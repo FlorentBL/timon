@@ -49,6 +49,22 @@ function script(responses: number[]): { shown: BoxOptions[]; show: ProblemDeps['
   return { shown, show: async (options) => { shown.push(options); return { response: responses.shift() ?? 0 }; } };
 }
 
+test('a clipboard write that rejects shows the copy failure, then the problem box again', async () => {
+  // problem: Copy → copy failed box OK → problem: OK
+  const { shown, show } = script([1, 0, 0]);
+  const log: string[] = [];
+  await showProblem(deps({
+    show,
+    writeClipboard: async () => { throw new Error('clipboard unavailable'); },
+    log: (line) => log.push(line),
+  }), { type: 'error', title: 'Timon', message: 'The daemon does not answer.', detail: 'd' });
+  assert.deepEqual(shown.map((b) => b.message), ['The daemon does not answer.', diagnosticCopy('en', 'win32').copyFailed, 'The daemon does not answer.']);
+  assert.equal(shown[1]!.type, 'error');
+  assert.equal(shown[1]!.detail, 'clipboard unavailable');
+  assert.ok(log.some((line) => line.includes('diagnostic copy failed: clipboard unavailable')));
+  assert.ok(!log.some((line) => line.includes('copied to the clipboard')));
+});
+
 test('each action answers in a box of its own, then the problem box comes back until OK', async () => {
   // problem: Copy → copied box OK → problem: Save → saved box OK → problem: Open → problem: OK
   const { shown, show } = script([1, 0, 2, 0, 3, 0]);
