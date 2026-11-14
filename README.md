@@ -142,7 +142,7 @@ And everything else a team of agents needs:
   <a href="https://github.com/ai-timon/timon/releases/latest"><img alt="Download for Linux" src=".github/assets/download-linux.svg" height="56"></a>
 </p>
 
-<p align="center"><sub>Windows 10+ (x64) · macOS 11+ (Apple silicon) · Linux x64, glibc 2.28+</sub></p>
+<p align="center"><sub>Windows 10+ (x64) · macOS 13+ (Apple silicon) · Linux x64, glibc 2.28+</sub></p>
 
 You need one agent CLI already signed in: `claude`, `codex`, `copilot`, `grok`, `opencode`, `pi`
 or `hermes-acp`. The installer brings its own Node.js, and on Windows installs Git when it is missing.
