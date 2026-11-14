@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import type { EventEmitter } from 'node:events';
 import { fileURLToPath } from 'node:url';
-import { BrowserWindow, session, WebContentsView, ipcMain, type IpcMainEvent, type Rectangle, type Session, type WebContents, type WebPreferences, type DownloadItem } from 'electron';
+import { BrowserWindow, session, WebContentsView, ipcMain, type IpcMainEvent, type Rectangle, type Session, type WebContents, type WebPreferences, type DownloadItem, type NativeImage } from 'electron';
 import {
   BrowserCommandError, BrowserPresentationTickets, browserUrlOf, DEFAULT_VIEWPORT,
   objectOf, profileIdOf, viewportOf,
@@ -161,6 +161,29 @@ const IMMEDIATE_COMMANDS = new Set(['status', 'dialogRespond', 'permissionRespon
 const DIALOG_BLOCKED_COMMANDS = new Set(['resize', 'screenshot', 'navigate', 'input', 'evaluate',
   'clipboardRead', 'clipboardPaste', 'fillCredential', 'captureCredential', 'fileUploadCommit', 'mediaSource',
   'emulate', 'performanceStart', 'performanceStop', 'annotateStart', 'annotatePick', 'annotateHighlight']);
+/** A capture without a composited frame is tried again this many times, a few frames apart. */
+const FRAME_RETRIES = 4;
+const FRAME_RETRY_MS = 100;
+
+/**
+ * The view's last composited frame. With no frame (before the first paint, just after a resize)
+ * Electron 33 answered an empty image and Electron 45 rejects (UnknownVizError): a rejection is
+ * retried, since the next frame is usually a few milliseconds away, then means "no frame" too.
+ */
+async function captureFrame(contents: Pick<WebContents, 'capturePage' | 'isDestroyed'>): Promise<NativeImage> {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await contents.capturePage();
+    } catch (error) {
+      if (attempt >= FRAME_RETRIES || contents.isDestroyed()) {
+        console.warn(`[native-browser] Screenshot without a frame: ${error instanceof Error ? error.message : String(error)}`);
+        throw new BrowserCommandError('The page has no frame to capture yet.', 503);
+      }
+      await new Promise((resolve) => setTimeout(resolve, FRAME_RETRY_MS));
+    }
+  }
+}
+
 /** How long a right button waits for the page's `context-menu`: none comes when the page cancels it. */
 const CONTEXT_MENU_WAIT_MS = 500;
 
@@ -1050,12 +1073,7 @@ export class NativeBrowserEngine {
         const { width, height } = profile.viewport;
         let timeout: ReturnType<typeof setTimeout> | undefined;
         let image = await Promise.race([
-          // A view with no composited frame yet: Electron 33 answered an empty image, Electron 45
-          // rejects (UnknownVizError). Both mean the same thing to the caller.
-          contents.capturePage().catch((error: unknown) => {
-            console.warn(`[native-browser] Screenshot without a frame: ${error instanceof Error ? error.message : String(error)}`);
-            throw new BrowserCommandError('The page has no frame to capture yet.', 503);
-          }),
+          captureFrame(contents),
           new Promise<never>((_resolve, reject) => {
             timeout = setTimeout(() => reject(new BrowserCommandError('The browser command timed out.', 504)), 15_000);
             timeout.unref();

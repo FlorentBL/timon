@@ -112,17 +112,28 @@ test('screenshot captures the composited frame without the debugger, in viewport
   } finally { await close(); }
 });
 
-test('screenshot refuses an empty frame and a closed tab instead of answering a blank image', { timeout: 1000 }, async () => {
+test('screenshot refuses an empty frame and a closed tab instead of answering a blank image', { timeout: 3000 }, async () => {
   const { contents, command, close } = fixture();
   try {
     contents.capturePage = async () => fakeImage(0, 0);
     await assert.rejects(command('screenshot'), (error: unknown) => error instanceof protocol.BrowserCommandError && error.statusCode === 503);
-    // Electron 45 rejects where Electron 33 answered an empty image: the same 503, not a raw Viz error.
-    contents.capturePage = async () => { throw new Error('UnknownVizError'); };
+    // Electron 45 rejects where Electron 33 answered an empty image: retried, then the same 503, not a raw Viz error.
+    let attempts = 0;
+    contents.capturePage = async () => { attempts += 1; throw new Error('UnknownVizError'); };
     await assert.rejects(command('screenshot'), (error: unknown) => error instanceof protocol.BrowserCommandError && error.statusCode === 503);
+    assert.equal(attempts, 5);
     contents.isDestroyed = () => true;
     contents.capturePage = () => assert.fail('A closed tab must not be captured');
     await assert.rejects(command('screenshot'), (error: unknown) => error instanceof protocol.BrowserCommandError && error.statusCode === 409);
+  } finally { await close(); }
+});
+
+test('a frame missing for a moment after a resize is captured once it is there', { timeout: 3000 }, async () => {
+  const { contents, command, close } = fixture();
+  try {
+    let attempts = 0;
+    contents.capturePage = async () => { attempts += 1; if (attempts < 3) throw new Error('UnknownVizError'); return fakeImage(640, 480); };
+    assert.deepEqual([(await command('screenshot')).width, attempts], [640, 3]);
   } finally { await close(); }
 });
 
