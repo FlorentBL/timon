@@ -164,6 +164,10 @@ rpm:
   afterRemove: ../orchestrator/src/host/linux-cli-after-remove.tpl
 mac:
   category: public.app-category.developer-tools
+  # Electron 45 does not run below macOS 13. Stated here, it becomes the app's
+  # LSMinimumSystemVersion and the pkg's allowed OS versions: the installer
+  # refuses an older Mac instead of installing an app that cannot start.
+  minimumSystemVersion: "13.0"
   # The default, stated: a Developer ID build runs under the hardened runtime,
   # where the microphone needs the audio-input entitlement. The entitlements
   # are build/entitlements.mac.plist (the app) and

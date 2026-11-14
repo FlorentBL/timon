@@ -183,6 +183,10 @@ test('the Windows node-pty prebuild ships its ConPTY', () => {
  * "already installed" over it. The shell decides those values on first launch
  * and the first-run screen registers the service once they exist.
  */
+test('the macOS app and its pkg declare the oldest macOS Electron runs on', () => {
+  assert.match(yml, /\nmac:\n(?:  .*\n)*  minimumSystemVersion: "13\.0"\n/);
+});
+
 test('an older installer can replace a newer version, to go back after a bad update', () => {
   // NSIS (electron-builder 26) has no version check; the macOS .pkg has one, on by default.
   assert.match(yml, /\npkg:\n(?:  .*\n)*  isVersionChecked: false\n/);
