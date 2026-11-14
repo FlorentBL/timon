@@ -11,7 +11,8 @@ export interface BrowserUserAgentMetadata {
   mobile: boolean;
 }
 
-const FALLBACK_CHROME = '130.0.0.0';
+// The Chromium of the Electron in package.json (45: Chromium 156), for a user agent that names none.
+const FALLBACK_CHROME = '156.0.0.0';
 
 /** Drops the `Electron/x` and `<AppName>/x` tokens: identity providers refuse or loop on an embedded shell. */
 export function desktopUserAgent(raw: string): string {
@@ -35,7 +36,7 @@ export function mobileUserAgent(chrome: string): string {
 export function userAgentMetadata(
   chrome: string, mobile: boolean, platform: NodeJS.Platform, systemVersion: string,
 ): BrowserUserAgentMetadata {
-  const major = chrome.split('.')[0] || '130';
+  const major = chrome.split('.')[0] || FALLBACK_CHROME.split('.')[0]!;
   const desktopPlatform = platform === 'darwin' ? 'macOS' : platform === 'win32' ? 'Windows' : 'Linux';
   return {
     brands: [
@@ -56,7 +57,7 @@ export function userAgentMetadata(
   };
 }
 
-/** `Sec-CH-UA` header value for a brand list, e.g. `"Chromium";v="130", "Google Chrome";v="130"`. */
+/** `Sec-CH-UA` header value for a brand list, e.g. `"Chromium";v="156", "Google Chrome";v="156"`. */
 export function clientHintBrands(list: Array<{ brand: string; version: string }>): string {
   return list.map((entry) => `"${entry.brand}";v="${entry.version}"`).join(', ');
 }
@@ -82,7 +83,7 @@ export function identityForUrl(url: string): BrowserIdentity {
   return isGoogleSigninUrl(url) ? 'googleSignin' : 'chrome';
 }
 
-/** `Chrome/130.0.6723.191` becomes `Chrome`; every other token stays. */
+/** `Chrome/156.0.8078.100` becomes `Chrome`; every other token stays. */
 export function versionlessUserAgent(userAgent: string): string {
   return userAgent.replace(/Chrome\/[\d.]+/, 'Chrome');
 }
