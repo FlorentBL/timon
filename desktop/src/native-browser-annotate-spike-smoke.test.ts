@@ -8,6 +8,7 @@ import { dirname, join } from 'node:path';
 import { promisify } from 'node:util';
 import { Script } from 'node:vm';
 import ts from 'typescript';
+import { smokeElectron } from './electron-binary.fixture.js';
 
 /**
  * Spike for TODO #468 (annotating the built-in browser). Nothing here ships: the real preload is
@@ -581,7 +582,7 @@ test('annotate spike: swallowed gestures, passive fiber reads, clip coordinates,
   skip: process.env.TIMON_ELECTRON_SMOKE !== '1', timeout: 100_000,
 }, async () => {
   const root = await mkdtemp(join(tmpdir(), 'timon-annotate-spike-'));
-  const electron = createRequire(import.meta.url)('electron') as string;
+  const electron = smokeElectron();
   // React copies already installed by two workspaces of this repository: nothing is added to it.
   const react18 = dirname(createRequire(new URL('../../app/package.json', import.meta.url)).resolve('react/package.json'));
   const reactDom18 = dirname(createRequire(new URL('../../app/package.json', import.meta.url)).resolve('react-dom/package.json'));

@@ -2,12 +2,12 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { execFile } from 'node:child_process';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
-import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
 import { Script } from 'node:vm';
 import ts from 'typescript';
+import { smokeElectron } from './electron-binary.fixture.js';
 
 const MODULES = ['native-browser', 'native-browser-protocol', 'native-browser-credentials', 'native-browser-user-agent',
   'native-browser-devtools', 'native-browser-cookies', 'native-browser-chrome', 'native-browser-chrome-signin', 'native-browser-recorder', 'native-browser-annotator'];
@@ -80,7 +80,7 @@ test('a session sign-in survives a clean quit and a killed shell', {
   skip: process.env.TIMON_ELECTRON_SMOKE !== '1', timeout: 90_000,
 }, async () => {
   const root = await mkdtemp(join(tmpdir(), 'timon-native-browser-persistence-'));
-  const electron = createRequire(import.meta.url)('electron') as string;
+  const electron = smokeElectron();
   try {
     await writeFile(join(root, 'package.json'), '{"type":"module"}');
     for (const name of MODULES) {

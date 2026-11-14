@@ -11,10 +11,15 @@ daemon (or Compose) already serves.
 
 ```sh
 npm install
+npm run install:electron   # the Electron binary: npm install no longer fetches it
 npm test            # pure modules: config reader, health probe, supervisor
 npx tsc --noEmit
 npm run build && npm start
 ```
+
+The smoke tests that start a real Electron are opt-in
+(`TIMON_ELECTRON_SMOKE=1 npm test -- src/<name>-smoke.test.ts`) and stop with
+the install command above when the binary is missing.
 
 `TIMON_HOME` is honoured, so a development shell can point at a throwaway home:
 
