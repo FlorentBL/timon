@@ -1038,7 +1038,12 @@ export class NativeBrowserEngine {
         const { width, height } = profile.viewport;
         let timeout: ReturnType<typeof setTimeout> | undefined;
         let image = await Promise.race([
-          contents.capturePage(),
+          // A view with no composited frame yet: Electron 33 answered an empty image, Electron 45
+          // rejects (UnknownVizError). Both mean the same thing to the caller.
+          contents.capturePage().catch((error: unknown) => {
+            console.warn(`[native-browser] Screenshot without a frame: ${error instanceof Error ? error.message : String(error)}`);
+            throw new BrowserCommandError('The page has no frame to capture yet.', 503);
+          }),
           new Promise<never>((_resolve, reject) => {
             timeout = setTimeout(() => reject(new BrowserCommandError('The browser command timed out.', 504)), 15_000);
             timeout.unref();

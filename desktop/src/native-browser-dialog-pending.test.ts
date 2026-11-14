@@ -117,6 +117,9 @@ test('screenshot refuses an empty frame and a closed tab instead of answering a 
   try {
     contents.capturePage = async () => fakeImage(0, 0);
     await assert.rejects(command('screenshot'), (error: unknown) => error instanceof protocol.BrowserCommandError && error.statusCode === 503);
+    // Electron 45 rejects where Electron 33 answered an empty image: the same 503, not a raw Viz error.
+    contents.capturePage = async () => { throw new Error('UnknownVizError'); };
+    await assert.rejects(command('screenshot'), (error: unknown) => error instanceof protocol.BrowserCommandError && error.statusCode === 503);
     contents.isDestroyed = () => true;
     contents.capturePage = () => assert.fail('A closed tab must not be captured');
     await assert.rejects(command('screenshot'), (error: unknown) => error instanceof protocol.BrowserCommandError && error.statusCode === 409);
