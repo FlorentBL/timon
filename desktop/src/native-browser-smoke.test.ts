@@ -8,6 +8,7 @@ import { join } from 'node:path';
 import { promisify } from 'node:util';
 import { runInNewContext, Script } from 'node:vm';
 import ts from 'typescript';
+import { stageEngine } from './native-browser-engine.fixture.js';
 import { smokeElectron } from './electron-binary.fixture.js';
 
 /** Installed synchronously, before app.whenReady() or any dynamic browser import. */
@@ -76,13 +77,7 @@ test('real hidden Chromium isolates profiles, captures and accepts input after n
   const electron = smokeElectron();
   try {
     await writeFile(join(root, 'package.json'), '{"type":"module"}');
-    for (const name of ['native-browser', 'native-browser-protocol', 'native-browser-credentials', 'native-browser-user-agent', 'native-browser-devtools', 'native-browser-cookies', 'native-browser-chrome', 'native-browser-chrome-signin', 'native-browser-recorder', 'native-browser-annotator']) {
-      const source = await readFile(new URL(`./${name}.ts`, import.meta.url), 'utf8');
-      const compiled = ts.transpileModule(source, {
-        compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ESNext },
-      }).outputText;
-      await writeFile(join(root, `${name}.js`), compiled);
-    }
+    await stageEngine(root);
     const preloadSource = await readFile(new URL('./native-browser-preload.cts', import.meta.url), 'utf8');
     await writeFile(join(root, 'native-browser-preload.cjs'), ts.transpileModule(preloadSource, {
       compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS },

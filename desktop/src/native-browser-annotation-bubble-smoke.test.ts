@@ -7,6 +7,7 @@ import { join } from 'node:path';
 import { promisify } from 'node:util';
 import { Script } from 'node:vm';
 import ts from 'typescript';
+import { stageEngine } from './native-browser-engine.fixture.js';
 import { smokeElectron } from './electron-binary.fixture.js';
 
 /**
@@ -20,10 +21,6 @@ import { smokeElectron } from './electron-binary.fixture.js';
  * panel is open for; annotate mode ends and the bubble's renderer with it. The page, watched from
  * its first script, sees no key, no focus change, no click of any of it.
  */
-
-const MODULES = ['native-browser', 'native-browser-protocol', 'native-browser-credentials', 'native-browser-user-agent',
-  'native-browser-devtools', 'native-browser-cookies', 'native-browser-chrome', 'native-browser-chrome-signin',
-  'native-browser-recorder', 'native-browser-annotator', 'native-browser-bubble', 'native-browser-annotation-overlay'];
 
 const fixture = String.raw`
 const { app, dialog, BrowserWindow, desktopCapturer, screen } = require('electron');
@@ -238,12 +235,7 @@ async function runSmoke(): Promise<Report> {
   const electron = smokeElectron();
   try {
     await writeFile(join(root, 'package.json'), '{"type":"module"}');
-    for (const name of MODULES) {
-      const source = await readFile(new URL(`./${name}.ts`, import.meta.url), 'utf8');
-      await writeFile(join(root, `${name}.js`), ts.transpileModule(source, {
-        compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ESNext },
-      }).outputText);
-    }
+    await stageEngine(root);
     for (const name of ['native-browser-preload', 'native-browser-bubble-preload']) {
       await writeFile(join(root, `${name}.cjs`), ts.transpileModule(await readFile(new URL(`./${name}.cts`, import.meta.url), 'utf8'), {
         compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS },

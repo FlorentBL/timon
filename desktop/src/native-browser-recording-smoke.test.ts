@@ -7,16 +7,13 @@ import { join } from 'node:path';
 import { promisify } from 'node:util';
 import { Script } from 'node:vm';
 import ts from 'typescript';
+import { stageEngine } from './native-browser-engine.fixture.js';
 import { smokeElectron } from './electron-binary.fixture.js';
 
 /**
  * The recorder end to end under the pinned Electron (TODO #461): the real preload and the real
  * engine, human input through `webContents.sendInputEvent` (the OS input path, no debugger).
  */
-
-const MODULES = ['native-browser', 'native-browser-protocol', 'native-browser-credentials', 'native-browser-user-agent',
-  'native-browser-devtools', 'native-browser-cookies', 'native-browser-chrome', 'native-browser-chrome-signin',
-  'native-browser-recorder', 'native-browser-annotator'];
 
 const fixture = String.raw`
 const { app, dialog } = require('electron');
@@ -122,12 +119,7 @@ test('recording smoke: the real preload and engine record human steps, mask secr
   const electron = smokeElectron();
   try {
     await writeFile(join(root, 'package.json'), '{"type":"module"}');
-    for (const name of MODULES) {
-      const source = await readFile(new URL(`./${name}.ts`, import.meta.url), 'utf8');
-      await writeFile(join(root, `${name}.js`), ts.transpileModule(source, {
-        compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ESNext },
-      }).outputText);
-    }
+    await stageEngine(root);
     await writeFile(join(root, 'native-browser-preload.cjs'), ts.transpileModule(
       await readFile(new URL('./native-browser-preload.cts', import.meta.url), 'utf8'),
       { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS } }).outputText);

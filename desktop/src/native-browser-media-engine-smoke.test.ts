@@ -7,6 +7,7 @@ import { join } from 'node:path';
 import { promisify } from 'node:util';
 import { Script } from 'node:vm';
 import ts from 'typescript';
+import { stageEngine } from './native-browser-engine.fixture.js';
 import { smokeElectron } from './electron-binary.fixture.js';
 
 test('real engine WebContentsView streams while hidden and while attached to the desktop panel', {
@@ -16,12 +17,7 @@ test('real engine WebContentsView streams while hidden and while attached to the
   const electron = smokeElectron();
   try {
     await writeFile(join(home, 'package.json'), '{"type":"module"}');
-    for (const name of ['native-browser', 'native-browser-credentials', 'native-browser-media', 'native-browser-media-page', 'native-browser-protocol', 'native-browser-user-agent', 'native-browser-devtools', 'native-browser-cookies', 'native-browser-chrome', 'native-browser-chrome-signin', 'native-browser-recorder', 'native-browser-annotator']) {
-      const source = await readFile(new URL(`./${name}.ts`, import.meta.url), 'utf8');
-      await writeFile(join(home, `${name}.js`), ts.transpileModule(source, {
-        compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ESNext },
-      }).outputText);
-    }
+    await stageEngine(home, ['native-browser', 'native-browser-media', 'native-browser-media-page']);
     await writeFile(join(home, 'native-browser-preload.cjs'), ts.transpileModule(
       await readFile(new URL('./native-browser-preload.cts', import.meta.url), 'utf8'), {
         compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS },
