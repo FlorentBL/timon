@@ -2,22 +2,19 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { execFile } from 'node:child_process';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
-import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
 import { Script } from 'node:vm';
 import ts from 'typescript';
+import { stageEngine } from './native-browser-engine.fixture.js';
+import { smokeElectron } from './electron-binary.fixture.js';
 
 /**
  * Annotate mode end to end under the pinned Electron (TODO #468): the real preload and the real
  * engine, human input through `webContents.sendInputEvent` (the OS input path, no debugger).
  * Touch has no sendInputEvent form: it goes through `Input.dispatchTouchEvent`, trusted as well.
  */
-
-const MODULES = ['native-browser', 'native-browser-protocol', 'native-browser-credentials', 'native-browser-user-agent',
-  'native-browser-devtools', 'native-browser-cookies', 'native-browser-chrome', 'native-browser-chrome-signin',
-  'native-browser-recorder', 'native-browser-annotator'];
 
 /** The classic Runtime.enable tell: a console argument whose `stack` getter runs only when serialised. */
 const RUNTIME_TELL = String.raw`
@@ -201,15 +198,10 @@ test('annotation smoke: the real preload and engine swallow gestures, pick, mask
   skip: process.env.TIMON_ELECTRON_SMOKE !== '1', timeout: 60_000,
 }, async () => {
   const root = await mkdtemp(join(tmpdir(), 'timon-annotation-smoke-'));
-  const electron = createRequire(import.meta.url)('electron') as string;
+  const electron = smokeElectron();
   try {
     await writeFile(join(root, 'package.json'), '{"type":"module"}');
-    for (const name of MODULES) {
-      const source = await readFile(new URL(`./${name}.ts`, import.meta.url), 'utf8');
-      await writeFile(join(root, `${name}.js`), ts.transpileModule(source, {
-        compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ESNext },
-      }).outputText);
-    }
+    await stageEngine(root);
     await writeFile(join(root, 'native-browser-preload.cjs'), ts.transpileModule(
       await readFile(new URL('./native-browser-preload.cts', import.meta.url), 'utf8'),
       { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS } }).outputText);

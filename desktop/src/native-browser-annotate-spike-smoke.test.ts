@@ -8,6 +8,8 @@ import { dirname, join } from 'node:path';
 import { promisify } from 'node:util';
 import { Script } from 'node:vm';
 import ts from 'typescript';
+import { stageEngine } from './native-browser-engine.fixture.js';
+import { smokeElectron } from './electron-binary.fixture.js';
 
 /**
  * Spike for TODO #468 (annotating the built-in browser). Nothing here ships: the real preload is
@@ -24,9 +26,6 @@ import ts from 'typescript';
  * "Human" input is `webContents.sendInputEvent` (no debugger), as in the #461 spike. Touch has no
  * sendInputEvent form: it goes through `Input.dispatchTouchEvent`, which the page sees as trusted too.
  */
-
-const MODULES = ['native-browser', 'native-browser-protocol', 'native-browser-credentials', 'native-browser-user-agent',
-  'native-browser-devtools', 'native-browser-cookies', 'native-browser-chrome', 'native-browser-chrome-signin', 'native-browser-recorder', 'native-browser-annotator'];
 
 /** Appended to the compiled production preload: the shape task 1 would give the real annotator. */
 const SPIKE_ANNOTATOR = String.raw`
@@ -581,7 +580,7 @@ test('annotate spike: swallowed gestures, passive fiber reads, clip coordinates,
   skip: process.env.TIMON_ELECTRON_SMOKE !== '1', timeout: 100_000,
 }, async () => {
   const root = await mkdtemp(join(tmpdir(), 'timon-annotate-spike-'));
-  const electron = createRequire(import.meta.url)('electron') as string;
+  const electron = smokeElectron();
   // React copies already installed by two workspaces of this repository: nothing is added to it.
   const react18 = dirname(createRequire(new URL('../../app/package.json', import.meta.url)).resolve('react/package.json'));
   const reactDom18 = dirname(createRequire(new URL('../../app/package.json', import.meta.url)).resolve('react-dom/package.json'));
@@ -600,12 +599,7 @@ test('annotate spike: swallowed gestures, passive fiber reads, clip coordinates,
   };
   try {
     await writeFile(join(root, 'package.json'), '{"type":"module"}');
-    for (const name of MODULES) {
-      const source = await readFile(new URL(`./${name}.ts`, import.meta.url), 'utf8');
-      await writeFile(join(root, `${name}.js`), ts.transpileModule(source, {
-        compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ESNext },
-      }).outputText);
-    }
+    await stageEngine(root);
     const preload = ts.transpileModule(await readFile(new URL('./native-browser-preload.cts', import.meta.url), 'utf8'), {
       compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS },
     }).outputText;

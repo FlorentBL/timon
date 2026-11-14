@@ -2,13 +2,13 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { execFile } from 'node:child_process';
 import { mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
-import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 import { Script } from 'node:vm';
 import ts from 'typescript';
+import { smokeElectron } from './electron-binary.fixture.js';
 
 /** The engine and every local module it imports, followed from its own import lines: a list kept by hand goes stale. */
 async function engineModules(): Promise<Map<string, string>> {
@@ -153,7 +153,7 @@ test('Google\'s sign-in host sees a versionless UA and Electron\'s hints, in a p
   skip: process.env.TIMON_ELECTRON_SMOKE !== '1', timeout: 60_000,
 }, async () => {
   const root = await mkdtemp(join(tmpdir(), 'timon-native-browser-google-identity-'));
-  const electron = createRequire(import.meta.url)('electron') as string;
+  const electron = smokeElectron();
   try {
     await writeFile(join(root, 'package.json'), '{"type":"module"}');
     // The engine's modules import packages (i18n) that resolve from the desktop's own dependencies.
