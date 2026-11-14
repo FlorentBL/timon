@@ -125,3 +125,36 @@ test('screenshot refuses an empty frame and a closed tab instead of answering a 
     await assert.rejects(command('screenshot'), (error: unknown) => error instanceof protocol.BrowserCommandError && error.statusCode === 409);
   } finally { await close(); }
 });
+
+test('a right click returns once the page\'s context menu is known, which Electron 45 reports after the release', { timeout: 3000 }, async () => {
+  const { engine, profile, contents, command, close } = fixture();
+  const page = new EventEmitter();
+  Object.assign(contents, { once: page.once.bind(page), removeListener: page.removeListener.bind(page) });
+  const sent: string[] = [];
+  engine.cdp = async (_tab: unknown, _method: string, params: { type: string; button: string }) => {
+    sent.push(`${params.type}:${params.button}`);
+    // What the engine's own listener does, later than the CDP answer, as Electron 45 does it.
+    if (params.type === 'mouseReleased' && params.button === 'right') {
+      setTimeout(() => { profile.contextMenu = { id: 'menu', tabId: 'tab', x: 5, y: 5 }; page.emit('context-menu'); }, 30);
+    }
+    return {};
+  };
+  try {
+    await command('input', { event: { type: 'click', x: 5, y: 5, button: 'right' } });
+    assert.deepEqual(profile.contextMenu, { id: 'menu', tabId: 'tab', x: 5, y: 5 });
+    assert.equal(page.listenerCount('context-menu'), 0, 'the wait leaves no listener behind');
+    // A page that cancels its menu emits nothing: the click still returns, after the bounded wait.
+    profile.contextMenu = null;
+    engine.cdp = async () => ({});
+    const started = Date.now();
+    await command('input', { event: { type: 'click', x: 5, y: 5, button: 'right' } });
+    assert.ok(Date.now() - started < 2000);
+    assert.equal(profile.contextMenu, null);
+    assert.equal(page.listenerCount('context-menu'), 0);
+    // A left click never waits for a menu.
+    const left = Date.now();
+    await command('input', { event: { type: 'click', x: 5, y: 5 } });
+    assert.ok(Date.now() - left < 200);
+    assert.ok(sent.includes('mouseReleased:right'));
+  } finally { await close(); }
+});

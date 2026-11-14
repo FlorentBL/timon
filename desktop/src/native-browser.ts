@@ -161,6 +161,18 @@ const IMMEDIATE_COMMANDS = new Set(['status', 'dialogRespond', 'permissionRespon
 const DIALOG_BLOCKED_COMMANDS = new Set(['resize', 'screenshot', 'navigate', 'input', 'evaluate',
   'clipboardRead', 'clipboardPaste', 'fillCredential', 'captureCredential', 'fileUploadCommit', 'mediaSource',
   'emulate', 'performanceStart', 'performanceStop', 'annotateStart', 'annotatePick', 'annotateHighlight']);
+/** How long a right button waits for the page's `context-menu`: none comes when the page cancels it. */
+const CONTEXT_MENU_WAIT_MS = 500;
+
+/** Resolves on the next `context-menu` of `contents`, or after `ms`. */
+function nextContextMenu(contents: Pick<WebContents, 'once' | 'removeListener'>, ms: number): Promise<void> {
+  return new Promise((resolve) => {
+    const done = (): void => { clearTimeout(timer); contents.removeListener('context-menu', done); resolve(); };
+    const timer = setTimeout(done, ms);
+    contents.once('context-menu', done);
+  });
+}
+
 const ALLOWED_PERMISSIONS = new Set(['media', 'geolocation', 'notifications', 'fullscreen', 'pointerLock', 'mediaKeySystem',
   'storage-access', 'top-level-storage-access']);
 const promptEngines = new Set<NativeBrowserEngine>();
@@ -2026,6 +2038,11 @@ ${CHROME_SHIM_SOURCE}`, runImmediately: true,
       throw new BrowserCommandError('Invalid browser pointer button.');
     }
     const params = { x, y, modifiers, button: unpressed ? 'none' : button, buttons };
+    // Electron 45 emits `context-menu` after the CDP event resolves (Electron 33 emitted it
+    // before): the right button waits for it, briefly, so the status that follows lists the menu.
+    // The menu opens on press, on release under Windows: only that half waits.
+    const opensMenu = event.type === 'click' || event.type === (process.platform === 'win32' ? 'up' : 'down');
+    const menu = button === 'right' && opensMenu ? nextContextMenu(tab.view.webContents, CONTEXT_MENU_WAIT_MS) : null;
     if (event.type === 'click') {
       await this.cdp(tab, 'Input.dispatchMouseEvent', { ...params, type: 'mousePressed', clickCount,
         buttons: ({ left: 1, right: 2, middle: 4 } as Record<string, number>)[String(button)] });
@@ -2042,5 +2059,7 @@ ${CHROME_SHIM_SOURCE}`, runImmediately: true,
       }
       await this.cdp(tab, 'Input.dispatchMouseEvent', { ...params, type: 'mouseWheel', deltaX, deltaY });
     }
+    // A failed dispatch leaves it to its own timer: it never holds a listener past CONTEXT_MENU_WAIT_MS.
+    await menu;
   }
 }
