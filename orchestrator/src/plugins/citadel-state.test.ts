@@ -4,7 +4,7 @@
  */
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { buildState } from '../../../plugins/citadel/src/index.js';
+import { apply, buildState } from '../../../plugins/citadel/src/index.js';
 import { filterMissions, normalizeQuestions, normalizeAgent, normalizeLook, clip } from '../../../plugins/citadel/src/state.js';
 
 const NOW = 1_800_000_000_000;
@@ -98,4 +98,42 @@ test('normalizeLook keeps valid values only', () => {
   assert.equal(normalizeLook(null), null);
   assert.deepEqual(normalizeAgent({ name: 'a', look: { shape: 'hex', color: '#000000' } })?.look, { shape: 'hex', color: '#000000', eyes: 'pill', acc: 'none' });
   assert.equal(normalizeAgent({ name: 'a' })?.look, null);
+});
+
+type Handler = (req: { params: Record<string, string> }, res: FakeRes) => Promise<void>;
+interface FakeRes { code: number; body: unknown; status(n: number): FakeRes; json(b: unknown): FakeRes; set(h: unknown): FakeRes; send(b: unknown): FakeRes }
+
+/** The two routes of the plugin, mounted on a fake context whose caller is signed in or not. */
+function mount(signedIn: boolean): Map<string, Handler> {
+  const routes = new Map<string, Handler>();
+  const router = { get: (path: string, handler: Handler) => { routes.set(path, handler); return router; } };
+  const ctx = {
+    router: () => router, user: () => (signedIn ? { id: 'u1' } : null),
+    agents: { list: async () => [] }, projects: { list: async () => [] }, missions: { list: async () => [] }, questions: { list: async () => [] },
+  };
+  // The test double carries only what the routes read.
+  apply(ctx as unknown as Parameters<typeof apply>[0]);
+  return routes;
+}
+async function call(routes: Map<string, Handler>, path: string, name = ''): Promise<FakeRes> {
+  const res: FakeRes = { code: 200, body: undefined, status(n) { this.code = n; return this; }, json(b) { this.body = b; return this; }, set() { return this; }, send(b) { this.body = b; return this; } };
+  const handler = routes.get(path);
+  assert.ok(handler, `route ${path} is mounted`);
+  await handler({ params: { name } }, res);
+  return res;
+}
+
+test('an anonymous request is refused on both routes', async () => {
+  const routes = mount(false);
+  assert.equal((await call(routes, '/state')).code, 401);
+  assert.equal((await call(routes, '/assets/:name', 'office.glb')).code, 401);
+});
+
+test('a signed-in caller gets the snapshot, and only the two allow-listed assets', async () => {
+  const routes = mount(true);
+  const state = await call(routes, '/state');
+  assert.equal(state.code, 200);
+  assert.deepEqual(Object.keys(state.body as object).sort(), ['agents', 'errors', 'generated_at', 'missions', 'projects', 'questions']);
+  assert.equal((await call(routes, '/assets/:name', '../package.json')).code, 404);
+  assert.equal((await call(routes, '/assets/:name', 'mascot3d.json')).code, 200);
 });
