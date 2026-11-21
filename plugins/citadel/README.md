@@ -3,7 +3,7 @@
 A read-only 3D view of your Timon agents. Every workspace is an arc-shaped
 platform around a central rotunda, every project a cutaway pavilion, and every
 agent a **3D Tim**, Timon's plush mascot: standing at its desk when it works,
-waiting beside it when it needs you, slumped when a mission failed.
+waiting beside it when it needs you, cross-eyed when a mission failed.
 
 Official plugin (a `page` with a sidebar entry at `/citadel`), written on the
 public plugin SDK only, with read-only permissions.
