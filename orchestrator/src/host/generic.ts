@@ -58,9 +58,9 @@ export function unresolvedBinaryPath(name: string, platform: NodeJS.Platform, ru
 
 function resultOf(r: ReturnType<typeof spawnSync>): ExecResult {
   return {
-    code: r.status ?? (r.error ? 1 : 0),
+    code: r.status ?? 1,
     stdout: typeof r.stdout === 'string' ? r.stdout : r.stdout?.toString() ?? '',
-    stderr: typeof r.stderr === 'string' ? r.stderr : r.stderr?.toString() ?? r.error?.message ?? '',
+    stderr: r.stderr?.toString() || r.error?.message || (r.signal ? `process killed by ${r.signal}` : ''),
   };
 }
 
