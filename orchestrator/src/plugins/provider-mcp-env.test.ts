@@ -26,6 +26,9 @@ import type { BuildSpawnOpts, Dialect, SessionDriver } from '../backends/types.j
 
 await import('../../tests/helpers/paid-license.js');
 process.env.TIMON_RESOURCE_GUARD_ENABLED = '0';
+// The path proved here writes a stdio server's variables into the CLI's file, sealed
+// on the plugin's side: the daemon's bridge (on by default) keeps them out of it entirely.
+process.env.TIMON_MCP_STDIO_BRIDGE = '0';
 
 const { installedProgram } = await import('../../tests/helpers/witness-cli.js');
 // The provider's CLI is installed and authorized: a third party's launch is compared with what was (TODO #531).

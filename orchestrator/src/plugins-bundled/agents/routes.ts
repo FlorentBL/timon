@@ -26,7 +26,7 @@ import { scopedDb } from '../../users/scoped-db.js';
 import { browseAgentFiles, deleteAgentPath, mkdirAgentPath, moveAgentPath, openAgentFileRaw, openExternalFileRaw, readExternalFile, renameAgentPath, writeAgentFile, writeExternalFile } from '../../files.js';
 import { sendMedia } from '../../media-send.js';
 import { handleSpawn } from '../../http-helpers.js';
-import { defaultExcludedMcpIds, deleteMcp, getMcp, listMcp, missionTransport, presentMcpServer, redactMcpServer, setMcpOAuth, type McpHttpConfig, type McpStdioConfig, upsertMcp } from '../../mcp.js';
+import { defaultExcludedMcpIds, deleteMcp, getMcp, listMcp, mcpOAuthClient, missionTransport, presentMcpServer, redactMcpServer, setMcpOAuth, type McpHttpConfig, type McpStdioConfig, upsertMcp } from '../../mcp.js';
 import { buildAuthorizeUrl, discoverOAuth, dynamicRegister, exchangeCode, OAUTH_CALLBACK_PATH, oauthRedirectUri, oauthReturnPath, pkcePair, putPending, randomState, takePending } from '../../oauth.js';
 import { apiPort } from '../../api-url.js';
 import { agentDir, skillFile } from '../../paths.js';
@@ -1909,7 +1909,8 @@ export function registerRoutes(app: express.IRouter): void {
       const metadata = s.transport.oauth?.metadata ?? await discoverOAuth(s.transport.url);
       // A client registered under another redirect URI (the old default, a
       // changed port or public URL) would be refused at the publisher: register again.
-      const saved = s.transport.oauth?.redirect_uri === redirectUri ? s.transport.oauth?.client : undefined;
+      // With its secret read back from the vault: the file no longer holds it.
+      const saved = s.transport.oauth?.redirect_uri === redirectUri ? mcpOAuthClient(s) : undefined;
       const client = saved ?? await dynamicRegister(metadata, redirectUri);
       const { verifier, challenge } = pkcePair();
       const state = randomState();

@@ -16,6 +16,7 @@ import type { ModuleManifest } from '../../kernel/registry.js';
 import { SECRETS_MODULE_ID } from '../../secrets/availability.js';
 import { importSecretsEnvAtBoot, recoverVaultRotation } from '../../secrets/store.js';
 import { bus, type BusEvent } from '../../bus.js';
+import { migrateMcpHeadersToVault } from '../../mcp.js';
 import { registerRoutes } from './routes.js';
 import { endSecretRequestsOfMission, sweepSecretRequests } from './requests.js';
 
@@ -49,6 +50,15 @@ export function apply(ctx: Context): void {
     importSecretsEnvAtBoot();
   } catch (e) {
     console.warn(`[secrets] vault unavailable at boot: ${(e as Error).message}`);
+  }
+  // An MCP server saved while the vault was off kept its headers or variables
+  // in its file, and is held back from the agents: switching the vault on again
+  // moves them now, not at the next boot (TODO #1071).
+  try {
+    const moved = migrateMcpHeadersToVault();
+    if (moved.moved.length) console.log(`[secrets] mcp: headers and variables of ${moved.moved.join(', ')} moved into the secrets vault`);
+  } catch (err) {
+    console.warn(`[secrets] mcp: moving server credentials into the vault failed (${(err as Error).name})`);
   }
   // A value lent to a mission (`secret_request`, lifetime `once` / `mission`)
   // does not outlive it; a card does not outlive its expiry. The sweep also
