@@ -14,8 +14,11 @@ import { createServer } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { join } from 'node:path';
 import { dbApi } from './db.js';
-import { MCP_DIR, deleteMcp, getMcp, listMcp, mcpRelayUpstream, migrateMcpOAuthTokensToVault, refreshToolsCacheFromInit, setMcpOAuth, upsertMcp } from './mcp.js';
-import { mcpOAuthRowsForTest, readMcpOAuthTokens } from './mcp-oauth-store.js';
+import {
+  MCP_DIR, deleteMcp, getMcp, listMcp, mcpOAuthClient, mcpRelayUpstream, migrateMcpHeadersToVault, migrateMcpOAuthTokensToVault,
+  presentMcpServer, refreshToolsCacheFromInit, setMcpOAuth, upsertMcp,
+} from './mcp.js';
+import { mcpOAuthRowsForTest, readMcpOAuthClientSecret, readMcpOAuthTokens } from './mcp-oauth-store.js';
 import { isSealed } from './secrets/box.js';
 import { resolveMasterKey } from './secrets/key.js';
 import { resetActiveModules, setActiveModules } from './kernel/module-state.js';
@@ -31,10 +34,12 @@ for (const level of ['log', 'warn', 'error', 'info'] as const) {
 
 let issued = 0;
 let refuseRefresh = false;
+let lastBody = '';
 const provider = createServer((req, res) => {
   const chunks: Buffer[] = [];
   req.on('data', (chunk: Buffer) => chunks.push(chunk));
   req.on('end', () => {
+    lastBody = Buffer.concat(chunks).toString('utf8');
     if (refuseRefresh) {
       // A provider that quotes back what it refuses: its body must reach no log.
       const sent = new URLSearchParams(Buffer.concat(chunks).toString('utf8')).get('refresh_token');
@@ -210,6 +215,47 @@ test('vault off: a legacy file loses its tokens and the server must be connected
   }
   assert.equal(migrateMcpOAuthTokensToVault().moved.includes('store-off'), false, 'nothing left to move');
   assert.equal(readMcpOAuthTokens('store-off', 'https://mcp.example/v1'), undefined, 'the vault back, the server still has to be connected again');
+});
+
+test('the client secret of a registered client is sealed in the vault, and still reaches the token endpoint', async () => {
+  declare('store-client', `${PROVIDER}/mcp`);
+  const client = { client_id: 'store-test', client_secret: 'client-secret-0123456789' };
+  setMcpOAuth('store-client', { ...OAUTH, client, tokens: tokens('client-access-token-0123456789', Date.now() - 1000) });
+  assert.equal(fileText('store-client').includes('client-secret-0123456789'), false, 'not in the server file');
+  assert.equal(fileText('store-client').includes('store-test'), true, 'the client id stays');
+  assert.ok(mcpOAuthRowsForTest('store-client').every((row) => isSealed(row.value) && !row.value.includes('client-secret')));
+  assert.equal(JSON.stringify(presentMcpServer(getMcp('store-client')!)).includes('client-secret-0123456789'), false);
+  assert.equal(mcpOAuthClient(getMcp('store-client')!)?.client_secret, 'client-secret-0123456789', 'the OAuth code reads it back');
+  await mcpRelayUpstream('store-client');
+  assert.equal(new URLSearchParams(lastBody).get('client_secret'), 'client-secret-0123456789', 'a refresh sends it');
+  upsertMcp({ id: 'store-client', transport: { type: 'http', url: 'https://elsewhere.example/mcp' } });
+  assert.equal(readMcpOAuthClientSecret('store-client', `${PROVIDER}/mcp`), undefined, 'a moved server forgets it');
+  deleteMcp('store-client');
+  assert.deepEqual(mcpOAuthRowsForTest('store-client'), []);
+});
+
+test('a client secret a file holds moves into the vault at first read; with the vault off it waits in the file', async () => {
+  mkdirSync(MCP_DIR, { recursive: true });
+  const legacy = {
+    id: 'store-client-legacy', name: 'store-client-legacy',
+    transport: { type: 'http', url: 'https://legacy.example/mcp', oauth: { ...OAUTH, client: { client_id: 'c', client_secret: 'legacy-client-secret-0123' } } },
+  };
+  setActiveModules(['@timon/agents']);
+  try {
+    writeFileSync(join(MCP_DIR, 'store-client-legacy.json'), JSON.stringify(legacy));
+    getMcp('store-client-legacy');
+    assert.equal(fileText('store-client-legacy').includes('legacy-client-secret-0123'), true, 'nothing is lost while the vault is off');
+  } finally {
+    resetActiveModules();
+  }
+  const { moved } = migrateMcpHeadersToVault();
+  assert.ok(moved.includes('store-client-legacy'), 'the vault back, it moves');
+  assert.equal(fileText('store-client-legacy').includes('legacy-client-secret-0123'), false);
+  assert.equal(readMcpOAuthClientSecret('store-client-legacy', 'https://legacy.example/mcp'), 'legacy-client-secret-0123');
+  writeFileSync(join(MCP_DIR, 'store-client-legacy.json'), JSON.stringify(legacy));
+  assert.equal(mcpOAuthClient(getMcp('store-client-legacy')!)?.client_secret, 'legacy-client-secret-0123');
+  assert.equal(fileText('store-client-legacy').includes('legacy-client-secret-0123'), false, 'a plain read moves it too');
+  deleteMcp('store-client-legacy');
 });
 
 test('no token was ever logged', () => {

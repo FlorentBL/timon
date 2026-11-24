@@ -90,12 +90,62 @@ export function storeMcpOAuthTokens(id: string, url: string, tokens: OAuthTokens
   }
 }
 
-/** Forgets every token of a server: deleted, moved to another url, or no longer OAuth. */
+/** Forgets every token of a server, and its client's secret: deleted, moved to another url, or no longer OAuth. */
 export function forgetMcpOAuthTokens(id: string): void {
   for (const row of dbApi.pluginKvList(STORE, serverPrefix(id))) dbApi.pluginKvDelete(STORE, row.key);
+  for (const row of dbApi.pluginKvList(STORE, clientPrefix(id))) dbApi.pluginKvDelete(STORE, row.key);
+}
+
+/*
+ * The `client_secret` a publisher handed at dynamic registration (TODO #1071):
+ * sealed beside the tokens, keyed by the same route, so it is never handed to
+ * the server once it points elsewhere. It opens nothing without a user's
+ * authorisation, but it is the publisher's credential for this installation,
+ * and the server's file is readable by every agent's shell.
+ */
+function clientPrefix(id: string): string {
+  return `@settings/client/${id}/`;
+}
+
+function clientKey(id: string, url: string): string {
+  return `${clientPrefix(id)}${mcpRelayRoute(id, url)}`;
+}
+
+/** Seals a client secret; throws `McpOAuthVaultUnavailableError` rather than keep it anywhere else. */
+export function storeMcpOAuthClientSecret(id: string, url: string, secret: string): void {
+  if (!vaultEnabled()) throw new McpOAuthVaultUnavailableError();
+  const key = clientKey(id, url);
+  let envelope: string;
+  try {
+    envelope = sealWithVault(secret, pluginKvIdentity(STORE, key));
+  } catch {
+    throw new McpOAuthVaultUnavailableError();
+  }
+  dbApi.pluginKvSet(STORE, key, envelope);
+  for (const row of dbApi.pluginKvList(STORE, clientPrefix(id))) {
+    if (row.key !== key) dbApi.pluginKvDelete(STORE, row.key);
+  }
+}
+
+/** The client secret of a server at this url; `undefined` when none, or when the vault cannot open it. */
+export function readMcpOAuthClientSecret(id: string, url: string): string | undefined {
+  if (!vaultEnabled()) return undefined;
+  const key = clientKey(id, url);
+  const stored = dbApi.pluginKvGet(STORE, key);
+  if (!stored || !isSealed(stored)) return undefined;
+  try {
+    return openWithVault(stored, pluginKvIdentity(STORE, key));
+  } catch (error) {
+    if (!openWarned.has(`client:${id}`)) {
+      openWarned.add(`client:${id}`);
+      console.warn(`[timon] mcp ${id}: its OAuth client secret cannot be opened (${(error as Error).message})`);
+    }
+    return undefined;
+  }
 }
 
 /** Tests: the raw rows, to prove they are sealed. */
 export function mcpOAuthRowsForTest(id: string): { key: string; value: string }[] {
-  return dbApi.pluginKvList(STORE, serverPrefix(id)).map(({ key, value }) => ({ key, value }));
+  return [...dbApi.pluginKvList(STORE, serverPrefix(id)), ...dbApi.pluginKvList(STORE, clientPrefix(id))]
+    .map(({ key, value }) => ({ key, value }));
 }

@@ -78,7 +78,7 @@ export function apply(ctx: Context): void {
       // cannot take stays in the file, and the server out of the launches.
       try {
         const headers = migrateMcpHeadersToVault();
-        if (headers.moved.length) console.log(`[timon] mcp: headers of ${headers.moved.join(', ')} moved into the secrets vault`);
+        if (headers.moved.length) console.log(`[timon] mcp: headers and variables of ${headers.moved.join(', ')} moved into the secrets vault`);
       } catch (err) {
         console.warn(`[timon] mcp: header migration failed (${(err as Error).name})`);
       }

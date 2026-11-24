@@ -1,7 +1,7 @@
 /** Test builders for the archives `archive.ts` opens (tar.gz with modes, zip). */
 import { deflateRawSync, gzipSync } from 'node:zlib';
 
-export type FixtureFile = { path: string; data?: string | Buffer; type?: '0' | '1' | '2' | '5'; mode?: number; link?: string };
+export type FixtureFile = { path: string; data?: string | Buffer; type?: '0' | '1' | '2' | '3' | '5' | 'x' | 'K'; mode?: number; link?: string };
 
 export function buildTarGzWithModes(files: readonly FixtureFile[]): Buffer {
   const blocks: Buffer[] = [];

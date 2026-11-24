@@ -57,7 +57,7 @@
       "arguments": "Arguments",
       "argumentsHint": "(one per line)",
       "environment": "Environment",
-      "environmentHint": "(KEY=value per line)",
+      "environmentHint": "(KEY=value per line. A saved value shows as ***: leave it to keep it)",
       "url": "URL",
       "saveBeforeOAuth": "Save the server first, then come back here to authorize it via OAuth if the endpoint requires it.",
       "headers": "Headers",

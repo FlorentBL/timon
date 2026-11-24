@@ -68,6 +68,7 @@ test('the built-in terminal switch sits in Interface › Terminal, where "termin
 test('the Misc and Infra strays with a home leave Diagnostics', () => {
   assert.deepEqual(placeSetting({ key: 'TIMON_CHROME_PATH', group: 'Misc', advanced: true }), { category: 'network', tab: 'browser' });
   assert.deepEqual(placeSetting({ key: 'DISPATCHER_INTERVAL_MS', group: 'Infra', advanced: true }), { category: 'missions', tab: 'execution' });
+  assert.deepEqual(placeSetting({ key: 'TIMON_MCP_STDIO_BRIDGE', group: 'Misc', advanced: true }), { category: 'missions', tab: 'permissions' });
   assert.deepEqual(placeSetting({ key: 'TIMON_LOG_MAX_MB', group: 'Infra', advanced: false }), { category: 'system', tab: 'diagnostics' });
 });
 
