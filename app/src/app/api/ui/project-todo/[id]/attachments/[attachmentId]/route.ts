@@ -5,7 +5,7 @@ export const dynamic = 'force-dynamic';
 
 type Ctx = { params: Promise<{ id: string; attachmentId: string }> };
 
-const path = ({ id, attachmentId }: Ctx['params']) =>
+const path = ({ id, attachmentId }: Awaited<Ctx['params']>) =>
   `/api/project-todo/${encodeURIComponent(id)}/attachments/${encodeURIComponent(attachmentId)}`;
 
 // Streamed with the daemon's headers (type, disposition, sandbox). Only the

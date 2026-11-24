@@ -6,7 +6,7 @@ export const dynamic = 'force-dynamic';
 
 type Params = { params: Promise<{ slug: string; name: string }> };
 
-const path = ({ slug, name }: Params['params'], req: Request) =>
+const path = ({ slug, name }: Awaited<Params['params']>, req: Request) =>
   `/api/git-remote/${encodeURIComponent(slug)}/remotes/${encodeURIComponent(name)}${repoSuffix(req)}`;
 
 export async function PATCH(req: Request, props: Params): Promise<Response> {

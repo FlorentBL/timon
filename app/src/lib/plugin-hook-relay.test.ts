@@ -14,7 +14,7 @@ async function relay(plugin: string, name: string, body: string, headers: Record
   };
   try {
     const { POST } = await route;
-    const res = await POST(new Request('http://app.test/api/plugins/hooks/x/y', { method: 'POST', body, headers }), { params: { plugin, name } });
+    const res = await POST(new Request('http://app.test/api/plugins/hooks/x/y', { method: 'POST', body, headers }), { params: Promise.resolve({ plugin, name }) });
     return { res, seen };
   } finally { globalThis.fetch = original; }
 }
@@ -85,14 +85,14 @@ test('plugin hooks: a subscription GET is relayed with its query string, never w
   try {
     const { GET } = await route;
     const query = '?hub.mode=subscribe&hub.verify_token=abc&hub.challenge=1158201444';
-    const res = await GET(new Request(`http://app.test/api/plugins/hooks/acme/fb${query}`, { headers: { cookie: 'timon_session=secret' } }), { params: { plugin: 'acme', name: 'fb' } });
+    const res = await GET(new Request(`http://app.test/api/plugins/hooks/acme/fb${query}`, { headers: { cookie: 'timon_session=secret' } }), { params: Promise.resolve({ plugin: 'acme', name: 'fb' }) });
     assert.equal(res.status, 200);
     assert.equal(await res.text(), '1158201444');
     assert.equal(res.headers.get('x-content-type-options'), 'nosniff');
     assert.match(seen[0]!.url, /\/api\/plugins\/hooks\/acme\/fb\?hub\.mode=subscribe&hub\.verify_token=abc&hub\.challenge=1158201444$/);
     assert.equal(seen[0]!.method, 'GET');
     assert.equal(seen[0]!.headers.has('cookie'), false);
-    const bad = await GET(new Request('http://app.test/api/plugins/hooks/Acme/fb?x=1'), { params: { plugin: 'Acme', name: 'fb' } });
+    const bad = await GET(new Request('http://app.test/api/plugins/hooks/Acme/fb?x=1'), { params: Promise.resolve({ plugin: 'Acme', name: 'fb' }) });
     assert.equal(bad.status, 401);
     assert.equal(seen.length, 1);
   } finally { globalThis.fetch = original; }

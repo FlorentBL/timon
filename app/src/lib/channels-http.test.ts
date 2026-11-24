@@ -19,13 +19,13 @@ test('channel HTTP accepts into durable storage without waiting for or contactin
     const body = JSON.stringify({ event_id: 'message-1', text: 'hello' });
     const make = (signature: string) => new Request('http://test/api/channels/hook/inbound', { method: 'POST', body, headers: { 'x-timon-signature': signature } });
     const signature = createHmac('sha256', 'test-secret').update(body).digest('hex');
-    const first = await POST(make(signature), { params: { name: 'hook' } });
+    const first = await POST(make(signature), { params: Promise.resolve({ name: 'hook' }) });
     assert.equal(first.status, 202);
     const receipt = await first.json();
     assert.ok(receipt.receipt_id); assert.equal(receipt.mission_id, null);
-    assert.equal((await (await POST(make(signature), { params: { name: 'hook' } })).json()).receipt_id, receipt.receipt_id);
-    assert.equal((await POST(make('bad'), { params: { name: 'hook' } })).status, 401);
-    assert.equal((await POST(make(signature), { params: { name: '../hook' } })).status, 404);
+    assert.equal((await (await POST(make(signature), { params: Promise.resolve({ name: 'hook' }) })).json()).receipt_id, receipt.receipt_id);
+    assert.equal((await POST(make('bad'), { params: Promise.resolve({ name: 'hook' }) })).status, 401);
+    assert.equal((await POST(make(signature), { params: Promise.resolve({ name: '../hook' }) })).status, 404);
   } finally { globalThis.fetch = original; }
 });
 

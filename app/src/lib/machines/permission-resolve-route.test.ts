@@ -70,7 +70,7 @@ function resolve(headers: Record<string, string>, cookies: Record<string, string
         headers: all,
         body: JSON.stringify({ behavior: 'allow', origin: 'push_action' }),
       }),
-      { params: { id: 'perm-1' } },
+      { params: Promise.resolve({ id: 'perm-1' }) },
     ),
   );
 }

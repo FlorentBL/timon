@@ -38,7 +38,7 @@ async function withRoute(work: (handlers: Handlers, call: <T>(fn: () => Promise<
 }
 
 const get = (handlers: Handlers, path: string[]): Promise<Response> =>
-  handlers.GET(new Request(`http://localhost/api/ui/providers/${path.join('/')}`), { params: { path } });
+  handlers.GET(new Request(`http://localhost/api/ui/providers/${path.join('/')}`), { params: Promise.resolve({ path }) });
 
 test('the overview and one provider reach the daemon with the session cookie, never the daemon token', async () => {
   await withRoute(async (handlers, call, calls) => {
@@ -81,10 +81,10 @@ test('anything else under overview stops at a 404, before any hop', async () => 
     }
     const post = await call(() => handlers.POST(new Request('http://localhost/api/ui/providers/overview', {
       method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}',
-    }), { params: { path: ['overview'] } }), 'session-one');
+    }), { params: Promise.resolve({ path: ['overview'] }) }), 'session-one');
     assert.equal(post.status, 404, 'the overview is read-only');
     const remove = await call(() => handlers.DELETE(new Request('http://localhost/api/ui/providers/overview/claude', { method: 'DELETE' }),
-      { params: { path: ['overview', 'claude'] } }), 'session-one');
+      { params: Promise.resolve({ path: ['overview', 'claude'] }) }), 'session-one');
     assert.equal(remove.status, 404);
     assert.equal(calls.length, 0, 'no call reached the daemon');
   });

@@ -5,7 +5,7 @@ export const dynamic = 'force-dynamic';
 
 type Ctx = { params: Promise<{ slug: string; id: string }> };
 
-const path = (p: Ctx['params']) =>
+const path = (p: Awaited<Ctx['params']>) =>
   `/api/projects/${encodeURIComponent(p.slug)}/forge-proposals/${encodeURIComponent(p.id)}`;
 
 export async function GET(_req: Request, props: Ctx): Promise<Response> {
