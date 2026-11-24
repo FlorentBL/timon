@@ -1086,7 +1086,9 @@ export function registerRoutes(
     // mission override (worktree), otherwise the agent cwd.
     const m = scopedDb(viewerFromRequest(req)).getMission(req.params.id);
     if (!m) {
-      res.status(404).json(apiError('mission_not_running', 'no running agent for that mission'));
+      // The one answer that lets the chat start over on a new mission: anything
+      // else means the conversation still exists (TIM-0167).
+      res.status(404).json(apiError('mission_not_found', 'mission not found'));
       return;
     }
     const origin = agentCallerOrigin(req);
