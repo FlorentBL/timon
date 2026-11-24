@@ -16,6 +16,7 @@ import { tmpdir } from 'node:os';
 import type { ChildProcessWithoutNullStreams } from 'node:child_process';
 import type { AddressInfo } from 'node:net';
 import express from 'express';
+import type { RequestAuth } from './users/identity.js';
 
 const MIN = 60_000;
 
@@ -93,9 +94,13 @@ async function idleChat(session: string): Promise<{ missionId: string; child: Fa
   return { missionId, child };
 }
 
-async function post(path: string, body: unknown): Promise<{ status: number; body: Record<string, unknown> }> {
+async function post(path: string, body: unknown, auth?: RequestAuth): Promise<{ status: number; body: Record<string, unknown> }> {
   const app = express();
   app.use(express.json());
+  app.use((req, _res, next) => {
+    if (auth) req.auth = auth;
+    next();
+  });
   registerRoutes(app);
   const server = app.listen(0, '127.0.0.1');
   await new Promise<void>((resolve) => server.once('listening', () => resolve()));
@@ -134,6 +139,48 @@ test('a reply sent between the reaper SIGTERM and the exit resumes the same miss
   assert.ok(children[children.length - 1]!.written().includes('are you still there?'));
   assert.equal(dbApi.getMission(missionId)?.status, 'running');
   assert.deepEqual(runningOfAgent(), [missionId], 'no twin mission');
+});
+
+test('a new mission asked on the session of an open one continues that mission', async () => {
+  const { missionId, child } = await idleChat('tim0167-session-b');
+  const before = dbApi.listMissions(1000).length;
+  const res = await post('/api/missions', {
+    agent: AGENT, input: 'one more thing', resume_session_id: 'tim0167-session-b',
+  });
+  assert.equal(res.status, 200, JSON.stringify(res.body));
+  assert.equal(res.body.mission_id, missionId);
+  assert.equal(res.body.continued, true);
+  assert.equal(dbApi.listMissions(1000).length, before, 'no mission created');
+  assert.ok(child.written().includes('one more thing'), 'delivered to the live CLI');
+});
+
+test('the same request while the reaper stops that mission still continues it', async () => {
+  const { missionId, child } = await idleChat('tim0167-session-c');
+  invalidateSettingsCache();
+  reapStaleMissions([], Date.now() + 61 * MIN);
+  assert.deepEqual(child.signals, ['SIGTERM']);
+  const res = await post('/api/missions', {
+    agent: AGENT, input: 'from my phone', resume_session_id: 'tim0167-session-c',
+  });
+  assert.equal(res.status, 200, JSON.stringify(res.body));
+  assert.equal(res.body.mission_id, missionId);
+  assert.deepEqual(runningOfAgent(), [missionId]);
+  assert.ok(!child.written().includes('from my phone'), 'not lost in the dying CLI');
+  assert.ok(children[children.length - 1]!.written().includes('from my phone'));
+});
+
+test("another user's request on that session never reaches the open mission", async () => {
+  const { missionId, child } = await idleChat('tim0167-session-d');
+  dbApi.setMissionOwner(missionId, 'alice');
+  const mallory: RequestAuth = {
+    kind: 'api-token', user: null, isSuperadmin: false, actorId: 'mallory', permissions: ['missions:spawn'],
+  };
+  const res = await post('/api/missions', {
+    agent: AGENT, input: 'let me in', resume_session_id: 'tim0167-session-d',
+  }, mallory);
+  assert.notEqual(res.body.mission_id, missionId, JSON.stringify(res.body));
+  assert.notEqual(res.body.continued, true);
+  assert.ok(!child.written().includes('let me in'), "nothing written to alice's conversation");
 });
 
 test('a send to a mission that does not exist says so, the one case the chat may start over', async () => {
