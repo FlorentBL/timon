@@ -133,7 +133,7 @@ test('the board paints its tasks through kanban.card: the product card by defaul
   try {
     const { AppRouterContext } = await import('next/dist/shared/lib/app-router-context.shared-runtime');
     const { KanbanClient } = await import('./kanban-page');
-    const router = { back() {}, forward() {}, refresh() {}, prefetch() {}, push() {}, replace() {} };
+    const router = { bfcacheId: 'test', back() {}, forward() {}, refresh() {}, prefetch() {}, push() {}, replace() {} };
     const product = m.registerProduct();
     await m.render(m.React.createElement(AppRouterContext.Provider, { value: router }, m.React.createElement(KanbanClient)));
     await m.until(() => !!document.querySelector('[data-task-card="task-1"]'), 'the product task card');

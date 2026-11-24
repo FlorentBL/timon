@@ -33,7 +33,7 @@ async function render(seed: unknown, seededFor: string | null = OWNER): Promise<
     children: workspace,
   });
   const noop = () => {};
-  const router: AppRouterInstance = { back: noop, forward: noop, refresh: noop, push: noop, replace: noop, prefetch: noop };
+  const router: AppRouterInstance = { bfcacheId: 'test', back: noop, forward: noop, refresh: noop, push: noop, replace: noop, prefetch: noop };
   return renderToString(
     e(AppRouterContext.Provider, { value: router },
       e(PathnameContext.Provider, { value: '/' },

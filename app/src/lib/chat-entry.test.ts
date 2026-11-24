@@ -112,7 +112,7 @@ test('the chat route resolves a renamed principal before mounting the conversati
   const { SearchParamsContext } = await import('next/dist/shared/lib/hooks-client-context.shared-runtime');
   const { ChatRoute } = await import('../app/chat/chat-route');
   const destinations: string[] = [];
-  const router = { back() {}, forward() {}, refresh() {}, prefetch() {}, push() {}, replace(path: string) { destinations.push(path); } };
+  const router = { bfcacheId: 'test', back() {}, forward() {}, refresh() {}, prefetch() {}, push() {}, replace(path: string) { destinations.push(path); } };
   const root = createRoot(document.getElementById('root')!);
   try {
     await React.act(async () => {
@@ -286,7 +286,7 @@ test('the chat route offers to seat an orchestrator when the daemon flags nobody
   const { SearchParamsContext } = await import('next/dist/shared/lib/hooks-client-context.shared-runtime');
   const { ChatRoute } = await import('../app/chat/chat-route');
   const destinations: string[] = [];
-  const router = { back() {}, forward() {}, refresh() {}, prefetch() {}, push() {}, replace(path: string) { destinations.push(path); } };
+  const router = { bfcacheId: 'test', back() {}, forward() {}, refresh() {}, prefetch() {}, push() {}, replace(path: string) { destinations.push(path); } };
   const root = createRoot(document.getElementById('root')!);
   try {
     await React.act(async () => {

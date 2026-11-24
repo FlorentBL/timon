@@ -57,7 +57,7 @@ test('a task card\'s idea tags are read again when a job lands, not when only it
   resetSlotsForTests();
   const { KanbanClient } = await import('./kanban-page');
 
-  const router = { back() {}, forward() {}, refresh() {}, prefetch() {}, push() {}, replace() {} };
+  const router = { bfcacheId: 'test', back() {}, forward() {}, refresh() {}, prefetch() {}, push() {}, replace() {} };
   const root = createRoot(document.getElementById('root')!);
   const until = (condition: () => boolean, what: string) => waitUntil(React.act, condition, what);
   const text = () => document.querySelector('[data-task-card="next-bbbbbb"]')?.textContent ?? '';

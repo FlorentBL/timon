@@ -39,7 +39,7 @@ async function withDom(run: (env: {
   const { AppRouterContext } = await import('next/dist/shared/lib/app-router-context.shared-runtime');
   const navigations: string[] = [];
   const router = {
-    back() {}, forward() {}, refresh() {}, prefetch() {},
+    bfcacheId: 'test', back() {}, forward() {}, refresh() {}, prefetch() {},
     push(path: string) { navigations.push(path); },
     replace(path: string) { navigations.push(path); },
   };

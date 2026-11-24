@@ -36,7 +36,7 @@ async function withDom(run: (env: {
   const pushed: string[] = [];
   const pushListeners: Array<(path: string) => void> = [];
   const router = {
-    back() {}, forward() {}, refresh() {}, prefetch() {},
+    bfcacheId: 'test', back() {}, forward() {}, refresh() {}, prefetch() {},
     push(path: string) { pushed.push(path); for (const listener of pushListeners) listener(path); },
     replace(path: string) { pushed.push(path); },
   };
