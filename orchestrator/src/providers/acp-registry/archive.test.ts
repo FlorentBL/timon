@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, mkdtempSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, lstatSync, mkdtempSync, readFileSync, readlinkSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { ArchiveError, extractTarGz, extractZip, installRaw } from './archive.js';
@@ -41,12 +41,133 @@ test('tar.gz: traversal, absolute paths, links and devices are refused, and noth
     ['drive', [{ path: 'C:evil', data: 'x' }], 'unsafe-path'],
     ['symlink', [{ path: 'link', type: '2', link: '/etc/passwd' }], 'link'],
     ['hardlink', [{ path: 'link', type: '1', link: 'ok' }], 'link'],
+    ['device', [{ path: 'dev', type: '3' }], 'link'],
   ];
   for (const [label, files, code] of cases) {
     const dest = join(base, label.replaceAll(' ', '-'));
     await rejects(() => extractTarGz(archiveFile(buildTarGzWithModes(files), 'x.tar.gz'), dest), code);
   }
   assert.equal(existsSync(join(base, 'evil')), false);
+});
+
+/** The four links of the macOS build of Mistral Vibe (a PyInstaller bundle), as published. */
+const FRAMEWORK: Parameters<typeof buildTarGzWithModes>[0] = [
+  { path: 'vibe-acp', data: 'launcher', mode: 0o755 },
+  { path: '_internal/Python.framework/Versions/3.12/Python', data: 'libpython', mode: 0o755 },
+  { path: '_internal/Python.framework/Versions/3.12/Resources/Info.plist', data: 'plist' },
+  { path: '_internal/Python', type: '2', link: 'Python.framework/Versions/3.12/Python' },
+  { path: '_internal/Python.framework/Python', type: '2', link: 'Versions/Current/Python' },
+  { path: '_internal/Python.framework/Resources', type: '2', link: 'Versions/Current/Resources' },
+  { path: '_internal/Python.framework/Versions/Current', type: '2', link: '3.12' },
+];
+
+test('tar.gz: relative links that stay inside the bundle are kept (macOS framework layout)', { skip: !posix }, async () => {
+  const dest = join(scratch(), 'out');
+  await extractTarGz(archiveFile(buildTarGzWithModes(FRAMEWORK), 'v.tar.gz'), dest);
+  const fw = join(dest, '_internal', 'Python.framework');
+  assert.ok(lstatSync(join(fw, 'Versions', 'Current')).isSymbolicLink());
+  assert.equal(readlinkSync(join(fw, 'Versions', 'Current')), '3.12');
+  assert.equal(readFileSync(join(dest, '_internal', 'Python'), 'utf8'), 'libpython', 'a link through another link resolves');
+  assert.equal(readFileSync(join(fw, 'Resources', 'Info.plist'), 'utf8'), 'plist');
+  // `../` first, then names: the shape a sibling folder takes.
+  const up = join(scratch(), 'up');
+  await extractTarGz(archiveFile(buildTarGzWithModes([
+    { path: 'lib/real.so', data: 'so' },
+    { path: 'bin/lib.so', type: '2', link: '../lib/real.so' },
+  ]), 'u.tar.gz'), up);
+  assert.equal(readFileSync(join(up, 'bin', 'lib.so'), 'utf8'), 'so');
+});
+
+test('tar.gz: a long link target in a PAX record is read', { skip: !posix }, async () => {
+  const target = `${'d'.repeat(60)}/${'e'.repeat(60)}/file`;
+  const record = (body: string) => { let n = body.length + 3; while (`${n} ${body}\n`.length !== n) n += 1; return `${n} ${body}\n`; };
+  const dest = join(scratch(), 'out');
+  await extractTarGz(archiveFile(buildTarGzWithModes([
+    { path: target, data: 'deep' },
+    { path: 'PaxHeader', type: 'x', data: record(`linkpath=${target}`) },
+    { path: 'short', type: '2', link: 'ignored-by-pax' },
+  ]), 'p.tar.gz'), dest);
+  assert.equal(readlinkSync(join(dest, 'short')), target);
+});
+
+test('tar.gz: links that could leave the folder, or be written through, are refused', async () => {
+  const base = scratch();
+  const cases: Array<[string, Parameters<typeof buildTarGzWithModes>[0], string]> = [
+    // An absolute target, on either system.
+    ['absolute', [{ path: 'l', type: '2', link: '/etc/passwd' }], 'link'],
+    ['drive', [{ path: 'l', type: '2', link: 'C:/Windows' }], 'link'],
+    // Out by `..`, from the root and from a sub-folder.
+    ['dotdot', [{ path: 'l', type: '2', link: '../outside' }], 'link'],
+    ['nested dotdot', [{ path: 'a/b/l', type: '2', link: '../../../outside' }], 'link'],
+    // The root itself, and tricks in the target string.
+    ['root itself', [{ path: 'a/l', type: '2', link: '..' }], 'link'],
+    ['dot', [{ path: 'l', type: '2', link: '.' }], 'link'],
+    ['backslash', [{ path: 'l', type: '2', link: '..\\outside' }], 'link'],
+    ['empty', [{ path: 'l', type: '2', link: '' }], 'link'],
+    // A chain: `l1` points to `c` (shallower than its own name), so `l1/../../../evil` resolves inside on paper and
+    // outside for the system.
+    ['chain escape', [
+      { path: 'c/', type: '5' },
+      { path: 'a/b/l1', type: '2', link: '../../c' },
+      { path: 'a/b/l2', type: '2', link: 'l1/../../../evil' },
+    ], 'link'],
+    ['climb after a name', [{ path: 'sub/', type: '5' }, { path: 'l', type: '2', link: 'sub/../sub' }], 'link'],
+    // Written through a link: a file below it, before or after it in the archive, and a link below a link.
+    ['file through link', [{ path: 'sub/', type: '5' }, { path: 'd', type: '2', link: 'sub' }, { path: 'd/evil', data: 'x' }], 'unsafe-path'],
+    ['file then link', [{ path: 'sub/', type: '5' }, { path: 'd/evil', data: 'x' }, { path: 'd', type: '2', link: 'sub' }], 'unsafe-path'],
+    ['link through link', [{ path: 'sub/', type: '5' }, { path: 'd', type: '2', link: 'sub' }, { path: 'd/l', type: '2', link: '../x' }], 'link'],
+    ['same name twice', [{ path: 'f', data: 'x' }, { path: 'f', type: '2', link: 'g' }], 'unsafe-path'],
+  ];
+  for (const [label, files, code] of cases) {
+    const dest = join(base, label.replaceAll(' ', '-'));
+    await assert.rejects(
+      () => extractTarGz(archiveFile(buildTarGzWithModes(files), 'x.tar.gz'), dest, undefined, 'symlink'),
+      (err: unknown) => err instanceof ArchiveError && err.code === code,
+      `${label}: ${code}`,
+    );
+  }
+  assert.equal(existsSync(join(base, 'evil')), false);
+  assert.equal(existsSync(join(base, 'outside')), false);
+  if (posix) {
+    // The file written "through" `d` landed in a real folder, never in `sub`.
+    assert.equal(existsSync(join(base, 'file-through-link', 'sub', 'evil')), false);
+    assert.equal(existsSync(join(base, 'link-through-link', 'sub', 'l')), false);
+  }
+});
+
+test('tar.gz: a loop of links is refused', { skip: !posix }, async () => {
+  const loop = buildTarGzWithModes([{ path: 'a', type: '2', link: 'b' }, { path: 'b', type: '2', link: 'a' }]);
+  await rejects(() => extractTarGz(archiveFile(loop, 'l.tar.gz'), join(scratch(), 'o'), undefined, 'symlink'), 'link');
+});
+
+test('tar.gz: where links cannot be made (Windows), each one becomes a copy of its target', async () => {
+  const dest = join(scratch(), 'out');
+  await extractTarGz(archiveFile(buildTarGzWithModes([
+    ...FRAMEWORK,
+    { path: 'up', type: '2', link: '_internal' },
+    { path: '_internal/sub/self', type: '2', link: '..' },
+    { path: 'dangling', type: '2', link: 'nowhere' },
+  ]), 'c.tar.gz'), dest, undefined, 'copy');
+  const fw = join(dest, '_internal', 'Python.framework');
+  assert.equal(readFileSync(join(dest, '_internal', 'Python'), 'utf8'), 'libpython');
+  assert.equal(readFileSync(join(fw, 'Versions', 'Current', 'Resources', 'Info.plist'), 'utf8'), 'plist');
+  assert.equal(readFileSync(join(fw, 'Resources', 'Info.plist'), 'utf8'), 'plist');
+  assert.equal(lstatSync(join(fw, 'Versions', 'Current')).isDirectory(), true);
+  assert.equal(readFileSync(join(dest, 'up', 'Python'), 'utf8'), 'libpython', 'a folder is copied once its own links are in place');
+  if (posix) assert.equal(statSync(join(fw, 'Python')).mode & 0o777, 0o755);
+  assert.equal(existsSync(join(dest, 'dangling')), false, 'a dangling link is skipped');
+  assert.equal(existsSync(join(dest, '_internal', 'sub', 'self')), false, 'a link to its own ancestor is skipped');
+
+  // The copies count against the same budget: a link cannot multiply a big file past the limit.
+  const many = buildTarGzWithModes([
+    { path: 'big', data: Buffer.alloc(30_000, 1) },
+    { path: 'c1', type: '2', link: 'big' },
+    { path: 'c2', type: '2', link: 'big' },
+  ]);
+  await rejects(() => extractTarGz(archiveFile(many, 'm.tar.gz'), join(scratch(), 'o'), { maxExpandedBytes: 70_000, maxEntries: 100 }, 'copy'), 'too-large');
+  // And the refusals hold in this mode too.
+  const out = buildTarGzWithModes([{ path: 'l', type: '2', link: '../outside' }]);
+  await rejects(() => extractTarGz(archiveFile(out, 'o.tar.gz'), join(scratch(), 'o'), undefined, 'copy'), 'link');
 });
 
 test('tar.gz: limits cut a bomb and a flood; garbage is "corrupt"', async () => {

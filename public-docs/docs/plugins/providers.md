@@ -387,8 +387,14 @@ published checksum · verified 1.5.0 available to replace it*.
   does, a file that does not match is deleted and nothing is installed. When it
   does not (the line says *no published checksum*), Timon asks you to confirm
   before downloading, and records the install as unverified.
-- **Checked on every start.** Timon keeps a digest of the installed files and
-  compares it each time it registers the agent. A file changed afterwards is
+- **Safe unpacking.** An archive that tries to write outside its folder, holds
+  a hard link or a device, or a symbolic link that points outside the agent's
+  folder (or through another link) is refused with nothing installed. Symbolic
+  links that stay inside the agent's folder, such as those of a macOS framework,
+  are kept; on Windows, where creating one needs a privilege, Timon copies what
+  the link points to instead. A `.zip` holding a link is refused.
+- **Checked on every start.** Timon keeps a digest of the installed files, and of
+  where each link points, and compares it each time it registers the agent. A file changed afterwards is
   never launched; the line says its files changed and **Reinstall** repairs it.
 - **Updates.** A newer version appears on the line; installing it keeps the
   working version until the new one is verified, then swaps them. The previous
