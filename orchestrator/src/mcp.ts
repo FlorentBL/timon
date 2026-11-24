@@ -31,8 +31,10 @@ import { vaultEnabled } from './secrets/availability.js';
 import { SecretStoreError, createSecret, deleteSecret, readSecretValue } from './secrets/store.js';
 import { mcpRelayRoute } from './mcp-relay-route.js';
 import {
-  McpOAuthVaultUnavailableError, forgetMcpOAuthTokens, mcpOAuthVaultAvailable, readMcpOAuthTokens, storeMcpOAuthTokens,
+  McpOAuthVaultUnavailableError, forgetMcpOAuthTokens, mcpOAuthVaultAvailable, readMcpOAuthClientSecret, readMcpOAuthTokens,
+  storeMcpOAuthClientSecret, storeMcpOAuthTokens,
 } from './mcp-oauth-store.js';
+import type { OAuthClient } from './plugins/contract/mcp-servers.js';
 import type {
   McpExternalConfig, McpServer, McpSummary, McpHttpConfig, McpSource, McpStdioConfig, OAuthStatus, OAuthTokens,
 } from './plugins/contract/mcp-servers.js';
@@ -167,9 +169,55 @@ function moveTokensToVault(s: McpStoredServer): { record: McpStoredServer; moved
 }
 
 function readRaw(id: string): McpStoredServer | null {
-  const s = readFileRecord(id);
+  let s = readFileRecord(id);
   // A file from before the vault held the tokens is cleaned at first read, not only at boot.
-  return s && fileTokens(s) ? moveTokensToVault(s).record : s;
+  if (s && fileTokens(s)) s = moveTokensToVault(s).record;
+  if (s && fileClientSecret(s) && vaultEnabled()) s = moveClientSecretToVault(s).record;
+  return s;
+}
+
+/** The client secret a record still carries in its file: written before the vault held it, or while it was off. */
+function fileClientSecret(s: McpServer): string | undefined {
+  return s.transport.type === 'http' ? s.transport.oauth?.client?.client_secret : undefined;
+}
+
+function withoutClientSecret(s: McpStoredServer): McpStoredServer {
+  if (s.transport.type !== 'http' || !s.transport.oauth?.client?.client_secret) return s;
+  const { client_secret: _sealed, ...client } = s.transport.oauth.client;
+  return { ...s, transport: { ...s.transport, oauth: { ...s.transport.oauth, client } } };
+}
+
+/**
+ * Moves a client secret its file holds into the vault: sealed, read back, and
+ * only then taken out of the file. Unlike tokens, nothing is dropped when the
+ * vault cannot take it (it opens nothing on its own, and a lost one means
+ * registering the client again): it waits in the file for the vault.
+ */
+function moveClientSecretToVault(s: McpStoredServer): { record: McpStoredServer; moved: boolean } {
+  const secret = fileClientSecret(s);
+  if (!secret || s.transport.type !== 'http') return { record: s, moved: false };
+  try {
+    storeMcpOAuthClientSecret(s.id, s.transport.url, secret);
+    if (readMcpOAuthClientSecret(s.id, s.transport.url) !== secret) return { record: s, moved: false };
+  } catch {
+    return { record: s, moved: false };
+  }
+  const stripped = withoutClientSecret(s);
+  writeFileRecord(stripped);
+  return { record: stripped, moved: true };
+}
+
+/**
+ * The OAuth client of a server as the token endpoint needs it: its
+ * `client_secret` read back from the vault (or from the file, while the vault
+ * could not take it). For the daemon's own OAuth code only.
+ */
+export function mcpOAuthClient(s: McpServer): OAuthClient | undefined {
+  if (s.transport.type !== 'http' || !s.transport.oauth?.client) return undefined;
+  const client = s.transport.oauth.client;
+  if (client.client_secret) return client;
+  const secret = readMcpOAuthClientSecret(s.id, s.transport.url);
+  return secret ? { ...client, client_secret: secret } : client;
 }
 
 /**
@@ -177,7 +225,10 @@ function readRaw(id: string): McpStoredServer | null {
  * vault, tokens are refused (`McpOAuthVaultUnavailableError`) rather than
  * written in clear.
  */
-function writeRaw(server: McpStoredServer): void {
+function writeRaw(input: McpStoredServer): void {
+  let server = input;
+  // The client secret goes to the vault when it can take it; otherwise it waits in the file.
+  if (fileClientSecret(server) && vaultEnabled()) server = moveClientSecretOut(server);
   const tokens = fileTokens(server);
   if (!tokens || server.transport.type !== 'http') {
     writeFileRecord(server);
@@ -186,6 +237,16 @@ function writeRaw(server: McpStoredServer): void {
   // Throws when the vault is off or its master key unreadable (a locked keyring).
   storeMcpOAuthTokens(server.id, server.transport.url, tokens);
   writeFileRecord(withoutTokens(server));
+}
+
+function moveClientSecretOut(server: McpStoredServer): McpStoredServer {
+  const secret = fileClientSecret(server);
+  if (!secret || server.transport.type !== 'http') return server;
+  try {
+    storeMcpOAuthClientSecret(server.id, server.transport.url, secret);
+    if (readMcpOAuthClientSecret(server.id, server.transport.url) === secret) return withoutClientSecret(server);
+  } catch { /* kept in the file until the vault can take it */ }
+  return server;
 }
 
 /**
@@ -720,7 +781,12 @@ export function migrateMcpHeadersToVault(): { moved: string[]; kept: string[] } 
     if (!f.endsWith('.json')) continue;
     const id = f.slice(0, -'.json'.length);
     if (!ID_RE.test(id)) continue;
-    const s = readFileRecord(id);
+    let s = readFileRecord(id);
+    // An OAuth client secret written while the vault was off, too (it is not a header: moved on its own).
+    if (s && fileClientSecret(s) && vaultEnabled() && moveClientSecretToVault(s).moved) {
+      s = readFileRecord(id);
+      if (!moved.includes(id)) moved.push(id);
+    }
     if (!s || (s.transport.type !== 'http' && s.transport.type !== 'stdio')) continue;
     const kind: VaultKind = s.transport.type === 'stdio' ? 'env' : 'header';
     const clear = (s.transport.type === 'stdio' ? s.transport.env : s.transport.headers) ?? {};
@@ -744,7 +810,7 @@ export function migrateMcpHeadersToVault(): { moved: string[]; kept: string[] } 
       continue;
     }
     forgetUnreferencedKeys(id, s, next);
-    moved.push(id);
+    if (!moved.includes(id)) moved.push(id);
   }
   return { moved, kept };
 }
@@ -930,7 +996,8 @@ async function maybeRefreshTokens(s: McpServer, force = false): Promise<McpServe
   if (s.transport.type !== 'http' || !s.transport.oauth) return s;
   const tokens = oauthTokensOf(s);
   if (!tokens?.refresh_token) return s;
-  const { metadata, client } = s.transport.oauth;
+  const { metadata } = s.transport.oauth;
+  const client = mcpOAuthClient(s) ?? s.transport.oauth.client;
   // Refresh ~30s before actual expiry to avoid races.
   const fresh = tokens.expires_at && tokens.expires_at - 30_000 > Date.now();
   if (fresh && !force) return s;
