@@ -35,7 +35,13 @@ If you added an MCP server called `app-<name>` by hand, the matching card shows 
 
 **New MCP**, in the tab's toolbar, opens the MCP server form. There you can add any MCP server: a remote address with its own headers, or a program that runs on your machine.
 
-The headers of a remote server, an API key for example, are kept in the secrets vault and are not written into the agents' configuration: the agent talks to Timon, which adds the headers when it relays each call to the server. Once saved, a header value shows as `***` in the form: leave it as is to keep the value, or type a new one to replace it. This needs the secrets vault. If it is switched off, the server's card reads **Needs the secrets vault** and agents do not get the server until you switch the vault back on; the headers you typed are kept and move into the vault at the next start of Timon.
+The headers of a remote server, an API key for example, are kept in the secrets vault and are not written into the agents' configuration: the agent talks to Timon, which adds the headers when it relays each call to the server. Once saved, a header value shows as `***` in the form: leave it as is to keep the value, or type a new one to replace it. This needs the secrets vault. If it is switched off, the server's card reads **Needs the secrets vault** and agents do not get the server until you switch the vault back on; the headers you typed are kept and move into the vault as soon as you switch it back on.
+
+A program that runs on your machine (a `stdio` server) with environment variables is handled the same way: its variables are kept in the secrets vault, show as `***` in the form, and are never written into the agent's configuration. Timon starts the program itself for each conversation that uses it, gives it its variables, and the agent reaches it through Timon. The program runs in the conversation's folder and stops when the conversation ends. If it cannot start (the command is not found, for example), the agent runs without it and you receive a notification; its variables are never handed to the agent instead. A program without variables is started by the agent's own tool, as before. The **Run MCP servers with variables outside the agent** setting, under **Settings → Missions → Permissions**, turns this off: the agent's tool then starts the program and its variables are written into the agent's configuration, as in earlier versions.
+
+Agents on opencode and Hermes do not receive a server that Timon relays, since they only load programs they start themselves: a remote server, or a program with variables while the setting above is on.
+
+When a server signs in with OAuth, the secret the publisher gives Timon at registration is kept in the secrets vault too.
 
 ## What a connector receives
 
