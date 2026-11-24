@@ -228,6 +228,35 @@ test('tar.gz: where the disk folds case and Unicode form, two spellings of one n
   }
 });
 
+/** Whether the scratch disk calls two spellings one name (APFS, NTFS: case; APFS: Unicode form too). */
+function diskFolds(a: string, b: string): boolean {
+  const dir = scratch();
+  writeFileSync(join(dir, a), '');
+  return existsSync(join(dir, b));
+}
+
+test('tar.gz: on a disk that folds names, a link to its own folder by another spelling is refused by identity alone', async (t) => {
+  const nfc = 'caf\u00e9';
+  const nfd = 'cafe\u0301';
+  const cases: Array<[string, Parameters<typeof buildTarGzWithModes>[0], boolean]> = [
+    ['case', [{ path: 'a/', type: '5' }, { path: 'a/x', type: '2', link: '../A' }], diskFolds('Probe', 'probe')],
+    ['unicode form', [{ path: `${nfc}/`, type: '5' }, { path: `${nfc}/x`, type: '2', link: `../${nfd}` }], diskFolds(nfc, nfd)],
+  ];
+  if (!cases.some(([, , folds]) => folds)) return t.skip('this disk compares names byte for byte');
+  for (const mode of ['symlink', 'copy'] as const) {
+    if (mode === 'symlink' && !posix) continue;
+    for (const [label, files, folds] of cases) {
+      if (!folds) continue;
+      // `foldNames` off: the spelling check stays out of the way, the disk identity check alone must refuse.
+      await assert.rejects(
+        () => extractTarGz(archiveFile(buildTarGzWithModes(files), 'x.tar.gz'), join(scratch(), 'o'), undefined, mode, false),
+        (err: unknown) => err instanceof ArchiveError && err.code === 'link',
+        `${mode}, ${label}`,
+      );
+    }
+  }
+});
+
 test('tar.gz: GNU long name and long link records are read', { skip: !posix }, async () => {
   const deep = `${'d'.repeat(70)}/${'e'.repeat(70)}`;
   const dest = join(scratch(), 'out');
