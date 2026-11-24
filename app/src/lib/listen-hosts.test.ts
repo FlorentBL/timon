@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { isLoopbackHost, listenHostsFor } from './listen-hosts';
-import { middleware, redirectTo } from '../middleware';
+import { proxy, redirectTo } from '../proxy';
 import { NextRequest } from 'next/server';
 
 /**
@@ -14,7 +14,7 @@ import { NextRequest } from 'next/server';
  * The relative `Location` posted then did not hold (step 5.9.6): Next's
  * adapter reparses it without a base and throws `Invalid URL`. The redirect is
  * now absolute, built on the origin the CLIENT used — the proof through the
- * real adapter lives in `middleware-adapter.test.ts`.
+ * real adapter lives in `proxy-adapter.test.ts`.
  */
 test("a redirect keeps the client's origin", () => {
   const req = new NextRequest('http://localhost:3110/dashboard', {
@@ -26,7 +26,7 @@ test("a redirect keeps the client's origin", () => {
 });
 
 test('a page without a session goes to /login, on the same origin', () => {
-  const res = middleware(new NextRequest('http://localhost:3110/dashboard', {
+  const res = proxy(new NextRequest('http://localhost:3110/dashboard', {
     headers: { host: '127.0.0.1:3110' },
   }));
   assert.equal(res.status, 307);
@@ -36,7 +36,7 @@ test('a page without a session goes to /login, on the same origin', () => {
 test('a session is let through', () => {
   const req = new NextRequest('http://127.0.0.1:3110/dashboard');
   req.cookies.set('timon_session', 'abc');
-  const res = middleware(req);
+  const res = proxy(req);
   assert.notEqual(res.status, 307);
 });
 

@@ -48,7 +48,7 @@ function withUrl(req: NextRequest): NextResponse {
   return NextResponse.next({ request: { headers } });
 }
 
-export function middleware(req: NextRequest): NextResponse {
+export function proxy(req: NextRequest): NextResponse {
   if (!pageRequiresLogin(req.nextUrl.pathname)) return withUrl(req);
   const session = req.cookies.get(SESSION_COOKIE)?.value?.trim();
   if (session) return withUrl(req);

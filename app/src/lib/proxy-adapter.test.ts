@@ -42,10 +42,10 @@ async function throughAdapter(
   handler?: (req: unknown) => unknown,
 ): Promise<Response> {
   const { adapter } = await import('next/dist/server/web/adapter');
-  const { middleware } = await import('../middleware');
+  const { proxy } = await import('../proxy');
   const out = await adapter({
-    handler: (handler ?? middleware) as never,
-    page: '/middleware',
+    handler: (handler ?? proxy) as never,
+    page: '/proxy',
     request: {
       url,
       method: 'GET',
