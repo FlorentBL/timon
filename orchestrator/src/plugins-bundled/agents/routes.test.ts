@@ -172,10 +172,10 @@ test('GET /api/mcp/:id masks transport secrets for non-managers', async () => {
   assert.equal(httpAsAda.status, 200);
   assert.deepEqual((httpAsAda.json as { transport: { headers: Record<string, string> } }).transport.headers, { authorization: '***' });
 
-  // The superadmin reads the env back; a header's value is in the vault, which nothing reads back.
+  // An env value and a header's value are in the vault, which nothing reads back, the superadmin included.
   const stdioAsAdmin = await call('GET', '/api/mcp/mask-stdio', { cookie: adminCookie });
   assert.equal(stdioAsAdmin.status, 200);
-  assert.deepEqual((stdioAsAdmin.json as { transport: { env: Record<string, string> } }).transport.env, { SECRET: 'stdio-secret' });
+  assert.deepEqual((stdioAsAdmin.json as { transport: { env: Record<string, string> } }).transport.env, { SECRET: '***' });
 
   const httpAsAdmin = await call('GET', '/api/mcp/mask-http', { cookie: adminCookie });
   assert.equal(httpAsAdmin.status, 200);
