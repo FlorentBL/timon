@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { X } from 'lucide-react';
+import { TriangleAlert, X } from 'lucide-react';
 import { ProjectBadge } from '@/components/project-badge';
 import { resolveRole } from '@/lib/roles';
 import { agentToOpen } from '@/lib/main-agent';
@@ -32,6 +32,7 @@ import { BackendLimitsBadge } from '@/components/backend-limits-badge';
 import { t } from '@/lib/i18n';
 import { isValidAgentName, normalizeAgentName } from '@/lib/agent-name-rule';
 import { renameFollowUps } from '@/lib/agent-rename';
+import { agentSaveWarnings } from '@/lib/agent-save-warnings';
 import { TRIGGERS_ROUTE } from '@/plugins-client/triggers/model';
 import { BRAND } from '@/lib/brand';
 import { IdentityDocs } from '@/components/agent-editor/identity-docs';
@@ -409,6 +410,9 @@ export function AgentEditor({ agent, isNew, onClose, onDirtyChange, initialTab }
   // Which step of the form is on screen. The six sections used to be
   // stacked in one scroll — the tab bar is what made the page readable.
   const [tab, setTab] = useState<TabKey>(initialTab ?? 'identity');
+  // What the last save answered about this agent's permissions: kept on the
+  // Permissions tab until the next save, or until another agent is opened.
+  const [saveWarnings, setSaveWarnings] = useState<string[]>([]);
   // The agent picker replaces the sidebar that listed all agents.
   const [projectRoles, setProjectRoles] = useState<Record<string, RoleResolution> | null>(null);
   const docSaveTimers = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
@@ -656,6 +660,7 @@ export function AgentEditor({ agent, isNew, onClose, onDirtyChange, initialTab }
     const full = await fetchAgentDetails(a);
     setSelected(full);
     setDraft(toDraft(full, catalog));
+    setSaveWarnings([]);
     if (full.name) void loadSkillState(full.name);
     setDirty(false);
     setOrchestrationDirty(false);
@@ -908,8 +913,19 @@ export function AgentEditor({ agent, isNew, onClose, onDirtyChange, initialTab }
         body: JSON.stringify(body),
       });
       if (!r.ok) throw new Error(await responseErrorMessage(r));
+      const warnings = agentSaveWarnings(await r.json().catch(() => null));
+      setSaveWarnings(warnings);
       await syncSkillAttachments(name, draft.skills);
-      toast.success(t('editPage.saved', { name }));
+      if (warnings.length) {
+        // Saved as sent: a warning, not a refusal. The detail stays on the tab
+        // that holds the mode and the allowed tools.
+        toast.warning(t('editPage.saveWarningsToast', { name, count: warnings.length }), {
+          duration: 20_000,
+          action: { label: t('editPage.saveWarningsOpen'), onClick: () => setTab('permissions') },
+        });
+      } else {
+        toast.success(t('editPage.saved', { name }));
+      }
       announceAgentsChanged();
       const list = await fetchAll();
       const row = list.find((a) => a.name === name);
@@ -1371,6 +1387,19 @@ export function AgentEditor({ agent, isNew, onClose, onDirtyChange, initialTab }
               )}
               {permissionHint && !ownPermissions && (
                 <p className="mb-3 text-[12px] text-muted-foreground">{permissionHint}</p>
+              )}
+              {saveWarnings.length > 0 && (
+                <div role="alert" data-agent-save-warnings className="mb-3 space-y-1.5">
+                  {saveWarnings.map((warning) => (
+                    <p
+                      key={warning}
+                      className="flex items-start gap-1.5 rounded-md bg-amber-500/10 px-2.5 py-2 text-[12px] text-amber-900 dark:text-amber-200"
+                    >
+                      <TriangleAlert className="mt-0.5 size-3.5 shrink-0" aria-hidden />
+                      <span>{warning}</span>
+                    </p>
+                  ))}
+                </div>
               )}
               <FormRow label={t('editPage.permissionModeLabel')}>
                 <PermissionModeField
