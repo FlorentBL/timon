@@ -13,13 +13,21 @@
  *  - it also opens `.zip` (the Windows builds), by hand with `node:zlib`.
  *
  * Refused outright: absolute paths, `..`, backslash tricks, NUL, drive
- * letters, symbolic and hard links, devices, anything past the limits. The
- * resolved target of every entry is checked to stay inside the destination.
+ * letters, hard links, devices, anything past the limits. The resolved target
+ * of every entry is checked to stay inside the destination.
+ *
+ * Symbolic links are accepted in a tar.gz only, because a macOS framework
+ * bundled by PyInstaller is made of them (`Versions/Current -> 3.12`). A link
+ * is kept only when its target cannot leave the destination, which
+ * `linkTargetOf` proves without touching the disk, and links are placed after
+ * every file and folder, so no entry is ever written through one. The zip
+ * reader still refuses them: no agent needs one there.
  */
 import {
-  chmodSync, closeSync, copyFileSync, createReadStream, fstatSync, mkdirSync, openSync, readSync, writeSync,
+  chmodSync, closeSync, copyFileSync, createReadStream, fstatSync, lstatSync, mkdirSync, openSync, readdirSync, readSync,
+  realpathSync, symlinkSync, writeSync,
 } from 'node:fs';
-import { basename, dirname, isAbsolute, resolve, sep } from 'node:path';
+import { basename, dirname, isAbsolute, join, resolve, sep } from 'node:path';
 import { createGunzip, createInflateRaw } from 'node:zlib';
 import { windowsSegmentProblem } from '../../host/portable-names.js';
 import type { Readable } from 'node:stream';
@@ -103,7 +111,7 @@ function octal(buf: Buffer, start: number, length: number): number {
   return Number.parseInt(raw, 8);
 }
 
-function paxPath(data: Buffer): string | null {
+function paxRecord(data: Buffer, key: string): string | null {
   const text = data.toString('utf8');
   let offset = 0;
   while (offset < text.length) {
@@ -112,14 +120,161 @@ function paxPath(data: Buffer): string | null {
     const length = Number.parseInt(text.slice(offset, space), 10);
     if (!Number.isFinite(length) || length <= 0) break;
     const record = text.slice(space + 1, offset + length - 1);
-    if (record.startsWith('path=')) return record.slice('path='.length);
+    if (record.startsWith(`${key}=`)) return record.slice(key.length + 1);
     offset += length;
   }
   return null;
 }
 
+/* ── symbolic links (tar.gz only) ───────────────────────────────────────── */
+
+/** A link read from the archive, placed once every file and folder is written. */
+type PendingLink = { path: string; target: string };
+
+/**
+ * How links are materialised. Creating one on Windows needs a privilege most
+ * accounts lack, so there the target is copied instead.
+ */
+export type LinkMode = 'symlink' | 'copy';
+
+/**
+ * Checks a link target and returns it normalised (forward slashes).
+ *
+ * Accepted: relative, no NUL, no backslash, made of `..` segments first and
+ * plain names after (`../Resources`, `Versions/Current/Python`), landing
+ * strictly inside `root` when resolved from the link's own folder.
+ *
+ * Why the shape rule: the lexical check alone is fooled by a chain. With
+ * `l1 -> ../../c` in `a/b/`, the target `l1/../../../evil` resolves to
+ * `root/evil` on paper, but the system follows `l1` first and climbs out of
+ * the root. Once every `..` comes first, the climb walks real folders only
+ * (the link's parents are never links, see `assertNoLinkAbove`), so it stays
+ * where the lexical check says; the names that follow descend from there, each
+ * either a real entry or another link held to the same rule.
+ */
+function linkTargetOf(root: string, linkPath: string, raw: string): string {
+  if (raw === '' || raw.includes('\0') || raw.includes('\\')) {
+    throw new ArchiveError('link', 'archive contains a link with an unsafe target');
+  }
+  if (raw.startsWith('/') || /^[a-zA-Z]:/.test(raw) || isAbsolute(raw)) {
+    throw new ArchiveError('link', 'archive contains a link to an absolute path');
+  }
+  const parts = raw.split('/').filter((part) => part !== '' && part !== '.');
+  if (parts.length === 0) throw new ArchiveError('link', 'archive contains a link to its own folder');
+  const firstName = parts.findIndex((part) => part !== '..');
+  if (firstName !== -1 && parts.slice(firstName).includes('..')) {
+    throw new ArchiveError('link', 'archive contains a link that climbs back after descending');
+  }
+  const resolved = resolve(dirname(linkPath), ...parts);
+  if (resolved === root || !resolved.startsWith(root + sep)) {
+    throw new ArchiveError('link', 'archive contains a link pointing outside its folder');
+  }
+  return parts.join('/');
+}
+
+/** Refuses to create anything below a folder that is in fact a link. */
+function assertNoLinkAbove(root: string, path: string): void {
+  let current = root;
+  for (const part of dirname(path).slice(root.length + 1).split(sep).filter(Boolean)) {
+    current = join(current, part);
+    let info;
+    try { info = lstatSync(current); } catch { return; }
+    if (info.isSymbolicLink()) throw new ArchiveError('link', 'archive writes through a link');
+    if (!info.isDirectory()) throw new ArchiveError('unsafe-path', 'archive entry placed below a file');
+  }
+}
+
+function alreadyThere(err: unknown): boolean {
+  return (err as NodeJS.ErrnoException | null)?.code === 'EEXIST';
+}
+
+function placeSymlinks(root: string, links: readonly PendingLink[]): void {
+  for (const link of links) {
+    assertNoLinkAbove(root, link.path);
+    mkdirSync(dirname(link.path), { recursive: true });
+    try {
+      symlinkSync(link.target, link.path);
+    } catch (err) {
+      if (alreadyThere(err)) throw new ArchiveError('unsafe-path', 'archive writes the same entry twice');
+      throw err;
+    }
+  }
+  // Belt and braces over the shape rule: what the system really reaches. A loop is refused (nothing needs one, and
+  // it would trap whoever follows it); a dangling link reaches nothing, so it may stay.
+  const realRoot = realpathSync(root);
+  for (const link of links) {
+    let real: string;
+    try {
+      real = realpathSync(link.path);
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException | null)?.code === 'ENOENT') continue;
+      throw new ArchiveError('link', 'archive contains a link that loops');
+    }
+    if (real === realRoot || !real.startsWith(realRoot + sep)) {
+      throw new ArchiveError('link', 'archive contains a link pointing outside its folder');
+    }
+  }
+}
+
+/** Copies a file or a folder of the extracted tree, counted against the same budget as the archive. */
+function copyEntry(from: string, to: string, budget: Budget): void {
+  const info = lstatSync(from);
+  budget.entry();
+  if (info.isDirectory()) {
+    mkdirSync(to);
+    for (const name of readdirSync(from)) copyEntry(join(from, name), join(to, name), budget);
+    return;
+  }
+  if (!info.isFile()) return;
+  budget.bytes(info.size);
+  copyFileSync(from, to);
+  chmodSync(to, modeOf(info.mode));
+}
+
+/**
+ * The Windows stand-in for links: each one becomes a copy of its target. A link
+ * may point through another one (`Python -> Versions/Current/Python`), so
+ * passes repeat until none progresses; what is left (dangling, loops, a link to
+ * its own ancestor) is skipped, never followed.
+ */
+function placeCopies(root: string, links: readonly PendingLink[], budget: Budget): void {
+  let left = [...links];
+  for (;;) {
+    const waiting: PendingLink[] = [];
+    for (const link of left) {
+      const source = resolve(dirname(link.path), ...link.target.split('/'));
+      // A copy of its own ancestor would never end.
+      if (link.path.startsWith(source + sep)) continue;
+      let exists = true;
+      try { lstatSync(source); } catch { exists = false; }
+      // Wait while another pending link sits on the way to the source or inside it: copied now, it would be missing.
+      const blocked = left.some((other) => other !== link
+        && (other.path === source || source.startsWith(other.path + sep) || other.path.startsWith(source + sep)));
+      if (!exists || blocked) {
+        waiting.push(link);
+        continue;
+      }
+      assertNoLinkAbove(root, link.path);
+      mkdirSync(dirname(link.path), { recursive: true });
+      try {
+        copyEntry(source, link.path, budget);
+      } catch (err) {
+        if (alreadyThere(err)) throw new ArchiveError('unsafe-path', 'archive writes the same entry twice');
+        throw err;
+      }
+    }
+    if (waiting.length === 0 || waiting.length === left.length) return;
+    left = waiting;
+  }
+}
+
 /** Streams a `.tar.gz` into `dest`, layout and executable bits preserved. */
-export async function extractTarGz(file: string, dest: string, limits: ExtractLimits = DEFAULT_EXTRACT_LIMITS): Promise<void> {
+export async function extractTarGz(
+  file: string,
+  dest: string,
+  limits: ExtractLimits = DEFAULT_EXTRACT_LIMITS,
+  linkMode: LinkMode = process.platform === 'win32' ? 'copy' : 'symlink',
+): Promise<void> {
   const root = resolve(dest);
   mkdirSync(root, { recursive: true });
   const budget = new Budget(limits);
@@ -155,6 +310,8 @@ export async function extractTarGz(file: string, dest: string, limits: ExtractLi
   };
 
   let longName: string | null = null;
+  let longLink: string | null = null;
+  const links: PendingLink[] = [];
   try {
     for (;;) {
       if (!(await fill(512))) break;
@@ -165,24 +322,35 @@ export async function extractTarGz(file: string, dest: string, limits: ExtractLi
       const type = String.fromCharCode(header[156] ?? 0);
       const padding = (512 - (size % 512)) % 512;
 
-      if (type === 'x' || type === 'L' || type === 'g') {
+      if (type === 'x' || type === 'L' || type === 'K' || type === 'g') {
         const data = await readSmall(size);
         await consume(padding, null);
-        if (type === 'x') longName = paxPath(data) ?? longName;
-        else if (type === 'L') longName = cString(data, 0, data.length);
+        if (type === 'x') {
+          longName = paxRecord(data, 'path') ?? longName;
+          longLink = paxRecord(data, 'linkpath') ?? longLink;
+        } else if (type === 'L') longName = cString(data, 0, data.length);
+        else if (type === 'K') longLink = cString(data, 0, data.length);
         continue;
       }
       const prefix = cString(header, 345, 155);
       const name = cString(header, 0, 100);
       const raw = longName ?? (prefix ? `${prefix}/${name}` : name);
+      const rawLink = longLink ?? cString(header, 157, 100);
       longName = null;
+      longLink = null;
 
-      if (type === '1' || type === '2') throw new ArchiveError('link', 'archive contains a link — not allowed');
-      const kind = type === '0' || type === '\0' || type === '7' ? 'file' : type === '5' ? 'dir' : null;
+      if (type === '1') throw new ArchiveError('link', 'archive contains a hard link — not allowed');
+      const kind = type === '0' || type === '\0' || type === '7' ? 'file' : type === '5' ? 'dir' : type === '2' ? 'symlink' : null;
       if (kind === null) throw new ArchiveError('link', 'archive contains a special entry (device, fifo…) — not allowed');
 
       budget.entry();
       const target = targetOf(root, raw);
+      if (kind === 'symlink') {
+        if (!target) throw new ArchiveError('unsafe-path', 'archive link entry without a name');
+        links.push({ path: target, target: linkTargetOf(root, target, rawLink) });
+        await consume(size + padding, null);
+        continue;
+      }
       if (kind === 'dir') {
         if (target) mkdirSync(target, { recursive: true });
         await consume(size + padding, null);
@@ -202,6 +370,9 @@ export async function extractTarGz(file: string, dest: string, limits: ExtractLi
   } finally {
     source.destroy();
   }
+  // Last, so that no file or folder of the archive is ever written through a link.
+  if (linkMode === 'symlink') placeSymlinks(root, links);
+  else placeCopies(root, links, budget);
 }
 
 /* ── zip ────────────────────────────────────────────────────────────────── */
