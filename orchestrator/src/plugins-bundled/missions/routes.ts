@@ -57,7 +57,7 @@ import { backfillTraceSpans, rebuildMissionSpans } from '../../trace-span-backfi
 import { recordRequestDelivery } from '../../agent-request-replies.js';
 import { stopScope, StopBodySchema, UnknownScopeError } from '../../scope-stop.js';
 import { buildTraceView } from '../../trace-view.js';
-import { forbidden, rejectUnlessAny, requireAuth } from '../../users/identity.js';
+import { forbidden, rejectIfDenied, rejectUnlessAny, requireAuth } from '../../users/identity.js';
 import { RESTRICTED, canonicalPermissionMode, isKnownPermissionMode, overrideAuthority, permissionModeRefusal, rejectOverride } from '../../users/privileged-overrides.js';
 import { missionPermissionState, missionPermissionSwitchable } from '../../mission-permission-mode.js';
 import { resolvedPermissionModeFor } from '../../backends/catalog.js';
@@ -292,6 +292,49 @@ export function sendMissionTurn(
   // From the request on: the sender's indicator is up, and expanding a command
   // or re-testing a quota comes before anything the turn state can show.
   return whileTurnPrepares(m.id, () => deliverMissionTurn(m, body, inputOrigin, shown));
+}
+
+/** What `POST /api/missions` carries when it may continue an open mission. */
+const ContinueSessionSchema = z.object({
+  resume_session_id: z.string().min(1).max(200),
+  agent_name: z.string().optional(),
+  agent: z.string().optional(),
+  mission: z.string().optional(),
+  input: z.string().optional(),
+  images: z.array(z.object({ media_type: z.string().max(100), data: z.string() })).optional(),
+  attachments: z.unknown().optional(),
+  pasted: z.unknown().optional(),
+  voiceContext: z.unknown().optional(),
+});
+
+/**
+ * `POST /api/missions` asking to resume a session that an open mission of the
+ * same agent already carries continues that mission instead of starting a twin:
+ * two live missions on one session split the thread and its Kanban returns
+ * (TIM-0167). The chat ends up here when its `/send` failed while the reaper
+ * was stopping the process, or when the view lost the mission it showed. The
+ * caller must be able to read that mission, as for `/send`; anything else
+ * spawns as before.
+ */
+async function spawnOrContinueSession(req: Request, res: Response): Promise<void> {
+  // The spawn route's own permission first: continuing never needs less than spawning.
+  if (rejectIfDenied(req, res, 'missions:spawn')) return;
+  const parsed = ContinueSessionSchema.safeParse(req.body ?? {});
+  const agent = parsed.success ? parsed.data.agent_name ?? parsed.data.agent : undefined;
+  const openId = parsed.success && agent ? dbApi.openMissionIdForSession(parsed.data.resume_session_id, agent) : null;
+  const open = openId ? scopedDb(viewerFromRequest(req)).getMission(openId) : null;
+  if (!parsed.success || !open) return handleSpawn(req, res);
+  const { images, attachments, pasted, voiceContext } = parsed.data;
+  const input = parsed.data.mission ?? parsed.data.input ?? '';
+  const origin = agentCallerOrigin(req);
+  const outcome = await sendMissionTurn(open, { input, images, attachments, pasted, voiceContext }, origin);
+  if (outcome.status >= 300) {
+    res.status(outcome.status).json(outcome.body);
+    return;
+  }
+  if (personWrote(req, origin)) dbApi.markMissionUserEngaged(open.id);
+  console.log(`[spawn] session already carried by open mission ${open.id.slice(0, 8)} (${open.agent_name}) → continued in place`);
+  res.status(200).json({ ...outcome.body, mission_id: open.id, continued: true });
 }
 
 async function deliverMissionTurn(
@@ -534,7 +577,7 @@ export function registerRoutes(
     res.json({ value: value === null ? null : parseTitleModelChoice(serializeTitleModelChoice(value)), effective: effectiveTitleModel(userId).choice });
   });
 
-  app.post('/api/missions', handleSpawn);
+  app.post('/api/missions', spawnOrContinueSession);
   app.post('/api/missions/delegate', delegate);
 
   app.get('/api/missions', (req, res) => {
@@ -1086,7 +1129,9 @@ export function registerRoutes(
     // mission override (worktree), otherwise the agent cwd.
     const m = scopedDb(viewerFromRequest(req)).getMission(req.params.id);
     if (!m) {
-      res.status(404).json(apiError('mission_not_running', 'no running agent for that mission'));
+      // The one answer that lets the chat start over on a new mission: anything
+      // else means the conversation still exists (TIM-0167).
+      res.status(404).json(apiError('mission_not_found', 'mission not found'));
       return;
     }
     const origin = agentCallerOrigin(req);

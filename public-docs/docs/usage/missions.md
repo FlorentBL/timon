@@ -84,6 +84,8 @@ On the Agents graph, the ring still pulses for an agent at work; a small dot on 
 
 The same fields (`liveness`, `interrupted_reason`, `pending_messages`, `open_deliveries`) come back from `GET /api/missions` and `GET /api/missions/:id`, and `timon status` reads them from the mission.
 
+A conversation left idle for a long time (an hour by default) has its process closed to free a slot; it stays in the list and keeps its session. Your next message, even one sent while that process is still shutting down, reopens the same mission with its context: the conversation never splits into a second mission on the same session.
+
 To interrupt work deliberately, use the mission's stop control or `timon kill MISSION_ID`. Interruption does not mean the requested work was completed: check files and task status before retrying.
 
 If Timon itself restarts while a turn is running (a crash, an update, the background service restarted), the mission ends as **Interrupted** and its chat shows "turn interrupted: Timon restarted". The turn is not replayed on its own, since it may already have changed files or sent messages: check what it did, then send a message to carry on. When the backend can resume its session, the conversation picks up with its context.

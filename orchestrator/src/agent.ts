@@ -2771,6 +2771,23 @@ async function spawnTurn(args: {
 }
 
 /**
+ * Waits out a process we already asked to stop (idle reaper, STOP, bounce,
+ * hung turn). Its entry stays in `running` until it exits: writing to it loses
+ * the message, and refusing because it is "still alive" made the chat spawn a
+ * twin mission on the same session (TIM-0167). Such an entry counts as dead,
+ * so the caller resumes the mission in place once it is gone. Returns the
+ * entry a message may use, or `stopping` when one still stands after the wait:
+ * a relaunch owns it (`switching`), or the process outlived the kill.
+ */
+async function outliveStoppingProcess(live: RunningAgent): Promise<RunningAgent | 'stopping' | undefined> {
+  if (live.switching) return 'stopping';
+  await stopProcessAndWait(live);
+  const next = running.get(live.missionId);
+  // Another message may have resumed the mission meanwhile: that process is the one to use.
+  return next?.terminationIntent ? 'stopping' : next;
+}
+
+/**
  * Outcome of a `sendToAgent`. The three cases used to be flattened into a
  * single `false`, and the HTTP caller translated it into a 404 "mission
  * not found": the chat deduced a dead conversation and restarted on a
@@ -2804,7 +2821,13 @@ export async function sendToAgent(
   // request nobody is asking any more.
   if (origin?.turn_retry === undefined) cancelTurnRetry(missionId);
   const cleaned = input.replace(/\n+$/, '');
-  const live = running.get(missionId);
+  let live = running.get(missionId);
+  // Only then: a turn that starts with no wait keeps its preparation synchronous.
+  if (live?.terminationIntent) {
+    const settled = await outliveStoppingProcess(live);
+    if (settled === 'stopping') return 'turn_in_flight';
+    live = settled;
+  }
   if (live) {
     if (live.backend.persistentProcess) {
       if (isBackendCoolingDown(live.backend.name)
@@ -3020,7 +3043,8 @@ export async function respawnWithResume(
   /** Cf. `sendToAgent`. */
   turn: { agentCommand?: boolean; replayContext?: boolean } = {},
 ): Promise<boolean> {
-  if (running.get(missionId)) return false; // still alive → sendToAgent
+  const live = running.get(missionId);
+  if (live && (!live.terminationIntent || await outliveStoppingProcess(live))) return false; // still alive → sendToAgent
   const m = dbApi.getMission(missionId);
   if (!m || (!m.session_id && !turn.replayContext)) return false;
   if (origin?.turn_retry === undefined) cancelTurnRetry(missionId);

@@ -4356,6 +4356,11 @@ const missionBySessionStmt = db.prepare(
    WHERE session_id = ?
    ORDER BY started_at DESC LIMIT 1`,
 );
+const openMissionBySessionStmt = db.prepare(
+  `SELECT id FROM missions
+   WHERE session_id = ? AND agent_name = ? AND status = 'running'
+   ORDER BY started_at DESC LIMIT 1`,
+);
 
 export type Source = { channel: string; meta?: unknown };
 
@@ -7228,6 +7233,12 @@ export const dbApi = {
     if (!row) return null;
     return { id: row.id, agentName: row.agent_name, backendOverride: row.backend_override,
       ownerUserId: row.owner_user_id };
+  },
+  /** The open mission of `agentName` that carries this provider session, if
+   *  any: a new mission resuming it would run a twin of a live one. */
+  openMissionIdForSession(sessionId: string, agentName: string): string | null {
+    const row = openMissionBySessionStmt.get(sessionId, agentName) as { id: string } | undefined;
+    return row?.id ?? null;
   },
   /**
    * The user (or a plugin acting as one) renames a mission: `manual`, which no
