@@ -14,6 +14,7 @@ import type { Context } from '@deepseek-ai/cordis';
 import type { ModuleManifest } from '../../kernel/registry.js';
 import { registerRoutes } from './routes.js';
 import { startPermissionExpiry } from '../../permissions.js';
+import { startStdioBridgeLifecycle } from '../../mcp-stdio-bridges.js';
 import { startMissionTitles } from '../../mission-titles.js';
 import { purgeChatAttachments } from '../../chat-attachments.js';
 import { purgeProviderScratch, trimProviderCaches } from '../../backends/provider-scratch.js';
@@ -116,6 +117,9 @@ export function apply(ctx: Context): void {
   // zombie missions (done by `boot.ts` after the audit): otherwise the cards of
   // dead missions would stay open forever.
   ctx.effect(() => startPermissionExpiry());
+
+  // The stdio MCP servers the daemon runs for a mission end with it (TODO #1071).
+  ctx.effect(() => startStdioBridgeLifecycle());
 
   // A conversation opened by hand gets a short title at the end of its first
   // turn (TODO #358); automated missions never do. Off the turn's path.

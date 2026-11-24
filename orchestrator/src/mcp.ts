@@ -909,8 +909,34 @@ function relayedServer(s: McpStoredServer): s is McpStoredServer & { transport: 
   return Boolean(s.transport.oauth) || hasEntries(s.transport.headers) || hasEntries(s.transport.header_secrets);
 }
 
+/**
+ * A stdio server the daemon runs itself and the CLI reaches through the relay
+ * (`mcp-stdio-bridge.ts`): one with environment variables, which must not be
+ * written into the CLI's configuration. Without any, there is nothing to hide
+ * and the CLI starts it as before.
+ */
+export function bridgedStdioServer(s: McpStoredServer): s is McpStoredServer & { transport: McpStdioConfig } {
+  return s.transport.type === 'stdio' && hasEntries(s.transport.env);
+}
+
+/**
+ * What a bridged stdio server's relay route derives from, in place of an url:
+ * its command and arguments — another command is another route, and the
+ * old one leads nowhere.
+ */
+export function stdioRelayTarget(transport: Pick<McpStdioConfig, 'command' | 'args'>): string {
+  return `stdio:${JSON.stringify([transport.command, ...(transport.args ?? [])])}`;
+}
+
 /** What a launch hands a CLI for a server that carries a credential (`mcp-relay.ts`). */
 export type McpRelayMinter = (server: { id: string; url: string }) => { url: string; headers: Record<string, string> } | null;
+
+/**
+ * Starts the daemon's bridge of a stdio server for the mission being launched
+ * and returns what the CLI is handed, or `null` when it could not start: the
+ * server is then left out, never written with its variables.
+ */
+export type McpStdioBridgeStarter = (server: { id: string; target: string }) => Promise<{ url: string; headers: Record<string, string> } | null>;
 
 /**
  * The servers `ids` name, ready to be written for a CLI: external connectors
@@ -921,7 +947,9 @@ export type McpRelayMinter = (server: { id: string; url: string }) => { url: str
  * to — or without a relay key (vault off), such a server is left out. The
  * CLI-specific text is `backends/mcp-serialize.ts`, which a provider plugin shares.
  */
-export async function resolveLaunchServers(ids: string[], relay?: McpRelayMinter): Promise<McpLaunchServer[]> {
+export async function resolveLaunchServers(
+  ids: string[], relay?: McpRelayMinter, bridge?: McpStdioBridgeStarter,
+): Promise<McpLaunchServer[]> {
   const out: McpLaunchServer[] = [];
   for (const id of ids) {
     const s = readRaw(id);
@@ -957,6 +985,12 @@ export async function resolveLaunchServers(ids: string[], relay?: McpRelayMinter
       out.push({ type: 'http', name, ...target });
       continue;
     }
+    if (bridgedStdioServer(s) && bridge) {
+      // The daemon runs it; the CLI gets the relay, never the variables.
+      const target = await bridge({ id, target: stdioRelayTarget(s.transport) });
+      if (target) out.push({ type: 'http', name, ...target });
+      continue;
+    }
     if (s.transport.type === 'stdio') {
       out.push({
         type: 'stdio',
@@ -989,10 +1023,33 @@ export function mcpRelayServerForRoute(route: string): string | null {
     const id = f.slice(0, -'.json'.length);
     if (!ID_RE.test(id)) continue;
     const s = readRaw(id);
-    if (!s || !relayedServer(s)) continue;
-    if (mcpRelayRoute(id, s.transport.url) === route) return id;
+    if (!s) continue;
+    if (relayedServer(s) && mcpRelayRoute(id, s.transport.url) === route) return id;
+    if (bridgedStdioServer(s) && mcpRelayRoute(id, stdioRelayTarget(s.transport)) === route) return id;
   }
   return null;
+}
+
+/** What the daemon's bridge runs for a stdio server; `null` once it is gone or no longer bridged. */
+export type McpStdioLaunch = { command: string; args: string[]; env: Record<string, string>; target: string };
+
+export function mcpStdioBridgeLaunch(id: string): McpStdioLaunch | null {
+  validId(id);
+  const s = readRaw(id);
+  if (!s || !bridgedStdioServer(s)) return null;
+  return {
+    command: s.transport.command,
+    args: [...(s.transport.args ?? [])],
+    env: { ...(s.transport.env ?? {}) },
+    target: stdioRelayTarget(s.transport),
+  };
+}
+
+/** Whether a relay route leads to a bridged stdio server (rather than an http upstream). */
+export function isBridgedStdioMcp(id: string): boolean {
+  if (!ID_RE.test(id)) return false;
+  const s = readRaw(id);
+  return s !== null && bridgedStdioServer(s);
 }
 
 /** Where the relay sends a request for a server, with what. Never leaves the daemon. */
