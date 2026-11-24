@@ -127,8 +127,17 @@ import { reservedRouteSegment } from './reserved-routes.js';
  * These were numbered 18 and 19 while unreleased; `main` took 18 for the
  * provider profile folder first, so they all moved to 19
  * (docs/SDK-COMPAT.md §118-§120, §129).
+ *
+ * 20 — the platform `react` module re-exports React 19's named APIs (`use`,
+ * `useActionState`, `useOptimistic`, `useTransition`, `useDeferredValue`,
+ * `startTransition`, `forwardRef`, `useImperativeHandle`, `Children`,
+ * `isValidElement`), in the browser only. API 19 shipped in 0.1.10, so a new
+ * export opens a new wave: a plugin importing one of them declares 20, and a
+ * host 19 refuses it instead of loading a browser half that dies on the
+ * missing import. No member of the host's `PluginContext` changes
+ * (docs/SDK-COMPAT.md §131).
  */
-export const PLUGIN_API_VERSION = 19;
+export const PLUGIN_API_VERSION = 20;
 
 /** First contract that knows `ctx.forge` and the `forge:read` / `forge:propose` permissions. */
 export const FORGE_API_VERSION = 19;
