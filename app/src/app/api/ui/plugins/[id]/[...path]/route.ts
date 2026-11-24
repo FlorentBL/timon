@@ -1,7 +1,7 @@
 import { proxyPluginRequest, type PluginRouteParams } from '@/lib/ui/plugin-proxy';
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
-type Params = { params: PluginRouteParams };
+type Params = { params: Promise<PluginRouteParams> };
 export async function GET(request: Request, props: Params): Promise<Response> {
   const params = await props.params;
   return proxyPluginRequest('GET', request, params);
