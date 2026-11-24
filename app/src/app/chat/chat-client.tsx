@@ -70,6 +70,7 @@ import { useWidgetHost } from '@/components/widget-host/widget-host';
 import { BROWSER_ANNOTATIONS_POSTED, BROWSER_PANEL_CONTEXT, BROWSER_PANEL_CONTEXT_QUERY, useBrowserPanelOpen, type BrowserAnnotationsPosted } from '@/lib/browser-panel-bus';
 import { resultErrorText, isRateLimitMessage } from '@/lib/result-error';
 import { streamIsClosed, watchdogAction } from '@/lib/stream-watchdog';
+import { SEND_RETRY_DELAY_MS, missionGone } from '@/lib/mission-gone';
 import { agentRoleKey, resolveRole } from '@/lib/roles';
 import {
   useBackendCatalog,
@@ -5012,7 +5013,7 @@ export function ChatClient({
         refreshMissions();
       } else {
         const mid = activeMissionId.current;
-        const res = await fetch(
+        const postSend = () => fetch(
           '/api/ui/missions/' + mid + '/send',
           {
             method: 'POST',
@@ -5020,6 +5021,14 @@ export function ChatClient({
             body: JSON.stringify(sendBody()),
           },
         );
+        let res = await postSend();
+        // Only `mission_not_found` means the conversation is gone. Any other
+        // 404 is a mission that still exists, caught while its process was
+        // being replaced: try once more before saying so (TIM-0167).
+        if (res.status === 404 && !(await missionGone(res))) {
+          await new Promise((resolve) => setTimeout(resolve, SEND_RETRY_DELAY_MS));
+          res = await postSend();
+        }
         if (res.ok) {
           contextSent.current = true;
           // The mission may have died (restart / crash) and was just
@@ -5093,9 +5102,14 @@ export function ChatClient({
           const j = await res.clone().json().catch(() => ({}) as Record<string, unknown>);
           if (isReplyRefusal(j)) throw new Error(i18n('chatPage.replyRefused'));
         }
-        // Resume impossible (mission not found). We fall back to a fresh
-        // spawn — keeping the session_id so the CLI resumes where the
-        // previous process left off.
+        // The mission still exists: a fresh spawn would run a twin of it on
+        // the same session and split the thread (TIM-0167). Say what failed.
+        if (!res.ok && !(await missionGone(res))) {
+          const j: unknown = await res.clone().json().catch(() => null);
+          throw new Error(apiErrorMessage(j, { status: res.status }));
+        }
+        // The mission is gone. We fall back to a fresh spawn — keeping the
+        // session_id so the CLI resumes where the previous process left off.
         if (!res.ok) {
           activeStream.current?.close();
           activeStream.current = null;
