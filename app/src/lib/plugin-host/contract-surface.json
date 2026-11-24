@@ -1,5 +1,5 @@
 {
-  "apiVersion": 19,
+  "apiVersion": 20,
   "clientContext": {
     "api": {
       "type": "function",
@@ -175,6 +175,46 @@
       "useSyncExternalStore": {
         "type": "export",
         "since": 1
+      },
+      "Children": {
+        "type": "export",
+        "since": 20
+      },
+      "forwardRef": {
+        "type": "export",
+        "since": 20
+      },
+      "isValidElement": {
+        "type": "export",
+        "since": 20
+      },
+      "startTransition": {
+        "type": "export",
+        "since": 20
+      },
+      "use": {
+        "type": "export",
+        "since": 20
+      },
+      "useActionState": {
+        "type": "export",
+        "since": 20
+      },
+      "useDeferredValue": {
+        "type": "export",
+        "since": 20
+      },
+      "useImperativeHandle": {
+        "type": "export",
+        "since": 20
+      },
+      "useOptimistic": {
+        "type": "export",
+        "since": 20
+      },
+      "useTransition": {
+        "type": "export",
+        "since": 20
       }
     },
     "react-dom.js": {

@@ -10,7 +10,12 @@
  * single component tree the app owns — a plugin never bundles its own.
  */
 export const PLATFORM_MODULE_SOURCES: Record<string, string> = {
-  'react.js': 'const r=globalThis.__TIMON_PLATFORM__.react;export default r;export const createElement=r.createElement,cloneElement=r.cloneElement,createContext=r.createContext,Fragment=r.Fragment,Component=r.Component,PureComponent=r.PureComponent,memo=r.memo,lazy=r.lazy,Suspense=r.Suspense,useCallback=r.useCallback,useContext=r.useContext,useEffect=r.useEffect,useId=r.useId,useLayoutEffect=r.useLayoutEffect,useMemo=r.useMemo,useReducer=r.useReducer,useRef=r.useRef,useState=r.useState,useSyncExternalStore=r.useSyncExternalStore;',
+  // `react`: the app's React 19. The names after `useSyncExternalStore` open
+  // client API 20 — a host 19 does not export them, so a plugin importing one
+  // declares 20. `react/jsx-runtime` is deliberately not served.
+  'react.js': 'const r=globalThis.__TIMON_PLATFORM__.react;export default r;export const createElement=r.createElement,cloneElement=r.cloneElement,createContext=r.createContext,Fragment=r.Fragment,Component=r.Component,PureComponent=r.PureComponent,memo=r.memo,lazy=r.lazy,Suspense=r.Suspense,useCallback=r.useCallback,useContext=r.useContext,useEffect=r.useEffect,useId=r.useId,useLayoutEffect=r.useLayoutEffect,useMemo=r.useMemo,useReducer=r.useReducer,useRef=r.useRef,useState=r.useState,useSyncExternalStore=r.useSyncExternalStore,'
+    + 'use=r.use,useActionState=r.useActionState,useOptimistic=r.useOptimistic,useTransition=r.useTransition,useDeferredValue=r.useDeferredValue,startTransition=r.startTransition,'
+    + 'forwardRef=r.forwardRef,useImperativeHandle=r.useImperativeHandle,Children=r.Children,isValidElement=r.isValidElement;',
   'react-dom.js': 'const r=globalThis.__TIMON_PLATFORM__.reactDom;export default r;export const createPortal=r.createPortal,flushSync=r.flushSync;',
   // `@timon/ui`: the two composition slots, then the component kit
   // (`ui-kit.ts`). A name removed from here breaks every plugin that imports
