@@ -7,7 +7,7 @@ export async function GET(_req: Request, props: { params: Promise<{ slug: string
   const params = await props.params;
   const upstream = await relay(
     `/api/projects/${encodeURIComponent(params.slug)}/memory/${encodeURIComponent(params.file)}`,
-    { cache: 'no-store', headers: sessionProxyHeaders() },
+    { cache: 'no-store', headers: await sessionProxyHeaders() },
   );
   const text = await upstream.text();
   return new Response(text, {
@@ -24,7 +24,7 @@ export async function PUT(req: Request, props: { params: Promise<{ slug: string;
   const body = await req.text();
   const upstream = await relay(
     `/api/projects/${encodeURIComponent(params.slug)}/memory/${encodeURIComponent(params.file)}`,
-    { method: 'PUT', headers: { 'content-type': 'text/plain; charset=utf-8', ...sessionProxyHeaders() }, body, cache: 'no-store' },
+    { method: 'PUT', headers: { 'content-type': 'text/plain; charset=utf-8', ...(await sessionProxyHeaders()) }, body, cache: 'no-store' },
   );
   const text = await upstream.text();
   return new Response(text, {

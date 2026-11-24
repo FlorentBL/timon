@@ -48,7 +48,7 @@ export async function PUT(req: Request, props: { params: Promise<{ name: string 
   const target = `/api/agents/${encodeURIComponent(params.name)}/files?path=${encodeURIComponent(path)}`;
   const upstream = await relay(target, {
     method: 'PUT',
-    headers: { 'content-type': 'text/plain; charset=utf-8', ...sessionProxyHeaders() },
+    headers: { 'content-type': 'text/plain; charset=utf-8', ...(await sessionProxyHeaders()) },
     body,
     cache: 'no-store',
   });

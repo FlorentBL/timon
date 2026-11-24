@@ -24,7 +24,7 @@ export async function PUT(req: Request, props: { params: Promise<{ name: string 
     `/api/agents/${encodeURIComponent(params.name)}/files/external?path=${encodeURIComponent(path)}`,
     {
       method: 'PUT',
-      headers: { 'content-type': 'text/plain; charset=utf-8', ...sessionProxyHeaders() },
+      headers: { 'content-type': 'text/plain; charset=utf-8', ...(await sessionProxyHeaders()) },
       body: await req.text(),
       cache: 'no-store',
     },

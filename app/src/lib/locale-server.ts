@@ -10,7 +10,7 @@
  */
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { cookies, headers, type UnsafeUnwrappedCookies, type UnsafeUnwrappedHeaders } from 'next/headers';
+import { cookies, headers } from 'next/headers';
 import { DEFAULT_LOCALE, loadLocale, setLocaleLoader, type Dictionary, type Locale } from './i18n';
 import { LOCALE_COOKIE, parseLocaleChoice, resolveLocale } from './locale-preference';
 
@@ -26,12 +26,10 @@ setLocaleLoader(async (info) => {
   return JSON.parse(text) as Dictionary;
 });
 
-// Synchronous on purpose: Next 15 still unwraps `cookies()` and `headers()`
-// in place, and server components call this without awaiting.
-export function requestLocale(): Locale {
+export async function requestLocale(): Promise<Locale> {
   try {
-    const cookie = (cookies() as unknown as UnsafeUnwrappedCookies).get(LOCALE_COOKIE)?.value;
-    return resolveLocale(parseLocaleChoice(cookie), (headers() as unknown as UnsafeUnwrappedHeaders).get('accept-language'));
+    const cookie = (await cookies()).get(LOCALE_COOKIE)?.value;
+    return resolveLocale(parseLocaleChoice(cookie), (await headers()).get('accept-language'));
   } catch {
     // Outside a request (build-time prerender): nothing to negotiate.
     return DEFAULT_LOCALE;
@@ -40,7 +38,7 @@ export function requestLocale(): Locale {
 
 /** Resolves the request's locale and switches this module graph to it. */
 export async function applyRequestLocale(): Promise<Locale> {
-  const locale = requestLocale();
+  const locale = await requestLocale();
   await loadLocale(locale);
   return locale;
 }

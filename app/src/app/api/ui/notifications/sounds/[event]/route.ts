@@ -21,7 +21,7 @@ export async function GET(_req: Request, props: Ctx): Promise<Response> {
   const params = await props.params;
   if (!EVENT.test(params.event)) return bad(404, 'not_found');
   const upstream = await relay(`/api/notifications/sounds/${params.event}`, {
-    headers: sessionProxyHeaders(),
+    headers: await sessionProxyHeaders(),
     cache: 'no-store',
   });
   if (!upstream.ok) return bad(upstream.status, 'not_found');
@@ -46,7 +46,7 @@ export async function PUT(request: Request, props: Ctx): Promise<Response> {
   const upstream = await relay(`/api/notifications/sounds/${params.event}`, {
     method: 'PUT',
     headers: {
-      ...sessionProxyHeaders(),
+      ...(await sessionProxyHeaders()),
       'content-type': 'application/octet-stream',
       ...(name ? { 'x-sound-name': name } : {}),
     },

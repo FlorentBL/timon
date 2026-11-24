@@ -43,7 +43,7 @@ export async function DELETE(_request: Request, props: Params): Promise<Response
   if (head !== 'staged' || !token || !TOKEN_RE.test(token) || rest.length > 0) return notFound();
   const upstream = await relay(`${DAEMON_PREFIX}/staged/${token}`, {
     method: 'DELETE',
-    headers: sessionProxyHeaders(),
+    headers: await sessionProxyHeaders(),
     cache: 'no-store',
   });
   // 204 carries no body: `proxyJson` would hand `Response` an empty string.

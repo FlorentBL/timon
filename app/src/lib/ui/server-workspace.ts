@@ -15,7 +15,7 @@
  * before this module existed. A slow daemon must cost a flash, never a page.
  */
 
-import { headers, type UnsafeUnwrappedHeaders } from 'next/headers';
+import { headers } from 'next/headers';
 import { relayFetch, targetFor, type Target } from '@/lib/machines/target';
 import { sessionProxyHeaders } from '@/lib/ui/proxy';
 import { workspaceKeys } from '@/lib/workspace-scope';
@@ -33,7 +33,7 @@ import { handoverOf, readHandover, type LayoutHandoverInput } from '@/lib/layout
 export async function fetchForRender(path: string, pinned?: Target): Promise<globalThis.Response> {
   const target = pinned ?? await targetFor(path);
   return relayFetch(target, path, {
-    headers: sessionProxyHeaders(),
+    headers: await sessionProxyHeaders(),
     cache: 'no-store',
     signal: AbortSignal.timeout(target.timeoutMs),
   });
@@ -49,9 +49,8 @@ async function fetchJson(path: string): Promise<unknown | null> {
 }
 
 /** The URL the browser asked for, as the middleware forwarded it. */
-function requestedUrl(): { view: string; params: URLSearchParams } | null {
-  // Synchronous on purpose: Next 15 still unwraps `headers()` in place.
-  const raw = (headers() as unknown as UnsafeUnwrappedHeaders).get(URL_HEADER);
+async function requestedUrl(): Promise<{ view: string; params: URLSearchParams } | null> {
+  const raw = (await headers()).get(URL_HEADER);
   if (!raw) return null;
   const [view, query = ''] = raw.split('?');
   return { view: view || '/', params: new URLSearchParams(query) };
@@ -70,7 +69,7 @@ function requestedUrl(): { view: string; params: URLSearchParams } | null {
  */
 export async function resolveWorkspace(owner: string | null, previousOwner: string | null = null): Promise<InitialWorkspace | null> {
   if (!owner) return null;
-  const url = requestedUrl();
+  const url = await requestedUrl();
   if (!url) return null;
   const { view, params } = url;
   const { agent, explicitProject, route } = workspaceRoute(view, params);
