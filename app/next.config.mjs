@@ -87,9 +87,9 @@ const nextConfig = {
   // Without this normalization, an orphan URL answers 404: nothing to cache,
   // nothing to poison. No internal link uses a trailing slash.
   skipTrailingSlashRedirect: true,
-  // The middleware's `Location` goes out exactly as written (step 5.9.6).
+  // The proxy's `Location` goes out exactly as written (step 5.9.6).
   //
-  // Without this, the middleware adapter reparses our header into a `NextURL`
+  // Without this, the proxy adapter reparses our header into a `NextURL`
   // and, when the host equals the request's, rewrites `Location` with the
   // normalized form — and `parseURL()` folds `127.0.0.1` and `[::1]` back into
   // `localhost` (`next-url.js:15`). A browser sitting on `127.0.0.1:3110` thus
@@ -98,10 +98,10 @@ const nextConfig = {
   // No side effect here: the normalization it also disables covers the
   // `buildId` and locale of `/_next/data/...` URLs, which only exist in the
   // Pages Router — this app is App Router throughout, with no routing i18n.
-  skipMiddlewareUrlNormalize: true,
+  skipProxyUrlNormalize: true,
   // The image optimizer (`/_next/image`) is switched off.
   //
-  // It is unauthenticated (the middleware matcher skips it) and hands any
+  // It is unauthenticated (the proxy matcher skips it) and hands any
   // local or allowed remote file to sharp/libvips: Next 14.2.x carries
   // critical advisories on exactly that path (remote code execution through
   // AVIF and SVG decoding, out-of-memory and disk-filling denials of service),

@@ -39,7 +39,7 @@ const app = next({ dev, hostname, port, dir: process.cwd(), httpServer: nextUpgr
 const handle = app.getRequestHandler();
 // Every response, before Next sees the request (TODO #533).
 const windowPolicy = createWindowPolicy({ dev });
-// Here rather than in `middleware.ts`: that one skips `/api/`, the proxy to
+// Here rather than in `proxy.ts`, the login gate: it skips `/api/`, the relay to
 // the daemon, and never sees the terminal's WebSocket upgrades.
 const hostPolicy = createHostPolicyReader(TIMON_HOME);
 

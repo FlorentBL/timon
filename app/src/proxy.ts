@@ -19,12 +19,12 @@ import { URL_HEADER } from './lib/workspace-route';
  *     composed by the server from its own bind address, so it never carries
  *     the host the browser used. See `lib/client-origin.ts`.
  *   - A relative `Location` (5.9.1) never reaches the browser at all: the
- *     middleware adapter reparses the header with `new NextURL(location,
+ *     proxy adapter reparses the header with `new NextURL(location,
  *     opts)`, with no base, and throws `Invalid URL` — every page of the
  *     packaged AppImage answered HTTP 500.
  *
  * The origin then survives the adapter untouched thanks to
- * `skipMiddlewareUrlNormalize` (see `next.config.mjs`): without it the adapter
+ * `skipProxyUrlNormalize` (see `next.config.mjs`): without it the adapter
  * rewrites our `Location` into Next's normalized form, which folds every
  * loopback name back into `localhost`.
  */

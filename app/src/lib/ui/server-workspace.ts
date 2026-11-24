@@ -48,7 +48,7 @@ async function fetchJson(path: string): Promise<unknown | null> {
   }
 }
 
-/** The URL the browser asked for, as the middleware forwarded it. */
+/** The URL the browser asked for, as the proxy forwarded it. */
 async function requestedUrl(): Promise<{ view: string; params: URLSearchParams } | null> {
   const raw = (await headers()).get(URL_HEADER);
   if (!raw) return null;

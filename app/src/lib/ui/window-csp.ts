@@ -8,9 +8,9 @@
  * the daemon token: a browser half always loads from this computer's copy,
  * a remote machine's plugin included (`plugin-host/remote-plugins.ts`).
  *
- * The script nonce is born here rather than in `middleware.ts`: this is where
+ * The script nonce is born here rather than in `proxy.ts`: this is where
  * the one policy of the response is composed, for every path, and the
- * middleware skips `/api/` and the static files. The policy also replaces the
+ * proxy skips `/api/` and the static files. The policy also replaces the
  * request's own `content-security-policy` header, which is where Next reads
  * the nonce: one a client sent cannot reach the render.
  */
