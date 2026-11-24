@@ -9,7 +9,7 @@
 import '../test-home.js';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createProviderContext } from '../../../packages/sdk/src/testing/index.js';
@@ -170,7 +170,8 @@ test('a session kept in ~/.claude before the switch is brought into Timon\'s fol
   } finally {
     if (before === undefined) delete process.env.CLAUDE_CONFIG_DIR; else process.env.CLAUDE_CONFIG_DIR = before;
   }
-  const adopted = join(harness.configDir, 'projects', claudeProjectSlug(harness.root), `${sessionId}.jsonl`);
+  // The CLI files a session by its folder with links resolved: on macOS the temporary folder is reached through /var -> /private/var.
+  const adopted = join(harness.configDir, 'projects', claudeProjectSlug(realpathSync.native(harness.root)), `${sessionId}.jsonl`);
   assert.ok(existsSync(adopted));
   assert.equal(readFileSync(adopted, 'utf8'), '{"type":"user"}\n');
 });
