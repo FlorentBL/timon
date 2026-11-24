@@ -106,7 +106,9 @@ function* walk(dir: string, base: string): Generator<string> {
 function hashFile(file: string): Promise<string> {
   return new Promise((resolve, reject) => {
     const hash = createHash('sha256');
-    createReadStream(file).on('data', (chunk) => hash.update(chunk)).on('error', reject).on('end', () => resolve(hash.digest('hex')));
+    // Settled once the file is closed, not at its last byte: Windows refuses to rename a folder that holds an open
+    // file, and an install renames the folder it has just hashed.
+    createReadStream(file).on('data', (chunk) => hash.update(chunk)).on('error', reject).on('close', () => resolve(hash.digest('hex')));
   });
 }
 
