@@ -145,7 +145,6 @@ test('tar.gz: where links cannot be made (Windows), each one becomes a copy of i
   await extractTarGz(archiveFile(buildTarGzWithModes([
     ...FRAMEWORK,
     { path: 'up', type: '2', link: '_internal' },
-    { path: '_internal/sub/self', type: '2', link: '..' },
     { path: 'dangling', type: '2', link: 'nowhere' },
   ]), 'c.tar.gz'), dest, undefined, 'copy');
   const fw = join(dest, '_internal', 'Python.framework');
@@ -156,7 +155,6 @@ test('tar.gz: where links cannot be made (Windows), each one becomes a copy of i
   assert.equal(readFileSync(join(dest, 'up', 'Python'), 'utf8'), 'libpython', 'a folder is copied once its own links are in place');
   if (posix) assert.equal(statSync(join(fw, 'Python')).mode & 0o777, 0o755);
   assert.equal(existsSync(join(dest, 'dangling')), false, 'a dangling link is skipped');
-  assert.equal(existsSync(join(dest, '_internal', 'sub', 'self')), false, 'a link to its own ancestor is skipped');
 
   // The copies count against the same budget: a link cannot multiply a big file past the limit.
   const many = buildTarGzWithModes([
@@ -168,6 +166,82 @@ test('tar.gz: where links cannot be made (Windows), each one becomes a copy of i
   // And the refusals hold in this mode too.
   const out = buildTarGzWithModes([{ path: 'l', type: '2', link: '../outside' }]);
   await rejects(() => extractTarGz(archiveFile(out, 'o.tar.gz'), join(scratch(), 'o'), undefined, 'copy'), 'link');
+});
+
+test('tar.gz: a link to a folder above it is refused in both modes, even reached through another link', async () => {
+  const modes = ['symlink', 'copy'] as const;
+  for (const mode of modes) {
+    // Spelled as an ancestor: refused before anything is placed.
+    const self = buildTarGzWithModes([{ path: '_internal/sub/', type: '5' }, { path: '_internal/sub/self', type: '2', link: '..' }]);
+    await rejects(() => extractTarGz(archiveFile(self, 's.tar.gz'), join(scratch(), 'o'), undefined, mode), 'link');
+  }
+  if (!posix) return;
+  // `l -> a`, then `a/b/x -> ../../l`: no string says ancestor, the disk does (`x` is the folder `a` above it).
+  const viaLink = buildTarGzWithModes([
+    { path: 'a/b/', type: '5' },
+    { path: 'l', type: '2', link: 'a' },
+    { path: 'a/b/x', type: '2', link: '../../l' },
+  ]);
+  await rejects(() => extractTarGz(archiveFile(viaLink, 'v.tar.gz'), join(scratch(), 'o'), undefined, 'symlink'), 'link');
+  // Copied, the two links wait on each other: both are skipped, nothing copies itself.
+  const dest = join(scratch(), 'o');
+  await extractTarGz(archiveFile(viaLink, 'v.tar.gz'), dest, undefined, 'copy');
+  assert.equal(existsSync(join(dest, 'l')), false);
+  assert.equal(existsSync(join(dest, 'a', 'b', 'x')), false);
+});
+
+test('tar.gz: where the disk folds case and Unicode form, two spellings of one name are refused', async () => {
+  const nfc = 'caf\u00e9';
+  const nfd = 'cafe\u0301';
+  const cases: Array<[string, Parameters<typeof buildTarGzWithModes>[0], string]> = [
+    ['case', [{ path: 'a/', type: '5' }, { path: 'A/f', data: 'x' }], 'unsafe-path'],
+    ['case, files', [{ path: 'Readme', data: 'x' }, { path: 'README', data: 'y' }], 'unsafe-path'],
+    ['unicode form', [{ path: `${nfc}/`, type: '5' }, { path: `${nfd}/f`, data: 'x' }], 'unsafe-path'],
+    // The reviewed case: on APFS or NTFS `../A` is `a` itself, which the string checks call another folder.
+    ['link to its folder by case', [{ path: 'a/', type: '5' }, { path: 'a/x', type: '2', link: '../A' }], 'link'],
+    ['link by unicode form', [{ path: `${nfc}/f`, data: 'x' }, { path: 'l', type: '2', link: `${nfd}/f` }], 'link'],
+    // The link entry comes first: its target is checked once every entry is known.
+    ['link before its target', [{ path: 'l', type: '2', link: 'LIB' }, { path: 'lib/', type: '5' }], 'link'],
+  ];
+  for (const mode of ['symlink', 'copy'] as const) {
+    if (mode === 'symlink' && !posix) continue;
+    for (const [label, files, code] of cases) {
+      const dest = join(scratch(), 'o');
+      await assert.rejects(
+        () => extractTarGz(archiveFile(buildTarGzWithModes(files), 'x.tar.gz'), dest, undefined, mode, true),
+        (err: unknown) => err instanceof ArchiveError && err.code === code,
+        `${mode}, ${label}: ${code}`,
+      );
+      assert.equal(existsSync(join(dest, 'a', 'x', 'x')), false, `${mode}, ${label}: nothing copied into itself`);
+    }
+  }
+  // Same spelling twice is no collision, and where the disk compares bytes both names are kept.
+  const dest = join(scratch(), 'o');
+  await extractTarGz(archiveFile(buildTarGzWithModes([
+    { path: 'lib/', type: '5' }, { path: 'lib/', type: '5' }, { path: 'lib/f', data: 'x' }, { path: 'l', type: '2', link: 'lib/f' },
+  ]), 'same.tar.gz'), dest, undefined, 'copy', true);
+  assert.equal(readFileSync(join(dest, 'l'), 'utf8'), 'x');
+  if (process.platform === 'linux') {
+    const bytes = join(scratch(), 'o');
+    await extractTarGz(archiveFile(buildTarGzWithModes([{ path: 'Readme', data: 'x' }, { path: 'README', data: 'y' }]), 'r.tar.gz'), bytes);
+    assert.equal(readFileSync(join(bytes, 'README'), 'utf8'), 'y');
+  }
+});
+
+test('tar.gz: GNU long name and long link records are read', { skip: !posix }, async () => {
+  const deep = `${'d'.repeat(70)}/${'e'.repeat(70)}`;
+  const dest = join(scratch(), 'out');
+  await extractTarGz(archiveFile(buildTarGzWithModes([
+    { path: '././@LongLink', type: 'L', data: `${deep}/file\0` },
+    { path: 'cut-name', data: 'deep' },
+    { path: '././@LongLink', type: 'K', data: `${deep}/file\0` },
+    { path: 'short', type: '2', link: 'cut-link' },
+  ]), 'k.tar.gz'), dest, undefined, 'symlink');
+  assert.equal(readFileSync(join(dest, ...deep.split('/'), 'file'), 'utf8'), 'deep');
+  assert.equal(readlinkSync(join(dest, 'short')), `${deep}/file`);
+  // A long target is held to the same rules as a short one.
+  const out = buildTarGzWithModes([{ path: '././@LongLink', type: 'K', data: `../${deep}\0` }, { path: 'l', type: '2', link: 'ok' }]);
+  await rejects(() => extractTarGz(archiveFile(out, 'o.tar.gz'), join(scratch(), 'o'), undefined, 'symlink'), 'link');
 });
 
 test('tar.gz: limits cut a bomb and a flood; garbage is "corrupt"', async () => {
