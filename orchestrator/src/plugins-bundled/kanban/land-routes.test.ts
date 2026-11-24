@@ -55,6 +55,8 @@ function job(opts: { pr?: boolean; detached?: boolean; todo?: number } = {}): Jo
   git(repo, 'config', 'user.name', 'Acme Bot');
   git(repo, 'config', 'user.email', 'bot@acme.test');
   git(repo, 'config', 'commit.gpgsign', 'false');
+  // A Windows runner sets core.autocrlf=true globally: the checked-out files would read with CRLF.
+  git(repo, 'config', 'core.autocrlf', 'false');
   writeFileSync(join(repo, '.gitignore'), '/docs\n');
   git(repo, 'add', '.gitignore');
   commit(repo, 'a.txt', 'a\n', 'chore: start');

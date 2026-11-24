@@ -111,6 +111,9 @@ app.use((req, _res, next) => {
 registerForgeProposalRoutes(app, deps);
 registerForgeBranchRoutes(app, deps);
 const server = app.listen(0, '127.0.0.1');
+// The git fixtures run synchronously and block the loop for seconds on Windows: the server's 5 s idle
+// timer and fetch's reuse of the kept-alive socket then fire together, and the request dies with "fetch failed".
+server.keepAliveTimeout = 0;
 await once(server, 'listening');
 after(() => { server.close(); });
 const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
