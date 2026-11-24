@@ -34,6 +34,7 @@ import { CommandToRun } from '@/components/command-to-run';
 import { RemoteAccess } from '@/components/remote-access-panel';
 import { desktopBridge } from '@/lib/desktop';
 import { t } from '@/lib/i18n';
+import { BRAND } from '@/lib/brand';
 import { apiErrorMessage } from '@/lib/api-error';
 
 type RestartStatus = {
@@ -210,6 +211,18 @@ export default function RestartSetupPage() {
                   <h2 className="text-sm font-medium">{t('restartStep.manualTitle')}</h2>
                   <p className="text-xs text-muted-foreground">{t('restartStep.manualHint')}</p>
                   <CommandToRun command={status.command} label={t('setupPage.remoteAccessCommandLabel')} />
+                  <Button variant="outline" type="button" disabled={waiting} onClick={() => watchForNewDaemon()}>
+                    {t(waiting ? 'restartStep.checking' : 'restartStep.check')}
+                  </Button>
+                </section>
+              )}
+
+              {/* The desktop's embedded daemon has no command: the app runs it,
+                  so reopening the app is the restart. */}
+              {(!canBridge && !status.canSelfRestart || timedOut) && !status.command && !unsupervised && (
+                <section data-restart-reopen className="space-y-2 rounded-xl border border-border bg-card p-4">
+                  <h2 className="text-sm font-medium">{t('restartStep.manualTitle')}</h2>
+                  <p className="text-xs text-muted-foreground">{t('restartStep.reopenHint', { brand: BRAND.displayName })}</p>
                   <Button variant="outline" type="button" disabled={waiting} onClick={() => watchForNewDaemon()}>
                     {t(waiting ? 'restartStep.checking' : 'restartStep.check')}
                   </Button>
