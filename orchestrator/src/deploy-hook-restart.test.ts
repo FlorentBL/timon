@@ -42,3 +42,18 @@ test('a source checkout keeps its unit, and other systems get their own line', (
   assert.equal(portable.includes('systemctl'), false, portable);
   assert.match(portable, /quit and reopen Timon/);
 });
+
+test('the desktop\'s embedded daemon is restarted by reopening the app, whatever the machine runs', () => {
+  const before = process.env.TIMON_DESKTOP_EMBEDDED;
+  process.env.TIMON_DESKTOP_EMBEDDED = '1';
+  try {
+    for (const supervisor of ['systemd-user', 'launchd', 'windows'] as const) {
+      const body = noticeOn(supervisor, false);
+      assert.match(body, /quit and reopen Timon/, supervisor);
+      assert.equal(/systemctl|launchctl|schtasks/.test(body), false, body);
+    }
+  } finally {
+    if (before === undefined) delete process.env.TIMON_DESKTOP_EMBEDDED;
+    else process.env.TIMON_DESKTOP_EMBEDDED = before;
+  }
+});

@@ -44,6 +44,8 @@ const NOTIFY_ONLY_DIRS = new Set(['orchestrator']);
  * The restart line of THIS machine's daemon: the unit, label or task it really
  * runs under (a package's own unit on Linux, launchd, the scheduled task), not
  * the source checkout's systemd unit, which does nothing on any other install.
+ * The desktop's embedded daemon has no line: the app runs it, so the app is
+ * quit and reopened.
  */
 function restartLine(): string {
   return restartStatus().command ?? 'quit and reopen Timon';

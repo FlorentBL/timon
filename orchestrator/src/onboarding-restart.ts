@@ -106,15 +106,29 @@ export function clearRestartPending(): void {
 }
 
 /**
+ * Is this daemon the desktop app's own child (`TIMON_DESKTOP_EMBEDDED=1`)? The
+ * machine may well have a supervisor, but it does not run this process: the
+ * app does, and quitting and reopening it is the restart (`desktop/src/restart.ts`
+ * relaunches the shell the same way). A service the app installed carries
+ * `TIMON_DESKTOP_EMBEDDED=0`.
+ */
+export function embeddedInDesktop(env: NodeJS.ProcessEnv = process.env): boolean {
+  return env.TIMON_DESKTOP_EMBEDDED === '1';
+}
+
+/**
  * The command that restarts the daemon on this machine, as a line a human can
  * paste. Shown when the daemon cannot (or must not) do it itself: a packaged
  * install without a supervisor, or a host adapter whose `selfRestart` is inert.
+ * None for the desktop's embedded daemon: the supervisor's line would restart a
+ * service that is not this process (the source checkout's unit, or nothing).
  */
 export function restartCommand(
   supervisor: SupervisorKind,
   launchDaemon: boolean = process.env.TIMON_SERVICE_KIND === LAUNCHD_SYSTEM_KIND,
   env: NodeJS.ProcessEnv = process.env,
 ): string | null {
+  if (embeddedInDesktop(env)) return null;
   if (supervisor === 'systemd-user') return `systemctl --user restart ${ownLinuxUnit(LINUX_UNIT, TIMON_HOME, env)}`;
   if (supervisor === 'launchd') {
     // The system domain only takes orders from root.
@@ -198,10 +212,11 @@ export function restartStatus(): RestartStatus {
     pending: restartOnboardingPending(),
     supervisor,
     // `selfRestart` is only implemented by the systemd host; the generic one is
-    // a no-op, and a button wired to a no-op waits forever.
+    // a no-op, and a button wired to a no-op waits forever. The embedded daemon
+    // is the app's child: its unit is not this process.
     canSelfRestart: port
       ? port.canSelfRestart
-      : supervisor === 'systemd-user' && getHost().capabilities().includes('systemd'),
+      : supervisor === 'systemd-user' && getHost().capabilities().includes('systemd') && !embeddedInDesktop(),
     command: restartCommand(supervisor),
   };
 }

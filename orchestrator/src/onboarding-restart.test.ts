@@ -7,7 +7,7 @@ const { CONFIG_FILE } = await import('./config/load.js');
 const { db, dbApi } = await import('./db.js');
 const {
   RESTART_STEP_KEY, armRestartForFirstSetup, clearRestartPending, markRestartPending, onboardingStepsPending,
-  performSelfRestart, restartCommand, restartForOnboarding, restartOnboardingPending, restartStatus,
+  embeddedInDesktop, performSelfRestart, restartCommand, restartForOnboarding, restartOnboardingPending, restartStatus,
   selfRestartRefusal, setSelfRestartPortForTests,
 } = await import('./onboarding-restart.js');
 const { MAIN_AGENT_STEP_KEY } = await import('./onboarding-main-agent.js');
@@ -148,13 +148,41 @@ test('a packaged Linux service is restarted under its own unit, not the source c
   assert.equal(ownLinuxUnit('timon-orchestrator', TIMON_HOME, {}), 'timon-orchestrator');
 });
 
+test('the desktop\'s embedded daemon has no command: the app is quit and reopened', () => {
+  const embedded = { TIMON_DESKTOP_EMBEDDED: '1' };
+  for (const supervisor of ['systemd-user', 'launchd', 'windows', null] as const) {
+    assert.equal(restartCommand(supervisor, false, embedded), null, String(supervisor));
+  }
+  // The service the app installed is told apart by the same variable.
+  const unit = packagedUnit(TIMON_HOME);
+  assert.equal(restartCommand('systemd-user', false, { TIMON_DESKTOP_SERVICE: '1', TIMON_DESKTOP_EMBEDDED: '0' }), `systemctl --user restart ${unit}`);
+  assert.equal(embeddedInDesktop(embedded), true);
+  assert.equal(embeddedInDesktop({ TIMON_DESKTOP_EMBEDDED: '0' }), false);
+  assert.equal(embeddedInDesktop({}), false);
+});
+
+test('an embedded daemon never offers to restart a unit that is not itself', () => {
+  const before = process.env.TIMON_DESKTOP_EMBEDDED;
+  process.env.TIMON_DESKTOP_EMBEDDED = '1';
+  setSelfRestartPortForTests(null);
+  try {
+    const status = restartStatus();
+    assert.equal(status.canSelfRestart, false);
+    assert.equal(status.command, null);
+  } finally {
+    setSelfRestartPortForTests(null);
+    if (before === undefined) delete process.env.TIMON_DESKTOP_EMBEDDED;
+    else process.env.TIMON_DESKTOP_EMBEDDED = before;
+  }
+});
+
 test('the daemon only offers to restart itself where it actually can', () => {
   const status = restartStatus();
   // Machine-dependent by design — what must hold everywhere is the implication:
   // a self-restart is only ever offered with a supervisor behind it.
   assert.equal(status.canSelfRestart && status.supervisor === null, false);
   assert.equal(status.canSelfRestart ? status.supervisor : 'systemd-user', 'systemd-user');
-  assert.equal(status.command === null, status.supervisor === null);
+  assert.equal(status.command === null, status.supervisor === null || embeddedInDesktop());
 });
 
 test('under the test runner the daemon never restarts the machine\'s service', () => {
