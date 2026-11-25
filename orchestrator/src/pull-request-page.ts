@@ -11,12 +11,13 @@
  *
  * When the project names the GitHub account it expects, `gh` must sign in as
  * that account before anything is read with its config folder; the login it
- * answers is kept a minute per folder, so opening windows does not ask the
- * forge each time.
+ * answers is kept a minute per folder and per state of that folder's
+ * credentials (`ghCredentialsStamp`), so opening windows does not ask the
+ * forge each time, and switching accounts in the folder asks it at once.
  */
 import { bus, type BusEvent } from './bus.js';
 import { projectRepository, type ExternalPrRefusal } from './external-pr-review.js';
-import { ghLogin, type GhLoginOutcome } from './host/gh.js';
+import { ghCredentialsStamp, ghLogin, type GhLoginOutcome } from './host/gh.js';
 import { githubForge, type FailedCheckLog, type ForgeCheckLogReader } from './host/forge.js';
 import {
   githubPullPageReader, type ForgePullPageReader, type PullEventsPage, type PullRequestPage, type ReviewThreadsPage,
@@ -44,6 +45,8 @@ export type PageDeps = {
   checkLogReader?: (configDir: string | null) => ForgeCheckLogReader;
   /** Stands in for `gh api user`, the check the integration's page runs. */
   ghLogin?: (configDir: string | null) => Promise<GhLoginOutcome>;
+  /** Stands in for the `stat` of the folder's `hosts.yml`. */
+  credentialsStamp?: (configDir: string | null) => string | null;
   now?: () => number;
 };
 
@@ -59,8 +62,9 @@ function remember(key: string, entry: Entry): void {
   while (cache.size > PAGE_CACHE_SIZE) cache.delete(cache.keys().next().value as string);
 }
 
-/** Logins `gh` answered, per config folder ('' for none). */
-const logins = new Map<string, { at: number; login: string }>();
+/** Logins `gh` answered, per config folder ('' for none), with the stamp of
+ *  that folder's credentials when they were asked. */
+const logins = new Map<string, { at: number; stamp: string; login: string }>();
 
 /** Forgets every page read for `project` (all of them, and every login
  *  checked, when null). */
@@ -97,15 +101,17 @@ async function accountRefusal(
   const expected = integration.account;
   if (!expected) return null;
   const key = integration.gh_config_dir ?? '';
+  // Read before gh is asked: an account switched while it answers leaves a
+  // stamp that no longer matches, so the next read asks again.
+  const stamp = (deps.credentialsStamp ?? ghCredentialsStamp)(integration.gh_config_dir);
   let known = logins.get(key);
-  if (!known || now - known.at >= ACCOUNT_CHECK_MS) {
+  if (!known || now - known.at >= ACCOUNT_CHECK_MS || stamp === null || known.stamp !== stamp) {
+    logins.delete(key);
     const out = await (deps.ghLogin ?? ((dir: string | null) => ghLogin(dir)))(integration.gh_config_dir);
-    if (!out.ok) {
-      logins.delete(key);
-      return { ok: false, status: 502, code: 'forge_read_failed', reason: `the GitHub account could not be checked: ${out.reason}` };
-    }
-    known = { at: now, login: out.login };
-    logins.set(key, known);
+    if (!out.ok) return { ok: false, status: 502, code: 'forge_read_failed', reason: `the GitHub account could not be checked: ${out.reason}` };
+    known = { at: now, stamp: stamp ?? '', login: out.login };
+    // Unreadable credentials are checked again at every read.
+    if (stamp !== null) logins.set(key, known);
   }
   // GitHub logins ignore case.
   return known.login.toLowerCase() === expected.toLowerCase()

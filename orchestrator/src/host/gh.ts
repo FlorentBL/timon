@@ -12,7 +12,8 @@
  * `hosts.yml` signs in to (`ghForgeHost`), and its path never reaches a log or
  * an error: only `gh` opens the rest.
  */
-import { readFileSync } from 'node:fs';
+import { readFileSync, statSync } from 'node:fs';
+import { homedir } from 'node:os';
 import { join } from 'node:path';
 import type { ExecOpts, ExecResult } from './types.js';
 import { getHost } from './index.js';
@@ -58,6 +59,42 @@ export function ghForgeHost(configDir: string | null, read: (file: string) => st
   try { hosts = parseGhHosts(read(join(configDir, 'hosts.yml'))); } catch { return GITHUB_HOST; }
   if (hosts.length === 0 || hosts.includes(GITHUB_HOST)) return GITHUB_HOST;
   return hosts.length === 1 ? hosts[0]! : null;
+}
+
+/**
+ * The config folder `gh` reads with `configDir`: that folder, or the default
+ * gh resolves itself from the environment it inherits (`GH_CONFIG_DIR`, then
+ * `XDG_CONFIG_HOME/gh`, then `%AppData%/GitHub CLI` on Windows, then
+ * `~/.config/gh`), the same order as gh's own `ConfigDir`.
+ */
+export function ghConfigFolder(
+  configDir: string | null, env: NodeJS.ProcessEnv = process.env, platform: NodeJS.Platform = process.platform,
+): string {
+  if (configDir) return configDir;
+  if (env.GH_CONFIG_DIR) return env.GH_CONFIG_DIR;
+  if (env.XDG_CONFIG_HOME) return join(env.XDG_CONFIG_HOME, 'gh');
+  if (platform === 'win32' && env.APPDATA) return join(env.APPDATA, 'GitHub CLI');
+  return join(homedir(), '.config', 'gh');
+}
+
+/**
+ * A stamp of the credentials `gh` signs in with for `configDir`: the inode,
+ * size and modification time of its `hosts.yml`, read by one `stat`, never
+ * its content. `gh auth login`, `logout` and `switch` all rewrite that file,
+ * the last one even when the tokens live in the keyring (it changes the
+ * host's active `user`), so a stamp that moved means the account may have.
+ * Null when the file cannot be read: nothing can then be trusted from before.
+ */
+export function ghCredentialsStamp(
+  configDir: string | null, stat: (file: string) => { ino: bigint; size: bigint; mtimeNs: bigint } = (file) => statSync(file, { bigint: true }),
+): string | null {
+  try {
+    const s = stat(join(ghConfigFolder(configDir), 'hosts.yml'));
+    // Nanoseconds: two writes within the same millisecond still differ.
+    return `${s.ino}:${s.size}:${s.mtimeNs}`;
+  } catch {
+    return null;
+  }
 }
 
 export type GhRunner = (args: string[], opts: ExecOpts) => Promise<ExecResult>;
