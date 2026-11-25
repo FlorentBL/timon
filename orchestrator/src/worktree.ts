@@ -572,9 +572,14 @@ async function unlinkBeforeRemoval(worktreePath: string): Promise<void> {
  * the folder: Windows locks a process's current directory, and a git that
  * stands in the folder it deletes fails with "Permission denied". `root` is
  * the folder its leftovers may be purged from (a pilot's worktree lives in
- * another one than the tasks').
+ * another one than the tasks'). `guard`, called right before the removal,
+ * keeps the folder by answering false (it throws, like a refusal of git).
  */
-export async function releaseWorktreeFolder(path: string, root: string = WORKTREES_ROOT): Promise<void> {
+export async function releaseWorktreeFolder(
+  path: string,
+  root: string = WORKTREES_ROOT,
+  guard?: () => Promise<boolean>,
+): Promise<void> {
   const r = await exec(
     'git',
     ['-C', path, 'rev-parse', '--path-format=absolute', '--git-common-dir'],
@@ -582,6 +587,9 @@ export async function releaseWorktreeFolder(path: string, root: string = WORKTRE
   );
   const commonDir = r.stdout.trim();
   await unlinkBeforeRemoval(path);
+  // Git checks that the folder is clean, never what its HEAD holds: a caller
+  // that proved it earlier reads it again here, as late as it can.
+  if (guard && !(await guard())) throw new Error('the worktree changed before its removal');
   await exec('git', ['-C', commonDir || path, 'worktree', 'remove', path], { timeout: 15_000 });
   purgeShell(root, path, 0, Date.now());
 }
