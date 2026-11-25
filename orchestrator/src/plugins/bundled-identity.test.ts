@@ -40,7 +40,7 @@ test('Agent chat is a widget, Settings a page, the kernel a backend', () => {
   // Part 4/4: the notebook took over a tile, so the Kanban is ALSO a
   // widget: two `kind`s, like dreams.
   assert.deepEqual(bundledIdentity('@timon/kanban').kind, ['page', 'widget']);
-  assert.deepEqual(bundledIdentity('@timon/kanban').slots, ['nav.item', 'kanban.column', 'cockpit.widget', 'task.form', 'kanban.card', 'todo.form', 'kanban.todo.landing', 'kanban.job.dialog', 'forge.publish.dialog', 'project.settings']);
+  assert.deepEqual(bundledIdentity('@timon/kanban').slots, ['nav.item', 'kanban.column', 'cockpit.widget', 'task.form', 'kanban.card', 'todo.form', 'kanban.todo.landing', 'kanban.job.dialog', 'forge.publish.dialog', 'kanban.pull.dialog', 'project.settings']);
   // TODO #311: the code pipeline paints nothing any more. TODO #356, #357:
   // the chat's Files, Skills and MCP cards are widgets of their own, so the
   // agents module leaves both chat rails.
