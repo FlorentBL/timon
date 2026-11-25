@@ -27,9 +27,8 @@ export type PendingAuth = {
   metadata: OAuthMetadata;
   client: OAuthClient;
   created_at: number;
-  /** Where to bounce the browser after a successful callback. Captured from
-   *  the user's Origin at /oauth/start so we don't force https on a user
-   *  who's browsing the app over http (or vice versa). */
+  /** The app origin the browser goes back to after the callback: one of the
+   *  origins the daemon knows its app under, checked at /oauth/start. */
   return_to?: string;
   /** The app page the browser goes back to (`OAUTH_RETURN_PATHS`), `/mcp` when absent. */
   return_path?: OAuthReturnPath;
@@ -61,24 +60,53 @@ export function oauthRedirectUri(publicApiUrl: string | null | undefined, port: 
 
 const PENDING = new Map<string, PendingAuth>();
 const PENDING_TTL_MS = 10 * 60 * 1000;
+/** Flows started and not answered yet: a person clicks a handful of buttons, not hundreds. */
+export const PENDING_MAX = 64;
 
-/** What became of a state once its callback arrived. */
-export type UsedStateOutcome = 'in_progress' | 'ok' | 'failed';
+/** What became of a state once its callback arrived, or of a flow left unanswered. */
+export type UsedStateOutcome = 'in_progress' | 'ok' | 'failed' | 'expired';
 export type UsedState = OAuthReturn & { mcp_id: string; outcome: UsedStateOutcome; used_at: number };
 /** Where the browser goes back after a callback: the app origin and page. */
 export type OAuthReturn = { return_to?: string; return_path?: OAuthReturnPath };
 
+/**
+ * States this daemon issued whose flow is over: consumed by a callback, or
+ * expired unanswered. Only a state found here or in `PENDING` gives a callback
+ * the origin its flow started from: a state nobody issued gets nothing of it.
+ */
 const USED = new Map<string, UsedState>();
 /** How long a consumed state still answers a replayed callback. */
 export const USED_STATE_TTL_MS = 10 * 60 * 1000;
+export const USED_MAX = 256;
 
-/** The last return target of each MCP server, for a callback whose pending entry is gone. */
-const RETURNS = new Map<string, OAuthReturn>();
+/** Drop the oldest entries (a Map iterates in insertion order) beyond `max`. */
+function capOldest<V>(map: Map<string, V>, max: number): void {
+  for (const key of map.keys()) {
+    if (map.size <= max) return;
+    map.delete(key);
+  }
+}
+
+function remember(state: string, used: UsedState): void {
+  USED.delete(state);
+  USED.set(state, used);
+  capOldest(USED, USED_MAX);
+}
+
+function returnOf(p: OAuthReturn): OAuthReturn {
+  return {
+    ...(p.return_to ? { return_to: p.return_to } : {}),
+    ...(p.return_path ? { return_path: p.return_path } : {}),
+  };
+}
 
 function reapPending(): void {
   const now = Date.now();
   for (const [k, v] of PENDING) {
-    if (now - v.created_at > PENDING_TTL_MS) PENDING.delete(k);
+    if (now - v.created_at <= PENDING_TTL_MS) continue;
+    PENDING.delete(k);
+    // Kept a while as expired, so a late callback still links back to its app.
+    remember(k, { mcp_id: v.mcp_id, outcome: 'expired', used_at: v.created_at + PENDING_TTL_MS, ...returnOf(v) });
   }
   for (const [k, v] of USED) {
     if (now - v.used_at > USED_STATE_TTL_MS) USED.delete(k);
@@ -88,10 +116,7 @@ function reapPending(): void {
 export function putPending(state: string, p: PendingAuth): void {
   reapPending();
   PENDING.set(state, p);
-  RETURNS.set(p.mcp_id, {
-    ...(p.return_to ? { return_to: p.return_to } : {}),
-    ...(p.return_path ? { return_path: p.return_path } : {}),
-  });
+  capOldest(PENDING, PENDING_MAX);
 }
 
 /** The pending flow of `state`, once: the state is then kept as used (`usedState`). */
@@ -100,35 +125,26 @@ export function takePending(state: string): PendingAuth | null {
   const v = PENDING.get(state);
   if (!v) return null;
   PENDING.delete(state);
-  USED.set(state, {
-    mcp_id: v.mcp_id, outcome: 'in_progress', used_at: Date.now(),
-    ...(v.return_to ? { return_to: v.return_to } : {}),
-    ...(v.return_path ? { return_path: v.return_path } : {}),
-  });
+  remember(state, { mcp_id: v.mcp_id, outcome: 'in_progress', used_at: Date.now(), ...returnOf(v) });
   return v;
 }
 
 /** Record how the exchange of a used state ended, for a replayed callback. */
-export function settleState(state: string, outcome: Exclude<UsedStateOutcome, 'in_progress'>): void {
+export function settleState(state: string, outcome: Exclude<UsedStateOutcome, 'in_progress' | 'expired'>): void {
   const used = USED.get(state);
   if (used) USED.set(state, { ...used, outcome });
 }
 
-/** A state whose callback already arrived, within `USED_STATE_TTL_MS`. */
+/** A state this daemon issued whose flow is over, within `USED_STATE_TTL_MS`. */
 export function usedState(state: string): UsedState | null {
   reapPending();
   return USED.get(state) ?? null;
 }
 
-/** Where the last authorization of this MCP server started from. */
-export function rememberedReturn(mcpId: string): OAuthReturn | null {
-  return RETURNS.get(mcpId) ?? null;
-}
-
 /**
  * Separates the random part of a state from the MCP id it carries. The id is
- * not a secret (the publisher sees the server it authorizes) and is only used
- * to pick where the callback page links back to when the flow is gone.
+ * not a secret (the publisher sees the server it authorizes), and it is never
+ * read back: a callback learns its server from the flow its state names.
  */
 const STATE_ID_SEPARATOR = '~';
 
@@ -137,19 +153,21 @@ export function oauthState(mcpId: string): string {
   return `${randomState()}${STATE_ID_SEPARATOR}${mcpId}`;
 }
 
-/** The MCP id a state names, or null for a state of another shape. */
-export function mcpIdOfState(state: string): string | null {
-  const at = state.indexOf(STATE_ID_SEPARATOR);
-  if (at < 0) return null;
-  const id = state.slice(at + 1);
-  return /^[a-z0-9._-]{1,128}$/.test(id) ? id : null;
+/** Forget every flow of a deleted server: none of its states answers any more. */
+export function forgetOAuthFlows(mcpId: string): void {
+  for (const [k, v] of PENDING) if (v.mcp_id === mcpId) PENDING.delete(k);
+  for (const [k, v] of USED) if (v.mcp_id === mcpId) USED.delete(k);
+}
+
+/** Test hook: how many flows each table holds. */
+export function oauthFlowCountsForTests(): { pending: number; used: number } {
+  return { pending: PENDING.size, used: USED.size };
 }
 
 /** Test hook: forget every flow, as a restart of the daemon does. */
 export function resetOAuthFlowsForTests(): void {
   PENDING.clear();
   USED.clear();
-  RETURNS.clear();
 }
 
 function b64url(buf: Buffer): string {
@@ -351,14 +369,50 @@ export async function exchangeCode(
     // The status and the OAuth error code only: the provider's body may echo
     // the code it refuses, and this message reaches the callback page and the log.
     const errorCode = await r.json().then((j: unknown) => oauthErrorCode((j as { error?: unknown } | null)?.error)).catch(() => null);
-    throw new Error(`token exchange failed: HTTP ${r.status}${errorCode ? ` (${errorCode})` : ''}`);
+    throw new OAuthExchangeError(`token exchange failed: HTTP ${r.status}${errorCode ? ` (${errorCode})` : ''}`);
   }
-  return parseTokenResponse(await r.json());
+  return parseTokenResponse(await tokenResponseJson(r, 'token exchange failed'));
 }
 
-/** An RFC 6749 error code (`invalid_grant`, `access_denied`…), or null for free text. */
-export function oauthErrorCode(value: unknown): string | null {
-  return typeof value === 'string' && /^[a-z0-9_.-]{1,64}$/i.test(value) ? value : null;
+/**
+ * The error codes a publisher may send (RFC 6749 §4.1.2.1 and §5.2, plus
+ * `invalid_target` of RFC 8707, which MCP uses). A closed list: a free-form
+ * value can carry anything, the code verifier included, and the code reaches
+ * the page, its link and the log.
+ */
+export const OAUTH_ERROR_CODES = [
+  'invalid_request', 'unauthorized_client', 'access_denied', 'unsupported_response_type',
+  'invalid_scope', 'server_error', 'temporarily_unavailable',
+  'invalid_client', 'invalid_grant', 'unsupported_grant_type', 'invalid_target',
+] as const;
+export type OAuthErrorCode = typeof OAUTH_ERROR_CODES[number] | 'unknown_error';
+
+/** A known OAuth error code, else `unknown_error`: never the value itself. */
+export function oauthErrorCode(value: unknown): OAuthErrorCode {
+  return (OAUTH_ERROR_CODES as readonly unknown[]).includes(value) ? value as OAuthErrorCode : 'unknown_error';
+}
+
+/**
+ * A failed token exchange, worded for the callback page and the log: a
+ * status and a known error code at most, never the publisher's body.
+ */
+export class OAuthExchangeError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'OAuthExchangeError';
+  }
+}
+
+/**
+ * The JSON body of a token response. The parser's own error quotes the start
+ * of what it could not read, which may be a token: it is replaced.
+ */
+async function tokenResponseJson(r: Response, what: string): Promise<unknown> {
+  try {
+    return await r.json();
+  } catch {
+    throw new OAuthExchangeError(`${what}: the token response is not valid JSON`);
+  }
 }
 
 /**
@@ -392,7 +446,7 @@ export async function refreshTokens(
     await r.body?.cancel().catch(() => undefined);
     throw new OAuthRefreshError(r.status);
   }
-  const next = parseTokenResponse(await r.json());
+  const next = parseTokenResponse(await tokenResponseJson(r, 'refresh failed'));
   // Servers may omit refresh_token on refresh → keep the old one.
   if (!next.refresh_token) next.refresh_token = refreshToken;
   return next;
@@ -401,7 +455,7 @@ export async function refreshTokens(
 function parseTokenResponse(j: unknown): OAuthTokens {
   const o = (j ?? {}) as Record<string, unknown>;
   const access_token = o.access_token;
-  if (typeof access_token !== 'string') throw new Error('token response missing access_token');
+  if (typeof access_token !== 'string') throw new OAuthExchangeError('token response missing access_token');
   const expires_in = typeof o.expires_in === 'number' ? o.expires_in : undefined;
   return {
     access_token,
