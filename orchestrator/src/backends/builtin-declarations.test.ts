@@ -111,6 +111,8 @@ test('the catalogue serves the model-name fragments and the sign-in hints, wheth
   const served = catalogForViewer(null);
   assert.ok(!served.backends.some((entry) => entry.id === 'kimi'), 'no key: the profile is inactive here');
   assert.ok(served.modelBrands.some((hint) => hint.match === 'kimi' && hint.brand === 'moonshot'), 'its models keep their logo');
+  assert.ok(!served.backends.some((entry) => entry.id === 'zai'), 'no key: GLM (Z.ai) is inactive here too');
+  assert.ok(served.modelBrands.some((hint) => hint.match === 'glm' && hint.brand === 'zhipu'), 'a GLM model served by another provider keeps the Zhipu logo');
   const claude = served.backends.find((entry) => entry.id === 'claude');
   assert.equal(claude?.signInCommand, 'claude');
   assert.equal(claude?.signInThen, '/login');
