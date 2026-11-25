@@ -69,7 +69,7 @@ An agent uses `ui_render` when text cannot render what it wants to show. The doc
 | `ui_render` parameter | Meaning |
 | --- | --- |
 | `title` | One line shown above the document, up to 120 characters. |
-| `html` or `path` | The whole document (up to 512 KiB), or the absolute path of an `.html` file inside the mission's working folder. Exactly one of the two. |
+| `html` or `path` | The whole document (up to 512 KiB), or the absolute path of an `.html` file inside the mission's working folder, outside any hidden folder (a name starting with `.`). Exactly one of the two. |
 | `reply` | `true` to wait for the user's answer. |
 | `height` | Initial height in pixels (80–2000), until the document reports its own. |
 
@@ -84,5 +84,7 @@ await timon.fullscreen(true);              // false to come back inline
 ```
 
 With `reply: true`, the tool waits a short while and returns the answer, or `status: "pending"`: the answer will then come back as a message, and the agent should not show the document again. `ui_document_get` reads a document's state (`shown`, `pending`, `answered`, `dismissed`). Inside a mission the same is available as `timon ui-doc render <file.html> [--title TEXT] [--reply]` and `timon ui-doc get <id>`.
+
+A refused `path` tells the agent why: `path_outside_roots` when the file, symlinks followed, is outside the mission's working folder, `path_hidden_segment` when it sits in a hidden folder such as `.git` or `.timon`, `not_found` when nothing is there. The agent can then move the file or pass `html` instead.
 
 A plain decision or a choice between a few options is better asked with the `question` tool, which needs no page at all. Plugins can show cards too: see [HTML documents from a plugin](../plugins/ui-documents.md).
