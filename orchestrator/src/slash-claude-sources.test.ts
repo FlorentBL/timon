@@ -61,7 +61,7 @@ writeFileSync(join(claudeHome, 'plugins', 'installed_plugins.json'), JSON.string
   },
 }));
 
-const { listAllSkills, pluginManifestSkillDirs } = await import('./skill-registry.js');
+const { listAllSkills, pluginManifestSkillDirs, resolvePluginShortName } = await import('./skill-registry.js');
 const { expandSlashCommand } = await import('./slash.js');
 
 test('the popup lists them under their own source', () => {
@@ -125,4 +125,25 @@ test('a categorised plugin skill is inlined by its full id', async () => {
   const { expanded, skill } = await expandSlashCommand('/mattpocock-skills:handoff to Sam');
   assert.equal(skill, 'mattpocock-skills:handoff');
   assert.match(expanded, /HANDOFF-PROCEDURE/);
+});
+
+test('a short name unique among plugin skills resolves to its full id', async () => {
+  const { expanded, skill } = await expandSlashCommand('/handoff to Sam');
+  assert.equal(skill, 'mattpocock-skills:handoff');
+  assert.match(expanded, /HANDOFF-PROCEDURE/);
+  assert.match(expanded, /to Sam/);
+});
+
+test('a short name two plugins share resolves to nothing and names both', async () => {
+  const short = resolvePluginShortName('edit');
+  assert.equal(short.entry, null);
+  assert.deepEqual(short.candidates, ['mattpocock-skills:edit', 'seo:edit']);
+  const { expanded, skill } = await expandSlashCommand('/edit this');
+  assert.equal(skill, null);
+  assert.equal(expanded, '/edit this');
+});
+
+test('a short name never beats an exact id, and never reaches past plugins', () => {
+  assert.equal(resolvePluginShortName('geo-audit').entry, null);
+  assert.equal(resolvePluginShortName('mattpocock-skills:handoff').entry, null);
 });

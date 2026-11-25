@@ -441,6 +441,25 @@ export function resolveSkill(id: string, opts: ListOptions & { origin?: SkillOri
   return matches.find((e) => !e.shadowed) ?? matches[0] ?? null;
 }
 
+export type ShortNameResolution =
+  | { entry: SkillEntry; candidates: string[] }
+  | { entry: null; candidates: string[] };
+
+/**
+ * `/handoff` for `mattpocock-skills:handoff`, as Claude Code allows: a name
+ * without a namespace names the plugin skill whose last id segment it is, but
+ * only when exactly one plugin id ends that way. Two or more → nothing is
+ * resolved, and the ids are returned so the caller can say which to type.
+ */
+export function resolvePluginShortName(name: string, opts: ListOptions = {}): ShortNameResolution {
+  if (!ID_RE.test(name) || name.includes(':')) return { entry: null, candidates: [] };
+  const matches = listAllSkills(opts).filter((e) =>
+    e.source === 'plugin' && !e.shadowed && e.id.includes(':') && e.id.slice(e.id.lastIndexOf(':') + 1) === name);
+  const candidates = [...new Set(matches.map((e) => e.id))].sort();
+  if (candidates.length !== 1) return { entry: null, candidates };
+  return { entry: matches[0]!, candidates };
+}
+
 /** Reads the raw content of an entry's file. */
 export function readEntryContent(entry: SkillEntry): string | null {
   return safeRead(entry.path);
