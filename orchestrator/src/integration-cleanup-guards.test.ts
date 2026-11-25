@@ -211,6 +211,30 @@ test('a branch checked out in the main checkout at the moment of its deletion is
   }
 });
 
+test('a guard of the branch or of its remote copy that waits keeps the pilot worktree', async () => {
+  // Local: the branch is checked out while its deletion is being proven.
+  {
+    const { job, row } = await landedJob();
+    const out = await cleanIntegration(row, deps(job, {
+      beforeDeletion: (what) => { if (what === `ref:${job.branch}`) git(job.repo, 'checkout', '-q', job.branch); },
+    }));
+    assert.equal(out, 'waiting');
+    assert.equal(existsSync(join(job.pilot, '.git')), true, 'the pilot worktree outlives a local guard that waits');
+    git(job.repo, 'checkout', '-q', 'main');
+  }
+  // Remote: the forge answers for another account.
+  {
+    const { job, row } = await landedJob();
+    const out = await cleanIntegration(row, deps(job, { forge: () => ({
+      login: async () => ({ ok: true, login: 'someone-else' }),
+      branchStanding: async () => { throw new Error('never asked'); },
+    }) }));
+    assert.equal(out, 'waiting');
+    assert.equal(remoteHas(job, job.branch), true);
+    assert.equal(existsSync(join(job.pilot, '.git')), true, 'the pilot worktree outlives a remote guard that waits');
+  }
+});
+
 test('origin pointed at a mirror: the remote branch is refused', async () => {
   // The project's setting and origin moved together to another repository.
   const both = await landedJob();

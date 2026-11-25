@@ -554,11 +554,13 @@ async function cleanReserved(pass: Pass): Promise<CleanupResult> {
   }
   // In order, and a step that waits ends the pass: what follows it is not
   // proven any more. The worktrees first: a task's work is proven in the
-  // target, not after its branch is gone.
+  // target, not after its branch is gone. The pilot's worktree last: a guard
+  // of the branch that waits (a checkout, a remote it cannot read) must find
+  // it still there. Its proof does not need the branch: once merged, it is
+  // read against the target.
   const steps: Array<() => Promise<Step>> = [];
-  if (row.state === 'merged') steps.push(() => disposeTaskWorktrees(pass));
+  if (row.state === 'merged') steps.push(() => disposeTaskWorktrees(pass), () => deleteLocalBranch(pass), () => deleteRemoteCopy(pass));
   steps.push(() => releasePilotWorktree(pass, deps.seriesWorktreesRoot ?? SERIES_WORKTREES_ROOT));
-  if (row.state === 'merged') steps.push(() => deleteLocalBranch(pass), () => deleteRemoteCopy(pass));
   for (const step of steps) {
     if ((await step()) === 'waiting') return 'waiting';
   }
