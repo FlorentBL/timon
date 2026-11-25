@@ -253,7 +253,8 @@ export function createGenericHost(
   const capabilities = (): Capability[] => {
     const out: Capability[] = [];
     if (docker) out.push('containers');
-    if (config.host.traefik) out.push('traefik');
+    // Traefik is reached as a container: without Docker the flag claims nothing.
+    if (docker && config.host.traefik) out.push('traefik');
     if (gui) out.push('gui');
     for (const capability of ['git', 'grepai', 'uvx'] as const) {
       try { bin(capability); out.push(capability); } catch { /* capability missing */ }
