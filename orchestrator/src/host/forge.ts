@@ -328,9 +328,14 @@ export type PullRequestBranch = {
 
 export type PullRequestBranchOutcome = { ok: true; branch: PullRequestBranch } | ForgeReadFailure;
 
+export type RepositorySizeOutcome = { ok: true; kib: number } | ForgeReadFailure;
+
 /** The branch of a pull request, read only. */
 export interface ForgeBranchReader {
   pullRequestBranch(repo: string, number: number): Promise<PullRequestBranchOutcome>;
+  /** The size GitHub reports for a repository (`size`, in KiB): how a fetch
+   *  is refused before it starts rather than measured once it is done. */
+  repositorySize(repo: string): Promise<RepositorySizeOutcome>;
 }
 
 export type BranchUpdateFailureCode = ForgeReadFailure['code'] | 'head_moved' | 'conflict' | 'forbidden';
@@ -1066,6 +1071,17 @@ export function githubForge(
         return { ok: false, code: branchUpdateFailure(said), reason: redactedOutput(said) || `gh exited with code ${out.result.code}` };
       }
       return { ok: true };
+    },
+    async repositorySize(repo) {
+      if (!plainRepo(repo)) return { ok: false, code: 'unexpected_answer', reason: 'not a GitHub repository' };
+      const out = await read(['api', `repos/${repo}`, '--jq=.size']); // portability: a GitHub API path and a jq filter, no file
+      if (!out.ok) return out;
+      if (out.result.code !== 0) return failed(out.result);
+      const raw = out.result.stdout.trim();
+      const kib = /^\d{1,15}$/.test(raw) ? Number(raw) : Number.NaN;
+      return Number.isSafeInteger(kib)
+        ? { ok: true, kib }
+        : { ok: false, code: 'unexpected_answer', reason: 'gh did not answer the size of a repository' };
     },
     async commitParents(repo, sha) {
       if (!plainRepo(repo) || !COMMIT_SHA.test(sha)) {

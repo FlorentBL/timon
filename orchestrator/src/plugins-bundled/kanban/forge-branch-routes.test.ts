@@ -58,6 +58,7 @@ const reads: number[] = [];
 const fakeBranches: ForgeBranchWriter = {
   login: async () => ({ ok: true, login }),
   pullRequestBranch: async (_repo, number) => { reads.push(number); return branch; },
+  repositorySize: async () => ({ ok: true, kib: 1024 }),
   updatePullRequestBranch: async (repo, number, sha) => { updates.push({ repo, number, sha }); return update; },
   commitParents: async () => ({ ok: true, parents }),
 };

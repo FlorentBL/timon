@@ -467,6 +467,20 @@ test('the branch of a pull request: one read-only gh pr view, with the fork, its
   assert.equal((await githubForge(null, { gh: recorder({ stdout: '{}' }).run }).pullRequestBranch('../x', 7)).ok, false);
 });
 
+test('the size of a repository: one read-only gh api call, a whole number of KiB or a failure', async () => {
+  const run = recorder({ stdout: '524288\n' });
+  assert.deepEqual(await githubForge('/home/u/.config/gh-work', { gh: run.run }).repositorySize('acme/app'), { ok: true, kib: 524288 });
+  assert.deepEqual(run.calls[0]?.args, ['api', 'repos/acme/app', '--jq=.size']);
+  assert.equal(run.calls[0]?.opts.env?.GH_CONFIG_DIR, '/home/u/.config/gh-work');
+  for (const stdout of ['', 'null', '-1', '1.5', '12 MB']) {
+    assert.equal((await githubForge(null, { gh: recorder({ stdout }).run }).repositorySize('acme/app')).ok, false, stdout);
+  }
+  assert.equal((await githubForge(null, { gh: recorder({ code: 1, stderr: 'HTTP 404' }).run }).repositorySize('acme/app')).ok, false);
+  const odd = recorder({ stdout: '1' });
+  assert.equal((await githubForge(null, { gh: odd.run }).repositorySize('../x')).ok, false);
+  assert.equal(odd.calls.length, 0);
+});
+
 test('a branch update is one PUT to update-branch with the expected head, a raw string, and nothing else', async () => {
   const run = recorder({ stdout: '{"message":"Updating pull request branch.","url":"https://github.com/acme/app/pull/7"}' });
   const forge = githubForge('/home/u/.config/gh-work', { gh: run.run });
