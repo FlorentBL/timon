@@ -289,7 +289,7 @@ var CHIP = "inline-flex shrink-0 items-center gap-1 rounded-md px-1.5 py-0.5 tex
 var LABEL_TONE = "bg-sky-500/15 text-sky-700 dark:text-sky-300";
 var TODO_TONE = "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300";
 var PR_TONE = "bg-amber-500/15 text-amber-700 dark:text-amber-300";
-var MENU_ITEM = "flex cursor-pointer items-center gap-2 rounded-md px-2 py-2 outline-none focus:bg-muted";
+var MENU_ITEM = "flex cursor-pointer items-center gap-2 rounded-md px-2 py-2 outline-none";
 var MENU = "z-50 min-w-44 rounded-lg border border-border bg-popover p-1 text-xs text-popover-foreground shadow-elev-2";
 var ISLAND = "rounded-lg bg-foreground/[0.035]";
 function Icon({ d, className = "size-3.5" }) {
@@ -449,7 +449,7 @@ function IssuesWidget({ api, handle, className }) {
   const issues = useMemo(() => load.kind === "ready" ? sortCandidates(load.list.issues) : [], [load]);
   const enabled = load.kind !== "ready" || isEnabled(load.list);
   const hidden = load.kind === "ready" ? load.list.hidden : 0;
-  const left = load.kind === "ready" ? toImport(load.list.issues) : null;
+  const left = load.kind === "ready" && enabled ? toImport(load.list.issues) : null;
   const countOnTab = ui.useWidgetCount(left);
   const subtitle = left !== null && !countOnTab ? String(left) : void 0;
   const refreshInMenu = ui.useWidgetMenu(useMemo(() => project ? [{

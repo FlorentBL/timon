@@ -90,7 +90,10 @@ const CHIP = 'inline-flex shrink-0 items-center gap-1 rounded-md px-1.5 py-0.5 t
 const LABEL_TONE = 'bg-sky-500/15 text-sky-700 dark:text-sky-300';
 const TODO_TONE = 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-300';
 const PR_TONE = 'bg-amber-500/15 text-amber-700 dark:text-amber-300';
-const MENU_ITEM = 'flex cursor-pointer items-center gap-2 rounded-md px-2 py-2 outline-none focus:bg-muted';
+// The highlight is the platform item's own (accent background, accent text):
+// a background of its own here would keep the accent text on a dark muted
+// fill in the dark theme, unreadable, pictogram included.
+const MENU_ITEM = 'flex cursor-pointer items-center gap-2 rounded-md px-2 py-2 outline-none';
 const MENU = 'z-50 min-w-44 rounded-lg border border-border bg-popover p-1 text-xs text-popover-foreground shadow-elev-2';
 const ISLAND = 'rounded-lg bg-foreground/[0.035]';
 
@@ -341,7 +344,8 @@ function IssuesWidget({ api, handle, className }: { api: Api } & Partial<WidgetC
   const enabled = load.kind !== 'ready' || isEnabled(load.list);
   const hidden = load.kind === 'ready' ? load.list.hidden : 0;
   // What is left to import: the only number shown, on the tab once stacked ("Issues 2"), else by the title.
-  const left = load.kind === 'ready' ? toImport(load.list.issues) : null;
+  // Switched off, nothing is left to import: no count at all.
+  const left = load.kind === 'ready' && enabled ? toImport(load.list.issues) : null;
   const countOnTab = ui.useWidgetCount(left);
   const subtitle = left !== null && !countOnTab ? String(left) : undefined;
   // Stacked, the reload goes to the widget's menu, like the Jobs tab's: the tab strip has no room for it.

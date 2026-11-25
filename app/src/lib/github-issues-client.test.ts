@@ -292,6 +292,7 @@ test('a project switched off reads nothing on GitHub and is switched on from the
     await m.until(() => !!q('[data-issues-off]'), 'the switched-off state');
     assert.match(q('[data-issues-off]')?.textContent ?? '', /Issues are off for this project/);
     assert.equal(q('[data-issues-add]'), null, 'nothing to import while off');
+    assert.doesNotMatch(document.querySelector('header')?.textContent ?? '', /Issues\d/, 'no count while off');
     await m.click(q('[data-issues-switch-on]')?.closest('button'));
     await m.until(() => document.querySelectorAll('[data-issue-row]').length === 3, 'the list once on');
     assert.deepEqual(writes(m.calls).map((c) => [c.url, c.body]), [[`${BASE}project`, { project: 'acme', enabled: true }]]);
