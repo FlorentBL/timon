@@ -25,7 +25,7 @@
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { Copy, Eye, GitPullRequest, Loader2, MoreHorizontal, ScanSearch } from 'lucide-react';
+import { Copy, GitPullRequest, Loader2, MoreHorizontal, ScanSearch } from 'lucide-react';
 import * as Dropdown from '@radix-ui/react-dropdown-menu';
 import { toast } from 'sonner';
 import { Tile } from '@/components/tile';
@@ -49,7 +49,6 @@ import {
 import { diffLineKind, getLanding, type Landing } from './landing-api';
 import { DIFF_LINE_CLASS } from './landing-preview-dialog';
 import { JobDialog } from './job-dialog';
-import { JobLinksMenuItems } from './job-links-menu';
 import { useTodoOpener } from './todo-opener';
 import { proposalsForPull, waitingCount, type ForgeProposal } from './forge-proposals-api';
 import { ProposalChip } from './proposal-chip';
@@ -61,8 +60,8 @@ import { ConflictDialog } from './conflict-dialog';
 import { useLandingChanges, useLandingFallbackPoll, type LandingChange } from './landing-events';
 import { landsLocally, LocalLandingEmpty, useProjectIntegration } from './local-landing';
 import { onIntegrationChanged } from './project-integration-api';
-import { PullRequestDialog } from './pull-request-dialog';
-import { PULL_MENU_ITEM, PullActionMenuItems } from './pull-request-actions';
+import { PullRequestDialog } from './product-pull-request-dialog';
+import { PullActionMenuItems, PullLinkItems } from './pull-request-actions';
 
 /** How often a running review is asked for its verdict. */
 const RUNNING_POLL_MS = 15_000;
@@ -478,25 +477,6 @@ const BRANCH_CHIP_TONE = {
   conflict: 'bg-amber-500/15 text-amber-700 dark:text-amber-300',
   behind: 'bg-foreground/[0.06] text-muted-foreground',
 } as const;
-
-/** The way from a pull request to its job and its ideas, after its gestures in a "…" menu. */
-function PullLinkItems({ pull, onOpenJob, onOpenTodo }: {
-  pull: PullRequestItem;
-  onOpenJob: (id: string) => void;
-  onOpenTodo: (id: number) => void;
-}) {
-  const jobId = pull.links?.job_id ?? null;
-  return (
-    <>
-      {jobId && (
-        <Dropdown.Item data-menu-job={jobId} onSelect={() => onOpenJob(jobId)} className={PULL_MENU_ITEM}>
-          <Eye className="size-3.5" />{t('pullRequests.showJob')}
-        </Dropdown.Item>
-      )}
-      <JobLinksMenuItems links={pull.links} onOpenTodo={onOpenTodo} itemClassName={PULL_MENU_ITEM} />
-    </>
-  );
-}
 
 /** The entries of a row's "…" menu: its gestures in the window's order, then its links. */
 function PullMenuItems({ pull, actions, onRun, onOpenJob, onOpenTodo }: {
