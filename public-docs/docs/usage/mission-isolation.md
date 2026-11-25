@@ -114,7 +114,7 @@ These folders never open what the fence protects: Timon's own folder, a folder t
 
 ## A project's extra folders
 
-A folder several agents of one project need, a second repository or a shared data folder, can be given to the whole project instead of to each agent: in the project's settings, **Agent folders**, **Manage**, then **Add a folder** with **Whole project** chosen. Every mission of the project's agents gets it, beside its agent's own folders; when both name the same folder, the wider access wins. The same checks apply as for an agent's folders, and only a person signed in to the app can change the list: an agent, a script or the `timon` command cannot. Changing it takes the right to manage projects and the right to change privileged agent settings.
+A folder several agents of one project need, a second repository or a shared data folder, can be given to the whole project instead of to each agent: in the project's settings, **Agent folders**, **Manage**, then **Add a folder** with **Whole project** chosen. The row is there even before the project has an agent, so a folder can be prepared first. Every mission of the project's agents gets it, beside its agent's own folders; when both name the same folder, the wider access wins. The same checks apply as for an agent's folders, and only a person signed in to the app can change the list: an agent, a script or the `timon` command cannot. Changing it takes the right to manage projects and the right to change privileged agent settings.
 
 Without a fence (Windows, or **Off**), a read-only folder is only a request to the AI CLI: Claude Code is not given it at all, so an edit there stays a question for you, and nothing stops a shell command from writing in it.
 
