@@ -92,7 +92,7 @@ timon task create --type merge --landing local --agent my-app.merger --base feat
   --deps <ids of the code tasks> --title "Merge into main — Add CSV export"
 ```
 
-A job planned in the planner always names its branch, so in a project that merges locally it runs on a branch of its own, merged into `main` at the end unless you keep it. Tasks you create by hand, without a branch, work as before. A sequential job uses the same choice: `timon pr branch` gives the agent a working folder on the chosen branch, existing or new, in either kind of project. A branch that was chosen as existing and has since been deleted blocks the job's tasks with the reason; it is never recreated.
+A job planned in the planner always names its branch, so in a project that merges locally it runs on a branch of its own, merged into `main` at the end unless you keep it. Tasks you create by hand, without a branch, work as before. A sequential job uses the same choice: `timon job branch` gives the agent a working folder on the chosen branch, existing or new, in either kind of project (`timon pr branch` is the same command under its first name, kept for the scripts that use it). A branch that was chosen as existing and has since been deleted blocks the job's tasks with the reason; it is never recreated.
 
 ### Land a branch you kept
 

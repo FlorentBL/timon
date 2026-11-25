@@ -362,6 +362,14 @@ test('pr branch: the CLI takes the route of the MCP tool, THIS series by default
     assert.equal((await cli(base, ['pr', 'branch'])).code, 64);
     assert.equal((await cli(base, ['pr', 'branch', 'a', 'b'])).code, 64);
     assert.equal(seen.length, 0);
+    // `job branch`, the neutral name for a project that merges locally: the same request.
+    await cli(base, ['job', 'branch', 'feat/x', '--series', 's1']);
+    assert.deepEqual(posted().map((x) => [x.url, x.body]), [['/api/series/s1/integration-branch', { branch: 'feat/x' }]]);
+    seen.length = 0;
+    const usage = await cli(base, ['job', 'branch']);
+    assert.equal(usage.code, 64);
+    assert.match(usage.out, /usage: timon job branch/);
+    assert.equal(seen.length, 0);
   });
 });
 
