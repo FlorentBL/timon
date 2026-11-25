@@ -9,8 +9,10 @@ import assert from 'node:assert/strict';
 import { existsSync, readdirSync, writeFileSync } from 'node:fs';
 import { join, relative } from 'node:path';
 
-const { mountOfficialProviders } = await import('../tests/helpers/official-providers.js');
+const { mountOfficialProviders, stubCodexSignIn } = await import('../tests/helpers/official-providers.js');
 await mountOfficialProviders();
+// Codex's launch is built only once its credentials are readable: a placeholder, not the operator's own.
+await stubCodexSignIn();
 const { config } = await import('./config/load.js');
 const { TIMON_HOME } = await import('./paths.js');
 const { fenceAccess } = await import('./host/isolation.js');
