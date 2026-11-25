@@ -198,3 +198,18 @@ test('a launch merges the agent\'s and the project\'s folders, write winning', a
     [{ path: resolve(data, 'a'), mode: 'write' }, { path: resolve(repo), mode: 'read' }],
   );
 });
+
+test('a folder of one project never reaches a mission of another project', async () => {
+  createProject('web', { name: 'Website' });
+  ok(await call('POST', '/api/agents', { bearer: TOKEN, body: { name: 'web.coder', system_prompt: 'p', config: { role: 'coder', project: 'web' } } }));
+  const shared = mkdtempSync(join(tmpdir(), 'timon-project-extra-dirs-web-'));
+  ok(await call('POST', '/api/projects/web/extra-dirs', { cookie: adminCookie, body: { path: shared, mode: 'write' } }));
+  const lib = projectExtraDirs('lib').map((d) => resolve(d.path));
+  assert.ok(lib.includes(resolve(repo)), 'the first project still holds its folder');
+  assert.ok(!lib.includes(resolve(shared)), 'the second project\'s folder is not written on the first');
+  const web = missionExtraDirs('web.coder', 'web').map((d) => d.path);
+  assert.deepEqual(web, [resolve(shared)], 'a mission of the second project gets its own folder alone');
+  const libMission = missionExtraDirs('lib.coder', 'lib').map((d) => d.path);
+  assert.ok(libMission.includes(resolve(repo)));
+  assert.ok(!libMission.includes(resolve(shared)), 'a mission of the first project never gets the second\'s folder');
+});
