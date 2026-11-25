@@ -171,7 +171,7 @@ function notifySuperadmins(title: string, body: string, message: DaemonMessage):
  */
 export const ME_CAN_PERMISSIONS = [
   'projects:manage', 'agents:manage', 'agents:privileged-config', 'providers:manage', 'providers:accounts',
-  'settings:write',
+  'settings:write', 'forge:publish',
 ] as const;
 export type MeCan = Record<(typeof ME_CAN_PERMISSIONS)[number], boolean>;
 
