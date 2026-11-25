@@ -24,7 +24,7 @@ import { useEffect, useLayoutEffect, useMemo, useState, type ReactElement, type 
 import * as Dropdown from '@radix-ui/react-dropdown-menu';
 import {
   ChevronRight, CircleAlert, CircleCheck, CircleDot, CircleMinus, ExternalLink, GitCommitHorizontal, GitMerge,
-  GitPullRequest, GitPullRequestArrow, GitPullRequestClosed, GitPullRequestDraft, LoaderCircle, Lock, MoreHorizontal, RefreshCw, ScrollText, X,
+  GitPullRequest, GitPullRequestArrow, GitPullRequestClosed, GitPullRequestDraft, LoaderCircle, Lock, MoreHorizontal, RefreshCw, ScrollText, Tag, X,
 } from 'lucide-react';
 import { Dialog, DialogClose, DialogContent, DialogDescription, DialogTitle } from '@/components/ui/dialog';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
@@ -36,8 +36,9 @@ import { cn } from '@/lib/utils';
 import { diffLineKind, patchBody } from './landing-api';
 import { DIFF_LINE_CLASS } from './landing-preview-dialog';
 import {
-  checkCounts, checkSeconds, forgeHref, forgeMarkdownHtml, getCheckLog, getPullRequestDiff, getPullRequestPage, mergeState, placeThreads,
-  splitDiffByFile, type CheckLog, type MergeState, type PageCheck, type PageThread, type PageTimelineItem, type PullRequestPage, type Read,
+  checkCounts, checkSeconds, forgeHref, forgeMarkdownHtml, getCheckLog, getPullRequestDiff, getPullRequestPage, isPageText, mergeState, placeThreads,
+  splitDiffByFile, type CheckLog, type ForgeLabel, type MergeState, type PageCheck, type PageEvent, type PageReaction, type PageThread,
+  type PageTimelineItem, type PullRequestPage, type Read, type ReactionContent,
 } from './pull-request-page-api';
 import { branchLock, reviewBadge, type PullActionId, type PullActions, type PullRequestItem } from './pull-requests-model';
 import { PullActionButton, PullActionMenuItems } from './pull-request-actions';
@@ -136,6 +137,38 @@ function Markdown({ text, truncated }: { text: string; truncated: boolean }) {
   );
 }
 
+const REACTION_EMOJI: Record<ReactionContent, string> = {
+  thumbs_up: '👍', thumbs_down: '👎', laugh: '😄', hooray: '🎉', confused: '😕', heart: '❤️', rocket: '🚀', eyes: '👀',
+};
+
+/** The reactions to a text, as GitHub shows them under it: read only, the app reacts to nothing. */
+function Reactions({ reactions }: { reactions: PageReaction[] | undefined }) {
+  if (!reactions || reactions.length === 0) return null;
+  return (
+    <ul data-pull-reactions="" aria-label={t('pullRequests.detail.reactions')} className="flex flex-wrap items-center gap-1">
+      {reactions.map((r) => (
+        <li key={r.content} data-pull-reaction={r.content}
+          aria-label={t('pullRequests.detail.reaction', { count: r.count, emoji: REACTION_EMOJI[r.content] })}
+          className={cn(CHIP, 'h-6 bg-foreground/[0.05] px-2 text-[11px] text-foreground/80')}>
+          <span aria-hidden>{REACTION_EMOJI[r.content]}</span>
+          <span aria-hidden>{r.count}</span>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+function LabelChip({ label }: { label: ForgeLabel }) {
+  return (
+    <span className={cn(CHIP, MUTED_CHIP, 'min-w-0 max-w-[14rem]')}>
+      {label.color && /^[0-9a-f]{6}$/i.test(label.color) && (
+        <span aria-hidden className="size-2 shrink-0 rounded-full" style={{ backgroundColor: `#${label.color}` }} />
+      )}
+      <span className="truncate">{label.name}</span>
+    </span>
+  );
+}
+
 function More({ count, what }: { count: number; what: 'timeline' | 'threads' | 'commits' | 'files' | 'checks' | 'comments' | 'people' }) {
   if (count <= 0) return null;
   return <p data-pull-more={what} className="text-[11px] tabular-nums text-muted-foreground">{t(`pullRequests.detail.more.${what}`, { count })}</p>;
@@ -149,7 +182,37 @@ const STATE_ICON = { open: GitPullRequest, draft: GitPullRequestDraft, merged: G
 
 // ─── Conversation ──────────────────────────────────────────────────────────
 
+/** A label or a force-push: one quiet line between the comments, as on GitHub. */
+function EventEntry({ event }: { event: PageEvent }) {
+  const Icon = event.kind === 'force_pushed' ? GitCommitHorizontal : Tag;
+  return (
+    <li data-pull-timeline={event.kind} className="flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-1 px-3 py-0.5 text-[11.5px] text-muted-foreground">
+      <Icon className="size-3.5 shrink-0" aria-hidden />
+      <span className="min-w-0 truncate font-medium text-foreground/90">{event.actor ?? t('pullRequests.deletedAuthor')}</span>
+      {event.kind === 'force_pushed' ? (
+        <>
+          <span>{t('pullRequests.detail.event.forcePushed')}</span>
+          {event.before && event.after && (
+            <ForgeLink href={event.url} label={t('pullRequests.detail.event.compare')}>
+              {/* code-font: commit shas */}
+              <span className="font-mono text-[11px]">{event.before.slice(0, 7)} → {event.after.slice(0, 7)}</span>
+            </ForgeLink>
+          )}
+        </>
+      ) : (
+        <>
+          <span>{t(event.kind === 'labeled' ? 'pullRequests.detail.event.labeled' : 'pullRequests.detail.event.unlabeled')}</span>
+          <LabelChip label={event.label} />
+        </>
+      )}
+      <span className="ml-auto" />
+      <When iso={event.createdAt} />
+    </li>
+  );
+}
+
 function TimelineEntry({ item }: { item: PageTimelineItem }) {
+  if (!isPageText(item)) return <EventEntry event={item} />;
   const head = (
     <div className="flex min-w-0 items-center gap-1.5 text-[11.5px] text-muted-foreground">
       <Initial login={item.author} />
@@ -177,6 +240,7 @@ function TimelineEntry({ item }: { item: PageTimelineItem }) {
     <li data-pull-timeline={item.kind} className={cn(ISLAND, 'flex flex-col gap-1.5 px-3 py-2')}>
       {head}
       {item.body.trim() && <Markdown text={item.body} truncated={item.bodyTruncated} />}
+      <Reactions reactions={item.reactions} />
     </li>
   );
 }
@@ -193,6 +257,7 @@ function ThreadComments({ thread }: { thread: PageThread }) {
             <ForgeLink href={c.url}><When iso={c.createdAt} /></ForgeLink>
           </div>
           <Markdown text={c.body} truncated={c.bodyTruncated} />
+          <Reactions reactions={c.reactions} />
         </div>
       ))}
       <More count={thread.commentsMore} what="comments" />
@@ -386,6 +451,7 @@ function ConversationTab({ page, end }: { page: PullRequestPage; end: ReactNode 
           <When iso={page.createdAt} />
         </div>
         <Markdown text={page.body} truncated={page.bodyTruncated} />
+        <Reactions reactions={page.reactions} />
       </section>
       <More count={page.timelineMore} what="timeline" />
       {page.timeline.length > 0 && (
@@ -710,14 +776,7 @@ function Metadata({ page, repo, timon }: { page: PullRequestPage; repo: string |
           )}
           {page.labels.length > 0 && (
             <SideRow label={t('pullRequests.detail.labels')} data="labels">
-              {page.labels.map((label) => (
-                <span key={label.name} className={cn(CHIP, MUTED_CHIP)}>
-                  {label.color && /^[0-9a-f]{6}$/i.test(label.color) && (
-                    <span aria-hidden className="size-2 rounded-full" style={{ backgroundColor: `#${label.color}` }} />
-                  )}
-                  {label.name}
-                </span>
-              ))}
+              {page.labels.map((label) => <LabelChip key={label.name} label={label} />)}
             </SideRow>
           )}
           {page.milestone && (
@@ -911,7 +970,7 @@ export function PullRequestDialog({ project, repo, pull, actions, onAction, link
               <TabsList className={cn(TAB_BAR, 'col-start-1 row-start-1 self-start justify-self-start')}>
                 <TabsTrigger value="conversation" data-pull-tab="conversation" className="text-xs">
                   {t('pullRequests.detail.tab.conversation')}
-                  <span className="ml-1.5 tabular-nums text-muted-foreground">{page.timeline.length + page.timelineMore}</span>
+                  <span className="ml-1.5 tabular-nums text-muted-foreground">{page.timeline.filter(isPageText).length + page.timelineMore}</span>
                 </TabsTrigger>
                 <TabsTrigger value="commits" data-pull-tab="commits" className="text-xs">
                   {t('pullRequests.detail.tab.commits')}

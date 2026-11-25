@@ -20,6 +20,11 @@ export type PullState = 'open' | 'closed' | 'merged';
 export type ReviewState = 'approved' | 'changes_requested' | 'commented' | 'dismissed' | 'pending';
 export type CheckStatus = 'pass' | 'fail' | 'pending' | 'skipped';
 
+export const REACTION_CONTENTS = ['thumbs_up', 'thumbs_down', 'laugh', 'hooray', 'confused', 'heart', 'rocket', 'eyes'] as const;
+export type ReactionContent = (typeof REACTION_CONTENTS)[number];
+/** How many people reacted with one emoji. */
+export type PageReaction = { content: ReactionContent; count: number };
+
 export type PageComment = {
   kind: 'comment';
   author: string | null;
@@ -28,6 +33,8 @@ export type PageComment = {
   createdAt: string;
   url: string | null;
   hidden: boolean;
+  /** Absent from an older daemon. */
+  reactions?: PageReaction[];
 };
 
 export type PageReview = {
@@ -37,11 +44,38 @@ export type PageReview = {
   body: string;
   bodyTruncated: boolean;
   createdAt: string;
+  reactions?: PageReaction[];
 };
 
-export type PageTimelineItem = PageComment | PageReview;
+/** A label added to or removed from the pull request. */
+export type PageLabelEvent = { kind: 'labeled' | 'unlabeled'; actor: string | null; createdAt: string; label: ForgeLabel };
 
-export type PageThreadComment = { author: string | null; body: string; bodyTruncated: boolean; createdAt: string; url: string | null };
+/** Its branch rewritten: the heads before and after, and GitHub's comparison of the two. */
+export type PageForcePushEvent = {
+  kind: 'force_pushed';
+  actor: string | null;
+  createdAt: string;
+  before: string | null;
+  after: string | null;
+  url: string | null;
+};
+
+export type PageEvent = PageLabelEvent | PageForcePushEvent;
+
+export type PageTimelineItem = PageComment | PageReview | PageEvent;
+
+/** A comment or a review: what the conversation tab counts. */
+export const isPageText = (item: PageTimelineItem): item is PageComment | PageReview =>
+  item.kind === 'comment' || item.kind === 'review';
+
+export type PageThreadComment = {
+  author: string | null;
+  body: string;
+  bodyTruncated: boolean;
+  createdAt: string;
+  url: string | null;
+  reactions?: PageReaction[];
+};
 
 export type PageThread = {
   path: string | null;
@@ -89,6 +123,8 @@ export type PullRequestPage = {
   changedFiles: number;
   body: string;
   bodyTruncated: boolean;
+  /** The reactions to the description; absent from an older daemon. */
+  reactions?: PageReaction[];
   labels: ForgeLabel[];
   milestone: { title: string; url: string | null } | null;
   assignees: string[];

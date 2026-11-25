@@ -51,12 +51,18 @@ const PAGE = {
   reviewDecision: 'changes_requested', additions: 1, deletions: 1, changedFiles: 1,
   body: 'The app hurts at night. [spec](https://example.com/spec) [x](javascript:alert(1)) <script>alert(1)</script>',
   bodyTruncated: false,
+  reactions: [{ content: 'thumbs_up', count: 3 }, { content: 'rocket', count: 1 }],
   labels: [{ name: 'ui', color: 'a2eeef' }], milestone: { title: '0.2', url: 'https://github.com/acme/widgets/milestone/3' },
   assignees: ['maintainer'], assigneesMore: 0, reviewRequests: ['reviewer', 'acme/core'], reviewRequestsMore: 2,
   closingIssues: [{ repo: 'acme/widgets', number: 7, url: 'https://github.com/acme/widgets/issues/7' }],
   timeline: [
     { kind: 'review', author: 'reviewer', state: 'changes_requested', body: 'A few things.', bodyTruncated: false, createdAt: '2026-11-17T11:00:00Z' },
-    { kind: 'comment', author: 'maintainer', body: 'Thanks!', bodyTruncated: false, createdAt: '2026-11-17T12:00:00Z', url: 'http://github.com/insecure', hidden: false },
+    { kind: 'labeled', actor: 'maintainer', createdAt: '2026-11-17T11:30:00Z', label: { name: 'ui', color: 'a2eeef' } },
+    { kind: 'comment', author: 'maintainer', body: 'Thanks!', bodyTruncated: false, createdAt: '2026-11-17T12:00:00Z', url: 'http://github.com/insecure', hidden: false, reactions: [{ content: 'heart', count: 2 }] },
+    {
+      kind: 'force_pushed', actor: 'stranger', createdAt: '2026-11-17T12:30:00Z', before: 'c'.repeat(40), after: 'd'.repeat(40),
+      url: `https://github.com/acme/widgets/compare/${'c'.repeat(40)}..${'d'.repeat(40)}`,
+    },
   ],
   timelineMore: 3,
   commits: [{ sha: 'b'.repeat(40), headline: 'feat: dark theme', author: 'stranger', date: '2026-11-17T09:00:00Z', url: `https://github.com/acme/widgets/commit/${'b'.repeat(40)}` }],
@@ -333,7 +339,19 @@ test('a click on a row opens its page in a window, at the mouse and at the keybo
     assert.ok(!markdown.querySelector('script'));
     assert.match(markdown.textContent ?? '', /The app hurts at night\./);
     assert.deepEqual(Array.from(markdown.querySelectorAll('a')).map((a) => a.getAttribute('href')), ['https://example.com/spec']);
-    assert.deepEqual(Array.from(d.querySelectorAll('[data-pull-timeline]')).map((e) => e.getAttribute('data-pull-timeline')), ['review', 'comment']);
+    assert.deepEqual(Array.from(d.querySelectorAll('[data-pull-timeline]')).map((e) => e.getAttribute('data-pull-timeline')), ['review', 'labeled', 'comment', 'force_pushed']);
+    // Events sit between the comments; the tab counts only comments and reviews.
+    assert.match(d.querySelector('[data-pull-timeline="labeled"]')?.textContent ?? '', /maintainer.*added the label.*ui/);
+    const push = d.querySelector('[data-pull-timeline="force_pushed"]')!;
+    assert.match(push.textContent ?? '', /stranger.*force-pushed the branch.*ccccccc → ddddddd/);
+    assert.equal(push.querySelector('a')?.getAttribute('href'), `https://github.com/acme/widgets/compare/${'c'.repeat(40)}..${'d'.repeat(40)}`);
+    assert.match(d.querySelector('[data-pull-tab="conversation"]')?.textContent ?? '', /Conversation5$/);
+    // Reactions: under the description and under a comment, read only.
+    assert.deepEqual(Array.from(d.querySelectorAll('[data-pull-body] [data-pull-reaction]')).map((r) => [r.getAttribute('data-pull-reaction'), r.textContent]),
+      [['thumbs_up', '👍3'], ['rocket', '🚀1']]);
+    assert.equal(d.querySelector('[data-pull-body] [data-pull-reaction="thumbs_up"]')?.getAttribute('aria-label'), '3 reactions 👍');
+    assert.equal(d.querySelector('[data-pull-timeline="comment"] [data-pull-reaction="heart"]')?.textContent, '❤️2');
+    assert.equal(d.querySelector('[data-pull-reactions] button'), null);
     assert.equal(d.querySelector('[data-pull-review-state]')?.textContent, 'Changes requested');
     assert.match(d.querySelector('[data-pull-more="timeline"]')?.textContent ?? '', /3 earlier entries/);
     assert.ok(d.querySelector('[data-pull-thread-state="open"]'));
@@ -743,7 +761,11 @@ test('a row\'s proposal chip sits beside its open button, not inside it, and doe
     assert.equal(chip.closest('[data-pull-open]'), null, 'the chip is not inside the open button');
     assert.equal(row.querySelector('[data-pull-open]')?.querySelector('button'), null);
     await m.click(chip);
+    await m.settle();
     assert.equal(dialog(), null, 'the chip opens the publish dialog, not the window');
+    // Closed before the page goes: its reads must not land on a closed window.
+    await m.key(document.activeElement ?? document.body, 'Escape');
+    await m.settle();
   } finally {
     await m.unmount();
   }
