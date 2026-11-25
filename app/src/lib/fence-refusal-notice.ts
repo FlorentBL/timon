@@ -25,6 +25,27 @@ function text(value: unknown, fallback: string): string {
   return typeof value === 'string' && value.trim() ? value : fallback;
 }
 
+/** Payload of the `fence_suspected` event: a refusal that named no path, inside the fence. Read defensively. */
+export type FenceSuspectedPayload = {
+  said?: unknown;
+  mechanism?: unknown;
+  backend?: unknown;
+};
+
+/**
+ * The sentence rendered when a fenced CLI stopped on "Operation not permitted"
+ * without naming a path (codex's `os error 1`): nothing to check against the
+ * policy, so the fence is named as the likely cause, with where it is changed.
+ */
+export function fenceSuspicionNotice(payload: FenceSuspectedPayload): string {
+  return t('chatPage.fenceSuspected', {
+    said: text(payload.said, 'Operation not permitted'),
+    mechanism: payload.mechanism === 'seatbelt' ? 'seatbelt' : 'landlock',
+    backend: text(payload.backend, '?'),
+    settingsPath: settingsPath('system', 'security'),
+  });
+}
+
 /** `launch`: the mission never started, and this notice is all its thread says. */
 export function fenceRefusalEndsTurn(payload: FenceRefusedPayload): boolean {
   return payload.stage === 'launch';
