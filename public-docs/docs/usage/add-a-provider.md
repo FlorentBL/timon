@@ -7,7 +7,7 @@ You can add a language-model provider yourself — no plugin, no restart. It wor
 
 | Protocol | Runs through | Typical providers |
 |---|---|---|
-| **Anthropic** | the Claude Code CLI | DeepSeek, Moonshot (Kimi), Z.ai, a [LiteLLM proxy](#through-a-litellm-proxy), any Anthropic-compatible gateway |
+| **Anthropic** | the Claude Code CLI | DeepSeek, Moonshot (Kimi), a [LiteLLM proxy](#through-a-litellm-proxy), any Anthropic-compatible gateway |
 | **OpenAI Responses** | the Codex CLI | OpenRouter, a vLLM or LM Studio server, a [LiteLLM proxy](#through-a-litellm-proxy), any endpoint that serves `/v1/responses` |
 
 If your provider speaks neither, there are three ways forward:
@@ -182,9 +182,9 @@ An OpenAI Responses provider also declares how the Codex CLI reaches it:
 | `models[].reasoningControl` | Optional. A thinking setting that levels cannot express: `{ "type": "budget", "max": 16000 }` (`min` and `max` optional), `{ "type": "toggle" }` or `{ "type": "none" }`. Levels win if a model has both. |
 | `modelsEndpoint` | Optional. A public, OpenAI-style model listing that replaces `models` while it answers. |
 
-### Ollama Cloud and Kimi are built in
+### Ollama Cloud, Kimi and GLM are built in
 
-They need no backend of your own: create the key on the **Secrets** page, in *inject* mode, and **grant it to `global`**. Use `OLLAMA_API_KEY` for Ollama Cloud and `KIMI_API_KEY` for Kimi. The backend turns active without a restart.
+They need no backend of your own: create the key on the **Secrets** page, in *inject* mode, and **grant it to `global`**. Use `OLLAMA_API_KEY` for Ollama Cloud, `KIMI_API_KEY` for Kimi and `ZAI_API_KEY` for GLM (Z.ai). The backend turns active without a restart. For GLM, read [GLM (Z.ai)](glm-zai.md) first: it covers the Coding Plan and its terms.
 
 ### LLMTR is built in
 
@@ -241,7 +241,7 @@ A file that is refused, malformed, or named differently from its `id` is listed 
 
 ### Claude Code keeps a folder per backend
 
-An Anthropic backend other than Claude itself (Kimi, DeepSeek, one you added) runs Claude Code with a configuration folder of its own, kept by Timon across its missions: its sessions, logs and settings go there, never into your `~/.claude`, where your Claude subscription's sign-in lives. A mission on one of these backends therefore does not read your own Claude Code settings, hooks or global instructions from `~/.claude`. A conversation started on such a backend before this folder existed is resumed once from `~/.claude`: only that conversation's file is copied over.
+An Anthropic backend other than Claude itself (Kimi, GLM, DeepSeek, one you added) runs Claude Code with a configuration folder of its own, kept by Timon across its missions: its sessions, logs and settings go there, never into your `~/.claude`, where your Claude subscription's sign-in lives. A mission on one of these backends therefore does not read your own Claude Code settings, hooks or global instructions from `~/.claude`. A conversation started on such a backend before this folder existed is resumed once from `~/.claude`: only that conversation's file is copied over.
 
 ## Through a LiteLLM proxy
 

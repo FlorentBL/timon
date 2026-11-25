@@ -33,10 +33,10 @@ signature and licence requirements apply; see [Testing](testing.md) and
 ## Providers shipped with Timon
 
 Claude, Codex, Grok, Copilot, opencode, Hermes, Antigravity, Pi, Qwen Code, Kimi,
-Ollama Cloud and LLMTR are provided by official plugins shipped with the app. They appear in the Plugins
+GLM (Z.ai), Ollama Cloud and LLMTR are provided by official plugins shipped with the app. They appear in the Plugins
 gallery with a **Built-in** badge, and they are written on the same
 `ctx.provider` kit described below, so they are the reference for what a
-provider can do. Kimi is a profile on the Claude provider; Ollama Cloud is a
+provider can do. Kimi and GLM (Z.ai) are profiles on the Claude provider; Ollama Cloud is a
 profile on Codex's. LLMTR is its own remote provider: it calls Chat Completions
 at `https://llmtr.com/v1` with the vault secret `LLMTR_API_KEY`, through
 `ctx.fetch`, and only after the operator allows `llmtr.com` in

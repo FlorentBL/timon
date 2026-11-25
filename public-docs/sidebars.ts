@@ -66,6 +66,7 @@ const sidebars: SidebarsConfig = {
         "usage/pi",
         "usage/qwen-code",
         "usage/mistral-vibe",
+        "usage/glm-zai",
         "usage/antigravity",
         "usage/licence-api",
         "usage/multi-user",
