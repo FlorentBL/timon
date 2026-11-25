@@ -91,7 +91,7 @@ The **LLM** tab has a **Thinking level** slider over the levels the chosen model
 
 An agent works in its working folder. When it also needs other folders, a librarian that reads several projects, or an agent that keeps its notes in a second folder, add them in the **Workspace** tab, under **Extra folders**: **Add a folder** asks for the folder and its access, **Read only** or **Read and write**. Each folder's **…** menu changes its access or removes it. A project's settings list the extra folders of all its agents, under **Agent folders**.
 
-Only a person changes these folders, or a mission whose account holds the **agents:privileged-config** permission, and never for its own agent. Timon's own folder, a folder that contains it, a whole home folder or disk, and folders of credentials (`~/.ssh`, the sign-ins of the AI CLIs…) are refused, with the reason. A change applies from the agent's next mission. How the folders are enforced: [Mission isolation](./mission-isolation.md#an-agents-extra-folders).
+Only a person changes these folders, or a mission whose account holds the **agents:privileged-config** permission, and never for its own agent. Timon's own folder, a folder that contains it, a whole home folder or disk, and folders of credentials (`~/.ssh`, the sign-ins of the AI CLIs…) are refused, with the reason. A change applies from the agent's next mission. From a terminal, `timon agent extra-dirs list|add|rm <agent> [<path>]` does the same (`--write` gives read and write access, `--restart` stops the agent's running processes so they pick up the new list); an agent uses the `agent_extra_dirs` tool, under the same rules. How the folders are enforced: [Mission isolation](./mission-isolation.md#an-agents-extra-folders).
 
 ### Agent names
 
