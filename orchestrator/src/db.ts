@@ -3535,11 +3535,6 @@ const TASK_WATCHED_COLUMNS = [
 ] as const satisfies readonly (keyof TaskRow)[];
 
 /**
- * Publishes `task_updated` (and `task_assigned`) for what a write changed,
- * comparing the row read BEFORE the write with the row now. Synchronous, so the
- * origin store of the writer (`task-origin.ts`) is still the current one.
- */
-/**
  * Publishes `integration_changed` for a write that moved the row `id`. The
  * callers publish only when their statement changed something: a job's
  * screens reload on it, and a write that changes nothing must not wake them.
@@ -3567,6 +3562,11 @@ function checksSignature(checks: string | null): string | null {
   }
 }
 
+/**
+ * Publishes `task_updated` (and `task_assigned`) for what a write changed,
+ * comparing the row read BEFORE the write with the row now. Synchronous, so the
+ * origin store of the writer (`task-origin.ts`) is still the current one.
+ */
 function publishTaskDiff(prev: TaskRow | undefined): void {
   if (!prev) return;
   const next = getTaskStmt.get(prev.id) as TaskRow | undefined;
@@ -5933,13 +5933,19 @@ export const dbApi = {
   }): IntegrationRow {
     const now = Date.now();
     const id = randomUUID();
+    const before = getIntegrationStmt.get(row.repo, row.branch) as IntegrationRow | undefined;
     upsertIntegrationStmt.run(
       id, row.repo, row.branch, row.remote, row.target, row.mode,
       row.project ?? null, row.seriesId ?? null, row.baseSha ?? null, now, now,
     );
     const recorded = getIntegrationStmt.get(row.repo, row.branch) as IntegrationRow;
-    // Recording an existing branch again moves nothing a screen shows.
     if (recorded.id === id) publishIntegrationChange(id, ['created']);
+    // Recording an existing branch again only fills what it lacked. A filled
+    // project or series puts the job in front of a screen filtered on it,
+    // which would otherwise wait for its slow poll; the base sha shows nowhere.
+    else if (before && (before.project !== recorded.project || before.series_id !== recorded.series_id)) {
+      publishIntegrationChange(recorded.id, ['scope']);
+    }
     return recorded;
   },
   getIntegration(repo: string, branch: string): IntegrationRow | undefined {

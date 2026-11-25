@@ -62,6 +62,24 @@ test('a new row is announced once, with its ids and state; recording it again is
   })), []);
 });
 
+test('recording a job again announces the project or series it fills in, once', () => {
+  const repo = '/tmp/integration-events';
+  const base = { repo, branch: 'feat/scope', remote: 'origin', target: 'main', mode: 'pr' };
+  const [created] = published(() => dbApi.recordIntegration(base));
+  assert.equal(created!.project, null);
+  const series = randomUUID();
+  const filled = published(() => dbApi.recordIntegration({ ...base, project: PROJECT, seriesId: series }));
+  assert.deepEqual(
+    filled.map((e) => ({ id: e.integrationId, project: e.project, seriesId: e.seriesId, changed: e.changed })),
+    [{ id: created!.integrationId, project: PROJECT, seriesId: series, changed: ['scope'] }],
+    'a screen filtered on the project hears of the job at once',
+  );
+  // Already filled: another project never takes the job over, nothing moved.
+  assert.deepEqual(published(() => dbApi.recordIntegration({ ...base, project: 'elsewhere', seriesId: randomUUID() })), []);
+  // A base sha no screen shows.
+  assert.deepEqual(published(() => dbApi.recordIntegration({ ...base, baseSha: 'd'.repeat(40) })), []);
+});
+
 test('each transition of a pull request publishes once, a write that changes nothing publishes nothing', () => {
   const { id } = job('feat/transitions', 'owner-a');
   const opened = published(() => assert.equal(dbApi.markIntegrationOpen(id, { number: 7, url: 'https://github.com/acme/app/pull/7', headSha: 'a'.repeat(40) }), true));
