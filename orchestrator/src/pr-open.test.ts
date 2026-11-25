@@ -135,9 +135,6 @@ test('every check passes: the branch is pushed without force, the pull request o
   assert.equal(row?.pr_number, 12);
   assert.equal(row?.pr_url, 'https://github.com/acme/app/pull/12');
   assert.equal(row?.head_sha, git(f.repo, 'rev-parse', f.branch));
-  // Where it was opened: the cleanup deletes its branch there and nowhere else.
-  assert.equal(row?.pr_repository, 'acme/app');
-  assert.equal(row?.pr_push_url, REMOTE_URL);
   // The task reports the opening to its pilot itself: the card alone is added.
   assert.deepEqual(calls.opened, [{ id: f.integrationId, recap: false }]);
   // A second call does not open another one.

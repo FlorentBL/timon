@@ -2070,21 +2070,6 @@ if (!integrationCols.includes('notified_state')) {
 // pull request is closed, only the pilot's worktree. Rows concluded before the
 // column count as not cleaned: the same guards decide for them. NULL = not yet.
 if (!integrationCols.includes('cleaned_at')) db.exec(`ALTER TABLE integrations ADD COLUMN cleaned_at INTEGER`);
-// The cleanup's reservation: set before any of its effects, so two passes
-// (two pollers, a reload during a pass) never both delete; a reservation older
-// than `INTEGRATION_CLEANUP_LEASE_MS` belongs to a pass that died and is taken
-// over. `cleanup_remote_attempted_at` is set before the remote deletion: a
-// later pass that finds the branch still there cannot tell a deletion that
-// never happened from a branch pushed again at the same commit, and keeps it.
-if (!integrationCols.includes('cleanup_started_at')) db.exec(`ALTER TABLE integrations ADD COLUMN cleanup_started_at INTEGER`);
-if (!integrationCols.includes('cleanup_token')) db.exec(`ALTER TABLE integrations ADD COLUMN cleanup_token TEXT`);
-if (!integrationCols.includes('cleanup_remote_attempted_at')) db.exec(`ALTER TABLE integrations ADD COLUMN cleanup_remote_attempted_at INTEGER`);
-// The repository (`owner/name`) and the push URL the pull request was opened
-// on: the deletion of the remote branch goes there and nowhere else, whatever
-// `origin` or the project's setting say later. NULL (opened before the
-// columns) = the remote branch is never deleted.
-if (!integrationCols.includes('pr_repository')) db.exec(`ALTER TABLE integrations ADD COLUMN pr_repository TEXT`);
-if (!integrationCols.includes('pr_push_url')) db.exec(`ALTER TABLE integrations ADD COLUMN pr_push_url TEXT`);
 // The relecture of a contributor's pull request (`external-pr-review.ts`): one
 // row per pull request, the latest one. 'draft' holds the brief the person
 // reads before sending it; 'running' names the reviewer's mission; 'done' or
@@ -2590,21 +2575,8 @@ export type IntegrationRow = {
   notified_state?: string | null;
   /** Leftovers removed after the landing (see the `cleaned_at` migration). */
   cleaned_at?: number | null;
-  /** The cleanup's reservation (see the `cleanup_started_at` migration). */
-  cleanup_started_at?: number | null;
-  cleanup_token?: string | null;
-  cleanup_remote_attempted_at?: number | null;
-  /** Where the pull request was opened (see the `pr_repository` migration). */
-  pr_repository?: string | null;
-  pr_push_url?: string | null;
   created_at: number;
   updated_at: number;
-};
-
-/** A pull request recorded on an integration branch. `repository` and
- *  `pushUrl` say where it was opened (see the `pr_repository` migration). */
-export type IntegrationPullRequest = {
-  number: number; url: string; headSha: string; repository?: string | null; pushUrl?: string | null;
 };
 
 /** One repair of a job's pull request (see the `landing_repairs` migration). */
@@ -3343,7 +3315,7 @@ const listRecentIntegrationsStmt = db.prepare(
 const setIntegrationChecksStmt = db.prepare(`UPDATE integrations SET checks = ? WHERE id = ?`);
 // Only from 'branch': a pull request recorded once is never replaced by another.
 const markIntegrationOpenStmt = db.prepare(`
-  UPDATE integrations SET state = 'open', pr_number = ?, pr_url = ?, head_sha = ?, pr_repository = ?, pr_push_url = ?, updated_at = ?
+  UPDATE integrations SET state = 'open', pr_number = ?, pr_url = ?, head_sha = ?, updated_at = ?
   WHERE id = ? AND state = 'branch'
 `);
 // Only from 'closed': the landing gesture opened a new pull request for a job
@@ -3351,7 +3323,7 @@ const markIntegrationOpenStmt = db.prepare(`
 // forgotten, so a second closing is told again.
 const markIntegrationReopenedStmt = db.prepare(`
   UPDATE integrations SET state = 'open', pr_number = ?, pr_url = ?, head_sha = ?, checks = NULL,
-    notified_state = NULL, pr_repository = ?, pr_push_url = ?, updated_at = ?
+    notified_state = NULL, updated_at = ?
   WHERE id = ? AND state = 'closed'
 `);
 // A pushed repair moves the head the poller compares with the target; the
@@ -3387,40 +3359,7 @@ const listIntegrationsToCleanStmt = db.prepare(
     ORDER BY repo ASC, updated_at ASC`,
 );
 const markIntegrationCleanedStmt = db.prepare(
-  `UPDATE integrations SET cleaned_at = ?, cleanup_started_at = NULL, cleanup_token = NULL
-    WHERE id = ? AND state IN ('merged', 'closed') AND cleaned_at IS NULL AND cleanup_token IS ?`,
-);
-const claimIntegrationCleanupStmt = db.prepare(
-  `UPDATE integrations SET cleanup_started_at = ?, cleanup_token = ?
-    WHERE id = ? AND cleaned_at IS NULL AND state IN ('merged', 'closed')
-      AND (cleanup_token IS NULL OR cleanup_started_at IS NULL OR cleanup_started_at < ?)`,
-);
-const releaseIntegrationCleanupStmt = db.prepare(
-  `UPDATE integrations SET cleanup_started_at = NULL, cleanup_token = NULL WHERE id = ? AND cleanup_token = ?`,
-);
-const setIntegrationRemoteAttemptStmt = db.prepare(
-  `UPDATE integrations SET cleanup_remote_attempted_at = ? WHERE id = ? AND cleanup_token = ?`,
-);
-const ownsIntegrationCleanupStmt = db.prepare(
-  `SELECT 1 FROM integrations WHERE id = ? AND cleanup_token = ? AND cleaned_at IS NULL`,
-);
-// A task worktree the cleanup removes is detached from every task that names
-// it first, in one transaction, and only while each of them is DONE: the
-// dispatcher reads `worktree_path` to reuse a folder, so a task reopened after
-// this finds none and never starts in a folder being deleted. `updated_at` is
-// not touched (see `clearTaskWorktreeStmt`).
-const openTasksOnWorktreeStmt = db.prepare(
-  `SELECT COUNT(*) AS n FROM tasks WHERE worktree_path = ? AND status != 'DONE'`,
-);
-const tasksOnWorktreeStmt = db.prepare(`SELECT id FROM tasks WHERE worktree_path = ? AND status = 'DONE'`);
-const detachDoneTaskWorktreeStmt = db.prepare(
-  `UPDATE tasks SET worktree_path = NULL WHERE id = ? AND status = 'DONE' AND worktree_path = ?`,
-);
-const restoreTaskWorktreeStmt = db.prepare(
-  `UPDATE tasks SET worktree_path = ? WHERE id = ? AND worktree_path IS NULL`,
-);
-const forgetTaskBranchStmt = db.prepare(
-  `UPDATE tasks SET branch_name = NULL WHERE id = ? AND worktree_path IS NULL AND branch_name = ?`,
+  `UPDATE integrations SET cleaned_at = ? WHERE id = ? AND state IN ('merged', 'closed') AND cleaned_at IS NULL`,
 );
 const listOpenIntegrationsStmt = db.prepare(
   `SELECT * FROM integrations WHERE state = 'open' ORDER BY repo ASC, created_at ASC`,
@@ -6209,19 +6148,15 @@ export const dbApi = {
   },
   /** Records the pull request opened for an integration branch; false when
    *  the row is gone or already past the 'branch' state. */
-  markIntegrationOpen(id: string, pr: IntegrationPullRequest): boolean {
-    const opened = markIntegrationOpenStmt.run(
-      pr.number, pr.url, pr.headSha, pr.repository ?? null, pr.pushUrl ?? null, Date.now(), id,
-    ).changes > 0;
+  markIntegrationOpen(id: string, pr: { number: number; url: string; headSha: string }): boolean {
+    const opened = markIntegrationOpenStmt.run(pr.number, pr.url, pr.headSha, Date.now(), id).changes > 0;
     if (opened) publishIntegrationChange(id, ['state', 'pull_request']);
     return opened;
   },
   /** Records the new pull request of a job whose previous one was closed
    *  without a merge; false unless the row is still 'closed'. */
-  markIntegrationReopened(id: string, pr: IntegrationPullRequest): boolean {
-    const opened = markIntegrationReopenedStmt.run(
-      pr.number, pr.url, pr.headSha, pr.repository ?? null, pr.pushUrl ?? null, Date.now(), id,
-    ).changes > 0;
+  markIntegrationReopened(id: string, pr: { number: number; url: string; headSha: string }): boolean {
+    const opened = markIntegrationReopenedStmt.run(pr.number, pr.url, pr.headSha, Date.now(), id).changes > 0;
     if (opened) publishIntegrationChange(id, ['state', 'pull_request']);
     return opened;
   },
@@ -6271,48 +6206,9 @@ export const dbApi = {
   listIntegrationsToClean(): IntegrationRow[] {
     return listIntegrationsToCleanStmt.all() as IntegrationRow[];
   },
-  /** Records that the leftovers of a concluded integration were dealt with,
-   *  by the pass holding `token` (null: a row nobody reserved). */
-  markIntegrationCleaned(id: string, token: string | null = null): boolean {
-    return markIntegrationCleanedStmt.run(Date.now(), id, token).changes > 0;
-  },
-  /** Reserves the cleanup of a concluded integration for the pass holding
-   *  `token`; false while another pass holds a reservation newer than `staleBefore`. */
-  claimIntegrationCleanup(id: string, token: string, now: number, staleBefore: number): boolean {
-    return claimIntegrationCleanupStmt.run(now, token, id, staleBefore).changes > 0;
-  },
-  releaseIntegrationCleanup(id: string, token: string): void {
-    releaseIntegrationCleanupStmt.run(id, token);
-  },
-  /** True while the pass holding `token` still holds the reservation. */
-  ownsIntegrationCleanup(id: string, token: string): boolean {
-    return ownsIntegrationCleanupStmt.get(id, token) !== undefined;
-  },
-  /** `at` null clears it: the deletion was refused, nothing happened. */
-  setIntegrationRemoteAttempt(id: string, token: string, at: number | null): boolean {
-    return setIntegrationRemoteAttemptStmt.run(at, id, token).changes > 0;
-  },
-  /**
-   * Detaches `path` from every task that names it, only while all of them are
-   * DONE and `taskId` still names it. Returns the ids detached (to restore on a
-   * failed removal), or null when nothing was detached.
-   */
-  detachDoneTaskWorktree(taskId: string, path: string): string[] | null {
-    return db.transaction((): string[] | null => {
-      if ((openTasksOnWorktreeStmt.get(path) as { n: number }).n > 0) return null;
-      const ids = (tasksOnWorktreeStmt.all(path) as { id: string }[]).map((r) => r.id);
-      if (!ids.includes(taskId)) return null;
-      for (const id of ids) detachDoneTaskWorktreeStmt.run(id, path);
-      return ids;
-    })();
-  },
-  /** Gives `path` back to tasks a failed removal detached it from. */
-  restoreTaskWorktree(ids: string[], path: string): void {
-    for (const id of ids) restoreTaskWorktreeStmt.run(path, id);
-  },
-  /** Forgets a deleted task branch, once its worktree is detached. */
-  forgetTaskBranch(id: string, branch: string): void {
-    forgetTaskBranchStmt.run(id, branch);
+  /** Records that the leftovers of a concluded integration were dealt with. */
+  markIntegrationCleaned(id: string): boolean {
+    return markIntegrationCleanedStmt.run(Date.now(), id).changes > 0;
   },
   /** Local integration branches (no remote) that have not landed yet. */
   listLocalIntegrationsToLand(): IntegrationRow[] {

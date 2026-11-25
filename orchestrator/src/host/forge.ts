@@ -486,24 +486,6 @@ export interface ForgeBranchWriter extends ForgeBranchReader {
   commitParents(repo: string, sha: string): Promise<CommitParentsOutcome>;
 }
 
-/** What the forge says of a branch before it is deleted. */
-export type BranchStanding = {
-  /** The repository's default branch. */
-  defaultBranch: string;
-  /** A classic protection, or a ruleset that restricts its deletion. */
-  protected: boolean;
-};
-export type BranchStandingOutcome = { ok: true; standing: BranchStanding } | ForgeReadFailure;
-
-/**
- * Read before the deletion of a landed job's remote branch
- * (`integration-cleanup.ts`): the deletion refuses the default branch and a
- * protected one on its own side, whatever the server would allow.
- */
-export interface ForgeBranchStanding {
-  branchStanding(repo: string, branch: string): Promise<BranchStandingOutcome>;
-}
-
 /** Most issues a list asks for, the most recent first. */
 export const ISSUE_LIST_LIMIT = 50;
 /** Most characters kept of a title written on the forge. */
@@ -1042,7 +1024,7 @@ function pullRequestFrom(text: string): PullRequestRef | null {
 export function githubForge(
   configDir: string | null, runners: ForgeRunners = {},
 ): Forge & ForgeReader & ForgeChecksReader & ForgeCheckLogReader & ForgeIssueReader & ForgeCommentWriter & ForgeBranchWriter
-  & ForgeBranchStanding & ForgeReviewsReader
+  & ForgeReviewsReader
   & ForgeIssueCloser & ForgeIssueStateReader {
   const gh = runners.gh ?? hostGh;
   // Read-only `gh` calls: one shape for every failure, nothing secret in it.
@@ -1343,27 +1325,6 @@ export function githubForge(
       return Number.isSafeInteger(kib)
         ? { ok: true, kib }
         : { ok: false, code: 'unexpected_answer', reason: 'gh did not answer the size of a repository' };
-    },
-    async branchStanding(repo, branch) {
-      if (!plainRepo(repo) || !plainBranch(branch)) {
-        return { ok: false, code: 'unexpected_answer', reason: 'not a branch of a GitHub repository' };
-      }
-      const info = await read(['api', `repos/${repo}`, '--jq=.default_branch']); // portability: a GitHub API path and a jq filter, no file
-      if (!info.ok) return info;
-      if (info.result.code !== 0) return failed(info.result);
-      const defaultBranch = info.result.stdout.trim();
-      if (!plainBranch(defaultBranch)) return { ok: false, code: 'unexpected_answer', reason: 'gh did not answer the default branch' };
-      const classic = await read(['api', `repos/${repo}/branches/${branch}`, '--jq=.protected']); // portability: a GitHub API path and a jq filter, no file
-      if (!classic.ok) return classic;
-      if (classic.result.code !== 0) return failed(classic.result);
-      const flag = classic.result.stdout.trim();
-      if (flag !== 'true' && flag !== 'false') return { ok: false, code: 'unexpected_answer', reason: 'gh did not answer whether the branch is protected' };
-      // Rulesets apply without showing in the classic flag.
-      const rules = await read(['api', `repos/${repo}/rules/branches/${branch}`, '--jq=[.[].type] | join(" ")']); // portability: a GitHub API path and a jq filter, no file
-      if (!rules.ok) return rules;
-      if (rules.result.code !== 0) return failed(rules.result);
-      const types = rules.result.stdout.trim().split(/\s+/).filter((t) => t.length > 0);
-      return { ok: true, standing: { defaultBranch, protected: flag === 'true' || types.includes('deletion') } };
     },
     async commitParents(repo, sha) {
       if (!plainRepo(repo) || !COMMIT_SHA.test(sha)) {
