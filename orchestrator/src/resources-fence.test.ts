@@ -152,6 +152,29 @@ test('unfenced, the launch keeps the CLI\'s own sandbox exactly as the provider 
   assert.deepEqual([fallback.cmd, fallback.args], ['/usr/bin/codex', args]);
 });
 
+test('#1102 review: an npm CLI runs through the chosen node, its own arguments kept its own', () => {
+  const interpreter = { file: '/usr/local/bin/node', args: ['--no-warnings'] };
+  const script = '/usr/lib/node_modules/@openai/codex/bin/codex.js';
+  // What the fence adds to the CLI's arguments goes after the script, never to the interpreter.
+  const offArgs = { offArgs: ['--dangerously-bypass-sandbox'] };
+  const fenced = fenceMissionCommand(script, ['exec', '-'], 'unit-i1', TARGET, {
+    mode: 'auto', fence: fakeFence({ available: true, abi: 6 }), warn: () => {}, nestedSandbox: offArgs, interpreter,
+  });
+  assert.deepEqual(fenced.args.slice(fenced.args.indexOf('--') + 1),
+    ['/usr/local/bin/node', '--no-warnings', script, '--dangerously-bypass-sandbox', 'exec', '-']);
+  const unfenced = fenceMissionCommand(script, ['exec', '-'], 'unit-i2', TARGET, {
+    mode: 'off', fence: fakeFence({ available: true, abi: 6 }), warn: () => {}, nestedSandbox: offArgs, interpreter,
+  });
+  assert.deepEqual([unfenced.cmd, unfenced.args], ['/usr/local/bin/node', ['--no-warnings', script, 'exec', '-']]);
+  // No Timon home named: no fence layer, the interpreter still leads.
+  // The resource guard's scope, when this machine has one, wraps the whole: the command it ends on is what counts.
+  const argv = (launch: { cmd: string; args: string[] }) => [launch.cmd, ...launch.args];
+  assert.deepEqual(argv(wrapMissionLaunch(script, ['exec'], MISSION, { interpreter })).slice(-4), ['/usr/local/bin/node', '--no-warnings', script, 'exec']);
+  const plain = argv(wrapMissionLaunch(script, ['exec'], MISSION, { interpreter: null }));
+  assert.deepEqual(plain.slice(-2), [script, 'exec']);
+  assert.ok(!plain.includes('/usr/local/bin/node'));
+});
+
 test('fenced, a declared level missing from the launch is said, and the arguments are left alone', () => {
   const warnings: string[] = [];
   const launch = fenceMissionCommand('/usr/bin/codex', ['exec', '-'], 'unit-n5', TARGET, {

@@ -16,6 +16,9 @@
  * point `remote_url` elsewhere would choose where the next push a person
  * validates goes. Refused rather than silently switched back to "ask": the
  * caller learns why, and a person's choice is never undone behind them.
+ * Every change of the setting itself and of those fields, by anyone, gets its
+ * own audit row, so an agent that switches back to "ask" and repoints the
+ * remote leaves a trail before a person turns "resolve" on again.
  *
  * One exception, `POST …/integration/branch`: the Kanban planner checks the
  * branch of a new job while the person types or picks it, a new one or one
@@ -155,7 +158,12 @@ export function registerIntegrationRoutes(app: Router, deps: IntegrationRouteDep
     const slug = projectForRoute(req, res);
     if (!slug) return;
     const person = !!req.auth && isPersonAuth(req.auth);
+    let journal: { conflicts: string | null; pushTarget: string[] } = { conflicts: null, pushTarget: [] };
     const guard = (current: ProjectIntegration, next: ProjectIntegration): void => {
+      journal = {
+        conflicts: current.contributor_conflicts !== next.contributor_conflicts ? next.contributor_conflicts : null,
+        pushTarget: changedPushTargetFields(current, next),
+      };
       if (person || next.contributor_conflicts !== 'resolve') return;
       if (current.contributor_conflicts !== 'resolve') {
         throw new PersonRequired('only a signed-in person lets Timon resolve a contributor\'s conflict');
@@ -170,6 +178,11 @@ export function registerIntegrationRoutes(app: Router, deps: IntegrationRouteDep
     try {
       const integration = updateProjectIntegration(slug, req.body, { ...(deps.home ? { home: deps.home } : {}), guard });
       auditRequest(req, 'project.integration_set', `${slug}:${integration.mode}`);
+      // Their own rows: an agent may switch back to "ask", repoint the remote,
+      // then wait for a person to turn "resolve" on again. The journal shows
+      // who did each step; the field names only, a URL may carry a credential.
+      if (journal.conflicts) auditRequest(req, 'project.contributor_conflicts_set', `${slug}:${journal.conflicts}`);
+      if (journal.pushTarget.length > 0) auditRequest(req, 'project.push_target_changed', `${slug}:${journal.pushTarget.join(',')}`);
       announceProjectUpdated(slug, ['integration'], todoOriginFromRequest(req));
       res.json({ integration, configured: true });
     } catch (err) { answerError(res, err); }

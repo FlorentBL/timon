@@ -231,6 +231,27 @@ export interface ForgeThreadsReader {
   pullRequestReviewThreads(repo: string, number: number): Promise<ReviewThreadsOutcome>;
 }
 
+export const GENERAL_REVIEW_STATES = ['commented', 'changes_requested', 'approved'] as const;
+
+/** A submitted review's own text, the one written above its line comments. */
+export type GeneralReview = {
+  state: (typeof GENERAL_REVIEW_STATES)[number];
+  author: string | null;
+  body: string;
+  url: string | null;
+  submittedAt: string | null;
+};
+
+export type GeneralReviewsOutcome =
+  | { ok: true; reviews: GeneralReview[]; truncated: boolean }
+  | ForgeReadFailure;
+
+/** The text of the reviews submitted on a pull request: a reviewer often
+ *  writes what to change there rather than on a line. */
+export interface ForgeReviewsReader {
+  pullRequestReviews(repo: string, number: number): Promise<GeneralReviewsOutcome>;
+}
+
 /** The end of the log of a failed check, as the forge's CI printed it. */
 export type FailedCheckLog = {
   /** The last lines, at most `CHECK_LOG_TAIL_LINES` and `CHECK_LOG_TAIL_CHARS`. */
@@ -436,9 +457,14 @@ export type PullRequestBranch = {
 
 export type PullRequestBranchOutcome = { ok: true; branch: PullRequestBranch } | ForgeReadFailure;
 
+export type RepositorySizeOutcome = { ok: true; kib: number } | ForgeReadFailure;
+
 /** The branch of a pull request, read only. */
 export interface ForgeBranchReader {
   pullRequestBranch(repo: string, number: number): Promise<PullRequestBranchOutcome>;
+  /** The size GitHub reports for a repository (`size`, in KiB): how a fetch
+   *  is refused before it starts rather than measured once it is done. */
+  repositorySize(repo: string): Promise<RepositorySizeOutcome>;
 }
 
 export type BranchUpdateFailureCode = ForgeReadFailure['code'] | 'head_moved' | 'conflict' | 'forbidden';
@@ -476,7 +502,14 @@ export type BranchStandingOutcome = { ok: true; standing: BranchStanding } | For
  */
 export interface ForgeBranchStanding {
   branchStanding(repo: string, branch: string): Promise<BranchStandingOutcome>;
+  /**
+   * Whether the head branch of pull request `number` was ever deleted or
+   * restored since it was opened (its timeline): a branch there now at the
+   * same commit may then be another one, pushed again under the same name.
+   */
+  headRefDeleted(repo: string, number: number): Promise<HeadRefDeletedOutcome>;
 }
+export type HeadRefDeletedOutcome = { ok: true; deleted: boolean } | ForgeReadFailure;
 
 /** Most issues a list asks for, the most recent first. */
 export const ISSUE_LIST_LIMIT = 50;
@@ -489,6 +522,9 @@ export const REVIEW_THREAD_LIMIT = 20;
 export const REVIEW_THREAD_BODY_LIMIT = 1_000;
 /** Most review threads asked of the forge in one call. */
 const REVIEW_THREAD_PAGE = 100;
+/** Most reviews with a text kept, the latest; and reviews asked of the forge. */
+export const GENERAL_REVIEW_LIMIT = 10;
+const GENERAL_REVIEW_PAGE = 50;
 const LABEL_LIMIT = 20;
 const LABEL_NAME_LIMIT = 100;
 const CLOSING_ISSUE_LIMIT = 20;
@@ -907,6 +943,55 @@ const REVIEW_THREADS_QUERY = `query($owner: String!, $name: String!, $number: In
   }
 }`;
 
+const GeneralReviewSchema = z.object({
+  state: z.string().transform((v) => v.toLowerCase()).pipe(z.enum(GENERAL_REVIEW_STATES)),
+  author: LoginSchema.nullable().catch(null),
+  body: z.string().catch(''),
+  url: z.string().catch(''),
+  submittedAt: z.string().nullable().catch(null),
+});
+
+const ReviewsAnswerSchema = z.object({
+  data: z.object({
+    repository: z.object({
+      pullRequest: z.object({
+        reviews: z.object({ totalCount: z.int().nonnegative(), nodes: z.array(z.unknown()) }),
+      }),
+    }),
+  }),
+});
+
+/** The submitted reviews of a GraphQL answer that hold a text, oldest first,
+ *  the latest `GENERAL_REVIEW_LIMIT`; null when the answer is not one. A
+ *  pending or dismissed review is not one a reviewer stands by. */
+export function parseGeneralReviews(stdout: string): { reviews: GeneralReview[]; truncated: boolean } | null {
+  const parsed = ReviewsAnswerSchema.safeParse(jsonOf(stdout));
+  if (!parsed.success) return null;
+  const connection = parsed.data.data.repository.pullRequest.reviews;
+  const worded = itemsOf(connection.nodes, GeneralReviewSchema, connection.nodes.length)
+    .map((r): GeneralReview => ({
+      state: r.state,
+      author: r.author,
+      body: boundedText(r.body, REVIEW_THREAD_BODY_LIMIT),
+      url: httpsUrl(r.url),
+      submittedAt: r.submittedAt && !Number.isNaN(Date.parse(r.submittedAt)) ? new Date(r.submittedAt).toISOString() : null,
+    }))
+    .filter((r) => r.body.trim().length > 0);
+  const reviews = worded.slice(-GENERAL_REVIEW_LIMIT);
+  return { reviews, truncated: connection.totalCount > connection.nodes.length || worded.length > reviews.length };
+}
+
+const GENERAL_REVIEWS_QUERY = `query($owner: String!, $name: String!, $number: Int!) {
+  repository(owner: $owner, name: $name) {
+    pullRequest(number: $number) {
+      reviews(last: ${GENERAL_REVIEW_PAGE}, states: [COMMENTED, CHANGES_REQUESTED, APPROVED]) {
+        totalCount
+        nodes { state body url submittedAt author { login } }
+      }
+    }
+  }
+}`;
+
 /** What `gh api` answers when it creates an issue comment. */
 const CreatedComment = z.object({ id: z.number().int().positive(), html_url: z.string() });
 
@@ -964,7 +1049,7 @@ function pullRequestFrom(text: string): PullRequestRef | null {
 export function githubForge(
   configDir: string | null, runners: ForgeRunners = {},
 ): Forge & ForgeReader & ForgeChecksReader & ForgeCheckLogReader & ForgeIssueReader & ForgeCommentWriter & ForgeBranchWriter
-  & ForgeBranchStanding
+  & ForgeBranchStanding & ForgeReviewsReader
   & ForgeIssueCloser & ForgeIssueStateReader {
   const gh = runners.gh ?? hostGh;
   // Read-only `gh` calls: one shape for every failure, nothing secret in it.
@@ -1048,6 +1133,24 @@ export function githubForge(
       return answer
         ? { ok: true, ...answer }
         : { ok: false, code: 'unexpected_answer', reason: 'gh did not answer the review threads of a pull request' };
+    },
+    async pullRequestReviews(repo, number) {
+      const bad = badTarget(repo, number);
+      if (bad) return bad;
+      const [owner = '', name = ''] = repo.split('/');
+      const out = await read([
+        'api', 'graphql',
+        `--raw-field=query=${GENERAL_REVIEWS_QUERY}`,
+        `--raw-field=owner=${owner}`,
+        `--raw-field=name=${name}`,
+        `--field=number=${number}`,
+      ], 8 * 1024 * 1024);
+      if (!out.ok) return out;
+      if (out.result.code !== 0) return failed(out.result);
+      const answer = parseGeneralReviews(out.result.stdout);
+      return answer
+        ? { ok: true, ...answer }
+        : { ok: false, code: 'unexpected_answer', reason: 'gh did not answer the reviews of a pull request' };
     },
     async listIssues(repo, label) {
       const bad = badTarget(repo);
@@ -1237,6 +1340,17 @@ export function githubForge(
       }
       return { ok: true };
     },
+    async repositorySize(repo) {
+      if (!plainRepo(repo)) return { ok: false, code: 'unexpected_answer', reason: 'not a GitHub repository' };
+      const out = await read(['api', `repos/${repo}`, '--jq=.size']); // portability: a GitHub API path and a jq filter, no file
+      if (!out.ok) return out;
+      if (out.result.code !== 0) return failed(out.result);
+      const raw = out.result.stdout.trim();
+      const kib = /^\d{1,15}$/.test(raw) ? Number(raw) : Number.NaN;
+      return Number.isSafeInteger(kib)
+        ? { ok: true, kib }
+        : { ok: false, code: 'unexpected_answer', reason: 'gh did not answer the size of a repository' };
+    },
     async branchStanding(repo, branch) {
       if (!plainRepo(repo) || !plainBranch(branch)) {
         return { ok: false, code: 'unexpected_answer', reason: 'not a branch of a GitHub repository' };
@@ -1257,6 +1371,21 @@ export function githubForge(
       if (rules.result.code !== 0) return failed(rules.result);
       const types = rules.result.stdout.trim().split(/\s+/).filter((t) => t.length > 0);
       return { ok: true, standing: { defaultBranch, protected: flag === 'true' || types.includes('deletion') } };
+    },
+    async headRefDeleted(repo, number) {
+      const bad = badTarget(repo, number);
+      if (bad) return bad;
+      const out = await read([
+        'api', '--paginate', `repos/${repo}/issues/${number}/timeline?per_page=100`, // portability: a GitHub API path, no file
+        '--jq=.[] | select(.event == "head_ref_deleted" or .event == "head_ref_restored") | .event',
+      ], 16 * 1024 * 1024);
+      if (!out.ok) return out;
+      if (out.result.code !== 0) return failed(out.result);
+      const events = out.result.stdout.split('\n').map((line) => line.trim()).filter((line) => line.length > 0);
+      if (events.some((e) => e !== 'head_ref_deleted' && e !== 'head_ref_restored')) {
+        return { ok: false, code: 'unexpected_answer', reason: 'gh did not answer the timeline of a pull request' };
+      }
+      return { ok: true, deleted: events.length > 0 };
     },
     async commitParents(repo, sha) {
       if (!plainRepo(repo) || !COMMIT_SHA.test(sha)) {

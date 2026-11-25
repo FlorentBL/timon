@@ -50,7 +50,7 @@ import {
   type ForgeProposalRefusalCode, type ForgeProposalRow,
 } from './forge-proposals.js';
 import { forgeEndpointOf, forgeNetworkUrl, SSH_ALIAS_NAME, type ForgeEndpoint } from './forge-network-url.js';
-import { plainBranch, type PullRequestBranch } from './host/forge.js';
+import { plainBranch, type ForgeBranchReader, type PullRequestBranch } from './host/forge.js';
 import {
   gitVersionAtLeast, MIN_GIT_VERSION, openScratchRepo, reopenScratchRepo, SCRATCH_SIZE_LIMIT, sshHostName,
   type MergeTreeResult, type ScratchRepo,
@@ -327,6 +327,26 @@ function branchProblem(repo: string, branch: PullRequestBranch): Refusal | null 
   return null;
 }
 
+/**
+ * Refuses before the fetch a repository GitHub already reports larger than the
+ * scratch cap: git has no limit of its own while it fetches, so the check made
+ * after it (`fetchAndMerge`) only comes once the bytes are on the disk. The
+ * fetch reads the project's repository; the fork holds the contributor's own
+ * objects, which `refs/pull/<n>/head` brings along. A size GitHub would not
+ * tell refuses too: the fetch is never started blind.
+ */
+async function sizeProblem(forge: ForgeBranchReader, repos: readonly string[]): Promise<Refusal | null> {
+  const limitKib = SCRATCH_SIZE_LIMIT / 1024;
+  for (const repo of new Set(repos)) {
+    const size = await forge.repositorySize(repo);
+    if (!size.ok) return refuse(502, 'forge_read_failed', `the size of ${repo} could not be read: ${size.reason}`);
+    if (size.kib > limitKib) {
+      return refuse(413, 'conflict_fetch_too_large', `${repo} is larger than ${SCRATCH_SIZE_LIMIT / (1024 * 1024)} MB on GitHub`);
+    }
+  }
+  return null;
+}
+
 type Merged = { scratch: ScratchRepo; base: string; head: string; result: MergeTreeResult };
 
 /**
@@ -487,6 +507,9 @@ export async function prepareConflict(project: string, number: number, by: strin
       dropScratch(existing.scratch_dir);
     }
   }
+
+  const tooLarge = await sizeProblem(branchForge(integration.gh_config_dir, deps), [repo, branch.headRepository!]);
+  if (tooLarge) return tooLarge;
 
   const busyKey = `${project}:${repo}:${number}`;
   if (preparing.has(busyKey)) return refuse(409, 'conflict_invalid', 'this pull request is being merged already');

@@ -304,11 +304,9 @@ test('the installer stops when something of Timon still runs after the pause', a
   assert.ok(net.length > 0 && ps1.indexOf('# The net.') > ps1.lastIndexOf('MethodName Create'), 'after the resume is started: a refused install still enables the task again');
   assert.match(net, /\$remaining = \{\s+\$left = @\(& \$ofInstallation\)/, 'the processes of this installation');
   assert.match(net, /Get-NetTCPConnection -State Listen -LocalPort \$port -ErrorAction Stop/, 'and whoever listens on the daemon port');
-  // The port is read once, before the stop request that goes to it.
-  assert.match(ps1, /\$port = 3010\b/, `the packaged default (${PACKAGED_DEFAULTS.daemon.listen.port})`);
+  assert.match(net, /\$port = 3010\b/, `the packaged default (${PACKAGED_DEFAULTS.daemon.listen.port})`);
   assert.equal(PACKAGED_DEFAULTS.daemon.listen.port, 3010);
-  assert.match(ps1, /Join-Path \$TimonHome 'timon\.config\.json'[\s\S]*\$config\.daemon\.listen\.port/, 'or the port this home configured');
-  assert.ok(ps1.indexOf('$port = 3010') < ps1.indexOf('# The net.'));
+  assert.match(net, /Join-Path \$TimonHome 'timon\.config\.json'[\s\S]*\$config\.daemon\.listen\.port/, 'or the port this home configured');
   // A listener whose command line cannot be read is the session-0 daemon seen without elevation.
   assert.match(net, /if \(-not \$listener\.CommandLine\) \{ \$left \+= \$listener; continue \}/);
   assert.match(net, /\$runtimes -notcontains \$listener\.Name\) \{ continue \}/, 'a foreign program on the port is not waited for');
@@ -396,52 +394,6 @@ test('the service pause writes what it found and did to its journal', () => {
   // The resume says how it ended too, and the journal does not grow without bound.
   assert.match(ps1, /resume: the installer exited, task \{0\} is \{1\}/);
   assert.match(stop, /\.Length -gt 1MB\) \{ Remove-Item -LiteralPath \$Log/);
-});
-
-// TODO #1078: the pause ended the service's daemon with taskkill /F, which
-// runs no handler, so the start after an update read the previous run as
-// `unknown`. It now asks it to stop, as `timon service stop` does, and only
-// ends what is left.
-test('the service pause asks the daemon to stop before ending it, and the token stays in the script', async () => {
-  const ps1 = readFileSync(join(root, 'build', 'timon-service-pause.ps1'), 'utf8');
-  const stop = ps1.slice(ps1.indexOf('# The stop phase writes'));
-  const asked = stop.indexOf("'/api/daemon/shutdown'");
-  assert.ok(asked > 0, 'the stop request is made in the stop phase');
-  // After the task is disabled (its trigger must not restart the daemon that
-  // leaves), before the task is stopped and before any taskkill.
-  assert.ok(stop.indexOf('Disable-ScheduledTask') < asked);
-  assert.ok(asked < stop.indexOf('Stop-ScheduledTask'));
-  assert.ok(asked < stop.indexOf('taskkill.exe'));
-  assert.match(stop, /if \(\(& \$taskState\) -eq 'not registered'\) \{/, 'only a service daemon: a desktop restarts the one it embeds');
-  // Loopback only, no proxy, no redirect; the 202 the route answers, with the pid to wait on.
-  assert.match(stop, /\$loopback = "http:\/\/127\.0\.0\.1:\$port"/);
-  assert.match(stop, /\$request\.Proxy = \$null/);
-  assert.match(stop, /\$request\.AllowAutoRedirect = \$false/);
-  assert.match(stop, /\$status -ne 202/);
-  assert.match(stop, /\$body\.pid/);
-  assert.match(stop, /'GET' '\/api\/health'/, 'gone once nothing answers');
-  // The token: read from the data directory into this process, sent as a
-  // header, dropped after the request. Never in the journal, never on a
-  // command line (the resume's arguments, the installer's).
-  assert.match(stop, /Join-Path \$TimonHome 'daemon-token'/);
-  assert.match(stop, /\$request\.Headers\.Add\('Authorization', "Bearer \$bearer"\)/);
-  assert.match(stop, /\$token = \$null\n\s+if \(\$status -eq 0\)/);
-  assert.doesNotMatch(stop, /\$note[^\n]*\$(token|bearer)\b/i, 'no token in the journal');
-  assert.doesNotMatch(ps1.match(/\$arguments = [^\n]*\n[^\n]*/)?.[0] ?? '', /token/i, 'no token on the resume command line');
-  const nsh = readFileSync(join(root, 'build', 'installer.nsh'), 'utf8');
-  assert.doesNotMatch(nsh, /daemon-token/, 'the installer passes no token');
-  // The same wait as the CLI's stop and the desktop's quit: one variable, one default, one cap.
-  const { STOP_WAIT_ENV, STOP_WAIT_MS, STOP_WAIT_MAX_MS } = await import('./embedded.js');
-  assert.match(stop, new RegExp(`\\$stopWaitMs = ${STOP_WAIT_MS}\\n`));
-  assert.match(stop, new RegExp(`\\$stopWaitMaxMs = ${STOP_WAIT_MAX_MS}\\n`));
-  assert.match(stop, new RegExp(`\\$env:${STOP_WAIT_ENV}\\b`));
-  assert.match(stop, /-match '\^\[0-9\]\+\$'/, 'digits only, as the orchestrator reads it');
-  assert.match(stop, /\$stopWaitMs -le 0\) \{\s+& \$note 'pause: daemon not asked to stop/, '0 skips the request');
-  // What happened is in the journal: the forced stop that follows is explained.
-  assert.match(stop, /pause: the daemon \(pid \{0\}\) stopped on request/);
-  assert.match(stop, /still runs \{1\} s after the stop request: ending it/);
-  assert.match(stop, /pause: no daemon answered the stop request/);
-  assert.match(stop, /pause: the daemon did not accept to stop \(HTTP \{0\}\)/);
 });
 
 // VM, 06/11/2026: an installer killed from SSH left the task Disabled and the

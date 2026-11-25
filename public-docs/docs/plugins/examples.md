@@ -1243,9 +1243,9 @@ export function apply(ctx) {
 
 ## A mascot head the plugin draws {#mascot-head}
 
-Source: `examples/plugin-mascot-head`. Manifest ID: `example-mascot-head`. Minimum API: **15**.
+Source: `examples/plugin-mascot-head`. Manifest ID: `example-mascot-head`. Minimum API: **19**.
 
-API 15. A mascot pack whose part is a whole head drawn by the plugin's own component: an ember, a flame in the agent's colour whose eyes follow its state. The manifest declares the slug under timon.mascot.shape; the browser half registers it in the mascot.parts slot with a head component instead of the four skull numbers. Only the agents whose skull is `example-mascot-head:ember` are drawn by it; every other agent stays Timon's, in the person's 2D or 3D style, and several packs add their heads side by side. The component reads useAgentMascot(), like an agent.mascot occupant, and paints an svg (or a canvas) of `size` pixels. A head that throws is replaced by Timon's for that agent; remove the plugin and the agent shows its role's default skull.
+API 19. A mascot pack whose part is a whole head drawn by the plugin's own component: an ember, a flame in the agent's colour whose eyes follow its state. The manifest declares the slug under timon.mascot.shape; the browser half registers it in the mascot.parts slot with a head component instead of the four skull numbers. Only the agents whose skull is `example-mascot-head:ember` are drawn by it; every other agent stays Timon's, in the person's 2D or 3D style, and several packs add their heads side by side. The component reads useAgentMascot(), like an agent.mascot occupant, and paints an svg (or a canvas) of `size` pixels. A head that throws is replaced by Timon's for that agent; remove the plugin and the agent shows its role's default skull.
 
 Permissions: none. Read the [related guide](mascot-pack.md).
 

@@ -118,7 +118,7 @@ import { baseBackendId, isAccountInstanceId, splitBackendInstance } from './back
 import { backendOwnerPlugin, backendTrust, type BackendTrust } from './backends/registry.js';
 import { DEFAULT_BACKEND_CAPABILITIES } from './backends/types.js';
 import { BUILTIN_DECLARATIONS } from './backends/builtin-declarations.js';
-import { daemonNode, withLaunchPath } from './host/launch-path.js';
+import { chooseLaunchNode, nodeInterpreter, withLaunchPath } from './host/launch-path.js';
 import { missionProcessDir, trackMissionProcess } from './host/mission-processes.js';
 import { closeLaunchSeal, openLaunchSeal } from './backends/launch-seal.js';
 import { assertSpawnPinned, buildSealedSpawn } from './backends/sealed-spawn.js';
@@ -2036,6 +2036,16 @@ async function spawnMissionProcess(
   // a deny list must never swallow. Inert on the current scope launcher —
   // `host/isolation.ts` says why, at length.
   const backendBin = resolveBackendBin(host, spec.cmd);
+  // Chosen on the host, never from the PATH the mission sets (#1102): the machine's own `node`,
+  // else the daemon's runtime once checked, which the fence already opens to the mission. An npm
+  // CLI (`#!/usr/bin/env node`) is started with it, so no PATH entry decides what runs the CLI.
+  const node = chooseLaunchNode({
+    platform: host.platform,
+    findNode: () => host.bin('node'),
+    // Only Electron's binary is no `node`: a daemon run from sources IS on the right one.
+    selfExecutable: process.versions.electron ? process.execPath : undefined,
+  });
+  const interpreter = nodeInterpreter(backendBin, node, host.platform);
   const project = cfg.project ?? projectFromCwd(cwd) ?? '';
   // The fence (`resources.ts`) is the innermost wrapper: what it needs beyond
   // the working directory is the mission's identity, from which it reopens
@@ -2047,6 +2057,7 @@ async function spawnMissionProcess(
     backend: backend.name,
     timonHome: TIMON_HOME,
     nestedSandbox: nestedSandboxOf(backend.name),
+    interpreter,
     ...missionFenceTarget({ missionId, agentName, project, backend: backend.name, cwd: cwd ?? null, mcpServers: cfg.mcp_servers ?? [] }),
   });
   // Vault slice computed HERE so the inject journal (§8 / §12.8) records the
@@ -2080,12 +2091,8 @@ async function spawnMissionProcess(
   }), {
     platform: host.platform,
     binary: backendBin,
-    findNode: () => { try { return host.bin('node'); } catch { return null; } },
-    // No `node` on the machine (one installed by fnm or mise, which only a login shell lists):
-    // the daemon's own Node, which the fence already opens to the mission (#1102).
-    runtimeNode: daemonNode(),
-    // Only Electron's binary is no `node`: a daemon run from sources IS on the right one.
-    selfExecutable: process.versions.electron ? process.execPath : undefined,
+    // The same `node` the CLI is started with, for the MCP servers it starts as `node <script>`.
+    node,
   });
   if (launch.fence?.state === 'fenced') {
     // A `mktemp` lands in the mission's own folder, not in a /tmp every other

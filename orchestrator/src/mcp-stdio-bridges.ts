@@ -10,7 +10,7 @@ import { bus, type BusEvent } from './bus.js';
 import { dbApi } from './db.js';
 import { getHost } from './host/index.js';
 import { stopProcessGroup } from './host/kill-tree.js';
-import { daemonNode, withLaunchPath } from './host/launch-path.js';
+import { chooseLaunchNode, withLaunchPath } from './host/launch-path.js';
 import { missionProcessDir, trackMissionProcess } from './host/mission-processes.js';
 import { mcpRelayRoute } from './mcp-relay-route.js';
 import { mcpStdioBridgeLaunch } from './mcp.js';
@@ -29,9 +29,11 @@ export function bridgeEnvironment(serverEnv: Record<string, string>): NodeJS.Pro
   const host = getHost();
   const base = withLaunchPath(systemEnv(process.env), {
     platform: host.platform,
-    findNode: () => { try { return host.bin('node'); } catch { return null; } },
-    runtimeNode: daemonNode(),
-    selfExecutable: process.versions.electron ? process.execPath : undefined,
+    node: chooseLaunchNode({
+      platform: host.platform,
+      findNode: () => host.bin('node'),
+      selfExecutable: process.versions.electron ? process.execPath : undefined,
+    }),
   });
   return { ...base, ...serverEnv };
 }

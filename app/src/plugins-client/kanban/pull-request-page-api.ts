@@ -20,6 +20,11 @@ export type PullState = 'open' | 'closed' | 'merged';
 export type ReviewState = 'approved' | 'changes_requested' | 'commented' | 'dismissed' | 'pending';
 export type CheckStatus = 'pass' | 'fail' | 'pending' | 'skipped';
 
+export const REACTION_CONTENTS = ['thumbs_up', 'thumbs_down', 'laugh', 'hooray', 'confused', 'heart', 'rocket', 'eyes'] as const;
+export type ReactionContent = (typeof REACTION_CONTENTS)[number];
+/** How many people reacted with one emoji. */
+export type PageReaction = { content: ReactionContent; count: number };
+
 export type PageComment = {
   kind: 'comment';
   author: string | null;
@@ -28,6 +33,8 @@ export type PageComment = {
   createdAt: string;
   url: string | null;
   hidden: boolean;
+  /** Absent from an older daemon. */
+  reactions?: PageReaction[];
 };
 
 export type PageReview = {
@@ -37,11 +44,38 @@ export type PageReview = {
   body: string;
   bodyTruncated: boolean;
   createdAt: string;
+  reactions?: PageReaction[];
 };
 
-export type PageTimelineItem = PageComment | PageReview;
+/** A label added to or removed from the pull request. */
+export type PageLabelEvent = { kind: 'labeled' | 'unlabeled'; actor: string | null; createdAt: string; label: ForgeLabel };
 
-export type PageThreadComment = { author: string | null; body: string; bodyTruncated: boolean; createdAt: string; url: string | null };
+/** Its branch rewritten: the heads before and after, and GitHub's comparison of the two. */
+export type PageForcePushEvent = {
+  kind: 'force_pushed';
+  actor: string | null;
+  createdAt: string;
+  before: string | null;
+  after: string | null;
+  url: string | null;
+};
+
+export type PageEvent = PageLabelEvent | PageForcePushEvent;
+
+export type PageTimelineItem = PageComment | PageReview | PageEvent;
+
+/** A comment or a review: what the conversation tab counts. */
+export const isPageText = (item: PageTimelineItem): item is PageComment | PageReview =>
+  item.kind === 'comment' || item.kind === 'review';
+
+export type PageThreadComment = {
+  author: string | null;
+  body: string;
+  bodyTruncated: boolean;
+  createdAt: string;
+  url: string | null;
+  reactions?: PageReaction[];
+};
 
 export type PageThread = {
   path: string | null;
@@ -89,6 +123,8 @@ export type PullRequestPage = {
   changedFiles: number;
   body: string;
   bodyTruncated: boolean;
+  /** The reactions to the description; absent from an older daemon. */
+  reactions?: PageReaction[];
   labels: ForgeLabel[];
   milestone: { title: string; url: string | null } | null;
   assignees: string[];
@@ -218,7 +254,8 @@ forgeMarked.use({
     link(this: { parser: { parseInline: (tokens: Tokens.Link['tokens']) => string } }, token: Tokens.Link): string {
       const label = this.parser.parseInline(token.tokens);
       if (!/^https?:\/\//i.test(token.href)) return label;
-      return `<a href="${escapeHtml(token.href)}" target="_blank" rel="noopener noreferrer">${label}</a>`;
+      // `target` and `rel` are set after the sanitizer, which drops the first.
+      return `<a href="${escapeHtml(token.href)}">${label}</a>`;
     },
   },
 });
@@ -227,9 +264,7 @@ forgeMarked.use({
 export function forgeMarkdownHtml(md: string): string {
   if (!md.trim()) return '';
   const raw = forgeMarked.parse(md, { async: false }) as string;
-  const html = sanitizeMarkdownHtml(raw);
-  // The sanitizer may drop `target`: every kept link is set apart again.
-  return html.replace(/<a (?![^>]*target=)/g, '<a target="_blank" rel="noopener noreferrer" ');
+  return sanitizeMarkdownHtml(raw, { linksApart: true });
 }
 
 /**

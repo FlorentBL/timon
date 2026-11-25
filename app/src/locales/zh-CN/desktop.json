@@ -10,6 +10,12 @@
       "daemon": "守护进程：{state, select, running {运行中} other {无法连接}}（{origin}）",
       "quit": "退出"
     },
+    "contextMenu": {
+      "cut": "剪切",
+      "copy": "复制",
+      "paste": "粘贴",
+      "selectAll": "全选"
+    },
     "tray": {
       "iconMissing": "无法加载通知区域图标。",
       "iconMissingDetail": "请重新安装 Timon 以恢复图标。你可以继续使用此窗口；关闭窗口将退出 Timon。"

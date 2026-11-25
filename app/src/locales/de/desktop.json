@@ -10,6 +10,12 @@
       "daemon": "Daemon: {state, select, running {läuft} other {nicht erreichbar}} ({origin})",
       "quit": "Beenden"
     },
+    "contextMenu": {
+      "cut": "Ausschneiden",
+      "copy": "Kopieren",
+      "paste": "Einsetzen",
+      "selectAll": "Alles auswählen"
+    },
     "tray": {
       "iconMissing": "Das Symbol im Infobereich konnte nicht geladen werden.",
       "iconMissingDetail": "Bitte installiere Timon neu, um das Symbol wiederherzustellen. Du kannst dieses Fenster weiter nutzen; wenn du es schließt, wird Timon beendet."

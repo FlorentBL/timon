@@ -19,7 +19,7 @@ It installs the deb package on Debian and Ubuntu (it asks for your password once
 
 Use the supplied deb package, recommended during beta: it also installs the `timon` terminal command without requiring Node.js. AppImage remains portable and does not install a global CLI. Open Timon and follow [First run](first-run.md). The setup flow checks tools and installs a systemd user service so that agent work can continue after the window closes.
 
-Spell checking is off in the desktop app on Linux: it would need dictionaries downloaded from Google on first launch, and the app makes no request you did not ask for. On Windows and macOS the system's own spell checker is used, with nothing downloaded.
+Spell checking is off in the desktop app on Linux: it would need dictionaries downloaded from Google on first launch, and the app makes no request you did not ask for. On Windows and macOS the system's own spell checker is used, with nothing downloaded. A right click in a text field of the desktop app opens **Cut**, **Copy**, **Paste** and **Select All** on every system (only **Paste** and **Select All** in a password field), with the spelling suggestions of a misspelled word on Windows and macOS.
 
 ## From an authorised source checkout
 

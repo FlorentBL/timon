@@ -209,15 +209,53 @@ export async function headSha(cwd: string): Promise<string | null> {
   }
 }
 
+/** The tail of each worktree folder's queue of gestures, by resolved path. */
+const worktreeLocks = new Map<string, Promise<void>>();
+
+/**
+ * Runs `fn` alone on the worktree folder `path`, within this process: the
+ * folder of a task is computed from its id, so a task reopened and dispatched
+ * while the cleanup after a landing removes its worktree would otherwise get
+ * the folder being deleted, or have its fresh one deleted
+ * (`integration-cleanup.ts`). Every gesture that makes, reuses or removes a
+ * task's folder for the dispatcher or the cleanup takes it. Not reentrant.
+ * One daemon per home runs every dispatcher and every cleanup, so no mark in
+ * the database is needed.
+ */
+export async function withWorktreeLock<T>(path: string, fn: () => Promise<T>): Promise<T> {
+  const key = resolve(path);
+  const before = worktreeLocks.get(key) ?? Promise.resolve();
+  let release!: () => void;
+  const mine = new Promise<void>((done) => { release = done; });
+  const tail = before.then(() => mine);
+  worktreeLocks.set(key, tail);
+  await before;
+  try {
+    return await fn();
+  } finally {
+    release();
+    if (worktreeLocks.get(key) === tail) worktreeLocks.delete(key);
+  }
+}
+
 /**
  * Creates a worktree for a task. Idempotent: if a worktree for this
  * `taskId` already exists on disk, returns its info without recreating it.
  *
  * `repoCwd` must point to the main repo (typically the agent's cfg.cwd).
  * `git worktree add` runs there; the worktree lands
- * in WORKTREES_ROOT/<taskId>.
+ * in WORKTREES_ROOT/<taskId>. Under {@link withWorktreeLock}.
  */
 export async function createWorktree(
+  taskId: string,
+  repoCwd: string,
+  base?: string,
+  branchName?: string,
+): Promise<WorktreeInfo> {
+  return withWorktreeLock(join(WORKTREES_ROOT, taskId), () => createWorktreeLocked(taskId, repoCwd, base, branchName));
+}
+
+async function createWorktreeLocked(
   taskId: string,
   repoCwd: string,
   base?: string,
@@ -534,9 +572,14 @@ async function unlinkBeforeRemoval(worktreePath: string): Promise<void> {
  * the folder: Windows locks a process's current directory, and a git that
  * stands in the folder it deletes fails with "Permission denied". `root` is
  * the folder its leftovers may be purged from (a pilot's worktree lives in
- * another one than the tasks').
+ * another one than the tasks'). `guard`, called right before the removal,
+ * keeps the folder by answering false (it throws, like a refusal of git).
  */
-export async function releaseWorktreeFolder(path: string, root: string = WORKTREES_ROOT): Promise<void> {
+export async function releaseWorktreeFolder(
+  path: string,
+  root: string = WORKTREES_ROOT,
+  guard?: () => Promise<boolean>,
+): Promise<void> {
   const r = await exec(
     'git',
     ['-C', path, 'rev-parse', '--path-format=absolute', '--git-common-dir'],
@@ -544,6 +587,9 @@ export async function releaseWorktreeFolder(path: string, root: string = WORKTRE
   );
   const commonDir = r.stdout.trim();
   await unlinkBeforeRemoval(path);
+  // Git checks that the folder is clean, never what its HEAD holds: a caller
+  // that proved it earlier reads it again here, as late as it can.
+  if (guard && !(await guard())) throw new Error('the worktree changed before its removal');
   await exec('git', ['-C', commonDir || path, 'worktree', 'remove', path], { timeout: 15_000 });
   purgeShell(root, path, 0, Date.now());
 }

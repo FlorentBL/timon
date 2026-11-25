@@ -1,7 +1,7 @@
 /**
  * The page of one pull request of a project, as the detail window of the Pull
  * requests widget shows it: GitHub's page, read only (`host/forge-pull-view.ts`),
- * and the end of a failed check's log.
+ * its timeline events among its comments, and the end of a failed check's log.
  *
  * A short cache per (project, repository, number) keeps a window opened twice
  * from starting `gh` twice. It is bypassed when the caller knows the pull
@@ -13,7 +13,7 @@ import { bus, type BusEvent } from './bus.js';
 import { projectRepository, type ExternalPrRefusal } from './external-pr-review.js';
 import { githubForge, type FailedCheckLog, type ForgeCheckLogReader } from './host/forge.js';
 import {
-  githubPullPageReader, type ForgePullPageReader, type PullRequestPage, type ReviewThreadsPage,
+  githubPullPageReader, type ForgePullPageReader, type PullEventsPage, type PullRequestPage, type ReviewThreadsPage,
 } from './host/forge-pull-view.js';
 
 /** How long a page read is shown again without asking the forge. */
@@ -53,6 +53,23 @@ export function forgetPullRequestPages(project: string | null = null): void {
   for (const [key, entry] of cache) if (entry.project === project) cache.delete(key);
 }
 
+/**
+ * The page's timeline with the events among its comments and reviews, oldest
+ * first. Past its bound the page kept the latest comments: an event older
+ * than the first one kept would stand alone among them, so it counts with the
+ * entries left out.
+ */
+export function withEvents(page: PullRequestPage, events: PullEventsPage | null): Pick<PullRequestPage, 'timeline' | 'timelineMore'> {
+  if (!events || events.events.length + events.eventsMore === 0) return { timeline: page.timeline, timelineMore: page.timelineMore };
+  const from = page.timelineMore > 0 ? page.timeline[0]?.createdAt ?? '' : '';
+  const kept = events.events.filter((e) => e.createdAt >= from);
+  return {
+    // A stable sort: at the same second, a comment stays before an event.
+    timeline: [...page.timeline, ...kept].sort((a, b) => a.createdAt.localeCompare(b.createdAt)),
+    timelineMore: page.timelineMore + events.eventsMore + (events.events.length - kept.length),
+  };
+}
+
 export type PageOutcome = { ok: true; view: PullRequestPageView; cached: boolean } | ExternalPrRefusal;
 
 export async function readPullRequestPage(
@@ -69,13 +86,16 @@ export async function readPullRequestPage(
     return { ok: true, view: known.view, cached: true };
   }
   const reader = (deps.pageReader ?? ((dir) => githubPullPageReader(dir)))(integration.gh_config_dir);
-  const [page, threads] = await Promise.all([
+  const [page, threads, events] = await Promise.all([
     reader.pullRequestPage(repo, number),
     reader.pullRequestThreadsPage(repo, number),
+    reader.pullRequestEvents(repo, number),
   ]);
   if (!page.ok) return { ok: false, status: 502, code: 'forge_read_failed', reason: page.reason };
+  // The events failing leaves the conversation as `gh pr view` gives it.
   const view: PullRequestPageView = {
     ...page.page,
+    ...withEvents(page.page, events.ok ? events.value : null),
     threads: threads.ok ? threads.value.threads : [],
     threadsMore: threads.ok ? threads.value.threadsMore : 0,
     threadsError: threads.ok ? null : threads.reason,

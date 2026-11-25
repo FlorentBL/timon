@@ -8,7 +8,7 @@
   "files": ["lib", "README.md", "SIGNATURE"],
   "timon": {
     "id": "example-mascot-head",
-    "apiVersion": 15,
+    "apiVersion": 19,
     "kind": "behavior",
     "label": "Ember head",
     "description": "Adds an ember head to the mascot configurator: a flame in the agent's colour that this plugin draws itself, whose eyes follow its state.",

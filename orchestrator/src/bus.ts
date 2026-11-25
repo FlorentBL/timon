@@ -257,6 +257,10 @@ export type BusEvent =
   // `notificationId` is set only when the ping announces a creation (native
   // triggers listen for exactly that), never on a read or a dismiss.
   | { kind: 'notifications_changed'; ownerUserId?: string | null; notificationId?: string }
+  // A proposed write on a project's forge was created, edited, claimed,
+  // published, failed or discarded (`forge-proposals.ts`). Ids only: the
+  // screens read the proposal again behind its route (`projects:manage`).
+  | { kind: 'forge_proposals_changed'; project: string; proposalId: string }
   // Emitted by the daemon on each real recomposition of the plugin tree
   // (add / remove / enable / disable, or a bundle `rev` that changes).
   // Read-only: plugins do not emit (§10.4). The front uses it

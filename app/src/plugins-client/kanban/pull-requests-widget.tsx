@@ -25,7 +25,7 @@
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { Copy, Eye, GitPullRequest, Loader2, MoreHorizontal, ScanSearch } from 'lucide-react';
+import { Copy, GitPullRequest, Loader2, MoreHorizontal, ScanSearch } from 'lucide-react';
 import * as Dropdown from '@radix-ui/react-dropdown-menu';
 import { toast } from 'sonner';
 import { Tile } from '@/components/tile';
@@ -49,7 +49,6 @@ import {
 import { diffLineKind, getLanding, type Landing } from './landing-api';
 import { DIFF_LINE_CLASS } from './landing-preview-dialog';
 import { JobDialog } from './job-dialog';
-import { JobLinksMenuItems } from './job-links-menu';
 import { useTodoOpener } from './todo-opener';
 import { proposalsForPull, waitingCount, type ForgeProposal } from './forge-proposals-api';
 import { ProposalChip } from './proposal-chip';
@@ -62,7 +61,7 @@ import { useLandingChanges, useLandingFallbackPoll, type LandingChange } from '.
 import { landsLocally, LocalLandingEmpty, useLandingMode } from './local-landing';
 import { onIntegrationChanged } from './project-integration-api';
 import { PullRequestDialog } from './pull-request-dialog';
-import { PULL_MENU_ITEM, PullActionMenuItems } from './pull-request-actions';
+import { PullActionMenuItems, PullLinkItems } from './pull-request-actions';
 
 /** How often a running review is asked for its verdict. */
 const RUNNING_POLL_MS = 15_000;
@@ -341,13 +340,6 @@ export function PullRequestsWidget({ handle, className }: WidgetProps) {
           onOpenTodo={(id) => { setDetail(null); openTodo(id); }}
           actions={pullRequestActions(detail, workOn(detail))}
           onAction={(id) => run(detail, id)}
-          links={(
-            <PullLinkItems
-              pull={detail}
-              onOpenJob={(id) => { setDetail(null); void openJob(id); }}
-              onOpenTodo={(id) => { setDetail(null); openTodo(id); }}
-            />
-          )}
         />
       )}
 
@@ -488,25 +480,6 @@ const BRANCH_CHIP_TONE = {
   behind: 'bg-foreground/[0.06] text-muted-foreground',
 } as const;
 
-/** The way from a pull request to its job and its ideas, after its gestures in a "…" menu. */
-function PullLinkItems({ pull, onOpenJob, onOpenTodo }: {
-  pull: PullRequestItem;
-  onOpenJob: (id: string) => void;
-  onOpenTodo: (id: number) => void;
-}) {
-  const jobId = pull.links?.job_id ?? null;
-  return (
-    <>
-      {jobId && (
-        <Dropdown.Item data-menu-job={jobId} onSelect={() => onOpenJob(jobId)} className={PULL_MENU_ITEM}>
-          <Eye className="size-3.5" />{t('pullRequests.showJob')}
-        </Dropdown.Item>
-      )}
-      <JobLinksMenuItems links={pull.links} onOpenTodo={onOpenTodo} itemClassName={PULL_MENU_ITEM} />
-    </>
-  );
-}
-
 /** The entries of a row's "…" menu: its gestures in the window's order, then its links. */
 function PullMenuItems({ pull, actions, onRun, onOpenJob, onOpenTodo }: {
   pull: PullRequestItem;
@@ -546,20 +519,21 @@ function PullRow({
   const meta = [`#${pull.number}`, pull.author ?? t('pullRequests.deletedAuthor')];
   if (pull.isDraft) meta.push(t('pullRequests.draft'));
   return (
-    <li data-pull-row={pull.number} className="group/pull flex items-center gap-1 rounded-lg bg-muted/30 py-2 pl-2.5 pr-1 transition-colors hover:bg-muted/50 has-[[data-pull-open]:focus-visible]:bg-muted/50">
-      <div
-        role="button"
-        tabIndex={0}
-        data-pull-open=""
-        aria-label={t('pullRequests.openDetail', { number: pull.number, title: pull.title })}
-        onClick={onOpen}
-        onKeyDown={(e) => {
-          if (e.target !== e.currentTarget) return;
-          if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onOpen(); }
-        }}
-        className="min-w-0 flex-1 cursor-pointer rounded-md outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background"
-      >
-        <div className="line-clamp-2 break-words text-[12.5px] font-medium leading-snug text-foreground group-hover/pull:underline group-hover/pull:decoration-foreground/30 group-hover/pull:underline-offset-2" title={pull.title}>{pull.title}</div>
+    // The row opens the window through one real button, its title, whose
+    // `::after` covers the whole row: the chip and the buttons beside it are
+    // its siblings, raised above that cover, never controls nested inside it.
+    <li data-pull-row={pull.number} className="group/pull relative flex items-center gap-1 rounded-lg bg-muted/30 py-2 pl-2.5 pr-1 transition-colors hover:bg-muted/50 has-[[data-pull-open]:focus-visible]:bg-muted/50 has-[[data-pull-open]:focus-visible]:ring-2 has-[[data-pull-open]:focus-visible]:ring-ring">
+      <div className="min-w-0 flex-1">
+        <button
+          type="button"
+          data-pull-open=""
+          aria-label={t('pullRequests.openDetail', { number: pull.number, title: pull.title })}
+          onClick={onOpen}
+          className="line-clamp-2 block w-full cursor-pointer break-words text-left text-[12.5px] font-medium leading-snug text-foreground outline-none after:absolute after:inset-0 after:rounded-lg group-hover/pull:underline group-hover/pull:decoration-foreground/30 group-hover/pull:underline-offset-2"
+          title={pull.title}
+        >
+          {pull.title}
+        </button>
         <div className="mt-0.5 flex flex-wrap items-center gap-x-1.5 gap-y-1 text-[11px] text-muted-foreground">
           <span className="truncate tabular-nums">{meta.join(' · ')}</span>
           {chip && (
@@ -574,12 +548,10 @@ function PullRow({
           )}
           {branchBusy && <Loader2 className="size-3 shrink-0 animate-spin" aria-label={t('pullRequests.branchPreparing')} />}
           {badge && <VerdictChip badge={badge} />}
-          <span className="contents" onClick={keepInside} onKeyDown={keepInside}>
-            <ProposalChip proposals={proposals} onOpen={onOpenProposal} />
-          </span>
+          <ProposalChip proposals={proposals} onOpen={onOpenProposal} className="relative z-10" />
         </div>
       </div>
-      <div className="flex shrink-0 items-center gap-1" onClick={keepInside} onKeyDown={keepInside}>
+      <div className="relative z-10 flex shrink-0 items-center gap-1" onClick={keepInside} onKeyDown={keepInside}>
         {/* Icon only: the row's width belongs to the pull request, not to its action. */}
         <WidgetButton
           data-pull-review=""

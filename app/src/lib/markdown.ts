@@ -242,7 +242,7 @@ export function createStreamingMarkdownRenderer() {
       const raw = (table ? streamTableParser : streamParser).parser([token]);
       return { signature, block: {
         key: `${index}:${token.type}`,
-        html: sanitizeMarkdownHtml(raw, true),
+        html: sanitizeMarkdownHtml(raw, { copyLinks: true }),
         table,
       } };
     });
@@ -271,7 +271,7 @@ function escapeAttr(s: string): string {
 export function mdToSafeHtml(md: string, options: { copyLinks?: boolean } = {}): string {
   if (!md) return '';
   const raw = marked.parse(md, { async: false }) as string;
-  return sanitizeMarkdownHtml(raw, options.copyLinks);
+  return sanitizeMarkdownHtml(raw, { copyLinks: options.copyLinks === true });
 }
 
 /**
@@ -341,8 +341,15 @@ function rewriteLocalFileHref(node: Element, data: { attrName: string; attrValue
   if (rewritten !== null) data.attrValue = rewritten;
 }
 
-/** Decorate sanitized links so entities are decoded exactly once for copying. */
-export function sanitizeMarkdownHtml(raw: string, copyLinks = false): string {
+export type SanitizeOptions = {
+  /** A copy button after each http(s) link, its entities decoded exactly once. */
+  copyLinks?: boolean;
+  /** Every kept link opens apart from the app: a new tab, no opener, no referrer. */
+  linksApart?: boolean;
+};
+
+/** Sanitized HTML of rendered markdown, its links decorated as `options` asks. */
+export function sanitizeMarkdownHtml(raw: string, options: SanitizeOptions = {}): string {
   // Installed for this call only: the instance is shared with the other sanitizers.
   DOMPurify.addHook('uponSanitizeAttribute', rewriteLocalFileHref);
   let fragment: DocumentFragment;
@@ -353,10 +360,23 @@ export function sanitizeMarkdownHtml(raw: string, copyLinks = false): string {
   }
   stripFetchingAttributes(fragment);
   replaceImages(fragment);
-  if (copyLinks) decorateLinks(fragment);
+  if (options.linksApart) setLinksApart(fragment);
+  if (options.copyLinks) decorateLinks(fragment);
   const holder = fragment.ownerDocument.createElement('div');
   holder.append(fragment);
   return holder.innerHTML;
+}
+
+/**
+ * Set on the sanitized tree, not on its serialized text: the sanitizer drops
+ * `target`, and a pattern over the HTML would also catch an `<a ` quoted in an
+ * attribute's value. Both attributes are replaced, never appended to.
+ */
+function setLinksApart(fragment: DocumentFragment): void {
+  for (const link of Array.from(fragment.querySelectorAll('a[href]'))) {
+    link.setAttribute('target', '_blank');
+    link.setAttribute('rel', 'noopener noreferrer');
+  }
 }
 
 function decorateLinks(fragment: DocumentFragment): void {

@@ -117,6 +117,7 @@ import { nodeInstallerSystem, silentInstall, takeWindowsInstallFailure, windowHa
 import { aboutCopy, readThirdPartyNotices, registerAboutIpc, thirdPartyNoticesPath } from './about.js';
 import { showAboutWindow } from './about-window.js';
 import { appMenuTemplate, newWindowCopy, newWindowShortcut } from './app-menu.js';
+import { contextMenuTemplate } from './context-menu.js';
 import { launchedOtherBuild, shellBuild, staleShellCopy, type LaunchData } from './shell-build.js';
 import { shellLocalesDir, shellText, useShellLocales } from './shell-i18n.js';
 import { LOCALE_COOKIE, ShellLocale } from './shell-locale.js';
@@ -638,6 +639,11 @@ function createPage(record: AppWindow, machineId: string | null, url: string): P
     event.preventDefault();
     if (reload === 'force') contents.reloadIgnoringCache();
     else contents.reload();
+  });
+  // Electron has no right-click menu of its own: without this one, a field cannot be pasted into with the mouse.
+  contents.on('context-menu', (_event, params) => {
+    const items = contextMenuTemplate(params, contents, uiLocale());
+    if (items.length > 0) Menu.buildFromTemplate(items).popup({ window: w });
   });
   // A document with unsaved changes holds the page (TIM-0128). Electron would
   // refuse the close, the reload or the quit without a word: ask instead.

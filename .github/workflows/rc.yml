@@ -213,6 +213,15 @@ jobs:
           sudo ln -sfn /usr/include/x86_64-linux-gnu/asm "$musl_include/asm"
           x86_64-linux-musl-gcc --version | head -n 1
 
+      # What the Linux build calls by name, checked before an hour of build:
+      # objdump for the baseline check of the fence launcher, the compilers,
+      # docker for the native modules rebuilt in the manylinux image. A runner
+      # image that drops one fails here, in a second. Same step as
+      # build-packages.yml, which release.yml and nightly.yml use.
+      - name: Check the Linux build tools
+        if: matrix.os == 'linux'
+        run: for tool in objdump gcc x86_64-linux-musl-gcc docker; do command -v "$tool" >/dev/null || { echo "::error::$tool is missing on this runner"; exit 1; }; done
+
       # A self-hosted runner (the Mac) keeps its workspace between runs, and the
       # build never overwrites installers: a run started again for the same
       # version would stop on the output of the one before. Hosted runners

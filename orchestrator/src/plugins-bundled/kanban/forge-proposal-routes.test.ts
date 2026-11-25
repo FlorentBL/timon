@@ -15,7 +15,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { after, beforeEach, mock, test } from 'node:test';
 import express from 'express';
-import { createTestAccount } from '../../../tests/helpers/accounts.js';
+import { createTestAccount, grantTestPermissions } from '../../../tests/helpers/accounts.js';
 import { db, dbApi } from '../../db.js';
 import { getHost } from '../../host/index.js';
 import type { ExecOpts, ExecResult } from '../../host/types.js';
@@ -38,6 +38,12 @@ dbApi.setProjectIntegration('acme', integration('ai-bot'));
 
 const admin = createTestAccount(dbApi, { email: 'maintainer@example.test', name: 'Maintainer', passwordHash: 'x', isSuperadmin: true });
 const guest = createTestAccount(dbApi, { email: 'guest@example.test', name: 'Guest', passwordHash: 'x', isSuperadmin: false });
+// Manages projects, may not speak for the project's account on GitHub.
+const manager = createTestAccount(dbApi, { email: 'manager@example.test', name: 'Manager', passwordHash: 'x', isSuperadmin: false });
+grantTestPermissions(dbApi, manager.id, ['projects:manage']);
+// Publishes, and nothing else.
+const publisher = createTestAccount(dbApi, { email: 'publisher@example.test', name: 'Publisher', passwordHash: 'x', isSuperadmin: false });
+grantTestPermissions(dbApi, publisher.id, ['forge:publish']);
 
 const TOKEN = 'ghp_abcdefghijklmnopqrstuvwxyz0123456789';
 
@@ -85,6 +91,8 @@ app.use((req, _res, next) => {
   else if (who === 'person') req.auth = { kind: 'session', user: admin, isSuperadmin: true };
   else if (who === 'device') req.auth = { kind: 'device', user: admin, isSuperadmin: true, deviceId: 'd-1' };
   else if (who === 'guest') req.auth = { kind: 'session', user: guest, isSuperadmin: false };
+  else if (who === 'manager') req.auth = { kind: 'session', user: manager, isSuperadmin: false };
+  else if (who === 'publisher') req.auth = { kind: 'session', user: publisher, isSuperadmin: false };
   next();
 });
 registerForgeProposalRoutes(app);
@@ -93,7 +101,7 @@ await once(server, 'listening');
 after(() => { server.close(); });
 const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
 
-type Who = 'anonymous' | 'daemon' | 'mission' | 'plugin' | 'person' | 'device' | 'guest';
+type Who = 'anonymous' | 'daemon' | 'mission' | 'plugin' | 'person' | 'device' | 'guest' | 'manager' | 'publisher';
 function call(method: string, path: string, who: Who, body?: unknown) {
   const headers: Record<string, string> = { 'content-type': 'application/json' };
   if (who !== 'anonymous') headers['x-test-who'] = who;
@@ -156,6 +164,23 @@ test('a person without projects:manage is refused; a paired device acts for its 
   assert.equal((await call('GET', '/api/projects/acme/forge-proposals', 'guest')).status, 403);
   const res = await call('POST', '/api/projects/acme/forge-proposals', 'device', { kind: 'comment', target: { type: 'pull', number: 304 }, body: 'Could you rebase on main?' });
   assert.equal(res.status, 201);
+});
+
+test('publishing takes forge:publish: projects:manage proposes and discards, it does not publish', async () => {
+  const before = posts().length;
+  const res = await call('POST', '/api/projects/acme/forge-proposals', 'manager', { kind: 'comment', target: { type: 'issue', number: 305 }, body: 'Fixed in #51.' });
+  assert.equal(res.status, 201);
+  const proposal = ((await res.json()) as { proposal: View }).proposal;
+  const refused = await call('POST', `/api/projects/acme/forge-proposals/${proposal.id}/publish`, 'manager', {});
+  assert.equal(refused.status, 403);
+  assert.equal((await call('POST', `/api/projects/acme/forge-proposals/${proposal.id}/publish`, 'anonymous', {})).status, 401);
+  assert.equal(posts().length, before, 'nothing reached GitHub');
+  // `forge:publish` alone publishes; it does not open the rest.
+  assert.equal((await call('PATCH', `/api/projects/acme/forge-proposals/${proposal.id}`, 'publisher', { body: 'x' })).status, 403);
+  const published = await call('POST', `/api/projects/acme/forge-proposals/${proposal.id}/publish`, 'publisher', {});
+  assert.equal(published.status, 200);
+  assert.equal(((await published.json()) as { proposal: View }).proposal.state, 'published');
+  assert.equal(posts().length, before + 1);
 });
 
 test('a person proposes once per target; the card waits in the notification centre', async () => {

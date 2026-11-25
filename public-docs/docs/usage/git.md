@@ -138,7 +138,7 @@ GitHub tells whether a pull request's branch is behind its base or in conflict w
 - **Update the branch** (the branch is behind): GitHub itself merges the base into the branch, on its side; nothing runs on your machine. Timon records the branch's head when you ask, and GitHub refuses the update if the contributor pushed since. The contributor's fork must let the maintainers modify it.
 - **Ask the contributor** (the branch is in conflict): a comment asking the author to merge the base into their branch and push. You can edit it before publishing. This is what a project does by default.
 - **Resolve the conflict…** (the branch is in conflict, and the project allows it): Timon merges the branch here **without a working tree**. The contributor's files are never written to your disk, and none of their code, hooks or scripts runs. A window walks through four steps:
-  1. **Checks**: the window opens only when the contributor lets the maintainers modify their branch and every file in conflict is a text file; it shows the account that will push.
+  1. **Checks**: the window opens only when the contributor lets the maintainers modify their branch and every file in conflict is a text file; it shows the account that will push. A repository or fork GitHub reports larger than 512 MB is refused before anything is downloaded.
   2. **Resolution**: each file in conflict shows its conflicting blocks. **Keep theirs**, **Keep main** (the target branch), **Edit by hand**, or **Suggest**: an agent with no tool at all reads the versions as untrusted data and returns a text, shown to you and applied only if you click **Apply**. A resolved file reads as a diff against the contributor's version: what your commit changes on their branch. A text that still holds conflict markers is refused.
   3. **Commit preview**: once every file is resolved, Timon commits the resolution as the project's account and shows the commit's diff: only the files that were in conflict, nothing else.
   4. **Propose the publication** opens [Publish on GitHub](#publish-on-github), with the commit, the contributor's branch, where the push goes (host and fork) and the comment that will follow. Publishing pushes that one commit to the branch as a fast-forward, never forced, then posts the comment, which tells them to pull it. If the contributor pushed or retargeted the pull request in between, or the project's remote changed, nothing is pushed.
@@ -149,7 +149,7 @@ Timon resolves only a conflict of content, in at most 20 text files of 1 MB or l
 
 Over SSH, the push uses the key SSH picks for the remote, not the account `gh` signs in as. Point the project's remote at an SSH alias whose key belongs to the project's account (`git@github-myaccount:owner/repo.git`), or at its `https://` URL so `gh` signs the push.
 
-To allow it, open the project's window: under **Integrations**, the **Contributors' conflicts** row says what the project does; **Configure** lets you choose **Let Timon resolve them**. The row appears for a project that lands its jobs through pull requests on GitHub. Only a signed-in person can turn it on; an agent or the daemon's token cannot. While it is on, the same goes for the project's remote URL, account, `gh` folder, remote name and landing mode: they decide where the push goes and as whom. A push to the contributor's branch re-runs their checks on GitHub, and removes a `protected-paths-approved` label your repository may use: put it back after reading the change.
+To allow it, open the project's window: under **Integrations**, the **Contributors' conflicts** row says what the project does; **Configure** lets you choose **Let Timon resolve them**. The row appears for a project that lands its jobs through pull requests on GitHub. Only a signed-in person can turn it on; an agent or the daemon's token cannot. While it is on, the same goes for the project's remote URL, account, `gh` folder, remote name and landing mode: they decide where the push goes and as whom. Each change of this choice and of those fields is recorded in the audit log, with who made it, so a remote changed while the project was back to asking contributors shows there before you turn it on again. A push to the contributor's branch re-runs their checks on GitHub, and removes a `protected-paths-approved` label your repository may use: put it back after reading the change.
 
 ## Jobs
 
@@ -198,7 +198,7 @@ When a job's pull request needs work, Timon can hand it back to the job's agent,
 |---|---|---|
 | **Resolve the conflict** | the branch conflicts with its target | the files in conflict; it merges the target into the branch, never rebases |
 | **Fix the checks** | a check fails | the names of the failing checks and the end of their logs |
-| **Address the comments** | a reviewer asked for changes, or review threads are still open | the open review threads and the review's decision |
+| **Address the comments** | a reviewer asked for changes, or review threads are still open | the open review threads, the text of the latest reviews and the review's decision |
 
 A conflict comes first: GitHub does not run the checks of a branch that does not merge. The other repairs wait in the row's menu.
 
@@ -270,7 +270,7 @@ On the left, the exact text that would be posted, and whether it goes on an issu
 
 A branch update has no text to edit: the window shows the branch GitHub updates, the base it merges in and the head it expects, and its main button reads **Update the branch**. Closing an issue has no text either: the window says why it closes and that it posts no comment; **Close the issue** closes it (an issue already closed is left as it is), **Leave it open** drops the proposal. A conflict's push shows the commit and the contributor's branch above the comment that follows it; its main button reads **Push and comment**, and **Do not push** drops it.
 
-Without an account set on the project, **Publish** stays off. Proposing, editing and publishing need you to be signed in with the **Create, update and delete projects** permission: an agent or the daemon's token cannot do it. A plugin holding `forge:propose` may propose a comment ([The GitHub repository of a project](../plugins/forge.md)), never edit or publish one: it waits here for you like any other.
+Without an account set on the project, **Publish** stays off. Proposing, editing and discarding need you to be signed in with the **Create, update and delete projects** permission; publishing needs the **Publish proposed writes on GitHub** permission, which an administrator grants in a role, so that managing projects does not by itself let an account speak for the project's GitHub account. Without it, **Publish** is greyed and its tooltip names the permission. An agent or the daemon's token can do none of these. A plugin holding `forge:propose` may propose a comment ([The GitHub repository of a project](../plugins/forge.md)), never edit or publish one: it waits here for you like any other.
 
 ## Who may change a repository
 

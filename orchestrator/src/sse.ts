@@ -5,7 +5,7 @@ import { dbApi } from './db.js';
 import { viewerFromRequest } from './users/identity.js';
 import { viewerSeesAll } from './users/owned.js';
 import { scopedDb } from './users/scoped-db.js';
-import { filterGallery } from './users/surfaces.js';
+import { filterGallery, viewerAllows } from './users/surfaces.js';
 import { apiError } from './api-error.js';
 import { integrationVisibleTo } from './integration-visibility.js';
 
@@ -305,6 +305,14 @@ export function sseHandler(req: Request, res: Response): void {
         if (ev.ownerUserId !== viewer.id) return;
       }
       writeEvent('notifications_changed', ev, true);
+      return;
+    }
+    // A proposal of a project's forge moved: global stream only, for a viewer
+    // who may read the proposals (`forge-proposal-routes.ts`). Ids only.
+    if (ev.kind === 'forge_proposals_changed') {
+      if (filter) return;
+      if (!viewer || !viewerAllows(viewer, 'projects:manage')) return;
+      writeEvent('forge_proposals_changed', { kind: ev.kind, project: ev.project, proposalId: ev.proposalId });
       return;
     }
     // plugins_changed has no missionId: the front listens to it on the

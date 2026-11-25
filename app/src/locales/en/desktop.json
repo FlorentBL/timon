@@ -10,6 +10,12 @@
       "daemon": "Daemon: {state, select, running {running} other {unreachable}} ({origin})",
       "quit": "Quit"
     },
+    "contextMenu": {
+      "cut": "Cut",
+      "copy": "Copy",
+      "paste": "Paste",
+      "selectAll": "Select All"
+    },
     "tray": {
       "iconMissing": "The notification area icon could not be loaded.",
       "iconMissingDetail": "Please reinstall Timon to restore the icon. You can keep using this window; closing it will quit Timon."

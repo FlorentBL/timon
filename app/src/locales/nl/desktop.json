@@ -10,6 +10,12 @@
       "daemon": "Daemon: {state, select, running {actief} other {onbereikbaar}} ({origin})",
       "quit": "Afsluiten"
     },
+    "contextMenu": {
+      "cut": "Knippen",
+      "copy": "Kopiëren",
+      "paste": "Plakken",
+      "selectAll": "Alles selecteren"
+    },
     "tray": {
       "iconMissing": "Het pictogram in het systeemvak kon niet worden geladen.",
       "iconMissingDetail": "Installeer Timon opnieuw om het pictogram te herstellen. Je kunt dit venster blijven gebruiken; als je het sluit, wordt Timon afgesloten."
