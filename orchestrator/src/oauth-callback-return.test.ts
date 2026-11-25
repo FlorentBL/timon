@@ -327,3 +327,38 @@ test('deleting a server forgets its flows: its states no longer give back an ori
   assert.ok(takePending(other), 'another server keeps its flow');
 });
 
+test('every callback page carries a nonce CSP, no referrer, no cache', async () => {
+  resetOAuthFlowsForTests();
+  tokenAnswer = { status: 200, body: { access_token: 'at', token_type: 'Bearer' } };
+  const ok = startFlow('cloudflare', { return_to: PUBLIC_APP });
+  const failed = startFlow('cloudflare');
+  const queries = [
+    { state: ok, code: SECRET_CODE },
+    { state: ok, code: SECRET_CODE },
+    { state: failed, error: 'access_denied' },
+    { state: failed, code: SECRET_CODE },
+    { state: 'forged', code: SECRET_CODE },
+    {},
+  ];
+  const nonces = new Set<string>();
+  for (const query of queries) {
+    const r = await fetch(`${base}${OAUTH_CALLBACK_PATH}?${new URLSearchParams(query).toString()}`);
+    const html = await r.text();
+    const csp = r.headers.get('content-security-policy') ?? '';
+    const nonce = /script-src 'nonce-([A-Za-z0-9+/=]+)'/.exec(csp)?.[1];
+    assert.ok(nonce, `a script nonce (${csp})`);
+    assert.equal(csp, [
+      "default-src 'none'", `script-src 'nonce-${nonce}'`, `style-src 'nonce-${nonce}'`,
+      "base-uri 'none'", "form-action 'none'", "frame-ancestors 'none'",
+    ].join('; '));
+    assert.equal(r.headers.get('referrer-policy'), 'no-referrer');
+    assert.equal(r.headers.get('cache-control'), 'no-store');
+    const tagged = (tag: string): number => html.split(`<${tag} nonce="${nonce}">`).length - 1;
+    assert.equal((html.match(/<script\b/g) ?? []).length, tagged('script'), 'every script carries the nonce');
+    assert.equal((html.match(/<style\b/g) ?? []).length, tagged('style'), 'every style carries the nonce');
+    assert.ok(tagged('script') >= 1 && tagged('style') === 1);
+    nonces.add(nonce);
+  }
+  assert.equal(nonces.size, queries.length, 'a fresh nonce per page');
+});
+

@@ -6,7 +6,7 @@
  * Routes extracted verbatim from `index.ts` (step 1.4).
  */
 import express from 'express';
-import { randomUUID } from 'node:crypto';
+import { randomBytes, randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { createRole, deleteRole, isSafeRoleIconSvg, listRoles, getRole, resetRoleDirectives, updateRole } from '../../agent-roles.js';
 import { canonicalAgentName, createEphemeralAgent, deleteAgent, getAgent, restoreAgent, setAgentOrchestrates, teamVisibleAgents, clientTurnState, getTurnState, isAutonomousMission, killRunningForAgent, listAgents, loadConfig, patchAgentConfig, renamedTriggerReason, spawnAgent, upsertAgent } from '../../agent.js';
@@ -306,7 +306,7 @@ type CallbackOutcome = {
  * when the daemon knows where it is; a failure stays here, readable, and only
  * redirects when the app URL was configured on purpose.
  */
-function oauthCallbackPage(outcome: CallbackOutcome): string {
+function oauthCallbackPage(outcome: CallbackOutcome, nonce: string): string {
   const explicit = explicitAppUrl();
   // Checked again here: the configuration may have changed since the flow began.
   const remembered = outcome.back?.return_to ? trustedReturnOrigin(outcome.back.return_to) : null;
@@ -325,9 +325,9 @@ function oauthCallbackPage(outcome: CallbackOutcome): string {
   const notify = outcome.replay ? '' :
     `try { new BroadcastChannel('timon-mcp-oauth').postMessage(${scriptJson({ ok: outcome.ok, mcpId: outcome.mcpId, error: outcome.ok ? undefined : outcome.message })}); } catch(_) {}`;
   return `<!doctype html><meta charset="utf-8"><meta name="color-scheme" content="light dark"><title>${title}</title>
-<style>body{font:14px/1.5 -apple-system,system-ui,sans-serif;max-width:540px;margin:60px auto;padding:0 20px}h1{font-size:18px}</style>
+<style nonce="${nonce}">body{font:14px/1.5 -apple-system,system-ui,sans-serif;max-width:540px;margin:60px auto;padding:0 20px}h1{font-size:18px}</style>
 <h1>${title}</h1><p>${escapeHtml(outcome.message)}</p>${link}
-<script>
+<script nonce="${nonce}">
   // Tell an app tab of the same origin; another origin learns it by polling.
   ${notify}
   ${redirect ? `setTimeout(()=>{ location.replace(${scriptJson(target)}); }, 600);` : ''}
@@ -335,6 +335,25 @@ function oauthCallbackPage(outcome: CallbackOutcome): string {
 }
 
 /** JSON safe to inline in a <script>: a `</script>` in a message cannot close it. */
+/**
+ * Sends a callback page. Its only script and style carry a fresh nonce; the
+ * URL holds a code and a state, so it is never sent on as a referrer nor kept
+ * in a cache, and the page cannot be framed.
+ */
+function sendOAuthCallbackPage(res: express.Response, status: number, outcome: CallbackOutcome): void {
+  const nonce = randomBytes(16).toString('base64');
+  res.status(status)
+    .set('Content-Security-Policy', [
+      "default-src 'none'", `script-src 'nonce-${nonce}'`, `style-src 'nonce-${nonce}'`,
+      "base-uri 'none'", "form-action 'none'", "frame-ancestors 'none'",
+    ].join('; '))
+    .set('Referrer-Policy', 'no-referrer')
+    .set('Cache-Control', 'no-store')
+    .set('X-Content-Type-Options', 'nosniff')
+    .type('html')
+    .send(oauthCallbackPage(outcome, nonce));
+}
+
 function scriptJson(value: unknown): string {
   return JSON.stringify(value).replace(/</g, '\\u003c');
 }
@@ -2025,13 +2044,13 @@ export function registerRoutes(app: express.IRouter): void {
     const refuse = (status: number, outcome: Omit<CallbackOutcome, 'ok'>): void => {
       // Never the state or the code: either one is half of a credential.
       console.warn(`[mcp-oauth] callback for ${outcome.mcpId ?? 'an unknown server'} refused: ${outcome.message}`);
-      res.status(status).type('html').send(oauthCallbackPage({ ok: false, ...outcome }));
+      sendOAuthCallbackPage(res, status, { ok: false, ...outcome });
     };
     if (!pending) {
       const used = state ? usedState(state) : null;
       if (used?.outcome === 'ok') {
-        res.type('html').send(oauthCallbackPage({ ok: true, replay: true, mcpId: used.mcp_id, back: used,
-          message: 'This server is already authorized. You can close this tab.' }));
+        sendOAuthCallbackPage(res, 200, { ok: true, replay: true, mcpId: used.mcp_id, back: used,
+          message: 'This server is already authorized. You can close this tab.' });
         return;
       }
       if (used?.outcome === 'expired') {
@@ -2069,8 +2088,8 @@ export function registerRoutes(app: express.IRouter): void {
         tokens,
       });
       settleState(state, 'ok');
-      res.type('html').send(oauthCallbackPage({ ok: true, mcpId: pending.mcp_id, back,
-        message: 'You can close this tab. Returning to Timon…' }));
+      sendOAuthCallbackPage(res, 200, { ok: true, mcpId: pending.mcp_id, back,
+        message: 'You can close this tab. Returning to Timon…' });
     } catch (err) {
       settleState(state, 'failed');
       // Anything else (network, vault) may quote what it failed on: a generic word.
