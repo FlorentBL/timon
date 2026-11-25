@@ -346,6 +346,42 @@ test('a config file the daemon cannot write: pin_write_failed, the errno alone i
   assert.deepEqual(readdirSync(HOME).filter((f) => f.endsWith('.tmp')), [], 'no temporary file left');
 });
 
+test('a temporary file written but not renamed: pin_write_failed, the errno alone, the temporary file removed', async () => {
+  const fs = (await import('node:fs')).default;
+  const { syncBuiltinESMExports } = await import('node:module');
+  const before = readFileSync(CONFIG_FILE, 'utf8');
+  // No chmod: the rename alone refuses, the way a locked config does on Windows. Node's own message quotes both files.
+  const realRename = fs.renameSync;
+  const renamed: string[] = [];
+  fs.renameSync = (from: Parameters<typeof realRename>[0], to: Parameters<typeof realRename>[1]): void => {
+    if (String(to) !== CONFIG_FILE) { realRename(from, to); return; }
+    renamed.push(String(from));
+    throw Object.assign(new Error(`EBUSY: resource busy or locked, rename '${String(from)}' -> '${String(to)}'`), {
+      code: 'EBUSY', errno: -16, syscall: 'rename', path: String(from), dest: String(to),
+    });
+  };
+  syncBuiltinESMExports();
+  let res: Awaited<ReturnType<typeof call>>;
+  let logs: string;
+  try {
+    ({ out: res, logs } = await capturingLogs(() => call('PUT', `/api/host/binaries/${CMD}`, { cookie: adminCookie, body: { path: EXECUTABLE } })));
+  } finally {
+    fs.renameSync = realRename;
+    syncBuiltinESMExports();
+  }
+  assert.equal(renamed.length, 1, 'the temporary file was written, then its rename refused');
+  assert.equal(res.status, 500, res.text);
+  assert.deepEqual(res.json, {
+    error: 'pin_write_failed', message: 'timon.config.json could not be written: check that the daemon may write to its folder.',
+  });
+  assert.match(logs, /\[backends\] binary pin: pin_write_failed \(EBUSY\)/);
+  assertNoPath(`${res.text}\n${logs}`, CONFIG_FILE, EXECUTABLE, renamed[0]!);
+  assert.equal(existsSync(renamed[0]!), false, 'the temporary file is removed');
+  assert.deepEqual(readdirSync(HOME).filter((f) => f.endsWith('.tmp')), [], 'no temporary file left');
+  assert.equal(readFileSync(CONFIG_FILE, 'utf8'), before, 'nothing written');
+  assert.equal(config().host.binaries[CMD], undefined, 'nothing applied');
+});
+
 // Windows starts only a `.exe` or a known npm shim to check it, and these stubs are shell scripts.
 test('the folder the check runs in cannot be made: probe_setup_failed, the errno alone in the log', { skip: process.platform === 'win32' }, async () => {
   const before = readFileSync(CONFIG_FILE, 'utf8');
@@ -393,6 +429,10 @@ test('a check whose folder cannot be removed still answers, and logs the errno a
   assert.equal(config().host.binaries.codex, codex);
   assert.match(logs, /\[backends\] identity check: its temporary folder could not be removed \(EACCES\)/);
   assertNoPath(logs, temp, codex);
+  // The answer lists the pins, so it names the pinned file: neither the probe's folder nor its failure, though.
+  for (const leak of [temp, 'probe temp', 'EACCES', 'locked', 'could not be removed', 'permission denied']) {
+    assert.equal(res.text.toLowerCase().includes(leak.toLowerCase()), false, `${leak} leaked in ${res.text}`);
+  }
   assert.equal((await call('DELETE', '/api/host/binaries/codex', { cookie: adminCookie })).status, 200);
 });
 
