@@ -95,6 +95,7 @@ import type { FenceMechanism, HostFence, HostFenceWitness } from './host/types.j
 import { fenceMechanismName, fenceRefusalMessage, type FenceRefusal } from './fence-refusal.js';
 import { argsUnderFence, type NestedSandboxDeclaration } from './backends/permission-models.js';
 import { hasSystemd, systemctl, systemctlCallCount } from './host/systemd.js';
+import type { LaunchInterpreter } from './host/launch-path.js';
 import {
   instancePrefix,
   isLegacyMissionScope,
@@ -628,7 +629,18 @@ export type FenceMissionOptions = {
   nestedSandbox?: NestedSandboxDeclaration | undefined;
   /** Where the decision and the dropped grants are reported. */
   warn?: (line: string) => void;
+  /**
+   * The interpreter the CLI runs through (`nodeInterpreter`): put in front of
+   * it once its own arguments are final, so that what the fence adds to them
+   * stays the CLI's and never becomes the interpreter's.
+   */
+  interpreter?: LaunchInterpreter | null | undefined;
 };
+
+/** `cmd` with `args`, or the interpreter that runs it, then `cmd` as its script. */
+function throughInterpreter(cmd: string, args: string[], interpreter: LaunchInterpreter | null | undefined): { cmd: string; args: string[] } {
+  return interpreter ? { cmd: interpreter.file, args: [...interpreter.args, cmd, ...args] } : { cmd, args };
+}
 
 /**
  * Whether the next launch of a mission of `target` will run inside a fence that
@@ -679,7 +691,7 @@ export function fenceMissionCommand(
       warnedUnfenced.add(decision.warning);
       warn(`${label} ${decision.warning}`);
     }
-    return { cmd, args, fence: { state: 'unfenced', warning: decision.warning, tampered: decision.tampered } };
+    return { ...throughInterpreter(cmd, args, options.interpreter), fence: { state: 'unfenced', warning: decision.warning, tampered: decision.tampered } };
   };
 
   if (mode === 'off') return unfenced({ state: 'unsupported', reason: 'off', abi: 0 });
@@ -724,7 +736,8 @@ export function fenceMissionCommand(
   const policyFile = fencePolicyFile(target.timonHome, unit);
   const credentialStoreWritable = fenceWritesCredentialStore(policy, target.platform ?? process.platform, target.home ?? homedir());
   try {
-    const wrapped = fence.wrap(policy, cmd, nested.args, policyFile);
+    const run = throughInterpreter(cmd, nested.args, options.interpreter);
+    const wrapped = fence.wrap(policy, run.cmd, run.args, policyFile);
     reportFenceReady(fence.mechanism, status.abi);
     return { ...wrapped, fence: { state: 'fenced', mechanism: fence.mechanism, policyFile, tmpDir, workspace, packageCacheDir, credentialStoreWritable, policy } };
   } catch (err) {
@@ -890,6 +903,8 @@ export function watchFencedLaunch(
 export type MissionLaunchTarget = IsolationTarget & Partial<FenceTarget> & {
   /** Cf. `FenceMissionOptions.nestedSandbox`. */
   nestedSandbox?: NestedSandboxDeclaration | undefined;
+  /** Cf. `FenceMissionOptions.interpreter`. */
+  interpreter?: LaunchInterpreter | null | undefined;
 };
 
 /** Wraps a spawn command in a confined systemd scope + nice +
@@ -919,8 +934,9 @@ export function wrapMissionLaunch(
   const fenced: MissionLaunch = target?.timonHome
     ? fenceMissionCommand(cmd, args, unit, { ...target, timonHome: target.timonHome, missionId: target.missionId ?? missionId }, {
       ...(target.nestedSandbox ? { nestedSandbox: target.nestedSandbox } : {}),
+      ...(target.interpreter ? { interpreter: target.interpreter } : {}),
     })
-    : { cmd, args, fence: null };
+    : { ...throughInterpreter(cmd, args, target?.interpreter), fence: null };
   if (!guardEnabled() || !hasSystemd() || wrapUsable === false) return fenced;
   return { ...getHost().confine(fenced.cmd, fenced.args, unit, target), fence: fenced.fence };
 }

@@ -7,87 +7,129 @@
  * replaced there would then run as the daemon, and outside any fence for the
  * provider sign-in.
  *
- * Kept only when the file, every folder from it up to the manager's root
- * (both the path as written and the one its links resolve to), belongs to the
- * daemon's account or to root, and none of them is writable by the group or by
- * others, but for a sticky folder owned by root (`/tmp`), whose entries only
- * their owner may rename or remove. A link that leads out of the root is
- * followed up to the filesystem root: nothing else bounds what it reaches.
+ * The path is walked the way the kernel resolves it, one component at a time
+ * from `/`: every component must belong to the daemon's account or to root,
+ * and none may be writable by the group or by others, but for a sticky folder
+ * owned by root (`/tmp`), whose entries only their owner may rename or remove.
+ * A link is read with `lstat`, and its target walked the same way from its own
+ * start, so each step of a chain of links is checked: `realpath` alone keeps
+ * only the end of it, and whoever can write a folder above the manager's root,
+ * or a folder a link passes through, can swap the whole tree below.
  *
  * What a fenced mission can write is a separate question, answered by
  * `mission-writable.ts`: a folder of the daemon's own account passes here.
  */
-import { realpathSync, statSync } from 'node:fs';
+import { lstatSync, readlinkSync } from 'node:fs';
 import { posix } from 'node:path';
 
-export type TrustStat = { uid: number; mode: number; isDirectory: boolean };
+export type TrustKind = 'file' | 'directory' | 'link' | 'other';
+
+export type TrustStat = { uid: number; mode: number; kind: TrustKind };
 
 export type TrustedTreeDeps = {
   platform?: NodeJS.Platform;
   /** The daemon's account; `process.getuid()` by default. */
   uid?: number;
-  realpath?: (path: string) => string;
-  stat?: (path: string) => TrustStat;
+  /** What the path itself is, links not followed. */
+  lstat?: (path: string) => TrustStat;
+  readlink?: (path: string) => string;
 };
 
 const GROUP_OR_OTHER_WRITE = 0o022;
 const STICKY = 0o1000;
+/** Linux's own limit (`MAXSYMLINKS`): a longer chain is a loop or a trap. */
+const MAX_LINKS = 40;
 
-function diskStat(path: string): TrustStat {
-  const stat = statSync(path);
-  return { uid: stat.uid, mode: stat.mode, isDirectory: stat.isDirectory() };
+/** One path as the disk reports it, links not followed. */
+export function diskTrustStat(path: string): TrustStat {
+  const stat = lstatSync(path);
+  const kind: TrustKind = stat.isSymbolicLink() ? 'link' : stat.isDirectory() ? 'directory' : stat.isFile() ? 'file' : 'other';
+  return { uid: stat.uid, mode: stat.mode, kind };
 }
 
-function within(parent: string, child: string): boolean {
-  const rel = posix.relative(parent, child);
-  return rel === '' || (!rel.startsWith('../') && rel !== '..' && !posix.isAbsolute(rel));
+type Walk = {
+  uid: number;
+  lstat: (path: string) => TrustStat;
+  readlink: (path: string) => string;
+  links: number;
+};
+
+type Reached = { real: string; kind: TrustKind } | { problem: string };
+
+/** Why the entry at `path` could be swapped by another account, or null. Its links are judged by their owner only: nobody can rewrite one in place. */
+function entryProblem(path: string, info: TrustStat, uid: number): string | null {
+  if (info.uid !== uid && info.uid !== 0) return `${path} belongs to another account`;
+  if (info.kind === 'link' || (info.mode & GROUP_OR_OTHER_WRITE) === 0) return null;
+  if (info.kind === 'directory' && info.uid === 0 && (info.mode & STICKY) !== 0) return null;
+  return `${path} is writable by its group or by others`;
 }
 
-/** `from`'s folder and each one above it, up to `stop` when it lies beneath it, else to `/`. */
-function foldersUp(from: string, stop: string): string[] {
-  const bound = within(stop, from) ? stop : posix.parse(from).root;
-  const out: string[] = [];
-  for (let dir = posix.dirname(from); ; dir = posix.dirname(dir)) {
-    out.push(dir);
-    if (dir === bound || dir === posix.dirname(dir)) break;
-  }
-  return out;
+function look(path: string, walk: Walk): TrustStat | string {
+  try { return walk.lstat(path); } catch { return `${path} cannot be read`; }
 }
 
 /**
- * Why `file`, found under the version manager root `root`, may come from
- * another account, or null when it may not. Both paths are absolute.
+ * Walks absolute `path` from `/`, checking every component and following every
+ * link through a walk of its own. `..` steps back from the folder reached so
+ * far, as the kernel does, never lexically from the path as written.
  */
-export function untrustedTreeProblem(file: string, root: string, deps: TrustedTreeDeps = {}): string | null {
+function reach(path: string, walk: Walk): Reached {
+  const top = look('/', walk);
+  if (typeof top === 'string') return { problem: top };
+  const rootProblem = entryProblem('/', top, walk.uid);
+  if (rootProblem) return { problem: rootProblem };
+  let current = '/';
+  let kind: TrustKind = top.kind;
+  const parts = path.split('/').filter((part) => part !== '' && part !== '.');
+  for (let i = 0; i < parts.length; i++) {
+    const name = parts[i]!;
+    if (kind !== 'directory') return { problem: `${current} is not a folder` };
+    if (name === '..') {
+      // Every folder above `current` was walked to reach it.
+      current = posix.dirname(current);
+      continue;
+    }
+    const next = current === '/' ? `/${name}` : `${current}/${name}`;
+    const info = look(next, walk);
+    if (typeof info === 'string') return { problem: info };
+    const problem = entryProblem(next, info, walk.uid);
+    if (problem) return { problem };
+    if (info.kind !== 'link') {
+      current = next;
+      kind = info.kind;
+      continue;
+    }
+    if (++walk.links > MAX_LINKS) return { problem: `${path} goes through too many links` };
+    let target: string;
+    try { target = walk.readlink(next); } catch { return { problem: `${next} cannot be read` }; }
+    // Joined as text, not with `posix.join`: a `..` in the target is resolved by the walk, after the links before it.
+    const followed = reach(target.startsWith('/') ? target : `${current}/${target}`, walk); // portability: POSIX paths only, Windows returns before any walk
+    if ('problem' in followed) return followed;
+    current = followed.real;
+    kind = followed.kind;
+  }
+  return { real: current, kind };
+}
+
+/**
+ * Why the file at absolute `file` may come from another account, or null when
+ * it may not. Every component of the path as written, and of each link it goes
+ * through, is checked up to `/`.
+ */
+export function untrustedPathProblem(file: string, deps: TrustedTreeDeps = {}): string | null {
   const platform = deps.platform ?? process.platform;
   // portability: Windows has no POSIX owner or mode bits and its ACLs are not read here; binary-path.ts keeps a manager root outside the user's profile instead.
   if (platform === 'win32') return null;
   const uid = deps.uid ?? (typeof process.getuid === 'function' ? process.getuid() : undefined);
   if (uid === undefined) return 'no account to compare owners with';
-  const realpath = deps.realpath ?? realpathSync;
-  const stat = deps.stat ?? diskStat;
-  let realFile: string;
-  let realRoot: string;
-  try {
-    realFile = realpath(file);
-    realRoot = realpath(root);
-  } catch {
-    return 'cannot be resolved';
-  }
-  // The folders the path is written through hold its links: whoever writes one can swap them.
-  const folders = new Set([...foldersUp(file, root), ...foldersUp(realFile, realRoot)]);
-  const checks: Array<{ path: string; folder: boolean }> = [
-    { path: realFile, folder: false },
-    ...[...folders].map((path) => ({ path, folder: true })),
-  ];
-  for (const { path, folder } of checks) {
-    let info: TrustStat;
-    try { info = stat(path); } catch { return `${path} cannot be read`; }
-    if (folder !== info.isDirectory) return `${path} is not a ${folder ? 'folder' : 'file'}`;
-    if (info.uid !== uid && info.uid !== 0) return `${path} belongs to another account`;
-    if ((info.mode & GROUP_OR_OTHER_WRITE) === 0) continue;
-    if (folder && info.uid === 0 && (info.mode & STICKY) !== 0) continue;
-    return `${path} is writable by its group or by others`;
-  }
+  if (!posix.isAbsolute(file)) return `${file} is not an absolute path`;
+  const reached = reach(file, {
+    uid,
+    lstat: deps.lstat ?? diskTrustStat,
+    readlink: deps.readlink ?? ((path) => readlinkSync(path)),
+    links: 0,
+  });
+  if ('problem' in reached) return reached.problem;
+  if (reached.kind !== 'file') return `${reached.real} is not a file`;
   return null;
 }

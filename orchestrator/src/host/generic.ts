@@ -16,7 +16,7 @@ import { inspectListenPort } from './listen-port.js';
 import { detectDesktopSession, type DesktopSession } from './desktop-session.js';
 import { opensAsFolder, revealInFileManager } from './reveal.js';
 import { windowsDirectLaunch, windowsShimLaunch } from './windows-shell.js';
-import { daemonNode } from './launch-path.js';
+import { chooseLaunchNode } from './launch-path.js';
 import {
   fixedGitConfig, gitmodulesScanArgs, gitScanArgs, gitToplevelArgs, neutralGitCall, neutralGitEnv, parseGitConfigList,
   parseSubmoduleNames, type GitConfigEntry,
@@ -81,10 +81,12 @@ export function createGenericHost(
   // A test simulating another machine (`env`, `platform`) never gets this host's runtime.
   const ownRuntime = binaryOptions.env === undefined && (binaryOptions.platform ?? process.platform) === process.platform;
   const findRuntime = (name: 'node' | 'bun') => {
-    try { return bin(name); } catch {
-      // An npm `.cmd` shim with no `node` on the machine runs on the daemon's own Node (#1102).
-      return name === 'node' && ownRuntime ? daemonNode() : null;
+    // An npm `.cmd` shim runs on the machine's `node`, else the daemon's own once checked,
+    // however the search reached it (#1102).
+    if (name === 'node' && ownRuntime) {
+      return chooseLaunchNode({ platform: process.platform, findNode: () => bin(name), selfExecutable: process.versions.electron ? process.execPath : undefined });
     }
+    try { return bin(name); } catch { return null; }
   };
   // An npm shim (`.cmd`) cannot be spawned directly on Windows: EINVAL before
   // any process exists (TIM-0009). What it runs is started in its place, so the
