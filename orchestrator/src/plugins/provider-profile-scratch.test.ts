@@ -44,7 +44,7 @@ const profile = (id: string): ProfileRuntime => ({ id, cmd: 'claude', env: {} })
 const claude = servicesOf('provider-claude');
 
 test('the plugin that launches a profile gets its folder, private, under the plugin\'s cache', () => {
-  for (const id of ['claude', 'kimi', 'user-claude', 'pack-claude']) {
+  for (const id of ['claude', 'kimi', 'zai', 'user-claude', 'pack-claude']) {
     const dir = claude.scratch.profile(profile(id));
     assert.equal(dir.path, join(TIMON_HOME, 'provider-cache', 'provider-claude', 'profiles', id), id);
     assert.equal(dir.path, profileScratchPath('provider-claude', id));

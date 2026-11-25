@@ -566,6 +566,57 @@ test('kimi: its key may live in the vault too', async () => {
   assert.equal(isBackendName('kimi'), false);
 });
 
+test('zai: absent without its key, the reason names the entry and no value, global endpoint and model mapping, override wins', async () => {
+  delete process.env.ZAI_API_KEY;
+  delete process.env.ZAI_BASE_URL;
+  assert.equal(isBackendName('zai'), false);
+  // A key reserved to another backend does not reach Z.ai, and the refusal does not quote it.
+  const elsewhere = createSecret({ name: 'ZAI_API_KEY', value: 'z-reserved-elsewhere', grants: ['backend:kimi'] });
+  try {
+    assert.equal(isBackendName('zai'), false);
+    const reason = inactiveProfiles().find((p) => p.id === 'zai')?.reason ?? '';
+    assert.match(reason, /ZAI_API_KEY/);
+    assert.ok(!reason.includes('z-reserved-elsewhere'), reason);
+  } finally {
+    deleteSecret(elsewhere.id);
+  }
+
+  process.env.ZAI_API_KEY = 'z-1';
+  try {
+    const zai = activeProfiles().find((p) => p.profile.id === 'zai')!;
+    const { runtime } = await zai.runtimeFor();
+    assert.equal(runtime.cmd, 'claude');
+    assert.equal(runtime.env.ANTHROPIC_BASE_URL, 'https://api.z.ai/api/anthropic');
+    assert.equal(runtime.env.ANTHROPIC_AUTH_TOKEN, 'z-1');
+    assert.equal(runtime.env.ANTHROPIC_DEFAULT_SONNET_MODEL, 'glm-5.4');
+    assert.equal(runtime.env.ANTHROPIC_DEFAULT_HAIKU_MODEL, 'glm-5.3-flash');
+    // Active, it still never stands in for a provider whose quota ran dry: only a person picks it.
+    const { defaultEquivalentFallback } = await import('./equivalence.js');
+    const seen: string[] = [];
+    defaultEquivalentFallback('claude', 'opus', (backend) => { seen.push(backend); return false; });
+    assert.ok(!seen.includes('zai'), seen.join(', '));
+    process.env.ZAI_BASE_URL = 'https://proxy.test/api/anthropic';
+    assert.equal((await zai.runtimeFor()).runtime.env.ANTHROPIC_BASE_URL, 'https://proxy.test/api/anthropic');
+  } finally {
+    delete process.env.ZAI_API_KEY;
+    delete process.env.ZAI_BASE_URL;
+  }
+  assert.equal(isBackendName('zai'), false);
+});
+
+test('zai: a vault key reserved to it activates it and reaches the CLI', async () => {
+  delete process.env.ZAI_API_KEY;
+  const secret = createSecret({ name: 'ZAI_API_KEY', value: 'z-vault', grants: ['backend:zai'] });
+  try {
+    assert.equal(isBackendName('zai'), true);
+    const zai = activeProfiles().find((p) => p.profile.id === 'zai')!;
+    assert.equal((await zai.runtimeFor()).runtime.env.ANTHROPIC_AUTH_TOKEN, 'z-vault');
+  } finally {
+    deleteSecret(secret.id);
+  }
+  assert.equal(isBackendName('zai'), false);
+});
+
 test('the probe recognises a promise the way the spawn does, so both agree on the same object', async () => {
   const MARKER = 'sk-PROBE-SPAWN-4b2d';
   const fail = (): never => { throw new Error(MARKER); };
