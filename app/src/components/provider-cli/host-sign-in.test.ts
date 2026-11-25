@@ -274,12 +274,12 @@ test('recovery: a CLI Timon cannot sign in hands its command to a terminal, and 
     await m.until(() => document.querySelector('[data-state="signIn"]') !== null, 'the card');
     const card = document.querySelector('[data-state="signIn"]')!;
     const signIn = () => Array.from(card.querySelectorAll('button')).find((b) => b.textContent === 'Sign in');
-    assert.equal(offer('login'), null);
+    assert.ok(!offer('login'));
     assert.equal(commandShown('/usr/bin/claude'), false);
 
     await m.click(signIn());
     await m.until(() => m.typed.length === 1, 'the command typed in the terminal');
-    assert.equal(dialog(), null);
+    assert.ok(!dialog());
     assert.match(card.textContent ?? '', /Typed in Timon's terminal/);
     assert.equal(commandShown('/usr/bin/claude'), false, 'handed over: not shown');
 
@@ -307,7 +307,7 @@ test('recovery: a command Timon could neither type nor copy unfolds, for a termi
     await m.until(() => commandShown(command), 'the command, unfolded');
     assert.deepEqual(m.typed, []);
     assert.match(card.textContent ?? '', /Timon could not copy the command/);
-    assert.equal(card.querySelector('button[data-row-menu]'), null, 'nothing left in the menu');
+    assert.ok(!card.querySelector('button[data-row-menu]'), 'nothing left in the menu');
   } finally {
     await m.unmount();
   }
