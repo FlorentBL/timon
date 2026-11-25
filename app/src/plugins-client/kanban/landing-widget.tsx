@@ -59,7 +59,7 @@ import { PublishDialog } from './publish-dialog';
 import { useForgeProposals } from './use-forge-proposals';
 import { StackProjectPicker, useStackProject } from './git-stack-project';
 import { inProject, useLandingChanges, useLandingFallbackPoll } from './landing-events';
-import { landsLocally, LocalLandingEmpty, useProjectIntegration } from './local-landing';
+import { landsLocally, LocalLandingEmpty, useLandingMode } from './local-landing';
 
 const BADGE = 'inline-flex h-5 shrink-0 items-center gap-1 rounded-md px-1.5 text-[10.5px] font-medium tabular-nums';
 
@@ -328,7 +328,7 @@ export function LandingWidget({ handle, className }: WidgetProps) {
   const current = useRef<Landing[]>([]);
   const { openTodo, todoModal } = useTodoOpener();
   const [publishing, setPublishing] = useState<ForgeProposal | null>(null);
-  const integration = useProjectIntegration(project);
+  const landingMode = useLandingMode(project);
 
   const merge = useCallback((fresh: Landing) => {
     setLandings((list) => (list ?? []).map((l) => (l.id === fresh.id ? fresh : l)));
@@ -458,8 +458,8 @@ export function LandingWidget({ handle, className }: WidgetProps) {
     >
       {error && <p className="px-1 text-xs text-red-600 dark:text-red-400">{error}</p>}
       {landings === null && !error && <p className="px-1 text-xs text-muted-foreground">{t('landings.loading')}</p>}
-      {landings !== null && shown === 0 && (project && landsLocally(integration)
-        ? <LocalLandingEmpty project={project} read={integration} />
+      {landings !== null && shown === 0 && (project && landsLocally(landingMode)
+        ? <LocalLandingEmpty project={project} />
         : <p className="px-1 text-xs text-muted-foreground">{t('landings.empty')}</p>)}
       {groups.map(({ group, landings: members }) => (
         <section key={group} className="flex flex-col gap-1" aria-label={t(`landings.groups.${group}`)}>
