@@ -6,7 +6,11 @@
  * third-party plugin. An issue's title, body, author and labels were written
  * by someone else: React prints them as text, never as markup, and the
  * window frames the body as outside data. Nothing here writes on GitHub; an
- * import creates one TO DO idea, once.
+ * import creates one TO DO idea, once. "Import and plan" opens that idea,
+ * whose form sends it to the orchestrator that plans it.
+ *
+ * The list is read again when an imported idea moves elsewhere: the host half
+ * says so on the plugin's realtime topic.
  */
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { ComponentType, ReactNode } from 'react';
@@ -14,8 +18,9 @@ import * as ui from '@timon/ui';
 import type { ClientContext, WidgetChromeProps } from '@timon-ai/sdk';
 import messages from './messages.json';
 import {
-  errorKey, labelProblem, parseIssueInput, safeHref, shouldRead, sortCandidates, toImport,
-  type Candidate, type Candidates, type IssueDetails, type IssueLabel, type IssueTodo, type ProjectLabel,
+  errorKey, isEnabled, issuesSignal, labelProblem, parseIssueInput, safeHref, shouldRead, sortCandidates, toImport,
+  type Candidate, type Candidates, type HiddenIssue, type HiddenIssues, type IssueDetails, type IssueLabel, type IssuesSignal,
+  type IssueTodo, type ProjectLabel,
 } from './issues-model.js';
 
 const t = ui.createTranslator(messages);
@@ -109,6 +114,9 @@ const ICONS = {
   read: 'M4 5h7a2 2 0 0 1 2 2v12a2 2 0 0 0-2-2H4zM20 5h-7a2 2 0 0 0-2 2v12a2 2 0 0 1 2-2h7z',
   issue: 'M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18zM12 11v.01',
   pull: 'M6 4v16M18 10v10M6 4a2 2 0 1 0 0 .01M18 10a2 2 0 1 0 0 .01M14 6h2a2 2 0 0 1 2 2v2',
+  plan: 'M8 3v4M16 3v4M4 8h16M5 5h14v15H5zM9 14l2 2 4-4',
+  show: 'M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12zM12 10a2 2 0 1 0 0 4 2 2 0 0 0 0-4z',
+  power: 'M12 3v8M6.3 6.3a8 8 0 1 0 11.4 0',
 };
 const ISSUES_PICTO = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="#000" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="1.5"/></svg>';
 
@@ -141,10 +149,11 @@ async function copy(text: string): Promise<boolean> {
 
 type Notice = { text: string; tone: 'info' | 'error' };
 
-function IssueRow({ issue, busy, onImport, onOpenTodo, onRead, onCopy, onDismiss }: {
+function IssueRow({ issue, busy, onImport, onImportAndPlan, onOpenTodo, onRead, onCopy, onDismiss }: {
   issue: Candidate;
   busy: boolean;
   onImport: () => void;
+  onImportAndPlan: () => void;
   onOpenTodo: (id: number) => void;
   onRead: () => void;
   onCopy: () => void;
@@ -183,6 +192,9 @@ function IssueRow({ issue, busy, onImport, onOpenTodo, onRead, onCopy, onDismiss
         </DropdownMenuTrigger>
         <DropdownMenuContent sideOffset={6} align="end" className={MENU}>
           <NativeViewCover />
+          {!imported && (
+            <DropdownMenuItem data-menu-plan="" onSelect={onImportAndPlan} className={MENU_ITEM}><Icon d={ICONS.plan} />{t('importAndPlan')}</DropdownMenuItem>
+          )}
           <DropdownMenuItem data-menu-read="" onSelect={onRead} className={MENU_ITEM}><Icon d={ICONS.read} />{t('readText')}</DropdownMenuItem>
           {href && (
             <DropdownMenuItem onSelect={() => { window.open(href, '_blank', 'noopener,noreferrer'); }} className={MENU_ITEM}>
@@ -224,6 +236,27 @@ type Opened = { number: number } | { lookup: true };
  */
 const lastRead = new Map<string, { list: Candidates; at: number }>();
 
+/** The widgets and rows listening for an imported idea that moved elsewhere. */
+const signalListeners = new Set<(signal: IssuesSignal) => void>();
+
+/** Calls `onChange` when an imported idea of `project` moves elsewhere. */
+function useIssuesSignal(project: string | null, onChange: () => void): void {
+  const latest = useRef(onChange);
+  latest.current = onChange;
+  useEffect(() => {
+    if (!project) return undefined;
+    const listen = (signal: IssuesSignal) => { if (signal.project === project) latest.current(); };
+    signalListeners.add(listen);
+    return () => { signalListeners.delete(listen); };
+  }, [project]);
+}
+
+/** Switches the project's list on or off; the refusal's message key, or null. */
+async function setEnabled(api: Api, project: string, enabled: boolean): Promise<string | null> {
+  const out = await call(api, 'project', { method: 'PUT', body: { project, enabled } });
+  return out.ok ? null : errorKey(out.code);
+}
+
 function IssuesWidget({ api, handle, className }: { api: Api } & Partial<WidgetChromeProps>) {
   const { project } = ui.useGitStackProject();
   const { openTodo, todoModal } = ui.useTodoOpener();
@@ -231,6 +264,7 @@ function IssuesWidget({ api, handle, className }: { api: Api } & Partial<WidgetC
   const [busy, setBusy] = useState<number | null>(null);
   const [notice, setNotice] = useState<Notice | null>(null);
   const [opened, setOpened] = useState<Opened | null>(null);
+  const [reviewing, setReviewing] = useState(false);
   const front = ui.useWidgetInFront();
   const frontNow = useRef(front);
   frontNow.current = front;
@@ -262,6 +296,8 @@ function IssuesWidget({ api, handle, className }: { api: Api } & Partial<WidgetC
     const timer = setTimeout(() => setNotice(null), 4000);
     return () => clearTimeout(timer);
   }, [notice]);
+  // An imported idea done, resolved or deleted elsewhere: its chip changes.
+  useIssuesSignal(project, () => { void reload(true); });
 
   const importIssue = useCallback(async (number: number): Promise<IssueTodo | Failure> => {
     if (!project) return { code: null };
@@ -277,9 +313,22 @@ function IssuesWidget({ api, handle, className }: { api: Api } & Partial<WidgetC
     return { id: out.value.todo.id, status: 'open', progress: null, pr: null };
   }, [api, project, reload]);
 
-  const dismiss = async (number: number) => {
+  // The idea's form holds "Send back to the orchestrator", which plans it.
+  const importAndPlan = useCallback(async (number: number) => {
+    const out = await importIssue(number);
+    if ('id' in out) openTodo(out.id);
+  }, [importIssue, openTodo]);
+
+  const switchOn = async () => {
     if (!project) return;
-    const out = await call(api, 'dismiss', { method: 'POST', body: { project, issue: number } });
+    const refused = await setEnabled(api, project, true);
+    if (refused) setNotice({ text: t(refused), tone: 'error' });
+    else void reload();
+  };
+
+  const dismiss = async (number: number, title: string) => {
+    if (!project) return;
+    const out = await call(api, 'dismiss', { method: 'POST', body: { project, issue: number, title } });
     setNotice(out.ok ? { text: t('notice.dismissed', { number }), tone: 'info' } : { text: t(errorKey(out.code)), tone: 'error' });
     if (out.ok) void reload(true);
   };
@@ -289,6 +338,8 @@ function IssuesWidget({ api, handle, className }: { api: Api } & Partial<WidgetC
   };
 
   const issues = useMemo(() => (load.kind === 'ready' ? sortCandidates(load.list.issues) : []), [load]);
+  const enabled = load.kind !== 'ready' || isEnabled(load.list);
+  const hidden = load.kind === 'ready' ? load.list.hidden : 0;
   // What is left to import: the only number shown, on the tab once stacked ("Issues 2"), else by the title.
   const left = load.kind === 'ready' ? toImport(load.list.issues) : null;
   const countOnTab = ui.useWidgetCount(left);
@@ -301,7 +352,7 @@ function IssuesWidget({ api, handle, className }: { api: Api } & Partial<WidgetC
   const actions = (
     <>
       <GitStackProjectPicker none={t('chooseProjectOption')} label={t('selectProject')} className="max-w-[8rem]" />
-      {project && (
+      {project && enabled && (
         <>
           <button type="button" data-issues-add="" onClick={() => setOpened({ lookup: true })} title={t('importByNumber')} aria-label={t('importByNumber')} className={ICON_BUTTON}>
             <Icon d={ICONS.plus} />
@@ -336,6 +387,14 @@ function IssuesWidget({ api, handle, className }: { api: Api } & Partial<WidgetC
         <Empty text={t('loading')} />
       ) : load.kind === 'error' ? (
         <Empty text={t(errorKey(load.code))} />
+      ) : !enabled ? (
+        <div data-issues-off="" className="flex flex-col items-center justify-center gap-2 py-6">
+          <Icon d={ICONS.power} className="size-4 text-muted-foreground/60" />
+          <span className="text-center text-[12.5px] text-muted-foreground">{t('off')}</span>
+          <Button type="button" variant="outline" size="sm" onClick={() => { void switchOn(); }}>
+            <span data-issues-switch-on="">{t('switchOn')}</span>
+          </Button>
+        </div>
       ) : issues.length === 0 ? (
         <Empty text={t('empty', { label: load.kind === 'ready' ? load.list.label : '' })} />
       ) : (
@@ -346,13 +405,25 @@ function IssuesWidget({ api, handle, className }: { api: Api } & Partial<WidgetC
               issue={issue}
               busy={busy === issue.number}
               onImport={() => { void importIssue(issue.number); }}
+              onImportAndPlan={() => { void importAndPlan(issue.number); }}
               onOpenTodo={openTodo}
               onRead={() => setOpened({ number: issue.number })}
               onCopy={() => { void copyLink(issue.url); }}
-              onDismiss={() => { void dismiss(issue.number); }}
+              onDismiss={() => { void dismiss(issue.number, issue.title); }}
             />
           ))}
         </ul>
+      )}
+      {project && enabled && hidden > 0 && (
+        <div data-issues-hidden="" className="flex items-center justify-between gap-2 px-1 pt-2 text-[11px] text-muted-foreground">
+          <span className="tabular-nums">{t('hiddenCount', { count: hidden })}</span>
+          <button type="button" data-issues-review="" onClick={() => setReviewing(true)} className="rounded-md px-1.5 py-0.5 font-medium text-foreground/80 outline-none transition-colors hover:bg-muted hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring">
+            {t('reviewHidden')}
+          </button>
+        </div>
+      )}
+      {reviewing && project && (
+        <HiddenDialog api={api} project={project} onClose={() => setReviewing(false)} onChanged={() => { void reload(true); }} />
       )}
       {opened && project && (
         <IssueDialog
@@ -361,6 +432,11 @@ function IssuesWidget({ api, handle, className }: { api: Api } & Partial<WidgetC
           repo={load.kind === 'ready' ? load.list.repo : null}
           opened={opened}
           onImport={importIssue}
+          onImportAndPlan={async (number) => {
+            const out = await importIssue(number);
+            if ('id' in out) { setOpened(null); openTodo(out.id); }
+            return out;
+          }}
           onOpenTodo={(id) => { setOpened(null); openTodo(id); }}
           onClose={() => setOpened(null)}
         />
@@ -386,12 +462,13 @@ type Read = { kind: 'idle' } | { kind: 'loading' } | { kind: 'error'; text: stri
  * action, Import. Opened on an issue of the list, or on "+" with a field for
  * a number or a link, read before anything is imported.
  */
-function IssueDialog({ api, project, repo, opened, onImport, onOpenTodo, onClose }: {
+function IssueDialog({ api, project, repo, opened, onImport, onImportAndPlan, onOpenTodo, onClose }: {
   api: Api;
   project: string;
   repo: string | null;
   opened: Opened;
   onImport: (number: number) => Promise<IssueTodo | Failure>;
+  onImportAndPlan: (number: number) => Promise<IssueTodo | Failure>;
   onOpenTodo: (id: number) => void;
   onClose: () => void;
 }) {
@@ -418,10 +495,10 @@ function IssueDialog({ api, project, repo, opened, onImport, onOpenTodo, onClose
 
   const issue = read.kind === 'ready' ? read.issue : null;
   const closed = issue?.state === 'closed';
-  const runImport = async () => {
+  const runImport = async (plan = false) => {
     if (!issue) return;
     setImporting(true);
-    const out = await onImport(issue.number);
+    const out = await (plan ? onImportAndPlan : onImport)(issue.number);
     setImporting(false);
     if ('id' in out) setRead({ kind: 'ready', issue: { ...issue, todo: out } });
     else setRead({ kind: 'error', text: t(errorKey(out.code)) });
@@ -504,16 +581,118 @@ function IssueDialog({ api, project, repo, opened, onImport, onOpenTodo, onClose
               <span data-issue-dialog-open="" className="inline-flex items-center gap-1.5"><Icon d={ICONS.todo} />{t('openTodo')}</span>
             </Button>
           ) : (
-            <Button
-              type="button"
-              size="sm"
-              onClick={() => { void runImport(); }}
-              disabled={!issue || closed || importing}
-              title={closed ? t('dialog.closedHint') : undefined}
-            >
-              <span data-issue-dialog-import="" className="inline-flex items-center gap-1.5"><Icon d={ICONS.import} />{importing ? t('importing') : t('import')}</span>
-            </Button>
+            <>
+              <Button
+                type="button"
+                variant="secondary"
+                size="sm"
+                onClick={() => { void runImport(true); }}
+                disabled={!issue || closed || importing}
+                title={closed ? t('dialog.closedHint') : t('planHint')}
+              >
+                <span data-issue-dialog-plan="" className="inline-flex items-center gap-1.5"><Icon d={ICONS.plan} />{t('importAndPlan')}</span>
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                onClick={() => { void runImport(); }}
+                disabled={!issue || closed || importing}
+                title={closed ? t('dialog.closedHint') : undefined}
+              >
+                <span data-issue-dialog-import="" className="inline-flex items-center gap-1.5"><Icon d={ICONS.import} />{importing ? t('importing') : t('import')}</span>
+              </Button>
+            </>
           )}
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+type HiddenLoad = { kind: 'loading' } | { kind: 'error'; text: string } | { kind: 'ready'; issues: HiddenIssue[] };
+
+/**
+ * The issues the project hid, newest first, each shown again with one click.
+ * Their titles are what the list showed when they were hidden: text, never
+ * markup.
+ */
+function HiddenDialog({ api, project, onClose, onChanged }: {
+  api: Api;
+  project: string;
+  onClose: () => void;
+  onChanged: () => void;
+}) {
+  const [load, setLoad] = useState<HiddenLoad>({ kind: 'loading' });
+  const [busy, setBusy] = useState<number | null>(null);
+  const [notice, setNotice] = useState<Notice | null>(null);
+
+  useEffect(() => {
+    let live = true;
+    void call<HiddenIssues>(api, `hidden?${query(project)}`).then((out) => {
+      if (live) setLoad(out.ok ? { kind: 'ready', issues: out.value.issues } : { kind: 'error', text: t(errorKey(out.code)) });
+    });
+    return () => { live = false; };
+  }, [api, project]);
+
+  const show = async (number: number) => {
+    setBusy(number);
+    const out = await call(api, 'dismiss', { method: 'POST', body: { project, issue: number, hidden: false } });
+    setBusy(null);
+    if (!out.ok) { setNotice({ text: t(errorKey(out.code)), tone: 'error' }); return; }
+    setLoad((prev) => (prev.kind === 'ready' ? { kind: 'ready', issues: prev.issues.filter((i) => i.number !== number) } : prev));
+    setNotice({ text: t('hidden.shown', { number }), tone: 'info' });
+    onChanged();
+  };
+
+  return (
+    <Dialog open onOpenChange={(open) => { if (!open) onClose(); }}>
+      <DialogContent data-issues-hidden-dialog="" className="flex max-h-[80vh] max-w-[560px] flex-col gap-3 overflow-hidden">
+        <DialogTitle className="text-sm">{t('hidden.title', { project })}</DialogTitle>
+        <DialogDescription className="text-[11.5px] text-muted-foreground">{t('hidden.description')}</DialogDescription>
+        {notice && (
+          <p role="status" className={cn('text-[11px]', notice.tone === 'error' ? 'text-red-600 dark:text-red-400' : 'text-muted-foreground')}>{notice.text}</p>
+        )}
+        {load.kind === 'loading' ? (
+          <p className="text-xs text-muted-foreground">{t('loading')}</p>
+        ) : load.kind === 'error' ? (
+          <p className="text-xs text-red-600 dark:text-red-400">{load.text}</p>
+        ) : load.issues.length === 0 ? (
+          <Empty text={t('hidden.empty')} />
+        ) : (
+          <ul data-issues-hidden-list="" className={cn(ISLAND, 'scrollbar-thin flex min-h-0 flex-col gap-1 overflow-y-auto p-1.5')}>
+            {load.issues.map((issue) => {
+              const href = safeHref(issue.url);
+              return (
+                <li key={issue.number} data-hidden-row={String(issue.number)} className="flex items-center gap-1 rounded-lg bg-background/60 py-2 pl-2.5 pr-1">
+                  <div className="min-w-0 flex-1">
+                    <div className="truncate text-[12.5px] font-medium text-foreground" title={issue.title ?? undefined}>
+                      {issue.title ?? t('hidden.untitled', { number: issue.number })}
+                    </div>
+                    <div className="text-[11px] tabular-nums text-muted-foreground">{`#${issue.number}`}</div>
+                  </div>
+                  {href && (
+                    <a href={href} target="_blank" rel="noopener noreferrer" title={t('openOnGitHub')} aria-label={t('openOnGitHub')} className={ICON_BUTTON}>
+                      <Icon d={ICONS.external} />
+                    </a>
+                  )}
+                  <button
+                    type="button"
+                    data-hidden-show={String(issue.number)}
+                    onClick={() => { void show(issue.number); }}
+                    disabled={busy === issue.number}
+                    title={t('hidden.show')}
+                    aria-label={t('hidden.show')}
+                    className={PRIMARY_ICON_BUTTON}
+                  >
+                    <Icon d={ICONS.show} />
+                  </button>
+                </li>
+              );
+            })}
+          </ul>
+        )}
+        <div className="flex justify-end">
+          <Button type="button" variant="ghost" size="sm" onClick={onClose}>{t('dialog.close')}</Button>
         </div>
       </DialogContent>
     </Dialog>
@@ -532,18 +711,22 @@ function SettingsRow({ api }: { api: Api }) {
   const project = settings?.project ?? null;
   const [state, setState] = useState<Setting>({ kind: 'loading' });
   const [editing, setEditing] = useState(false);
+  const [reviewing, setReviewing] = useState(false);
 
   const reload = useCallback(async () => {
     if (!project) { setState({ kind: 'hidden' }); return; }
     const out = await call<ProjectLabel>(api, `project?${query(project)}`);
     if (!out.ok) { setState({ kind: 'hidden' }); return; }
     setState({ kind: 'ready', label: out.value, count: null });
+    // Switched off, nothing is asked of GitHub.
+    if (!isEnabled(out.value)) return;
     // The count asks GitHub: it follows the label, never holds the row back.
     const list = await call<Candidates>(api, `candidates?${query(project)}`);
     if (list.ok) setState({ kind: 'ready', label: out.value, count: toImport(list.value.issues) });
   }, [api, project]);
 
   useEffect(() => { void reload(); }, [reload]);
+  useIssuesSignal(project, () => { void reload(); });
 
   const useDefault = async () => {
     if (!project) return;
@@ -551,29 +734,49 @@ function SettingsRow({ api }: { api: Api }) {
     if (out.ok) void reload();
   };
 
+  const toggle = async (on: boolean) => {
+    if (!project) return;
+    if (!(await setEnabled(api, project, on))) void reload();
+  };
+
   if (state.kind !== 'ready' || !project) return null;
   const { label, count } = state;
+  const enabled = isEnabled(label);
+  const status = !enabled ? t('settings.statusOff', { label: label.label })
+    : count === null ? t('settings.statusNoCount', { label: label.label })
+      : t('settings.status', { label: label.label, count });
   return (
     <div data-issues-settings={project} className="flex min-w-0 items-center gap-2 rounded-md px-2.5 py-2">
       <div className="min-w-0 flex-1">
         <div className="text-[12.5px] font-medium text-foreground">{t('settings.title')}</div>
-        <div data-issues-settings-status="" className="truncate text-[11px] text-muted-foreground">
-          {count === null ? t('settings.statusNoCount', { label: label.label }) : t('settings.status', { label: label.label, count })}
-        </div>
+        <div data-issues-settings-status="" className="truncate text-[11px] text-muted-foreground">{status}</div>
       </div>
       <Button type="button" variant="outline" size="sm" onClick={() => setEditing(true)} className="shrink-0">
         <span data-issues-configure="">{t('settings.configure')}</span>
       </Button>
-      {label.custom && (
-        <DropdownMenu modal={false}>
-          <DropdownMenuTrigger asChild>
-            <button type="button" title={t('more')} aria-label={t('more')} className={ICON_BUTTON}><Icon d={ICONS.more} /></button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent sideOffset={6} align="end" className={MENU}>
-            <NativeViewCover />
-            <DropdownMenuItem data-menu-default-label="" onSelect={() => { void useDefault(); }} className={MENU_ITEM}>{t('settings.useDefault')}</DropdownMenuItem>
-          </DropdownMenuContent>
-        </DropdownMenu>
+      <DropdownMenu modal={false}>
+        <DropdownMenuTrigger asChild>
+          <button type="button" data-issues-settings-more="" title={t('more')} aria-label={t('more')} className={ICON_BUTTON}><Icon d={ICONS.more} /></button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent sideOffset={6} align="end" className={MENU}>
+          <NativeViewCover />
+          <DropdownMenuItem data-menu-toggle={enabled ? 'off' : 'on'} onSelect={() => { void toggle(!enabled); }} className={MENU_ITEM}>
+            <Icon d={ICONS.power} />{t(enabled ? 'settings.switchOff' : 'settings.switchOn')}
+          </DropdownMenuItem>
+          {label.hidden > 0 && (
+            <DropdownMenuItem data-menu-review-hidden="" onSelect={() => setReviewing(true)} className={MENU_ITEM}>
+              <Icon d={ICONS.show} />{t('settings.reviewHidden', { count: label.hidden })}
+            </DropdownMenuItem>
+          )}
+          {label.custom && (
+            <DropdownMenuItem data-menu-default-label="" onSelect={() => { void useDefault(); }} className={MENU_ITEM}>
+              <Icon d={ICONS.refresh} />{t('settings.useDefault')}
+            </DropdownMenuItem>
+          )}
+        </DropdownMenuContent>
+      </DropdownMenu>
+      {reviewing && (
+        <HiddenDialog api={api} project={project} onClose={() => setReviewing(false)} onChanged={() => { void reload(); }} />
       )}
       {editing && (
         <LabelDialog api={api} project={project} current={label.label} onClose={() => setEditing(false)} onSaved={() => { setEditing(false); void reload(); }} />
@@ -652,6 +855,13 @@ export function apply(ctx: ClientContext): () => void {
       },
     }, Widget as never),
     ctx.slots.register({ slot: 'project.settings' }, Settings),
+    // An imported idea moved elsewhere: the list read before is stale.
+    ctx.realtime.subscribe('issues', (payload) => {
+      const signal = issuesSignal(payload);
+      if (!signal) return;
+      lastRead.delete(signal.project);
+      for (const listen of signalListeners) listen(signal);
+    }),
   ];
   return () => {
     for (const dispose of disposers.reverse()) dispose();
