@@ -48,7 +48,7 @@ test('the shared Mac: a release leg cancels a nightly leg, a nightly leg waits f
     "cancel-in-progress: ${{ inputs.purpose == 'release' }}",
   ]);
   // Not a group of a caller: GitHub cancels the caller when they share one.
-  for (const caller of ['release.yml']) {
+  for (const caller of ['release.yml', 'nightly.yml']) {
     assert.doesNotMatch(readWorkflow(caller).code, /group:\s*timon-mac-runner|group: \$\{\{ github\.workflow \}\}/, caller);
   }
 });
