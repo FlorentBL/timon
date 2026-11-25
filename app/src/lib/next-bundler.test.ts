@@ -32,7 +32,7 @@ test('node_modules resolves the Next that package.json pins', () => {
   );
 });
 
-function turbopackAfter(options: { webpack?: boolean }): string | undefined {
+function turbopackAfter(options: { webpack?: boolean; turbopack?: boolean }): string | undefined {
   const before = process.env.TURBOPACK;
   delete process.env.TURBOPACK;
   try {
@@ -46,6 +46,13 @@ function turbopackAfter(options: { webpack?: boolean }): string | undefined {
 
 test('a custom server without a bundler flag gets Turbopack', () => {
   assert.ok(turbopackAfter({}), 'Next no longer selects Turbopack by default: this pin can go');
+});
+
+// `turbopack: false` reads like an opt-out but is not one: `createServer` only
+// tests the flag for truthiness, then falls back to `TURBOPACK=auto` unless
+// `webpack` is set (`next/dist/server/next.js`, `createServer`).
+test('turbopack: false is not an opt-out, Turbopack stays selected', () => {
+  assert.ok(turbopackAfter({ turbopack: false }));
 });
 
 test('a custom server created with webpack: true stays on webpack', () => {
