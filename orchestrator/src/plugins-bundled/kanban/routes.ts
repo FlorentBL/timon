@@ -13,10 +13,10 @@ import { asBackendName } from '../../backends/index.js';
 import { codeCloseRefusal, effectiveMergeSha, evaluateCodeDone, inspectGitBranch, mergeCloseRefusal, pullRequestCloseRefusal, shaInBase, taskRepo } from '../../code-gate.js';
 export { codeCloseRefusal, effectiveMergeSha, mergeCloseRefusal, pullRequestCloseRefusal } from '../../code-gate.js';
 import { config } from '../../config/load.js';
-import { FALLBACK_SCOPES, TASK_TYPES, db, dbApi, isCodeOnlyPipeline, isFallbackScope, isTaskType, normalizeTaskStatusInput, rowVisible, type TaskDeleteOutcome, type TaskDeleteResult, type TaskRow, type TaskType } from '../../db.js';
+import { FALLBACK_SCOPES, TASK_TYPES, db, dbApi, isCodeOnlyPipeline, isFallbackScope, isTaskType, normalizeTaskStatusInput, rowVisible, type MissionRunnerRow, type TaskDeleteOutcome, type TaskDeleteResult, type TaskRow, type TaskType } from '../../db.js';
 import { forbidden, forbiddenBody, isPersonAuth, rejectIfDenied, requireAuth, viewerFromRequest } from '../../users/identity.js';
 import { scopedDb } from '../../users/scoped-db.js';
-import { resolveTaskLlm, type SeriesLlmChoice } from '../../dispatcher.js';
+import { describeRouting, missionLlm, previewTaskRouting, resolveTaskLlm, type SeriesLlmChoice, type TaskLlmCache, type TaskRouting } from '../../dispatcher.js';
 import {
   clearSeriesFallbackRule, clearSeriesRoleChoice, listSeriesFallbackRules, listSeriesRoleChoices, parsePlanGroup, resolveSeriesId,
   SeriesParamSchema, seriesLlmChoice, SeriesServiceError, seriesVisibleTo, setSeriesFallbackRule, setSeriesRoleChoice,
@@ -111,6 +111,8 @@ export type TaskRunner = {
   source: string | null;
   /** `pinned` | `missing` | `other_project` | `orchestrator` | `other_role`. */
   reason: string | null;
+  /** No mission ran it yet: the agent the dispatcher WILL hand it to (#1109). */
+  planned?: true;
 };
 
 export function taskRunner(
@@ -118,7 +120,13 @@ export function taskRunner(
   lookup: (missionId: string) => { agent_name: string; source_meta: string | null } | undefined = dbApi.getMissionRunner,
 ): TaskRunner | null {
   if (!task.mission_id) return null;
-  const mission = lookup(task.mission_id);
+  return missionRunner(task, lookup(task.mission_id));
+}
+
+function missionRunner(
+  task: Pick<TaskRow, 'agent_name'>,
+  mission: { agent_name: string; source_meta: string | null } | undefined,
+): TaskRunner | null {
   if (!mission || mission.agent_name === task.agent_name) return null;
   let meta: Record<string, unknown> = {};
   try {
@@ -127,6 +135,37 @@ export function taskRunner(
   } catch { /* an unreadable meta only loses the reason */ }
   const text = (v: unknown): string | null => (typeof v === 'string' && v ? v : null);
   return { agent: mission.agent_name, source: text(meta.routing), reason: text(meta.routing_reason) };
+}
+
+/** Memo of one board read: `taskExecution` over every task of the list. */
+export type TaskExecutionCache = TaskLlmCache & { routing?: Map<string, TaskRouting> };
+
+/**
+ * Who runs a task and on what, as the board shows it (#1109). Once a mission
+ * ran it, the mission says: its agent, and the backend and model frozen on it
+ * at dispatch. A task waiting for its turn (PENDING, even with an older
+ * mission behind it) shows what the dispatcher will do with it now: the agent
+ * the role system hands it to, and that agent's pair under the overrides,
+ * the series rules and the project role.
+ */
+export function taskExecution(
+  task: TaskRow,
+  cache?: TaskExecutionCache,
+  lookup: (missionId: string) => MissionRunnerRow | undefined = dbApi.getMissionRunner,
+): { backend: string; model: string | null; runner: TaskRunner | null } {
+  const mission = task.mission_id && task.status !== 'PENDING' ? lookup(task.mission_id) : undefined;
+  if (mission) return { ...missionLlm(mission, cache), runner: missionRunner(task, mission) };
+  const key = `${task.agent_name}\u0000${task.type}\u0000${task.project ?? ''}\u0000${task.creator_mission_id ?? ''}`;
+  let routing = cache?.routing?.get(key);
+  if (!routing) {
+    routing = previewTaskRouting(task);
+    cache?.routing?.set(key, routing);
+  }
+  const rerouted = routing.agent !== task.agent_name;
+  return {
+    ...resolveTaskLlm(task, cache, routing.agent),
+    runner: rerouted ? { agent: routing.agent, source: routing.source, reason: routing.refusal ?? null, planned: true } : null,
+  };
 }
 
 /** A task that keeps another one alive, as the board and the 409 show it. */
@@ -800,15 +839,30 @@ export function createTaskFromBody(
   });
   if (base) dbApi.setTaskBaseBranch(id, base);
   if (todo.value) dbApi.setTaskTodoId(id, todo.value);
+  const created = scope.getTask(id);
+  const warnings = [schedWarning, created ? reroutingWarning(created) : null].filter((w): w is string => !!w);
   // `warnings` only if there are any: a client that ignores it keeps exactly
   // the previous contract.
   return {
     status: 201,
     json: {
-      task: scope.getTask(id),
-      ...(schedWarning ? { warnings: [schedWarning] } : {}),
+      task: created,
+      ...(warnings.length ? { warnings } : {}),
     },
   };
+}
+
+/**
+ * Said to whoever creates a task its named agent will not run (#1109): the
+ * task is kept as asked, the dispatcher hands it to the role's agent. Without
+ * it a pilot believes its own choice of agent, and of model, holds.
+ */
+export function reroutingWarning(task: TaskRow): string | null {
+  let routing: TaskRouting;
+  try { routing = previewTaskRouting(task); } catch { return null; }
+  if (routing.agent === task.agent_name) return null;
+  return `task ${task.id.slice(0, 8)} will be run by ${routing.agent}, not ${task.agent_name}: ` +
+    `${describeRouting(task.agent_name, routing)} (backend and model follow ${routing.agent})`;
 }
 
 /**
@@ -1083,20 +1137,20 @@ export function registerRoutes(app: Router, deps: KanbanRouteDeps = {}): void {
     // Effective backend + model per task (override → role → config → default),
     // resolved on the server side because the client does not have the agent config. Cache shared
     // over the batch: the tasks reuse the same agents/projects.
-    const cache = {
+    const cache: TaskExecutionCache = {
       cfg: new Map<string, AgentConfig>(),
       roles: new Map<string, RoleSpec | undefined>(),
       series: new Map<string, SeriesLlmChoice | undefined>(),
       modelBackend: new Map<string, string | null>(),
+      routing: new Map<string, TaskRouting>(),
     };
     const listChain = (rootId: string) => dbApi.listVerificationChain(rootId);
     // Only the number: the card shows a paperclip, the dialog reads the list.
     const attachmentCounts = countTaskAttachments(tasks);
     // `listed`, not `all`: a todo_id filter must not hide a task's dependents.
     const withLlm = withDependents(tasks, listed).map((t) => {
-      const { backend, model } = resolveTaskLlm(t, cache);
+      const { backend, model, runner } = taskExecution(t, cache);
       const row = full ? t : boardTaskRow(t);
-      const runner = taskRunner(t);
       return {
         ...row,
         effective_backend: backend,
@@ -1445,8 +1499,7 @@ export function registerRoutes(app: Router, deps: KanbanRouteDeps = {}): void {
   app.get('/api/tasks/:id', (req, res) => {
     const task = scopedDb(viewerFromRequest(req)).getTask(req.params.id);
     if (!task) { res.status(404).json(apiError('not_found', 'not found')); return; }
-    const { backend, model } = resolveTaskLlm(task);
-    const runner = taskRunner(task);
+    const { backend, model, runner } = taskExecution(task);
     // Inherited ones included: an iteration works with its root's files.
     const attachments = taskAttachmentsWithInherited(task).map(publicTaskAttachment);
     res.json({ task: { ...task, effective_backend: backend, effective_model: model, attachments, ...(runner ? { run_by: runner } : {}) } });

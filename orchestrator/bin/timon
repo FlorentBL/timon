@@ -2186,6 +2186,8 @@ async function cmdTaskCreate(argv) {
   };
 
   const j = await http('POST', '/api/tasks', body);
+  // stderr: stdout stays the task's JSON, which scripts pipe to `jq`.
+  for (const warning of j.warnings ?? []) process.stderr.write(`timon: warning: ${warning}\n`);
   process.stdout.write(JSON.stringify(j.task, null, 2) + '\n');
 }
 

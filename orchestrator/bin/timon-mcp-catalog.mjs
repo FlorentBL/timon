@@ -135,7 +135,13 @@ const TOOLS = [
       type: 'object',
       properties: {
         title: { type: 'string', description: 'Short task title.' },
-        agent_name: { type: 'string', description: 'Name of the agent who will run the task.' },
+        agent_name: {
+          type: 'string',
+          description:
+            'Name of the agent who will run the task. For a code/review/merge/research/chore task the ' +
+            'project\'s role system may hand it to the agent holding the type\'s role instead: the reply ' +
+            'then carries `warnings` naming who will run it (the task is still created).',
+        },
         description: { type: 'string', description: 'Optional context/details.' },
         priority: { type: 'number', minimum: 1, maximum: 5, description: '1 (someday) to 5 (urgent), default 3.' },
         deps: { type: 'array', items: { type: 'string' }, description: 'IDs of blocking tasks.' },
@@ -1430,7 +1436,8 @@ async function runTool(rawName, args, ctx) {
       if (args.todo_id !== undefined) body.todo_id = args.todo_id;
       if (env.traceId) body.trace_id = env.traceId;
       const r = await call('POST', '/api/tasks', body);
-      return r.task;
+      // A task another agent will run, or a schedule far out: said, not refused.
+      return r.warnings?.length ? { ...r.task, warnings: r.warnings } : r.task;
     }
     case 'series_fallback_set': {
       const id = args.series_id ?? 'current';
