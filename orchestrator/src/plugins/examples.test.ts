@@ -384,7 +384,7 @@ test('plugin-mascot-pack: its declared parts load at API 15 and become valid in 
   });
 });
 
-test('plugin-mascot-head: its head loads at API 15 and becomes a valid skull in a look', async () => {
+test('plugin-mascot-head: its head loads at API 19 and becomes a valid skull in a look', async () => {
   const { parseAgentLook } = await import('../agent-look.js');
   const { mascotPartsOf } = await import('./mascot-packs.js');
   await withExample('plugin-mascot-head', '@timon-ai/plugin-mascot-head', async (url, loader) => {

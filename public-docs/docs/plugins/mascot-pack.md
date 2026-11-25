@@ -4,7 +4,7 @@ title: Create a mascot pack
 
 A mascot pack adds parts to the mascot configurator: skulls, furs, eyes and accessories that people can dress their agents with, beside Timon's own. Your parts show in their own group, under your plugin's name, in the **Customise** panel of the first-run agent step and in the **Avatar** tab of the agent editor. A random draw picks among them too.
 
-A pack is mostly data: you describe each part, and Timon draws it. A skull is the exception you may take: your pack can [draw a whole head itself](#draw-a-head-yourself), for the agents that wear it. Requires `apiVersion: 15`. The complete template is `examples/plugin-mascot-pack`: a woolly hat, a scarf, a midnight fur and snowflake eyes; `examples/plugin-mascot-head` draws its own head, an ember.
+A pack is mostly data: you describe each part, and Timon draws it. A skull is the exception you may take: your pack can [draw a whole head itself](#draw-a-head-yourself), for the agents that wear it. Requires `apiVersion: 15`, and `apiVersion: 19` for a head your pack draws. The complete template is `examples/plugin-mascot-pack`: a woolly hat, a scarf, a midnight fur and snowflake eyes; `examples/plugin-mascot-head` draws its own head, an ember.
 
 ## Two halves, the same ids
 
@@ -59,6 +59,8 @@ Every part has a `label`: one string, or one per language tag (`{ en: 'Scarf', f
 ## Draw a head yourself
 
 A `shape` may carry a `head` component instead of the four `skull` numbers. An agent whose skull is that part (`<your plugin id>:<slug>`) is then drawn entirely by your component, everywhere its mascot shows: the configurator's preview and skull grid, avatars, the chat, the onboarding. Every other agent stays Timon's mascot, in the 2D or 3D style the person picked, so several packs can each add their own heads side by side. A shape has either `skull` or `head`, never both: `register` throws otherwise.
+
+A pack that draws a head declares `apiVersion: 19`, the contract of Timon 0.1.10, which first draws one. An older Timon then refuses the pack, saying it needs a newer Timon; declared lower, the pack would install there and its agents would show Timon's mascot instead, with no message.
 
 ```js
 import React from 'react'
