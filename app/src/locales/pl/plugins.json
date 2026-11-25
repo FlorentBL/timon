@@ -437,7 +437,7 @@
   "binariesSettings": {
     "brokenPin": "Przypiętej ścieżki nie można uruchomić: {path}",
     "pathLabel": "Ścieżka do pliku binarnego {name}",
-    "placeholder": "Pełna ścieżka, np. /usr/local/bin/claude lub C:\\Users\\ty\\AppData\\Roaming\\npm\\claude.cmd",
+    "placeholder": "Pełna ścieżka, np. {example}",
     "browse": "Przeglądaj…",
     "save": "Zapisz ścieżkę",
     "clear": "Usuń przypięcie",
@@ -450,6 +450,7 @@
       "path_missing": "Pod tą ścieżką nic nie ma.",
       "path_not_file": "To folder. Wybierz sam plik programu.",
       "path_not_executable": "Tego pliku nie można uruchomić: nie jest wykonywalny.",
+      "wrong_program": "Ten plik nie jest interfejsem CLI {name}.",
       "no_config": "Najpierw dokończ konfigurację.",
       "config_unreadable": "Nie można odczytać timon.config.json. Napraw go lub przywróć, a potem sprawdź ponownie.",
       "invalid_body": "Tej ścieżki nie można zapisać.",

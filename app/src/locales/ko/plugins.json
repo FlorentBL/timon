@@ -437,7 +437,7 @@
   "binariesSettings": {
     "brokenPin": "고정된 경로를 실행할 수 없습니다: {path}",
     "pathLabel": "{name} 바이너리 경로",
-    "placeholder": "전체 경로, 예: /usr/local/bin/claude 또는 C:\\Users\\you\\AppData\\Roaming\\npm\\claude.cmd",
+    "placeholder": "전체 경로, 예: {example}",
     "browse": "찾아보기…",
     "save": "경로 저장",
     "clear": "고정 해제",
@@ -450,6 +450,7 @@
       "path_missing": "이 경로에 아무것도 없습니다.",
       "path_not_file": "폴더입니다. 프로그램 파일 자체를 선택하세요.",
       "path_not_executable": "이 파일은 실행 가능하지 않아 실행할 수 없습니다.",
+      "wrong_program": "이 파일은 {name} CLI가 아닙니다.",
       "no_config": "먼저 설정을 마치세요.",
       "config_unreadable": "timon.config.json을 읽을 수 없습니다. 고치거나 복원한 뒤 다시 확인하세요.",
       "invalid_body": "이 경로는 저장할 수 없습니다.",

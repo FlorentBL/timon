@@ -28,7 +28,7 @@ import { InstallConsole } from '@/components/provider-cli/provider-cli-cards';
 import { ProviderSection, ProviderSettingRow } from '@/components/provider-page/provider-section';
 import { useProviderPage } from '@/components/provider-page/provider-page-context';
 import { TonePill } from '@/components/provider-page/provider-status-pill';
-import { pinBinary, recheckBinaries, unpinBinary } from '@/lib/backend-binaries';
+import { pinBinary, pinPathExample, recheckBinaries, unpinBinary } from '@/lib/backend-binaries';
 import { desktopBridge } from '@/lib/desktop';
 import { nativePickerReachesDaemon } from '@/lib/directory-pick';
 import { activeMachineId } from '@/lib/machines/machine-storage';
@@ -380,11 +380,13 @@ function PinnedPath({ program, pinKey }: { program: ProviderProgramView; pinKey:
 
   const trimmed = draft.trim();
   const unchanged = trimmed === (program.pin ?? '');
+  // The field names the program it wants (#1101: Ollama Cloud runs on the Codex CLI, and `ollama` was pinned).
+  const example = pinPathExample(pinKey, [program.path, program.pin], typeof navigator === 'undefined' ? '' : navigator.userAgent);
 
   return (
     <div className="space-y-2">
-      <p className="m-0 text-xs font-medium text-foreground">{t('providerPage.program.pin.title')}</p>
-      <p className="m-0 text-xs leading-relaxed text-muted-foreground">{t('providerPage.program.pin.description')}</p>
+      <p className="m-0 text-xs font-medium text-foreground">{t('providerPage.program.pin.title', { name: pinKey })}</p>
+      <p className="m-0 text-xs leading-relaxed text-muted-foreground">{t('providerPage.program.pin.description', { name: pinKey })}</p>
       {program.pin !== null && program.path === null ? (
         <p className="m-0 break-all text-xs text-amber-700 dark:text-amber-300">{t('binariesSettings.brokenPin', { path: program.pin })}</p>
       ) : null}
@@ -396,14 +398,14 @@ function PinnedPath({ program, pinKey }: { program: ProviderProgramView; pinKey:
           void work(() => pinBinary(pinKey, trimmed), t('binariesSettings.saved', { name: program.name }));
         }}
       >
-        <label htmlFor={inputId} className="sr-only">{t('binariesSettings.pathLabel', { name: program.name })}</label>
+        <label htmlFor={inputId} className="sr-only">{t('binariesSettings.pathLabel', { name: pinKey })}</label>
         <Input
           id={inputId}
           className="h-8 min-w-[16rem] flex-1 text-xs"
           value={draft}
           spellCheck={false}
           autoComplete="off"
-          placeholder={t('binariesSettings.placeholder')}
+          placeholder={t('binariesSettings.placeholder', { example })}
           disabled={busy}
           aria-invalid={error !== null}
           aria-describedby={error ? `${inputId}-error` : undefined}
