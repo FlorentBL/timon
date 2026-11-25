@@ -37,7 +37,7 @@ import { join } from 'node:path';
 import { dbApi } from '../db.js';
 import { getHost } from '../host/index.js';
 import { killProcessTree } from '../host/kill-tree.js';
-import { chooseLaunchNode, withLaunchPath } from '../host/launch-path.js';
+import { chooseLaunchNode, nodeInterpreter, withLaunchPath } from '../host/launch-path.js';
 import { LAUNCHD_SYSTEM_KIND } from '../host/service-install.js';
 import { ensurePrivateDir } from '../host/private-dir.js';
 import { systemEnv } from '../secrets/env.js';
@@ -105,8 +105,8 @@ type LoginDriver = {
   /** Kept for the whole flow: the paste flow needs the user, the device one
    *  only the provider's page. */
   promptKind: LoginPrompt['kind'];
-  args(expected: string | null): string[];
-  env(dir: string): Record<string, string>;
+  /** The CLI's process for a flow that signs `dir` in (`loginLaunch`). */
+  launch(expected: string | null, dir: string): LoginLaunch;
   /** The prompt, once the CLI printed enough of it. */
   parse(output: string): LoginPrompt | null;
   identity(dir: string): Promise<Identity | null>;
@@ -245,25 +245,35 @@ function baseEnv(): Record<string, string> {
 }
 
 /**
- * The PATH a mission's CLI gets (`host/launch-path.ts`), for its login too: an npm
- * `codex` found under nvm or `%APPDATA%\npm` runs `env node`, which the service's
- * PATH does not hold (TODO #486).
+ * A login's CLI as it starts: the program, its arguments and its environment.
+ * `interpreted`: `file` is the chosen `node`, the CLI's script its first argument.
  */
-function launchEnv(cmd: string, env: Record<string, string>): Record<string, string> {
-  const next = withLaunchPath(env, {
+type LoginLaunch = { file: string; args: string[]; env: Record<string, string>; interpreted: boolean };
+
+/**
+ * How a login starts `cmd`, as a mission starts its CLI (#1211). The PATH gets
+ * what a Node CLI needs (`host/launch-path.ts`): an npm `codex` found under nvm
+ * or `%APPDATA%\npm` runs `env node`, which the service's PATH does not hold
+ * (TODO #486). And such a CLI is started with the `node` the host chose
+ * (`nodeInterpreter`), never through its `#!/usr/bin/env node` line: the login
+ * runs outside the fence, so the first `node` of a PATH entry must not decide
+ * what runs there. Windows, a native CLI, or no chosen `node` keep `cmd` as is.
+ */
+function loginLaunch(cmd: string, args: readonly string[], env: Record<string, string>): LoginLaunch {
+  const binary = options.resolveBin(cmd);
+  const node = chooseLaunchNode({
     platform: options.platform,
-    binary: options.resolveBin(cmd),
-    node: chooseLaunchNode({
-      platform: options.platform,
-      findNode: () => options.resolveBin('node'),
-      // Only Electron's binary is no `node`: a daemon run from sources IS on the right one.
-      selfExecutable: process.versions.electron ? process.execPath : undefined,
-    }),
+    findNode: () => options.resolveBin('node'),
+    // Only Electron's binary is no `node`: a daemon run from sources IS on the right one.
+    selfExecutable: process.versions.electron ? process.execPath : undefined,
   });
-  if (next === env) return env;
-  const out: Record<string, string> = {};
-  for (const [key, value] of Object.entries(next)) if (value !== undefined) out[key] = value;
-  return out;
+  const next = withLaunchPath(env, { platform: options.platform, binary, node });
+  const launchEnv: Record<string, string> = {};
+  for (const [key, value] of Object.entries(next)) if (value !== undefined) launchEnv[key] = value;
+  const interpreter = binary ? nodeInterpreter(binary, node, options.platform) : null;
+  return interpreter && binary
+    ? { file: interpreter.file, args: [...interpreter.args, binary, ...args], env: launchEnv, interpreted: true }
+    : { file: cmd, args: [...args], env: launchEnv, interpreted: false };
 }
 
 /**
@@ -273,12 +283,13 @@ function launchEnv(cmd: string, env: Record<string, string>): Record<string, str
  * what the driver passes, never the daemon's secrets.
  */
 function declaredDriver(declared: ProviderLoginDriver, cmd: string): LoginDriver {
-  const env = (dir: string): Record<string, string> => launchEnv(cmd, declared.env(dir, baseEnv()));
-  const run: ProviderLoginRun = (args, extra, timeoutMs = 30_000) => options.run(cmd, [...args], launchEnv(cmd, { ...baseEnv(), ...extra }), timeoutMs);
+  const run: ProviderLoginRun = (args, extra, timeoutMs = 30_000) => {
+    const launch = loginLaunch(cmd, args, { ...baseEnv(), ...extra });
+    return options.run(launch.file, launch.args, launch.env, timeoutMs);
+  };
   return {
     promptKind: declared.promptKind,
-    args: (expected) => declared.args(expected),
-    env,
+    launch: (expected, dir) => loginLaunch(cmd, declared.args(expected), declared.env(dir, baseEnv())),
     parse: (output) => declared.parse(output),
     identity: (dir) => declared.identity(dir, run),
     install: (staging, dest) => declared.install(staging, dest),
@@ -288,13 +299,13 @@ function declaredDriver(declared: ProviderLoginDriver, cmd: string): LoginDriver
   };
 }
 
-function driverFor(backend: string): { driver: LoginDriver; cmd: string } | null {
+function driverFor(backend: string): { driver: LoginDriver } | null {
   const entry = activeProfiles().find((candidate) => candidate.profile.id === backend && !candidate.account);
   if (!entry || isRemoteDialect(entry.dialect)) return null;
   const cmd = entry.profile.cmd ?? entry.dialect.defaultCmd;
   // What the provider declared, the product's own two included.
   const declared = profileAccountsDeclaration(entry)?.login;
-  if (declared) return { driver: declaredDriver(declared, cmd), cmd };
+  if (declared) return { driver: declaredDriver(declared, cmd) };
   return null;
 }
 
@@ -515,7 +526,7 @@ export function startAccountLogin(account: BackendAccountRow, initiator: LoginIn
 function startLogin(target: LoginTarget, initiator: LoginInitiator): LoginView {
   const resolved = driverFor(target.backend);
   if (!resolved) throw new LoginFlowError('unsupported', `backend ${target.backend} has no login flow`);
-  const { driver, cmd } = resolved;
+  const { driver } = resolved;
   cancelLoginInternal(target.key);
 
   // macOS claude keeps the sign-in in a keychain entry named after the config
@@ -544,7 +555,8 @@ function startLogin(target: LoginTarget, initiator: LoginInitiator): LoginView {
 
   let child: ChildProcess;
   try {
-    child = options.spawn(cmd, driver.args(target.expected), { env: driver.env(dir), cwd: dir });
+    const launch = driver.launch(target.expected, dir);
+    child = options.spawn(launch.file, launch.args, { env: launch.env, cwd: dir });
   } catch {
     flow.exited = true;
     finish(flow, 'failed', 'cli_missing');
@@ -792,13 +804,18 @@ function finishToken(flow: TokenFlow, state: 'connected' | 'failed', failure: Lo
   retain.unref();
 }
 
-/** The command a pseudo-terminal runs: a Windows npm shim is a batch file, which only `cmd.exe` runs. */
-function ptyCommand(cmd: string, args: string[]): { file: string; args: string[] } {
+/**
+ * What a pseudo-terminal runs: `loginLaunch`, with a Windows npm shim (a batch
+ * file, which only `cmd.exe` runs) handed to `cmd.exe`.
+ */
+function ptyCommand(cmd: string, args: string[], env: Record<string, string>): LoginLaunch {
+  const launch = loginLaunch(cmd, args, env);
+  if (launch.interpreted) return launch;
   const path = options.resolveBin(cmd) ?? cmd;
   if (options.platform === 'win32' && /\.(cmd|bat)$/i.test(path)) {
-    return { file: process.env.ComSpec ?? 'cmd.exe', args: ['/d', '/s', '/c', path, ...args] };
+    return { ...launch, file: process.env.ComSpec ?? 'cmd.exe', args: ['/d', '/s', '/c', path, ...args] };
   }
-  return { file: path, args };
+  return { ...launch, file: path };
 }
 
 function tokenSeen(flow: TokenFlow): boolean {
@@ -844,10 +861,8 @@ export function startHostToken(backend: string, initiator: LoginInitiator): Logi
 
   let pty: TokenPty;
   try {
-    const run = ptyCommand(cmd, driver.args());
-    pty = tokenSpawn(run.file, run.args, {
-      env: launchEnv(cmd, driver.env(dir, baseEnv())), cwd: dir, cols: TOKEN_COLS, rows: TOKEN_ROWS,
-    });
+    const run = ptyCommand(cmd, driver.args(), driver.env(dir, baseEnv()));
+    pty = tokenSpawn(run.file, run.args, { env: run.env, cwd: dir, cols: TOKEN_COLS, rows: TOKEN_ROWS });
   } catch (err) {
     finishToken(flow, 'failed', (err as Error).message === 'pty_unavailable' ? 'unsupported' : 'cli_missing');
     return tokenSnapshot(flow);
