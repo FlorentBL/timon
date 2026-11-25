@@ -445,12 +445,16 @@ export function defaultCompactDeps(): CompactDeps {
       const scratch = pluginId ? existingMissionScratchPath(pluginId, missionId) : undefined;
       if (backend?.sessionStore === 'per-mission' && !scratch) return 'not_resumable';
       let cfg: RunNativeCompactOpts['cfg'] = { cwd: '' };
+      let agentModel: string | undefined;
       try {
         const loaded = loadConfig(mission.agent_name);
         cfg = { cwd: loaded.cwd, project: loaded.project };
+        agentModel = loaded.model;
       } catch {
         // Agent config may be missing on an archived mission; proceed without cwd/project.
       }
+      const model = missionLlmConfig(mission).model ?? agentModel ?? catalogBackend(backendName)?.defaultModel ?? undefined;
+      if (model) cfg = { ...cfg, model };
       if (backend?.runNativeCompact) {
         return backend.runNativeCompact({
           missionId,
@@ -466,6 +470,7 @@ export function defaultCompactDeps(): CompactDeps {
         missionId,
         sessionId: mission.session_id,
         ...(cfg.cwd ? { cwd: cfg.cwd } : {}),
+        ...(model ? { model } : {}),
         ...(scratch ? { scratch } : {}),
         timeoutMs,
         ...(signal ? { signal } : {}),

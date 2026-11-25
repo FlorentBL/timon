@@ -14,6 +14,7 @@ import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { TIMON_HOME } from '../paths.js';
 import { dbApi } from '../db.js';
+import { createSecret, deleteSecret, grantSecret } from '../secrets/store.js';
 import { mountOfficialProviders, stubCliBinaries, buildUnderSeal } from '../../tests/helpers/official-providers.js';
 import { nativeCompactCommand, nativeCompactOf } from './capabilities.js';
 import { catalogBackend, getBackend } from './index.js';
@@ -144,7 +145,7 @@ test('Backend.runNativeCompact resolves profile runtime, passthroughEnv, launch 
     const res = await backend.runNativeCompact({
       missionId: 'm-bound-1',
       agentName: 'acme.main',
-      cfg: { cwd: TIMON_HOME, project: 'acme' },
+      cfg: { cwd: TIMON_HOME, project: 'acme', model: 'm-1' },
       sessionId: 'sess-bound-1',
       scratch: join(TIMON_HOME, 'scratch-1'),
       timeoutMs: 30_000,
@@ -155,12 +156,63 @@ test('Backend.runNativeCompact resolves profile runtime, passthroughEnv, launch 
     assert.equal(received.missionId, 'm-bound-1');
     assert.equal(received.sessionId, 'sess-bound-1');
     assert.equal(received.cwd, TIMON_HOME);
+    assert.equal(received.model, 'm-1');
     assert.equal(received.env?.ACME_COMPACT_DIR, 'from-host');
     assert.equal(received.launch?.project, 'acme');
     assert.equal(received.signal, controller.signal);
     assert.ok(received.profile && typeof received.profile === 'object');
   } finally {
     delete process.env.ACME_COMPACT_DIR;
+    releaseProfile();
+    releaseProvider();
+  }
+});
+
+test('Backend.runNativeCompact injects Vault secrets (CODEX_API_KEY) for trusted dialects via providerEnvPlan', async () => {
+  const id = 'acme-trusted-compact';
+  let received: NativeCompactContext | undefined;
+  const def = {
+    ...MINIMAL,
+    id,
+    declares: { ...MINIMAL.declares, passthroughEnv: ['CODEX_AUTH_DIR'] },
+    session: {
+      ...MINIMAL.session,
+      compact: {
+        run: async (ctx: NativeCompactContext) => {
+          received = ctx;
+          return { metadata: { method: 'thread/compact/start' } };
+        },
+      },
+    },
+  } as unknown as NativeProviderDefinition;
+  const releaseProvider = registerProvider('@test/acme-trusted-compact', def, { trusted: true });
+  const releaseProfile = registerProfile('@test/acme-trusted-compact', {
+    id,
+    dialect: id,
+    label: 'Acme Trusted',
+    models: ['gpt-5.4'],
+    defaultModel: 'gpt-5.4',
+  }, { trusted: true });
+  const secret = createSecret({ name: 'CODEX_API_KEY', value: 'sk-vault-compact-key' });
+  grantSecret(secret.id, { scope_kind: 'agent', scope_ref: 'acme.main' });
+  try {
+    dbApi.createMission('m-vault-1', 'acme.main', 'test');
+    const backend = getBackend(id);
+    assert.ok(backend?.runNativeCompact);
+    await backend.runNativeCompact({
+      missionId: 'm-vault-1',
+      agentName: 'acme.main',
+      cfg: { cwd: TIMON_HOME, project: 'acme', model: 'gpt-5.4' },
+      sessionId: 'sess-vault-1',
+      scratch: join(TIMON_HOME, 'scratch-vault-1'),
+      timeoutMs: 30_000,
+    });
+    assert.ok(received);
+    assert.equal(received.env?.CODEX_API_KEY, 'sk-vault-compact-key');
+    assert.equal(received.env?.CODEX_AUTH_DIR, process.env.CODEX_AUTH_DIR);
+    assert.equal(received.model, 'gpt-5.4');
+  } finally {
+    deleteSecret(secret.id);
     releaseProfile();
     releaseProvider();
   }

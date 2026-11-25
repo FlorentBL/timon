@@ -1,4 +1,4 @@
-import { codexContextSnapshot } from './context.js';
+import { codexContextSnapshot, codexContextSnapshotAfter, codexRolloutMarker } from './context.js';
 
 /**
  * Native in-place compaction for Codex via `codex app-server` JSON-RPC
@@ -62,6 +62,7 @@ export async function compactCodexThread(binary, ctx, binaryName = 'codex') {
         throw abortError(ctx.signal);
     }
 
+    const preRollout = codexRolloutMarker(ctx.scratch);
     let preTokens = positiveNumber(codexContextSnapshot(ctx.scratch)?.tokens);
     let notifiedPostTokens;
     const env = { ...(ctx.env ?? {}), CODEX_HOME: ctx.scratch };
@@ -127,7 +128,11 @@ export async function compactCodexThread(binary, ctx, binaryName = 'codex') {
                         return finish(new Error(`codex app-server initialize failed: ${rpcErrorMessage(msg.error)}`));
                     }
                     send({ method: 'initialized', params: {} });
-                    const resumeParams = { threadId: sessionId, ...(ctx.cwd ? { cwd: ctx.cwd } : {}) };
+                    const resumeParams = {
+                        threadId: sessionId,
+                        ...(ctx.cwd ? { cwd: ctx.cwd } : {}),
+                        ...(ctx.model ? { model: ctx.model } : {}),
+                    };
                     send({ id: 2, method: 'thread/resume', params: resumeParams });
                     continue;
                 }
@@ -181,7 +186,8 @@ export async function compactCodexThread(binary, ctx, binaryName = 'codex') {
                             : '';
                         return finish(new Error(`codex compaction ${status}${detail}`));
                     }
-                    const postTokens = notifiedPostTokens ?? positiveNumber(codexContextSnapshot(ctx.scratch)?.tokens);
+                    const postTokens = notifiedPostTokens
+                        ?? positiveNumber(codexContextSnapshotAfter(ctx.scratch, preRollout)?.tokens);
                     return finish(null, {
                         metadata: {
                             method: 'thread/compact/start',

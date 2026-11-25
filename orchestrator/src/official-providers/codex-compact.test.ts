@@ -5,7 +5,7 @@
 import '../test-home.js';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { compactCodexThread } from '../../official-providers/provider-codex/lib/compact.js';
@@ -82,6 +82,7 @@ test('compactCodexThread: happy path runs JSON-RPC sequence, forwards CODEX_HOME
     missionId: 'm-1',
     sessionId: 'thr-42',
     cwd: '/repo/project',
+    model: 'gpt-5.4',
     scratch: '/tmp/scratch/m-1',
     timeoutMs: 120_000,
   });
@@ -98,7 +99,7 @@ test('compactCodexThread: happy path runs JSON-RPC sequence, forwards CODEX_HOME
     recorded[0]!.sent.map((m) => m.method),
     ['initialize', 'initialized', 'thread/resume', 'thread/compact/start'],
   );
-  assert.deepEqual(recorded[0]!.sent[2]!.params, { threadId: 'thr-42', cwd: '/repo/project' });
+  assert.deepEqual(recorded[0]!.sent[2]!.params, { threadId: 'thr-42', cwd: '/repo/project', model: 'gpt-5.4' });
   assert.deepEqual(recorded[0]!.sent[3]!.params, { threadId: 'thr-42' });
 });
 
@@ -230,6 +231,49 @@ test('compactCodexThread: reports pre_tokens from scratch snapshot and post_toke
   }
 });
 
+test('compactCodexThread: leaves post_tokens undefined when rollout is unchanged and no tokenUsage notification arrives', async () => {
+  const scratch = mkdtempSync(join(tmpdir(), 'timon-codex-compact-stale-'));
+  try {
+    const sessDir = join(scratch, 'sessions', '2026', '10', '25');
+    mkdirSync(sessDir, { recursive: true });
+    const rollout = join(sessDir, 'rollout-2026-10-25.jsonl');
+    writeFileSync(rollout, `${JSON.stringify({
+      type: 'event_msg',
+      payload: {
+        type: 'token_count',
+        info: { last_token_usage: { input_tokens: 52_000, output_tokens: 1_500 }, model_context_window: 200_000 },
+      },
+    })}\n`);
+
+    const { binary } = makeFakeBinary((msg, emit) => {
+      if (msg.id === 1) emit(`${JSON.stringify({ id: 1, result: {} })}\n`);
+      if (msg.id === 2) emit(`${JSON.stringify({ id: 2, result: {} })}\n`);
+      if (msg.id === 3) {
+        emit(`${JSON.stringify({ id: 3, result: {} })}\n`);
+        emit(`${JSON.stringify({ method: 'item/completed', params: { threadId: 'thr-stale', item: { type: 'contextCompaction' } } })}\n`);
+        emit(`${JSON.stringify({ method: 'turn/completed', params: { threadId: 'thr-stale', turn: { status: 'completed' } } })}\n`);
+      }
+    });
+
+    const result = await compactCodexThread(binary, {
+      missionId: 'm-stale',
+      sessionId: 'thr-stale',
+      scratch,
+      timeoutMs: 10_000,
+    });
+    assert.deepEqual(result, {
+      metadata: {
+        method: 'thread/compact/start',
+        context_compaction: true,
+        pre_tokens: 52_000,
+      },
+    });
+    assert.equal(result.metadata.post_tokens, undefined);
+  } finally {
+    rmSync(scratch, { recursive: true, force: true });
+  }
+});
+
 test('codex session.compact.run: injects profile env / API key and isolates named account profiles', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'timon-codex-dialect-'));
   try {
@@ -266,7 +310,20 @@ test('codex session.compact.run: injects profile env / API key and isolates name
     );
     const run = provider.session.compact.run;
 
-    // 1. API-key profile with custom profile.env
+    // 1. API-key via ctx.env when host auth.json is present: auth.json is NOT linked and CODEX_API_KEY is forwarded
+    await run({
+      missionId: 'm-env-api',
+      sessionId: 'thr-auth',
+      scratch,
+      env: { CODEX_AUTH_DIR: authDir, CODEX_API_KEY: 'sk-env-key' },
+      profile: { id: 'codex', cmd: 'codex', env: {} },
+      timeoutMs: 10_000,
+    });
+    assert.equal(recorded[0]!.opts.env?.CODEX_API_KEY, 'sk-env-key');
+    assert.equal(recorded[0]!.opts.env?.CODEX_HOME, scratch);
+    assert.equal(existsSync(join(scratch, 'auth.json')), false);
+
+    // 2. API-key profile with custom profile.env
     await run({
       missionId: 'm-api',
       sessionId: 'thr-auth',
@@ -275,11 +332,12 @@ test('codex session.compact.run: injects profile env / API key and isolates name
       profile: { id: 'codex', cmd: 'codex', env: { OPENAI_BASE_URL: 'https://proxy.example', CODEX_API_KEY: 'sk-prof-key' } },
       timeoutMs: 10_000,
     });
-    assert.equal(recorded[0]!.opts.env?.OPENAI_BASE_URL, 'https://proxy.example');
-    assert.equal(recorded[0]!.opts.env?.CODEX_API_KEY, 'sk-prof-key');
-    assert.equal(recorded[0]!.opts.env?.CODEX_HOME, scratch);
+    assert.equal(recorded[1]!.opts.env?.OPENAI_BASE_URL, 'https://proxy.example');
+    assert.equal(recorded[1]!.opts.env?.CODEX_API_KEY, 'sk-prof-key');
+    assert.equal(recorded[1]!.opts.env?.CODEX_HOME, scratch);
+    assert.equal(existsSync(join(scratch, 'auth.json')), false);
 
-    // 2. Named account profile: blanks CODEX_API_KEY and copies/links auth.json into scratch
+    // 3. Named account profile: blanks CODEX_API_KEY and copies/links auth.json into scratch
     await run({
       missionId: 'm-acct',
       sessionId: 'thr-auth',
@@ -293,9 +351,9 @@ test('codex session.compact.run: injects profile env / API key and isolates name
       },
       timeoutMs: 10_000,
     });
-    assert.equal(recorded[1]!.opts.env?.CODEX_API_KEY, '');
-    assert.equal(recorded[1]!.opts.env?.CODEX_EXTRA, 'yes');
-    assert.equal(recorded[1]!.opts.env?.CODEX_HOME, scratch);
+    assert.equal(recorded[2]!.opts.env?.CODEX_API_KEY, '');
+    assert.equal(recorded[2]!.opts.env?.CODEX_EXTRA, 'yes');
+    assert.equal(recorded[2]!.opts.env?.CODEX_HOME, scratch);
     assert.match(readFileSync(join(scratch, 'auth.json'), 'utf8'), /fresh-tok/);
   } finally {
     rmSync(dir, { recursive: true, force: true });

@@ -233,13 +233,15 @@ export type NativeCompactContext = {
   readonly sessionId: string;
   /** Agent working directory, when available. */
   readonly cwd?: string;
+  /** Effective model slug for the mission, when known. */
+  readonly model?: string;
   /** Per-mission private scratch directory (e.g. `CODEX_HOME`), when present on disk. */
   readonly scratch?: string;
   /** Resolved profile runtime (env, account, provider config) for this mission. */
   readonly profile?: ProfileRuntime;
   /** Launch context identifying the mission, owner, agent, and project. */
   readonly launch?: BackendLaunchContext;
-  /** Non-secret passthrough environment variables declared by the provider. */
+  /** Mission environment (system whitelist, vault slice when trusted, and declared passthroughEnv). */
   readonly env?: Readonly<Record<string, string>>;
   /** Maximum time the compaction may run before timing out, in milliseconds. */
   readonly timeoutMs: number;
@@ -251,7 +253,7 @@ export type NativeCompactContext = {
 export type RunNativeCompactOpts = {
   readonly missionId: string;
   readonly agentName: string;
-  readonly cfg: Pick<ProviderAgentConfig, 'cwd' | 'project'>;
+  readonly cfg: Pick<ProviderAgentConfig, 'cwd' | 'project' | 'model'>;
   readonly sessionId: string;
   readonly scratch?: string;
   readonly timeoutMs: number;
