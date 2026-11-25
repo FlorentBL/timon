@@ -105,7 +105,7 @@ test('a manager reads the default, sets, reads back and resets the setting', asy
   assert.equal(read.configured, true);
   assert.deepEqual(read.integration, {
     mode: 'pr', remote: 'origin', target: 'main', forge: 'github', account: 'ai-bot', gh_config_dir: ghDir, branch_prefix: 'sec/',
-    remote_url: null, contributor_conflicts: 'ask', delete_remote_branch: false,
+    remote_url: null, contributor_conflicts: 'ask',
   });
   assert.ok(dbApi.listAuditLog(50).some((row) => row.action === 'project.integration_set' && row.target === 'acme:pr'));
   const cleared = await (await call('DELETE', URL_, 'manager')).json() as { configured: boolean };
@@ -121,7 +121,6 @@ test('bodies and paths that do not validate are refused before the database', as
     { account: 'not a login' },
     { branch_prefix: 'timon/' },
     { unknown: 1 },
-    { delete_remote_branch: 'yes' },
     { gh_config_dir: 'relative/gh' },
     { gh_config_dir: join(tmpdir(), 'outside-home') },
     { gh_config_dir: home },

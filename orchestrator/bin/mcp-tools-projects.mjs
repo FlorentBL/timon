@@ -73,7 +73,6 @@ export const tools = [
         gh_config_dir: { type: ['string', 'null'], description: 'Absolute GH_CONFIG_DIR for this project.' },
         branch_prefix: { type: 'string', description: 'Prefix of integration branches, like feat/ or sec/.' },
         remote_url: { type: ['string', 'null'], description: 'Push URL the remote must have before `pr_open` pushes, like git@github.com:owner/repo.git.' },
-        delete_remote_branch: { type: 'boolean', description: 'Delete a job\'s branch on the remote once its pull request is merged and landed. Off by default.' },
         reset: { type: 'boolean', description: 'Back to the local merge; no other field.' },
       },
       required: ['slug'],
@@ -175,7 +174,7 @@ export const handlers = {
     const path = `/api/projects/${enc(args.slug)}/integration`;
     if (args.reset) return await call('DELETE', path);
     const body = {};
-    for (const key of ['mode', 'remote', 'target', 'forge', 'account', 'gh_config_dir', 'branch_prefix', 'remote_url', 'delete_remote_branch']) {
+    for (const key of ['mode', 'remote', 'target', 'forge', 'account', 'gh_config_dir', 'branch_prefix', 'remote_url']) {
       if (args[key] !== undefined) body[key] = args[key];
     }
     return await call('PUT', path, body);

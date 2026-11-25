@@ -2064,12 +2064,6 @@ if (!integrationCols.includes('notified_state')) {
   db.exec(`ALTER TABLE integrations ADD COLUMN notified_state TEXT`);
   db.exec(`UPDATE integrations SET notified_state = state WHERE state IN ('merged', 'closed')`);
 }
-// When what a concluded integration left behind was removed
-// (`integration-cleanup.ts`): once merged, its local branch, its tasks' and
-// pilot's worktrees, its remote branch when the project allows it; once its
-// pull request is closed, only the pilot's worktree. Rows concluded before the
-// column count as not cleaned: the same guards decide for them. NULL = not yet.
-if (!integrationCols.includes('cleaned_at')) db.exec(`ALTER TABLE integrations ADD COLUMN cleaned_at INTEGER`);
 // The relecture of a contributor's pull request (`external-pr-review.ts`): one
 // row per pull request, the latest one. 'draft' holds the brief the person
 // reads before sending it; 'running' names the reviewer's mission; 'done' or
@@ -2547,10 +2541,6 @@ export type TaskRow = {
   landing?: string | null;
 };
 
-/** What a job's pilot is told of its integration: its pull request opened,
- *  then merged or closed. */
-export type IntegrationNotice = 'open' | 'merged' | 'closed';
-
 /** One integration branch (see the `integrations` migration). */
 export type IntegrationRow = {
   id: string;
@@ -2573,8 +2563,6 @@ export type IntegrationRow = {
   landed_at: number | null;
   /** Outcome the series pilot was told about (see the `notified_state` migration). */
   notified_state?: string | null;
-  /** Leftovers removed after the landing (see the `cleaned_at` migration). */
-  cleaned_at?: number | null;
   created_at: number;
   updated_at: number;
 };
@@ -3352,14 +3340,6 @@ const failLandingRepairAttemptStmt = db.prepare(
 // its `--landing local` task, never through a pull request.
 const listLocalIntegrationsToLandStmt = db.prepare(
   `SELECT * FROM integrations WHERE state = 'branch' AND remote = '' ORDER BY repo ASC, created_at ASC`,
-);
-const listIntegrationsToCleanStmt = db.prepare(
-  `SELECT * FROM integrations
-    WHERE cleaned_at IS NULL AND ((state = 'merged' AND landed_at IS NOT NULL) OR state = 'closed')
-    ORDER BY repo ASC, updated_at ASC`,
-);
-const markIntegrationCleanedStmt = db.prepare(
-  `UPDATE integrations SET cleaned_at = ? WHERE id = ? AND state IN ('merged', 'closed') AND cleaned_at IS NULL`,
 );
 const listOpenIntegrationsStmt = db.prepare(
   `SELECT * FROM integrations WHERE state = 'open' ORDER BY repo ASC, created_at ASC`,
@@ -6202,14 +6182,6 @@ export const dbApi = {
   listOpenIntegrations(): IntegrationRow[] {
     return listOpenIntegrationsStmt.all() as IntegrationRow[];
   },
-  /** Landed (or closed) integrations whose leftovers were not removed yet. */
-  listIntegrationsToClean(): IntegrationRow[] {
-    return listIntegrationsToCleanStmt.all() as IntegrationRow[];
-  },
-  /** Records that the leftovers of a concluded integration were dealt with. */
-  markIntegrationCleaned(id: string): boolean {
-    return markIntegrationCleanedStmt.run(Date.now(), id).changes > 0;
-  },
   /** Local integration branches (no remote) that have not landed yet. */
   listLocalIntegrationsToLand(): IntegrationRow[] {
     return listLocalIntegrationsToLandStmt.all() as IntegrationRow[];
@@ -6223,13 +6195,13 @@ export const dbApi = {
   touchIntegrationPolled(id: string): void {
     touchIntegrationPolledStmt.run(Date.now(), id);
   },
-  /** Claims the notice of `state` ('open' | 'merged' | 'closed'): true for one
-   *  caller only, and only while the row is in that state. */
-  claimIntegrationNotice(id: string, state: IntegrationNotice): boolean {
+  /** Claims the notice of `state` ('merged' | 'closed'): true for one caller
+   *  only, and only while the row is in that state. */
+  claimIntegrationNotice(id: string, state: 'merged' | 'closed'): boolean {
     return claimIntegrationNoticeStmt.run(state, Date.now(), id, state, state).changes === 1;
   },
   /** Hands back a notice that could not be sent. */
-  releaseIntegrationNotice(id: string, state: IntegrationNotice): void {
+  releaseIntegrationNotice(id: string, state: 'merged' | 'closed'): void {
     releaseIntegrationNoticeStmt.run(Date.now(), id, state);
   },
   /** Concluded integrations whose pilot was not told yet. */

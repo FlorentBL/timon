@@ -75,10 +75,7 @@ function fixture(opts: { branch?: string; mode?: 'pr' | 'branch' | 'local' } = {
   return { repo, branch, taskId, seriesId, slug, integrationId: row.id };
 }
 
-type Calls = {
-  login: number; push: string[]; created: Array<{ base: string; head: string; title: string; body: string; repo: string }>; fetched: string[];
-  opened: Array<{ id: string; recap: boolean }>;
-};
+type Calls = { login: number; push: string[]; created: Array<{ base: string; head: string; title: string; body: string; repo: string }>; fetched: string[] };
 
 let login: GhLoginOutcome;
 let remoteSha: string | null;
@@ -89,7 +86,7 @@ beforeEach(() => {
   login = { ok: true, login: 'AI-Bot' };
   remoteSha = null;
   publicTree = { ran: true, ok: true, summary: 'Blockers: 0' };
-  calls = { login: 0, push: [], created: [], fetched: [], opened: [] };
+  calls = { login: 0, push: [], created: [], fetched: [] };
 });
 
 function deps(repo: string): PrOpenDeps {
@@ -110,7 +107,6 @@ function deps(repo: string): PrOpenDeps {
     transport: () => transport,
     publicTree: async () => publicTree,
     agentCwd: () => repo,
-    notifyOpened: (id, recap) => { calls.opened.push({ id, recap }); },
   };
 }
 
@@ -135,21 +131,16 @@ test('every check passes: the branch is pushed without force, the pull request o
   assert.equal(row?.pr_number, 12);
   assert.equal(row?.pr_url, 'https://github.com/acme/app/pull/12');
   assert.equal(row?.head_sha, git(f.repo, 'rev-parse', f.branch));
-  // The task reports the opening to its pilot itself: the card alone is added.
-  assert.deepEqual(calls.opened, [{ id: f.integrationId, recap: false }]);
   // A second call does not open another one.
   const again = await openPullRequest({ target: 'task', id: f.taskId, ...REQUEST }, deps(f.repo));
   assert.equal(again.ok, false);
   assert.equal(calls.push.length, 1);
-  assert.equal(calls.opened.length, 1, 'told once');
 });
 
 test('the series id finds the same branch', async () => {
   const f = fixture();
   const out = await openPullRequest({ target: 'series', id: f.seriesId, ...REQUEST }, deps(f.repo));
   assert.equal(out.ok, true, JSON.stringify(out));
-  // No task of the job opened it: the pilot hears of it.
-  assert.deepEqual(calls.opened, [{ id: f.integrationId, recap: true }]);
 });
 
 test('gh signed in as another account: refused, nothing pushed', async () => {
