@@ -17,6 +17,7 @@ export function scopedDb(viewer: DbViewer | null) {
     listLatestMissionCandidates: (agent: string, window?: number) =>
       dbApi.listLatestMissionCandidates(agent, viewer, window),
     getMission: (id: string) => dbApi.getMission(id, viewer),
+    readableMissionIds: (ids: readonly string[]) => dbApi.readableMissionIds(ids, viewer),
     searchMissions: (opts: Parameters<typeof dbApi.searchMissions>[0]) =>
       dbApi.searchMissions({ ...opts, viewer }),
     listChildMissions: (parentId: string) => dbApi.listChildMissions(parentId, viewer),
