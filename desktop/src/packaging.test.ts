@@ -304,11 +304,9 @@ test('the installer stops when something of Timon still runs after the pause', a
   assert.ok(net.length > 0 && ps1.indexOf('# The net.') > ps1.lastIndexOf('MethodName Create'), 'after the resume is started: a refused install still enables the task again');
   assert.match(net, /\$remaining = \{\s+\$left = @\(& \$ofInstallation\)/, 'the processes of this installation');
   assert.match(net, /Get-NetTCPConnection -State Listen -LocalPort \$port -ErrorAction Stop/, 'and whoever listens on the daemon port');
-  // The port is read once, before the stop request that goes to it.
-  assert.match(ps1, /\$port = 3010\b/, `the packaged default (${PACKAGED_DEFAULTS.daemon.listen.port})`);
+  assert.match(net, /\$port = 3010\b/, `the packaged default (${PACKAGED_DEFAULTS.daemon.listen.port})`);
   assert.equal(PACKAGED_DEFAULTS.daemon.listen.port, 3010);
-  assert.match(ps1, /Join-Path \$TimonHome 'timon\.config\.json'[\s\S]*\$config\.daemon\.listen\.port/, 'or the port this home configured');
-  assert.ok(ps1.indexOf('$port = 3010') < ps1.indexOf('# The net.'));
+  assert.match(net, /Join-Path \$TimonHome 'timon\.config\.json'[\s\S]*\$config\.daemon\.listen\.port/, 'or the port this home configured');
   // A listener whose command line cannot be read is the session-0 daemon seen without elevation.
   assert.match(net, /if \(-not \$listener\.CommandLine\) \{ \$left \+= \$listener; continue \}/);
   assert.match(net, /\$runtimes -notcontains \$listener\.Name\) \{ continue \}/, 'a foreign program on the port is not waited for');
@@ -364,7 +362,7 @@ test('the service pause writes what it found and did to its journal', () => {
   assert.match(ps1, /\$Log = Join-Path \$TimonHome 'tmp\\timon-service-pause\.log'/);
   // Elevated or not, the account expected, the installation and the data directory.
   assert.match(stop, /IsInRole\(\[Security\.Principal\.WindowsBuiltInRole\]::Administrator\)/);
-  assert.match(stop, /& \$note \("pause: start, elevated: \{0\}, installer pid \{1\}, account SID \{2\} \(from \{3\}\), installation '\{4\}', data '\{5\}', profile '\{6\}'" -f \$elevated, \$InstallerPid, \$account, \$accountSource, \$InstallDir, \$TimonHome, \$UserProfile\)/);
+  assert.match(stop, /& \$note \("pause: start, elevated: \{0\}, installer pid \{1\}, account SID \{2\} \(from \{3\}\), installation '\{4\}', data '\{5\}'" -f \$elevated, \$InstallerPid, \$account, \$accountSource, \$InstallDir, \$TimonHome\)/);
   // The task: its state before and after, and what each call answered.
   assert.match(stop, /pause: task \{0\} is \{1\}" -f \$task, \(& \$taskState\)/);
   assert.match(stop, /try \{\s+\$null = Disable-ScheduledTask -TaskName \$task -TaskPath '\\' -ErrorAction Stop\s+& \$note 'pause: task disabled'\s+\} catch \{ & \$note "pause: task not disabled: \$\(\$_\.Exception\.Message\)" \}/);
@@ -396,128 +394,6 @@ test('the service pause writes what it found and did to its journal', () => {
   // The resume says how it ended too, and the journal does not grow without bound.
   assert.match(ps1, /resume: the installer exited, task \{0\} is \{1\}/);
   assert.match(stop, /\.Length -gt 1MB\) \{ Remove-Item -LiteralPath \$Log/);
-});
-
-// TODO #1078: the pause ended the service's daemon with taskkill /F, which
-// runs no handler, so the start after an update read the previous run as
-// `unknown`. It now asks it to stop, as `timon service stop` does, and only
-// ends what is left.
-test('the service pause asks the daemon to stop before ending it, and the token stays in the script', async () => {
-  const ps1 = readFileSync(join(root, 'build', 'timon-service-pause.ps1'), 'utf8');
-  const stop = ps1.slice(ps1.indexOf('# The stop phase writes'));
-  const asked = stop.indexOf('POST /api/daemon/shutdown HTTP/1.1');
-  assert.ok(asked > 0, 'the stop request is made in the stop phase');
-  // After the task is disabled (its trigger must not restart the daemon that
-  // leaves), before the task is stopped and before any taskkill.
-  assert.ok(stop.indexOf('Disable-ScheduledTask') < asked);
-  assert.ok(asked < stop.indexOf('Stop-ScheduledTask'));
-  assert.ok(asked < stop.indexOf('taskkill.exe'));
-  assert.match(stop, /if \(\(& \$taskState\) -eq 'not registered'\) \{/, 'only a service daemon: a desktop restarts the one it embeds');
-  // The health check that waits for the daemon to leave carries no token:
-  // loopback, no proxy, no redirect.
-  const health = stop.match(/\$localRequest = \{\n([\s\S]*?)\n\}\n/)?.[1] ?? '';
-  assert.match(health, /\$request\.Proxy = \$null/);
-  assert.match(health, /\$request\.AllowAutoRedirect = \$false/);
-  assert.doesNotMatch(health, /Authorization|bearer/i, 'no token in the health check');
-  assert.match(stop, /\$loopback = "http:\/\/127\.0\.0\.1:\$port"/);
-  assert.match(stop, /'GET' '\/api\/health'/, 'gone once nothing answers');
-  assert.match(stop, /\$status -ne 202/);
-  // The token: read from the data directory into this process, written to the
-  // checked socket only, dropped after the request. Never in the journal,
-  // never on a command line (the resume's arguments, the installer's).
-  assert.match(stop, /Join-Path \$dataDir 'daemon-token'/);
-  assert.match(stop, /Authorization: Bearer \$bearer`r`n/);
-  assert.match(stop, /\$asked = & \$askToStop \$token \$daemonPid\n\s+\$token = \$null\n/);
-  assert.match(stop, /\[Array\]::Clear\(\$payload, 0, \$payload\.Length\)/, 'the request bytes are wiped');
-  assert.doesNotMatch(stop, /\$note[^\n]*\$(token|bearer|payload)\b/i, 'no token in the journal');
-  assert.doesNotMatch(ps1.match(/\$arguments = [^\n]*\n[^\n]*/)?.[0] ?? '', /token/i, 'no token on the resume command line');
-  const nsh = readFileSync(join(root, 'build', 'installer.nsh'), 'utf8');
-  assert.doesNotMatch(nsh, /daemon-token/, 'the installer passes no token');
-  // The same wait as the CLI's stop and the desktop's quit: one variable, one default, one cap.
-  const { STOP_WAIT_ENV, STOP_WAIT_MS, STOP_WAIT_MAX_MS } = await import('./embedded.js');
-  assert.match(stop, new RegExp(`\\$stopWaitMs = ${STOP_WAIT_MS}\\n`));
-  assert.match(stop, new RegExp(`\\$stopWaitMaxMs = ${STOP_WAIT_MAX_MS}\\n`));
-  assert.match(stop, new RegExp(`\\$env:${STOP_WAIT_ENV}\\b`));
-  assert.match(stop, /-match '\^\[0-9\]\+\$'/, 'digits only, as the orchestrator reads it');
-  assert.match(stop, /\$stopWaitMs -le 0\) \{\s+& \$note 'pause: daemon not asked to stop/, '0 skips the request');
-  // What happened is in the journal: the forced stop that follows is explained.
-  assert.match(stop, /pause: the daemon \(pid \{0\}\) stopped on request/);
-  assert.match(stop, /still runs \{1\} s after the stop request: ending it/);
-  assert.match(stop, /pause: no daemon answered the stop request on port \{0\} \(\{1\}\)/);
-  assert.match(stop, /pause: daemon not asked to stop: \{0\}; it is ended by force/);
-  assert.match(stop, /pause: the daemon did not accept to stop \(HTTP \{0\}\)/);
-});
-
-// Review of #1078: the script may run elevated under another account's
-// administrator and holds the daemon token. Unless the token is proven to be
-// the account's, the listener proven to be its daemon and the whole request
-// bounded in time, nothing is sent and the forced stop does the work.
-test('the service pause sends the token only to the account\'s own daemon, within one deadline', () => {
-  const nsh = readFileSync(join(root, 'build', 'installer.nsh'), 'utf8');
-  const ps1 = readFileSync(join(root, 'build', 'timon-service-pause.ps1'), 'utf8');
-  const pause = nsh.match(/!macro timonPauseService\s+([\s\S]*?)!macroend/)?.[1] ?? '';
-  const stop = ps1.slice(ps1.indexOf('# The stop phase writes'));
-  const block = (name: string): string => stop.match(new RegExp(`\\$${name} = \\{\\n([\\s\\S]*?)\\n\\}\\n`))?.[1] ?? '';
-
-  // 1. Provenance. The installer names the profile of the account that started
-  // it, read before the elevation, on both runs.
-  assert.equal((pause.match(/-TimonHome "\$3" -UserProfile "\$PROFILE"'/g) ?? []).length, 2, 'both runs pass the profile');
-  assert.ok(pause.indexOf('-UserProfile "$PROFILE"') > pause.indexOf('ReadEnvStr $3 TIMON_HOME'));
-  assert.match(ps1, /\[string\]\$UserProfile = ''/);
-  const provenance = block('tokenRefusal');
-  assert.match(provenance, /if \(\$elevated -and -not \$installer\) \{ return /, 'elevated, the account must come from the installer');
-  assert.match(provenance, /-notmatch '\^S-1-\[0-9\]\+\(-\[0-9\]\+\)\+\$'/, 'the SID is checked before it names a registry key');
-  assert.match(provenance, /if \(-not \$UserProfile\) \{ return /);
-  assert.match(provenance, /OpenSubKey\("SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\ProfileList\\\$account"\)/, 'the profile Windows records for that SID');
-  assert.match(provenance, /\[Microsoft\.Win32\.RegistryView\]::Registry64/, 'the 32-bit PowerShell sees the 64-bit registry');
-  assert.match(provenance, /GetValue\('ProfileImagePath'\)/);
-  assert.match(provenance, /if \(\$profileDir -ne \(& \$fullPath \$UserProfile\)\) \{ return /);
-  assert.match(provenance, /\$dataDir\.StartsWith\("\$profileDir\\", \[StringComparison\]::OrdinalIgnoreCase\)/, 'the data directory lies under it');
-  // The token and the pid file are read through a handle whose owner is that SID.
-  const owned = block('readOwned');
-  assert.match(owned, /\[IO\.File\]::Open\(/);
-  assert.match(owned, /\$file\.GetAccessControl\(\)\.GetOwner\(\[Security\.Principal\.SecurityIdentifier\]\)\.Value/);
-  assert.match(owned, /if \(\$owner -ne \$account\) \{ return \$null \}/);
-  assert.match(owned, /if \(\$file\.Length -gt \$limit\) \{ return \$null \}/);
-  assert.match(stop, /& \$readOwned \(Join-Path \$dataDir 'daemon\.lock\.json'\) 4096/);
-  assert.match(stop, /& \$readOwned \(Join-Path \$dataDir 'daemon-token'\) 4096/);
-  assert.doesNotMatch(stop, /Get-Content[^\n]*daemon-token/, 'never read by path alone');
-
-  // 2. The listener: only the pid the data directory names, from this
-  // installation, of this account; then the peer of the very connection.
-  const listener = block('listenerRefusal');
-  assert.match(listener, /Get-NetTCPConnection -State Listen -LocalPort \$port -ErrorAction Stop \| Select-Object -ExpandProperty OwningProcess -Unique/);
-  assert.match(listener, /\$owners\.Count -ne 1 -or \[int\]\$owners\[0\] -ne \$expected/);
-  assert.match(listener, /\$listener\.ExecutablePath\.ToLowerInvariant\(\)\.StartsWith\("\$root\\"\)/);
-  assert.match(listener, /\(& \$sidOf \$listener\) -ne \$account/);
-  assert.ok(ps1.indexOf('$root = $InstallDir') < ps1.indexOf('$listenerRefusal = {'), 'the installation is known before the check');
-  const ask = block('askToStop');
-  const peer = ask.indexOf("-State Established -LocalAddress '127.0.0.1' -LocalPort $port -RemoteAddress '127.0.0.1' -RemotePort $ours");
-  assert.ok(peer > 0, 'the other end of the connection is looked up');
-  assert.match(ask, /\$peers\.Count -ne 1 -or \[int\]\$peers\[0\] -ne \$expected\) \{ return @\{ status = 0;/);
-  assert.ok(peer < ask.indexOf('Authorization: Bearer'), 'checked before the token is written');
-  assert.match(ask, /\[Net\.IPAddress\]::Loopback, \$port/);
-  // Every guard runs before the token is read, and a refusal sends nothing.
-  const tokenRead = stop.indexOf("Join-Path $dataDir 'daemon-token'");
-  for (const guard of ['$why = & $tokenRefusal', '$why = & $listenerRefusal $daemonPid']) {
-    assert.ok(stop.indexOf(guard) > 0 && stop.indexOf(guard) < tokenRead, `${guard} before the token`);
-  }
-  assert.match(stop, /if \(\$why\) \{\s+\$token = \$null\s+& \$note /);
-
-  // 3. One monotonic deadline over connecting, sending and reading, and an
-  // answer bounded in size: no ReadToEnd, no wall clock.
-  assert.match(stop, /\$requestMs = 3000\n/);
-  assert.match(stop, /\$answerMaxBytes = 4096\n/);
-  assert.match(ask, /\$clock = \[Diagnostics\.Stopwatch\]::StartNew\(\)/);
-  assert.match(ask, /\$remaining = \{ \[int\]\[Math\]::Max\(0, \$requestMs - \$clock\.ElapsedMilliseconds\) \}/);
-  assert.match(ask, /AsyncWaitHandle\.WaitOne\(\(& \$remaining\)\)/, 'the connection');
-  assert.match(ask, /\$client\.SendTimeout = \$left/, 'the request');
-  assert.match(ask, /while \(\$received\.Length -lt \$answerMaxBytes\) \{\s+\$left = & \$remaining\s+if \(\$left -le 0\) \{ return /, 'each read');
-  assert.match(ask, /\$client\.ReceiveTimeout = \$left/);
-  assert.doesNotMatch(stop, /ReadToEnd/);
-  assert.doesNotMatch(stop, /Get-Date\)\.AddMilliseconds/, 'the wait for the exit is monotonic too');
-  assert.match(stop, /\$waited = \[Diagnostics\.Stopwatch\]::StartNew\(\)/);
-  assert.match(ask, /finally \{\s+if \(\$payload\) \{ \[Array\]::Clear/);
 });
 
 // VM, 06/11/2026: an installer killed from SSH left the task Disabled and the

@@ -391,7 +391,7 @@ Do not change the task in Task Scheduler afterwards: switch with `timon service 
 
 ## Windows: updating while the background service runs
 
-The installer pauses the `TimonOrchestrator` task and asks its daemon to stop before replacing the files, with the Windows permission prompt when it is granted and without it otherwise. The daemon then stops as it does when you quit, and Timon records the previous run as ended normally; the request is sent only when your data folder is inside your user folder and the program on the daemon's port is that daemon, run from this installation by your account, and otherwise the daemon is ended by force as before. A daemon still running after 10 seconds is ended by force (`TIMON_COOPERATIVE_STOP_MS` sets that wait in milliseconds, up to 120000, `0` to end it at once). If an older installer left Timon failing at launch (for example "ffmpeg.dll was not found"), close every `Timon.exe` from Task Manager, run the installer again, then start the task from Task Scheduler or reopen Timon.
+The installer pauses the `TimonOrchestrator` task and ends its daemon before replacing the files, with the Windows permission prompt when it is granted and without it otherwise. If an older installer left Timon failing at launch (for example "ffmpeg.dll was not found"), close every `Timon.exe` from Task Manager, run the installer again, then start the task from Task Scheduler or reopen Timon.
 
 Before it replaces anything, the installer checks that nothing of Timon still runs: no program of the installation, and nothing listening on the daemon's port. When something does, it stops there:
 
