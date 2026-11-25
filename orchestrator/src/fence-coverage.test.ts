@@ -154,3 +154,17 @@ test('an anonymous request for the fence coverage is refused', async () => {
     server.close();
   }
 });
+
+const realSeatbelt = process.platform !== 'darwin' ? 'Seatbelt is macOS only' : !existsSync('/usr/bin/sandbox-exec') ? 'no sandbox-exec' : false; // portability: macOS system binary, darwin only
+
+test('under the real Seatbelt fence, each profile\'s real launch is covered and the private files stay shut', { skip: realSeatbelt }, async () => {
+  const report = await fenceCoverage({ cfg: AUTO, profiles: ['claude', 'codex'] });
+  assert.equal(report.state, 'checked', report.reason);
+  assert.equal(report.mechanism, 'seatbelt');
+  for (const profile of report.profiles) {
+    assert.equal(profile.ok, true, `${profile.profile}: ${profile.error ?? JSON.stringify(profile.checks.filter(failedCheck))}`);
+    assert.equal(profile.launch?.built, true, `${profile.profile}: ${JSON.stringify(profile.launch)}`);
+    const token = profile.checks.find((c) => c.display.endsWith('daemon-token'));
+    assert.deepEqual([token?.policy, token?.kernel], ['refused', 'refused']);
+  }
+});
