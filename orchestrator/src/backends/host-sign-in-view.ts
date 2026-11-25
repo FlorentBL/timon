@@ -18,6 +18,12 @@ export type HostSignInView = {
   browser: boolean;
   /** A long-lived token can be minted in the app; `stored`: one is kept. */
   token: { stored: boolean } | null;
+  /**
+   * Only that token runs the host's launches: the daemon is a service outside
+   * the user's session, where the CLI's sign-in (kept or the terminal's) cannot
+   * be read. `browser` is then false.
+   */
+  tokenOnly: boolean;
   /** Whether the backend is signed in at all, as far as the daemon knows (`null`: it cannot tell). */
   signedIn: boolean | null;
 };
@@ -34,6 +40,7 @@ export function hostSignInView(backend: string): HostSignInView | null {
     identity: kept?.identityLabel ?? null,
     browser: support.browser,
     token: stored === null ? null : { stored },
+    tokenOnly: support.tokenOnly,
     signedIn: providerSignedIn(backend),
   };
 }
