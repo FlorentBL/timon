@@ -149,8 +149,9 @@ const PAGE_SIZE = 100;
 
 /**
  * Every changed file of the pull request, or an error. A missing file could be
- * the protected one, so the list counts only once it matches the pull
- * request's own `changed_files`; anything less fails the check.
+ * the protected one, so the list counts only once its distinct names match the
+ * pull request's own `changed_files`; a repeated name or anything less fails
+ * the check.
  * `get(path)` returns the parsed JSON, or null for a 404.
  */
 export async function listPullFiles(get, repo, number) {
@@ -170,8 +171,17 @@ export async function listPullFiles(get, repo, number) {
     files.push(...batch);
     if (batch.length < PAGE_SIZE) break;
   }
-  if (files.length !== expected) {
-    throw new Error(`listed ${files.length} changed files but the pull request changes ${expected}: the list is incomplete, run the check again`);
+  // A name listed twice stands in for one never listed: the total would match
+  // while a protected file stays out of sight, so the list is not trusted.
+  const seen = new Set();
+  for (const file of files) {
+    if (seen.has(file.filename)) {
+      throw new Error(`the changed files list names ${file.filename} twice: it moved while being read, run the check again`);
+    }
+    seen.add(file.filename);
+  }
+  if (seen.size !== expected) {
+    throw new Error(`listed ${seen.size} changed files but the pull request changes ${expected}: the list is incomplete, run the check again`);
   }
   return files;
 }

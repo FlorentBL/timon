@@ -183,6 +183,21 @@ test('a list whose length differs from the pull request count fails, in both dir
   await assert.rejects(listPullFiles(more.get, 'o/r', 7), /listed 4 changed files but the pull request changes 3/);
 });
 
+test('a repeated name fails even when the total matches: it could hide the file never listed', async () => {
+  // f100.ts..f199.ts minus f150.ts, with f0.ts listed again on page 2: 200 entries, 199 distinct names.
+  const page2 = [...named(50, 100), ...named(49, 151), { filename: 'f0.ts', status: 'modified' }];
+  const { get } = fakeApi({ changed: 200, pages: { 1: named(100), 2: page2 } });
+  await assert.rejects(listPullFiles(get, 'o/r', 7), /names f0\.ts twice/);
+  const sameEntry = fakeApi({ changed: 2, pages: { 1: [{ filename: 'a.ts', status: 'modified' }, { filename: 'a.ts', status: 'modified' }] } });
+  await assert.rejects(listPullFiles(sameEntry.get, 'o/r', 7), /names a\.ts twice/);
+});
+
+test('a rename next to a new file at its old name is not a repeat', async () => {
+  const pages = { 1: [{ filename: 'b.ts', previous_filename: 'a.ts', status: 'renamed' }, { filename: 'a.ts', status: 'added' }] };
+  const { get } = fakeApi({ changed: 2, pages });
+  assert.equal((await listPullFiles(get, 'o/r', 7)).length, 2);
+});
+
 test('an unreadable page or pull request fails the check', async () => {
   const missing = fakeApi({ changed: 150, pages: { 1: named(100), 2: null } });
   await assert.rejects(listPullFiles(missing.get, 'o/r', 7), /page 2 of the changed files is unreadable/);
