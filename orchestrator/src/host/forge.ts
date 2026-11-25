@@ -335,6 +335,84 @@ export function parseClosedIssue(stdout: string): { url: string } | null {
   return url ? { url } : null;
 }
 
+/** Most issues one state read asks for: one GraphQL query, aliased. */
+export const ISSUE_STATE_BATCH = 50;
+
+/** What closed an issue, when it was a pull request. */
+export type IssueClosedBy = {
+  number: number;
+  url: string | null;
+  merged: boolean;
+  /** `owner/name` of the pull request's repository. */
+  repo: string | null;
+};
+
+/** An issue's state, and the pull request that closed it, if one did. */
+export type IssueStateRead = {
+  number: number;
+  state: IssueState;
+  stateReason: IssueStateReason | null;
+  closedBy: IssueClosedBy | null;
+};
+
+export type IssueStatesOutcome = { ok: true; issues: IssueStateRead[] } | ForgeReadFailure;
+
+/** Reads, in one call, whether issues are closed and by which pull request. */
+export interface ForgeIssueStateReader {
+  issueStates(repo: string, numbers: readonly number[]): Promise<IssueStatesOutcome>;
+}
+
+/** The GraphQL query of `issueStates`: the numbers are checked integers. */
+export function issueStatesQuery(numbers: readonly number[]): string {
+  const fields = numbers.map((n) => `i${n}: issue(number: ${n}) { number state stateReason `
+    + 'timelineItems(itemTypes: [CLOSED_EVENT], last: 1) { nodes { ... on ClosedEvent { closer { __typename '
+    + '... on PullRequest { number url merged repository { nameWithOwner } } } } } } }');
+  return `query($owner: String!, $name: String!) { repository(owner: $owner, name: $name) { ${fields.join(' ')} } }`;
+}
+
+const IssueStateNode = z.object({
+  number: z.int().positive(),
+  state: z.enum(['OPEN', 'CLOSED']),
+  stateReason: z.string().transform((s) => s.toLowerCase()).pipe(z.enum(ISSUE_STATE_REASONS)).nullable().catch(null),
+  timelineItems: z.object({ nodes: z.array(z.unknown()) }).catch({ nodes: [] }),
+});
+const CloserNode = z.object({
+  closer: z.object({
+    __typename: z.literal('PullRequest'),
+    number: z.int().positive(),
+    url: z.string().catch(''),
+    merged: z.boolean(),
+    repository: z.object({ nameWithOwner: z.string() }).nullable().catch(null),
+  }),
+});
+
+/**
+ * The issues a state read answered. An alias the forge could not resolve (a
+ * number that is a pull request, or gone) is left out: the others still count.
+ */
+export function parseIssueStates(stdout: string): IssueStateRead[] | null {
+  const answer = z.object({ data: z.object({ repository: z.record(z.string(), z.unknown()) }) }).safeParse(jsonOf(stdout));
+  if (!answer.success) return null;
+  const out: IssueStateRead[] = [];
+  for (const value of Object.values(answer.data.data.repository)) {
+    const node = IssueStateNode.safeParse(value);
+    if (!node.success) continue;
+    const last = CloserNode.safeParse(node.data.timelineItems.nodes.at(-1));
+    out.push({
+      number: node.data.number,
+      state: node.data.state === 'OPEN' ? 'open' : 'closed',
+      stateReason: node.data.stateReason,
+      closedBy: last.success ? {
+        number: last.data.closer.number,
+        url: httpsUrl(last.data.closer.url),
+        merged: last.data.closer.merged,
+        repo: last.data.closer.repository ? repoName(last.data.closer.repository.nameWithOwner) : null,
+      } : null,
+    });
+  }
+  return out;
+}
+
 /** What a pull request's branch is, read before its update or the resolution
  *  of its conflict. Every name in it was chosen by the pull request's author:
  *  data, checked again before it reaches a refspec. */
@@ -866,7 +944,7 @@ function pullRequestFrom(text: string): PullRequestRef | null {
 export function githubForge(
   configDir: string | null, runners: ForgeRunners = {},
 ): Forge & ForgeReader & ForgeChecksReader & ForgeCheckLogReader & ForgeIssueReader & ForgeCommentWriter & ForgeBranchWriter
-  & ForgeIssueCloser {
+  & ForgeIssueCloser & ForgeIssueStateReader {
   const gh = runners.gh ?? hostGh;
   // Read-only `gh` calls: one shape for every failure, nothing secret in it.
   const read = async (args: string[], maxBuffer?: number): Promise<{ ok: true; result: ExecResult } | ForgeReadFailure> => {
@@ -1068,6 +1146,26 @@ export function githubForge(
       return comment
         ? { ok: true, comment }
         : { ok: false, code: 'unexpected_answer', reason: 'gh did not answer the address of a comment' };
+    },
+    async issueStates(repo, numbers) {
+      const bad = badTarget(repo);
+      if (bad) return { ...bad, reason: 'not a GitHub repository' };
+      const asked = [...new Set(numbers)].filter((n) => Number.isSafeInteger(n) && n > 0).slice(0, ISSUE_STATE_BATCH);
+      if (asked.length === 0) return { ok: true, issues: [] };
+      const [owner = '', name = ''] = repo.split('/');
+      const out = await read([
+        'api', 'graphql',
+        `--raw-field=query=${issueStatesQuery(asked)}`,
+        `--raw-field=owner=${owner}`,
+        `--raw-field=name=${name}`,
+      ], 4 * 1024 * 1024);
+      if (!out.ok) return out;
+      // A number the forge cannot resolve makes gh exit non-zero beside the
+      // data of the others: the answer is read whenever it holds data.
+      const issues = parseIssueStates(out.result.stdout);
+      if (issues) return { ok: true, issues };
+      if (out.result.code !== 0) return failed(out.result);
+      return { ok: false, code: 'unexpected_answer', reason: 'gh did not answer the state of issues' };
     },
     async closeIssue(repo, number, reason) {
       if (!plainRepo(repo) || !Number.isSafeInteger(number) || number <= 0 || !ISSUE_CLOSE_REASONS.includes(reason)) {

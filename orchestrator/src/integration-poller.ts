@@ -18,12 +18,14 @@
  *
  * Each pass also moves the repairs a person asked for (`landing-repair.ts`):
  * once a repair's chain integrated its work, the branch is pushed forward to
- * its pull request.
+ * its pull request. The armed poller then lands the imported ideas whose issue
+ * a contributor's merged pull request closed (`contributor-landing.ts`).
  *
  * Every network gesture goes through `host/forge.ts`; the local reads through
  * the host adapter.
  */
 import { existsSync } from 'node:fs';
+import { landContributorClosings, type ContributorLandingDeps } from './contributor-landing.js';
 import { dbApi, type IntegrationRow } from './db.js';
 import {
   githubForge, githubRepoFromUrl, gitTransport,
@@ -54,6 +56,8 @@ export type PollerDeps = {
   /** What pushing a repair reaches (`landing-repair.ts`); `runners` and
    *  `transport` above by default. */
   repairs?: RepairDeps;
+  /** What reading the issues of imported ideas reaches (`contributor-landing.ts`). */
+  contributors?: ContributorLandingDeps;
 };
 
 /**
@@ -266,6 +270,8 @@ export function startIntegrationPoller(intervalMs: number = POLL_INTERVAL_MS, de
     running = true;
     pollOpenIntegrations(deps)
       .catch((err) => console.error(`[landing-poller] pass failed: ${(err as Error).message}`))
+      .then(() => landContributorClosings(deps.contributors ?? (deps.runners ? { runners: deps.runners } : {})))
+      .catch((err) => console.error(`[landing-poller] contributor closings: ${(err as Error).message}`))
       .finally(() => { running = false; });
   };
   const first = setTimeout(pass, Math.min(FIRST_POLL_DELAY_MS, intervalMs));
