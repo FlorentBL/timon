@@ -9,9 +9,9 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, readdirSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readdirSync, realpathSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, sep } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { once } from 'node:events';
 import type { AddressInfo } from 'node:net';
@@ -142,15 +142,22 @@ test('without explain, every refused path still answers like a missing file', ()
   }
 });
 
-test('a symlink that leaves the root is judged by where it lands', { skip: !canSymlink }, () => {
+test('a symlink that leaves the root answers like a missing file', { skip: !canSymlink }, () => {
   assert.equal(statusOf(() => openMissionMedia(join(root, 'link.png'), [root])), 404);
-  assert.equal(refusalOf(() => openMissionMedia(join(root, 'link.png'), [root], true))?.code, 'path_outside_roots');
+  const missing = refusalOf(() => openMissionMedia(join(root, 'missing.png'), [root], true));
+  assert.deepEqual(refusalOf(() => openMissionMedia(join(root, 'link.png'), [root], true)), missing);
   assert.equal(openMissionMedia(join(root, 'link.png'), [root, outside]).media.mime, 'image/png');
 });
 
+/** A link target written with its `..` kept: `resolve` would erase the step
+ *  before it, the kernel follows it first. */
+function rawTarget(...steps: string[]): string {
+  return steps.join(sep);
+}
+
 /** Links whose target exists, next to the same link with its target gone: an
  *  agent must not learn which is which from the refusal (TODO #1160). */
-const LINK_PAIRS: Array<{ name: string; code: string; present: string; absent: string }> = [];
+const LINK_PAIRS: Array<{ name: string; status: number; code: string; present: string; absent: string }> = [];
 if (canSymlink) {
   symlinkSync(join(outside, 'elsewhere.png'), join(root, 'out-present.png'));
   symlinkSync(join(outside, 'nothing.png'), join(root, 'out-absent.png'));
@@ -159,27 +166,60 @@ if (canSymlink) {
   symlinkSync(join(root, 'nothing.png'), join(root, '.secret', 'link-absent.png'));
   symlinkSync(join(root, '.secret', 'hidden.png'), join(root, 'into-hidden-present.png'));
   symlinkSync(join(root, '.secret', 'nothing.png'), join(root, 'into-hidden-absent.png'));
+  // `.hop/..` reads as the root, but `.hop` is a link: the kernel lands
+  // outside, next to its target. A decoy of the same name sits in the root.
+  mkdirSync(join(outside, 'deep', 'inner'), { recursive: true });
+  writeFileSync(join(outside, 'deep', 'decoy.png'), PNG);
+  writeFileSync(join(root, 'decoy.png'), PNG);
+  symlinkSync(join(outside, 'deep', 'inner'), join(root, '.hop'));
+  symlinkSync(rawTarget(root, '.hop', '..', 'decoy.png'), join(root, 'dotdot-out-present.png'));
+  symlinkSync(rawTarget(root, '.hop', '..', 'gone.png'), join(root, 'dotdot-out-absent.png'));
+  // The same through a link into a hidden folder of the root.
+  mkdirSync(join(root, '.secret', 'inner'));
+  writeFileSync(join(root, '.secret', 'shadow.png'), PNG);
+  writeFileSync(join(root, 'shadow.png'), PNG);
+  symlinkSync(join(root, '.secret', 'inner'), join(root, '.hop-hidden'));
+  symlinkSync(rawTarget(root, '.hop-hidden', '..', 'shadow.png'), join(root, 'dotdot-hidden-present.png'));
+  symlinkSync(rawTarget(root, '.hop-hidden', '..', 'gone.png'), join(root, 'dotdot-hidden-absent.png'));
   LINK_PAIRS.push(
-    { name: 'a link that leaves the root', code: 'path_outside_roots', present: join(root, 'out-present.png'), absent: join(root, 'out-absent.png') },
-    { name: 'a folder link that leaves the root', code: 'path_outside_roots', present: join(root, 'out-dir', 'elsewhere.png'), absent: join(root, 'out-dir', 'nothing.png') },
-    { name: 'a link inside a hidden folder', code: 'path_hidden_segment', present: join(root, '.secret', 'link-present.png'), absent: join(root, '.secret', 'link-absent.png') },
-    { name: 'a link into a hidden folder', code: 'path_hidden_segment', present: join(root, 'into-hidden-present.png'), absent: join(root, 'into-hidden-absent.png') },
+    { name: 'a link that leaves the root', status: 404, code: 'not_found', present: join(root, 'out-present.png'), absent: join(root, 'out-absent.png') },
+    { name: 'a folder link that leaves the root', status: 404, code: 'not_found', present: join(root, 'out-dir', 'elsewhere.png'), absent: join(root, 'out-dir', 'nothing.png') },
+    { name: 'a link inside a hidden folder', status: 403, code: 'path_hidden_segment', present: join(root, '.secret', 'link-present.png'), absent: join(root, '.secret', 'link-absent.png') },
+    { name: 'a link into a hidden folder', status: 404, code: 'not_found', present: join(root, 'into-hidden-present.png'), absent: join(root, 'into-hidden-absent.png') },
+    { name: 'a link whose `..` leaves the root', status: 404, code: 'not_found', present: join(root, 'dotdot-out-present.png'), absent: join(root, 'dotdot-out-absent.png') },
+    { name: 'a link whose `..` lands in a hidden folder', status: 404, code: 'not_found', present: join(root, 'dotdot-hidden-present.png'), absent: join(root, 'dotdot-hidden-absent.png') },
   );
 }
 
 test('a symlink is refused the same whether its target exists or not', { skip: !canSymlink }, () => {
+  const missing = refusalOf(() => openMissionMedia(join(root, 'missing.png'), [root], true));
   for (const pair of LINK_PAIRS) {
     const present = refusalOf(() => openMissionMedia(pair.present, [root], true));
     const absent = refusalOf(() => openMissionMedia(pair.absent, [root], true));
-    assert.equal(present?.status, 403, pair.name);
+    assert.equal(present?.status, pair.status, pair.name);
     assert.equal(present?.code, pair.code, pair.name);
     assert.deepEqual(absent, present, pair.name);
+    // Nothing tells a link that leaves from a file that is not there.
+    if (pair.code === 'not_found') assert.deepEqual(present, missing, pair.name);
   }
   // A link that stays under the roots still opens, and a dangling one there is missing.
   symlinkSync(join(root, 'ok.png'), join(root, 'inside-link.png'));
   symlinkSync(join(root, 'gone.png'), join(root, 'inside-dangling.png'));
   assert.equal(openMissionMedia(join(root, 'inside-link.png'), [root], true).media.mime, 'image/png');
   assert.equal(refusalOf(() => openMissionMedia(join(root, 'inside-dangling.png'), [root], true))?.code, 'not_found');
+});
+
+test('a folder link onto the root itself reaches the files below it', { skip: !canSymlink }, () => {
+  symlinkSync(root, join(root, 'self'));
+  assert.equal(openMissionMedia(join(root, 'self', 'ok.png'), [root], true).media.mime, 'image/png');
+  assert.equal(openMissionMedia(join(root, 'self', 'self', 'assets', 'clip.webm'), [root], true).media.kind, 'video');
+  // Hidden on its way, even through the link.
+  assert.equal(refusalOf(() => openMissionMedia(join(root, 'self', '.secret', 'hidden.png'), [root], true))?.code, 'path_hidden_segment');
+  // A root named through an alias is still that root.
+  const alias = join(outside, 'alias-root');
+  symlinkSync(root, alias);
+  assert.equal(openMissionMedia(join(alias, 'ok.png'), [alias], true).media.mime, 'image/png');
+  assert.equal(openMissionMedia(join(realpathSync.native(root), 'ok.png'), [alias], true).media.mime, 'image/png');
 });
 
 test('byte ranges: one range, suffix form, and out-of-bounds', () => {
@@ -335,15 +375,26 @@ test('a local file outside the roots, hidden, or not a media is refused', async 
 });
 
 test('the media route answers a symlink the same whether its target exists or not', { skip: !canSymlink }, async () => {
+  const missing = await show({ src: join(root, 'missing.png') });
   for (const pair of LINK_PAIRS) {
     const present = await show({ src: pair.present });
     const absent = await show({ src: pair.absent });
-    assert.equal(present.status, 403, pair.name);
+    assert.equal(present.status, pair.status, pair.name);
     assert.equal(present.json.error, pair.code, pair.name);
     assert.equal(absent.status, present.status, pair.name);
     assert.deepEqual(absent.json, present.json, pair.name);
+    if (pair.code === 'not_found') assert.deepEqual(present.json, missing.json, pair.name);
   }
   assert.equal(dbApi.listEvents(missionId).filter((e) => e.type === 'media').length, 0, 'no refusal leaves a block');
+});
+
+test('the media route shows a file reached through a folder link onto the root', { skip: !canSymlink }, async () => {
+  // A mission of its own: the block counts of the other tests stay exact.
+  const linked = randomUUID();
+  dbApi.createMission(linked, 'media.agent', 'linked', undefined, owner);
+  dbApi.setMissionCwdOverride(linked, root);
+  const r = await call('POST', `/api/missions/${linked}/media`, { user: owner, mission: linked }, { src: join(root, 'self', 'ok.png') });
+  assert.equal(r.status, 201);
 });
 
 test('a browser session still gets one 404 for every refused path', async () => {

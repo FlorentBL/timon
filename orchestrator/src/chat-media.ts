@@ -21,10 +21,10 @@
  */
 
 import {
-  closeSync, copyFileSync, createReadStream, fstatSync, lstatSync, mkdirSync, openSync, readSync, readdirSync, readlinkSync,
-  realpathSync, statSync, type Dirent, type ReadStream, type Stats,
+  closeSync, copyFileSync, createReadStream, fstatSync, mkdirSync, openSync, readSync, readdirSync,
+  realpathSync, statSync, type Dirent, type ReadStream,
 } from 'node:fs';
-import { dirname, isAbsolute, join, relative, resolve, sep, win32 } from 'node:path';
+import { isAbsolute, join, relative, resolve, sep, win32 } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { chatAttachmentsRoot, safeAttachmentName } from './chat-attachments.js';
 import { bus } from './bus.js';
@@ -111,9 +111,12 @@ export function parseMediaPath(raw: unknown): string {
   return resolve(raw);
 }
 
+/** Where the kernel says `path` leads. The native call, not Node's own walk:
+ *  that one resolves a link target's `..` on its letters, so a link through
+ *  `link-to-elsewhere/..` would read as one file and open as another. */
 export function realOrNull(path: string): string | null {
   try {
-    return realpathSync(path);
+    return realpathSync.native(path);
   } catch {
     return null;
   }
@@ -139,77 +142,53 @@ function hasHiddenStep(rel: string): boolean {
  */
 export type PathRefusal = 'path_hidden_segment' | 'path_outside_roots' | 'not_found';
 
-/** A root as configured and as it resolves: an agent may write either form. */
-type RootForms = { written: string; real: string | null };
-
-/** Symlinks followed for one path before giving up, like the kernel's ELOOP. */
-const MAX_LINK_HOPS = 40;
-
-/** Where `target` sits, judged on its letters only: the real root to walk
- *  from and the steps below it, or why it may not be read. */
-function placeUnder(roots: readonly RootForms[], target: string):
-  { base: string | null; steps: string[] } | Exclude<PathRefusal, 'not_found'> {
+/** Where `target` sits under `roots`, on its letters alone. A root under
+ *  which it is readable wins over one under which it is hidden: a root may
+ *  live inside another's hidden folder (`.codex/generated_images`). */
+function placeUnder(roots: readonly string[], target: string): Exclude<PathRefusal, 'not_found'> | null {
   let hidden = false;
   for (const root of roots) {
-    for (const form of [root.written, root.real]) {
-      if (form === null) continue;
-      const rel = relativeBelow(form, target);
-      if (rel === null) continue;
-      if (hasHiddenStep(rel)) { hidden = true; continue; }
-      return { base: root.real, steps: rel.split(sep) };
-    }
+    const rel = relativeBelow(root, target);
+    if (rel === null) continue;
+    if (!hasHiddenStep(rel)) return null;
+    hidden = true;
   }
   return hidden ? 'path_hidden_segment' : 'path_outside_roots';
 }
 
-/** A Windows link may read back in its `\\?\` namespace form. */
-function linkTarget(link: string): string {
-  return link.startsWith('\\\\?\\') ? link.slice(4) : link;
-}
-
 /**
- * Resolves `path` under `roots`, or says why it may not be read. The written
- * path is judged first, on its letters alone. Then its steps are walked from
- * the real root, and each symlink met is judged on where it points before
- * anything there is looked at: nothing outside the roots or in a hidden
- * folder is ever touched. The answer for a path hidden, outside, or behind a
- * link that leaves the roots is therefore the same whether its target exists
- * or not; only a path that stays readable all along can answer `not_found`.
+ * Resolves `path` under `roots`, or says why it may not be read, in two
+ * steps. The kernel resolves the links, never this module: a resolution of
+ * our own would sooner or later open another file than the one it judged.
+ *
+ * 1. The written path, on its letters alone, with no access to the disk: a
+ *    hidden step below a root, or no root above it, is refused with its own
+ *    code. A root counts as written and as resolved, so an alias of a root
+ *    is admitted. These answers depend on nothing but the letters typed,
+ *    so they reveal nothing.
+ * 2. `realpath` of that path. When it fails, or when the real path is not
+ *    strictly under a real root, or goes through a hidden folder below it,
+ *    the answer is one and the same `not_found`: a link that leaves the
+ *    roots answers like a missing file, whether its target exists or not.
+ *
+ * The caller opens the real path returned, the one judged here.
  */
 export function resolveMissionPath(path: string, roots: readonly string[]): { real: string } | { refusal: PathRefusal } {
-  const forms = roots.map((root) => ({ written: resolve(root), real: realOrNull(root) }));
-  const placed = placeUnder(forms, path);
-  if (typeof placed === 'string') return { refusal: placed };
-  let base = placed.base;
-  const steps = placed.steps;
-  let hops = 0;
-  while (base !== null && steps.length > 0) {
-    const next = join(base, steps.shift() as string);
-    let st: Stats;
-    try { st = lstatSync(next); } catch { return { refusal: 'not_found' }; }
-    if (!st.isSymbolicLink()) { base = next; continue; }
-    if (++hops > MAX_LINK_HOPS) return { refusal: 'not_found' };
-    let link: string;
-    try { link = readlinkSync(next); } catch { return { refusal: 'not_found' }; }
-    const landed = placeUnder(forms, resolve(dirname(next), linkTarget(link)));
-    if (typeof landed === 'string') return { refusal: landed };
-    base = landed.base;
-    steps.unshift(...landed.steps);
-  }
-  if (base === null) return { refusal: 'not_found' };
-  // The walk saw no link left; a link swapped in since is still caught here.
-  const real = realOrNull(base);
-  if (real === null) return { refusal: 'not_found' };
-  const check = placeUnder(forms.map((root) => ({ written: root.real ?? root.written, real: root.real })), real);
-  return typeof check === 'string' ? { refusal: check } : { real };
+  const realRoots = roots.map(realOrNull).filter((root): root is string => root !== null);
+  const written = placeUnder([...roots.map((root) => resolve(root)), ...realRoots], path);
+  if (written !== null) return { refusal: written };
+  const real = realOrNull(path);
+  if (real === null || placeUnder(realRoots, real) !== null) return { refusal: 'not_found' };
+  return { real };
 }
 
 const PATH_REFUSAL_TEXT: Record<PathRefusal, string> = {
   path_hidden_segment: 'the path goes through a hidden folder (a name starting with "."): '
     + 'the file must be under your working directory, outside any hidden folder',
-  path_outside_roots: 'the path resolves outside your working directory (symlinks are followed): '
+  path_outside_roots: 'the path is outside your working directory: '
     + 'the file must be under your working directory, outside any hidden folder',
-  not_found: 'no file at this path',
+  not_found: 'no readable file at this path inside your working directory; '
+    + 'links that leave it or lead into a hidden folder are not followed',
 };
 
 /** The status, code and message an agent reads for a refused path. */
