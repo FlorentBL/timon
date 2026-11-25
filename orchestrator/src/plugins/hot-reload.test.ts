@@ -10,7 +10,7 @@ import '../test-home.js';
 import '../../tests/helpers/paid-license.js';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, utimesSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, symlinkSync, unlinkSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -20,7 +20,7 @@ import { Context } from '@deepseek-ai/cordis';
 const { createHttpPlugin } = await import('../kernel/http-service.js');
 const { PluginLoader } = await import('./loader.js');
 const { daemonHost } = await import('./context.js');
-const { HOOK_SOURCE } = await import('./hot-reload.js');
+const { HOOK_SOURCE, entryUrl } = await import('./hot-reload.js');
 import type { ModuleSetting } from '../config/schema.js';
 
 const OK = join(dirname(fileURLToPath(import.meta.url)), 'fixtures', 'ok');
@@ -110,4 +110,97 @@ test('TIM-0116: the resolve hook keeps a sub-module in the revision whatever the
   assert.doesNotMatch(foreign.url, /\?rev=/, 'a sibling directory is not part of the plugin');
   const dependency = await resolved(`${root}node_modules/dep/index.js`);
   assert.doesNotMatch(dependency.url, /\?rev=/, 'node_modules stays shared');
+});
+
+/**
+ * A plugin installed from a local folder is linked by npm, not copied:
+ * `<home>/plugins/node_modules/<pkg>` points at the folder (a junction on
+ * Windows). Its entry was imported under the linked path while the root the
+ * hook compares against was the real one: under a resolver that keeps links
+ * (`NODE_PRESERVE_SYMLINKS=1`), a sub-module never got the revision and kept
+ * the old version next to a new entry until a restart. Node's default
+ * resolver hides it; the hook test below fakes the other one.
+ */
+function linkedPlugin(): { root: string; config: string; unlink: () => void } {
+  const root = mkdtempSync(join(tmpdir(), 'timon-hot-reload-linked-'));
+  const release = join(root, 'releases', 'plugin-linked');
+  mkdirSync(join(release, 'dist'), { recursive: true });
+  const manifest = JSON.parse(readFileSync(join(OK, 'package.json'), 'utf8')) as { timon: Record<string, unknown> };
+  writeFileSync(join(release, 'package.json'), JSON.stringify({
+    name: '@fixtures/plugin-linked',
+    version: '1.0.0',
+    private: true,
+    type: 'module',
+    main: 'dist/index.js',
+    timon: { id: 'fixture-linked', apiVersion: 1, kind: ['behavior'], label: 'Linked', description: 'Hot reload', permissions: manifest.timon.permissions },
+  }));
+  writeFileSync(join(release, 'dist', 'index.js'), [
+    "import { version } from './config.js'",
+    "export const name = 'fixture-linked'",
+    'export function apply(ctx) { ctx.router().get(\'/version\', (_req, res) => res.json({ version })) }',
+    '',
+  ].join('\n'));
+  const config = join(release, 'dist', 'config.js');
+  writeFileSync(config, "export const version = 'one';\n");
+  const scope = join(root, 'node_modules', '@fixtures');
+  mkdirSync(scope, { recursive: true });
+  const link = join(scope, 'plugin-linked');
+  // What npm creates for a `file:` dependency: a junction on Windows (no
+  // privilege needed), a directory symlink elsewhere.
+  symlinkSync(release, link, process.platform === 'win32' ? 'junction' : 'dir');
+  writeFileSync(join(root, 'package.json'), JSON.stringify({ dependencies: { '@fixtures/plugin-linked': 'file:releases/plugin-linked' } }));
+  // The link itself goes first: a recursive removal that meets it would
+  // follow it and empty the folder it points at.
+  return { root, config, unlink: () => unlinkSync(link) };
+}
+
+test('#134: a plugin linked into node_modules reloads its sub-modules with its entry', async () => {
+  const d = await daemon();
+  const { root, config, unlink } = linkedPlugin();
+  const loader = new PluginLoader(d.ctx, { dir: root, host: daemonHost(d.ctx), plugins: () => ({}), allowUnsigned: () => true });
+  try {
+    const [first] = await loader.update();
+    assert.equal(first?.state, 'active', first?.error ?? '');
+    assert.deepEqual(await (await fetch(d.url('/api/plugins/fixture-linked/version'))).json(), { version: 'one' });
+
+    // A different size: the tree stamp, read through the link, sees the change.
+    writeFileSync(config, "export const version = 'second';\n");
+    const [second] = await loader.update();
+    assert.equal(second?.state, 'active', second?.error ?? '');
+    assert.deepEqual(
+      await (await fetch(d.url('/api/plugins/fixture-linked/version'))).json(),
+      { version: 'second' },
+      'the sub-module imported by the new entry must be the new one',
+    );
+  } finally {
+    await loader.dispose();
+    await d.close();
+    unlink();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('#134: a resolver that keeps links still gives the revision to a linked plugin\'s sub-modules', async () => {
+  const hook = await import(`data:text/javascript,${encodeURIComponent(HOOK_SOURCE)}`) as {
+    resolve: (specifier: string, context: { parentURL?: string }, next: (s: string, c: { parentURL?: string }) => Promise<{ url: string }>) => Promise<{ url: string }>;
+  };
+  // `--preserve-symlinks`: a URL is resolved as written, the link never
+  // replaced by its target (what the reporter's daemon did).
+  const keepLinks = async (specifier: string, context: { parentURL?: string }) => {
+    const url = new URL(specifier, context.parentURL);
+    url.search = '';
+    return { url: url.href };
+  };
+  const { root, unlink } = linkedPlugin();
+  try {
+    const dir = join(root, 'node_modules', '@fixtures', 'plugin-linked');
+    const entry = await hook.resolve(entryUrl(join(dir, 'dist', 'index.js'), 'r2', dir), {}, async (s) => ({ url: s }));
+    const sub = await hook.resolve('./config.js', { parentURL: entry.url }, keepLinks);
+    assert.match(sub.url, /\/dist\/config\.js\?rev=r2&/, 'the sub-module must carry the entry\'s revision');
+    const dependency = await hook.resolve('../node_modules/dep/index.js', { parentURL: entry.url }, keepLinks);
+    assert.doesNotMatch(dependency.url, /\?rev=/, 'the plugin\'s own dependencies stay shared');
+  } finally {
+    unlink();
+    rmSync(root, { recursive: true, force: true });
+  }
 });

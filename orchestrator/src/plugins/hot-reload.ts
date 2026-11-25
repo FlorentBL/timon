@@ -15,7 +15,14 @@
  *    the first place.
  *
  * The hook never touches a module outside the plugin directory (the daemon's
- * own modules stay singletons) nor anything under `node_modules`.
+ * own modules stay singletons) nor anything under `node_modules` below it (the
+ * plugin's own dependencies).
+ *
+ * The plugin directory is compared by its real path, and the entry is imported
+ * under its real path too: a plugin installed from a local folder is a link in
+ * `<home>/plugins/node_modules`, and a resolver that keeps links would
+ * otherwise hand the hook URLs under the linked path, never inside the root,
+ * so its sub-modules kept the old version until a restart (#134).
  */
 import { createHash } from 'node:crypto';
 import { lstatSync, readdirSync, realpathSync, statSync } from 'node:fs';
@@ -114,13 +121,22 @@ function ensureHooks(): boolean {
  * entry is busted: its modules stay shared, exactly as before.
  */
 export function entryUrl(entry: string, rev: string, dir: string | null): string {
-  const base = pathToFileURL(entry).href;
-  if (dir === null || !ensureHooks()) return `${base}?rev=${encodeURIComponent(rev)}`;
-  let real = dir;
-  try { real = realpathSync(dir); } catch { /* import will fail and report it */ }
-  // Node resolves symlinks before the hook sees a URL: compare real paths.
-  const root = pathToFileURL(real.endsWith(sep) ? real : real + sep).href;
-  return `${base}?${new URLSearchParams({ rev, root }).toString()}`;
+  if (dir === null || !ensureHooks()) return `${pathToFileURL(entry).href}?rev=${encodeURIComponent(rev)}`;
+  // A plugin installed from a local folder is linked by npm
+  // (`<home>/plugins/node_modules/<pkg>` -> the folder; a junction on
+  // Windows). Node's default resolver turns the entry URL into its real path,
+  // but one that keeps links (`--preserve-symlinks`) resolves the entry and
+  // every relative import under the linked path. The entry URL and the root
+  // must therefore be built from the same path, whatever the resolver does:
+  // both real. A relative import of a real URL stays real in either mode.
+  let realEntry = entry;
+  let realDir = dir;
+  try {
+    realEntry = realpathSync(entry);
+    realDir = realpathSync(dir);
+  } catch { /* import will fail and report it */ }
+  const root = pathToFileURL(realDir.endsWith(sep) ? realDir : realDir + sep).href;
+  return `${pathToFileURL(realEntry).href}?${new URLSearchParams({ rev, root }).toString()}`;
 }
 
 const requireCache = createRequire(import.meta.url).cache;
