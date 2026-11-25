@@ -12,7 +12,7 @@ import { once } from 'node:events';
 import { createServer } from 'node:http';
 import { mkdtempSync, mkdirSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, sep } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import type { AddressInfo } from 'node:net';
 import express from 'express';
@@ -217,21 +217,39 @@ test.describe('ui documents', { concurrency: false }, () => {
     symlinkSync(join(root, 'gone.html'), join(root, '.hidden', 'link-absent.html'));
     symlinkSync(join(root, '.hidden', 'page.html'), join(root, 'into-hidden-present.html'));
     symlinkSync(join(root, '.hidden', 'gone.html'), join(root, 'into-hidden-absent.html'));
+    // `.hop/..` reads as the root, but `.hop` is a link: the kernel lands
+    // outside, where a page of the same name waits. Written with its `..` kept.
+    mkdirSync(join(outside, 'inner'));
+    writeFileSync(join(outside, 'decoy.html'), HTML);
+    writeFileSync(join(root, 'decoy.html'), HTML);
+    symlinkSync(join(outside, 'inner'), join(root, '.hop'));
+    symlinkSync([root, '.hop', '..', 'decoy.html'].join(sep), join(root, 'dotdot-present.html'));
+    symlinkSync([root, '.hop', '..', 'gone.html'].join(sep), join(root, 'dotdot-absent.html'));
     dbApi.setMissionCwdOverride('m-path', root);
-    const pairs: Array<[string, string, string]> = [
-      ['out-present.html', 'out-absent.html', 'path_outside_roots'],
-      [join('.hidden', 'link-present.html'), join('.hidden', 'link-absent.html'), 'path_hidden_segment'],
-      ['into-hidden-present.html', 'into-hidden-absent.html', 'path_hidden_segment'],
+    const missing = await send('POST', '', agentOf('m-path'), { title: 't', path: join(root, 'missing.html') });
+    assert.equal(missing.status, 404);
+    const missingBody = await missing.json() as { error: string };
+    const pairs: Array<[string, string, number, string]> = [
+      ['out-present.html', 'out-absent.html', 404, 'not_found'],
+      [join('.hidden', 'link-present.html'), join('.hidden', 'link-absent.html'), 403, 'path_hidden_segment'],
+      ['into-hidden-present.html', 'into-hidden-absent.html', 404, 'not_found'],
+      ['dotdot-present.html', 'dotdot-absent.html', 404, 'not_found'],
     ];
-    for (const [present, absent, code] of pairs) {
+    for (const [present, absent, status, code] of pairs) {
       const a = await send('POST', '', agentOf('m-path'), { title: 't', path: join(root, present) });
       const b = await send('POST', '', agentOf('m-path'), { title: 't', path: join(root, absent) });
-      assert.equal(a.status, 403, present);
+      assert.equal(a.status, status, present);
       assert.equal(b.status, a.status, absent);
       const bodyA = await a.json() as { error: string };
       assert.equal(bodyA.error, code, present);
       assert.deepEqual(await b.json(), bodyA, absent);
+      // Nothing tells a link that leaves from a page that is not there.
+      if (code === 'not_found') assert.deepEqual(bodyA, missingBody, present);
     }
+    // A folder link onto the root itself reaches the pages below it.
+    symlinkSync(root, join(root, 'self'));
+    const viaRoot = await send('POST', '', agentOf('m-path'), { title: 't', path: join(root, 'self', 'page.html') });
+    assert.equal(viaRoot.status, 201);
   });
 
   test('a secret in the HTML or the title is masked before it is served', async () => {
