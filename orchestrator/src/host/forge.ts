@@ -305,6 +305,36 @@ export interface ForgeCommentWriter {
   postIssueComment(repo: string, number: number, body: string): Promise<IssueCommentOutcome>;
 }
 
+/**
+ * Why an issue is closed without being fixed, as GitHub's REST API spells it.
+ * `completed` is left to the `Fixes` line of a merged pull request.
+ */
+export const ISSUE_CLOSE_REASONS = ['not_planned', 'duplicate'] as const;
+export type IssueCloseReason = (typeof ISSUE_CLOSE_REASONS)[number];
+
+/** `reason` is the one GitHub recorded: a server that does not know
+ *  `duplicate` closes the issue as `not_planned` instead. */
+export type IssueCloseOutcome = { ok: true; url: string; reason: IssueCloseReason } | ForgeReadFailure;
+
+/**
+ * Closes an issue, the second write outside a pull request's opening. Like
+ * the comment, it runs only for a proposal a signed-in person published.
+ */
+export interface ForgeIssueCloser extends ForgeIssueReader {
+  login(): Promise<GhLoginOutcome>;
+  closeIssue(repo: string, number: number, reason: IssueCloseReason): Promise<IssueCloseOutcome>;
+}
+
+const ClosedIssue = z.object({ html_url: z.string(), state: z.string() });
+
+/** The issue `gh api …/issues/<n>` answered once closed, or null. */
+export function parseClosedIssue(stdout: string): { url: string } | null {
+  const parsed = ClosedIssue.safeParse(jsonOf(stdout));
+  if (!parsed.success || parsed.data.state.toLowerCase() !== 'closed') return null;
+  const url = httpsUrl(parsed.data.html_url);
+  return url ? { url } : null;
+}
+
 /** What a pull request's branch is, read before its update or the resolution
  *  of its conflict. Every name in it was chosen by the pull request's author:
  *  data, checked again before it reaches a refspec. */
@@ -835,7 +865,8 @@ function pullRequestFrom(text: string): PullRequestRef | null {
 /** GitHub through `gh`, signed in with the project's config folder. */
 export function githubForge(
   configDir: string | null, runners: ForgeRunners = {},
-): Forge & ForgeReader & ForgeChecksReader & ForgeCheckLogReader & ForgeIssueReader & ForgeCommentWriter & ForgeBranchWriter {
+): Forge & ForgeReader & ForgeChecksReader & ForgeCheckLogReader & ForgeIssueReader & ForgeCommentWriter & ForgeBranchWriter
+  & ForgeIssueCloser {
   const gh = runners.gh ?? hostGh;
   // Read-only `gh` calls: one shape for every failure, nothing secret in it.
   const read = async (args: string[], maxBuffer?: number): Promise<{ ok: true; result: ExecResult } | ForgeReadFailure> => {
@@ -1037,6 +1068,28 @@ export function githubForge(
       return comment
         ? { ok: true, comment }
         : { ok: false, code: 'unexpected_answer', reason: 'gh did not answer the address of a comment' };
+    },
+    async closeIssue(repo, number, reason) {
+      if (!plainRepo(repo) || !Number.isSafeInteger(number) || number <= 0 || !ISSUE_CLOSE_REASONS.includes(reason)) {
+        return { ok: false, code: 'unexpected_answer', reason: 'not an issue of a GitHub repository' };
+      }
+      const close = (why: IssueCloseReason) => read([
+        'api', '--method=PATCH', `repos/${repo}/issues/${number}`, '--raw-field=state=closed', `--raw-field=state_reason=${why}`,
+      ]);
+      let used: IssueCloseReason = reason;
+      let out = await close(used);
+      // A GitHub Enterprise server older than the `duplicate` reason refuses
+      // it: the issue is closed as not planned rather than left open.
+      if (out.ok && out.result.code !== 0 && used === 'duplicate' && /state_reason|422|Validation Failed/i.test(out.result.stderr)) {
+        used = 'not_planned';
+        out = await close(used);
+      }
+      if (!out.ok) return out;
+      if (out.result.code !== 0) return failed(out.result);
+      const closed = parseClosedIssue(out.result.stdout);
+      return closed
+        ? { ok: true, url: closed.url, reason: used }
+        : { ok: false, code: 'unexpected_answer', reason: 'gh did not answer a closed issue' };
     },
     async pullRequestBranch(repo, number) {
       const bad = badTarget(repo, number);

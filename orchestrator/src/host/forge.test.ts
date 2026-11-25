@@ -560,3 +560,39 @@ test('a failed log larger than the buffer is kept as cut; a failure says why wit
   assert.equal(no.ok, false);
   assert.ok(!no.ok && !no.reason.includes('ghp_'));
 });
+
+test('closing an issue is one PATCH with its reason, and a server without `duplicate` closes it as not planned', async () => {
+  const closed = JSON.stringify({ html_url: 'https://github.com/acme/app/issues/5', state: 'closed', state_reason: 'not_planned' });
+  const run = recorder({ stdout: closed });
+  const out = await githubForge('/home/u/.config/gh-work', { gh: run.run }).closeIssue('acme/app', 5, 'not_planned');
+  assert.deepEqual(out, { ok: true, url: 'https://github.com/acme/app/issues/5', reason: 'not_planned' });
+  assert.deepEqual(run.calls[0]?.args, [
+    'api', '--method=PATCH', 'repos/acme/app/issues/5', '--raw-field=state=closed', '--raw-field=state_reason=not_planned',
+  ]);
+  assert.equal(run.calls[0]?.opts.env?.GH_CONFIG_DIR, '/home/u/.config/gh-work');
+
+  const calls: string[][] = [];
+  const older: GhRunner = async (args) => {
+    calls.push(args);
+    return args.includes('--raw-field=state_reason=duplicate')
+      ? { code: 1, stdout: '', stderr: 'gh: Validation Failed (HTTP 422) state_reason' }
+      : { code: 0, stdout: closed, stderr: '' };
+  };
+  const fallback = await githubForge(null, { gh: older }).closeIssue('acme/app', 6, 'duplicate');
+  assert.deepEqual(fallback, { ok: true, url: 'https://github.com/acme/app/issues/5', reason: 'not_planned' });
+  assert.equal(calls.length, 2);
+});
+
+test('closing never reaches gh for an odd target, and a failure is a refusal without a token', async () => {
+  const run = recorder({ stdout: '{}' });
+  const forge = githubForge(null, { gh: run.run });
+  for (const [repo, n] of [['../x', 1], ['acme/..', 1], ['acme/app', 0], ['acme/app', 1.5]] as const) {
+    assert.equal((await forge.closeIssue(repo, n, 'not_planned')).ok, false, `${repo} ${n}`);
+  }
+  assert.equal((await forge.closeIssue('acme/app', 1, 'completed' as never)).ok, false, 'completed is the pull request\'s');
+  assert.equal(run.calls.length, 0);
+  const leaked = await githubForge(null, { gh: recorder({ code: 1, stderr: `HTTP 401 ${TOKEN}` }).run }).closeIssue('a/b', 1, 'not_planned');
+  assert.ok(!leaked.ok && !leaked.reason.includes('ghp_'));
+  const open = JSON.stringify({ html_url: 'https://github.com/a/b/issues/1', state: 'open' });
+  assert.equal((await githubForge(null, { gh: recorder({ stdout: open }).run }).closeIssue('a/b', 1, 'not_planned')).ok, false);
+});

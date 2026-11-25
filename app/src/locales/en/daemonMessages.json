@@ -321,6 +321,10 @@
       "title": "A conflict resolution waits for your approval",
       "body": "Read the resolution prepared for {target}, then publish or discard it."
     },
+    "forge_issue_close_pending": {
+      "title": "Closing a GitHub issue waits for your approval",
+      "body": "Close {target} on GitHub, or leave it open."
+    },
     "landing_repair_pushed": {
       "title": "Repair pushed to {pr}",
       "body": "The repair of {branch} was pushed to its pull request {pr}; GitHub runs its checks again."

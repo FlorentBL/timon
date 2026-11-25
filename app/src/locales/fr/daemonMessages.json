@@ -321,6 +321,10 @@
       "title": "Une résolution de conflit attend votre accord",
       "body": "Lisez la résolution préparée pour {target}, puis publiez-la ou abandonnez-la."
     },
+    "forge_issue_close_pending": {
+      "title": "La fermeture d'une issue GitHub attend votre accord",
+      "body": "Fermez {target} sur GitHub, ou laissez-la ouverte."
+    },
     "landing_repair_pushed": {
       "title": "Réparation poussée sur {pr}",
       "body": "La réparation de {branch} a été poussée sur sa pull request {pr} ; GitHub relance ses contrôles."
