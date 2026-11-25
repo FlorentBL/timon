@@ -18,8 +18,40 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # Which suites a pull request needs (scripts/ci-changes.mjs): one that only
+  # changes workflows, public docs, changelog fragments or root Markdown runs
+  # the tests that read those paths, not the half hour of daemon and app
+  # suites. Pushes and manual runs always run everything.
+  changes:
+    name: changed paths
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      suites: ${{ steps.decide.outputs.suites }}
+      guards: ${{ steps.decide.outputs.guards }}
+    steps:
+      # A pull request checks out its merge commit: its first parent is the
+      # base, so the diff between the two is what the pull request brings.
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Decide which suites run
+        id: decide
+        env:
+          EVENT: ${{ github.event_name }}
+        run: node scripts/ci-changes.mjs --event "$EVENT" --base HEAD^1 --head HEAD
+
   test:
     name: ${{ matrix.os }} · ${{ matrix.part.suite }}${{ matrix.part.shard && format(' {0}', matrix.part.shard) || '' }}
+    needs: changes
+    # The checks of this job are required to merge: it always runs, and skips
+    # its heavy steps instead of itself. When `changes` fails, SUITES is empty
+    # and every suite runs.
+    if: ${{ !cancelled() }}
     runs-on: ${{ matrix.os }}
     # Linux gates the merge. macOS and Windows report without blocking until
     # their suites have been green for a while: they never ran in CI before.
@@ -40,6 +72,7 @@ jobs:
           - { suite: app, shard: '' }
     env:
       NODE_ENV: test
+      SUITES: ${{ needs.changes.outputs.suites }}
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
@@ -49,7 +82,15 @@ jobs:
         shell: bash
         run: echo "TIMON_HOME=${RUNNER_TEMP}/timon-home" >> "$GITHUB_ENV"
 
+      # Skipped suites: the first daemon half runs the guard tests, the
+      # other jobs stop here, green.
+      - name: Suites skipped
+        if: env.SUITES == 'guards'
+        shell: bash
+        run: echo "::notice title=Suites skipped::Only workflows, public docs, changelog fragments or root Markdown changed (scripts/ci-changes.mjs)."
+
       - uses: actions/setup-node@v4
+        if: env.SUITES != 'guards' || (matrix.part.suite == 'daemon' && matrix.part.shard == '1/2')
         with:
           node-version: 22
           cache: npm
@@ -59,47 +100,58 @@ jobs:
             desktop/package-lock.json
 
       - name: Install the daemon
+        if: env.SUITES != 'guards' || (matrix.part.suite == 'daemon' && matrix.part.shard == '1/2')
         working-directory: orchestrator
         run: npm ci --include=dev
 
       - name: Install the web app
+        if: env.SUITES != 'guards'
         working-directory: app
         run: npm ci --include=dev
 
       # Daemon tests import desktop/src and the agent-import plugin, which carry their own dependencies.
       - name: Install the desktop app
-        if: matrix.part.suite == 'daemon'
+        if: env.SUITES != 'guards' && matrix.part.suite == 'daemon'
         working-directory: desktop
         run: npm ci --include=dev --ignore-scripts
 
       - name: Install the agent-import plugin
-        if: matrix.part.suite == 'daemon'
+        if: env.SUITES != 'guards' && matrix.part.suite == 'daemon'
         working-directory: plugins/agent-import
         run: npm install --no-audit --no-fund --ignore-scripts
 
       - name: Typecheck the daemon
         # Checked once, by the first half.
-        if: matrix.part.suite == 'daemon' && matrix.part.shard == '1/2'
+        if: env.SUITES != 'guards' && matrix.part.suite == 'daemon' && matrix.part.shard == '1/2'
         working-directory: orchestrator
         run: npx tsc --noEmit
 
       - name: Portability
         # Checked once, by the first half.
-        if: matrix.part.suite == 'daemon' && matrix.part.shard == '1/2'
+        if: env.SUITES != 'guards' && matrix.part.suite == 'daemon' && matrix.part.shard == '1/2'
         run: node scripts/check-portability.mjs
 
       - name: Test the daemon
-        if: matrix.part.suite == 'daemon'
+        if: env.SUITES != 'guards' && matrix.part.suite == 'daemon'
         working-directory: orchestrator
         run: npm test -- --test-shard=${{ matrix.part.shard }}
 
+      - name: Test what the changed paths can break
+        if: env.SUITES == 'guards' && matrix.part.suite == 'daemon' && matrix.part.shard == '1/2'
+        working-directory: orchestrator
+        shell: bash
+        env:
+          GUARDS: ${{ needs.changes.outputs.guards }}
+        # GUARDS is a space-separated list of test files: split on purpose.
+        run: npm test -- $GUARDS
+
       - name: Typecheck the web app
-        if: matrix.part.suite == 'app'
+        if: env.SUITES != 'guards' && matrix.part.suite == 'app'
         working-directory: app
         run: npm run typecheck
 
       - name: Test the web app
-        if: matrix.part.suite == 'app'
+        if: env.SUITES != 'guards' && matrix.part.suite == 'app'
         working-directory: app
         run: npm test
 

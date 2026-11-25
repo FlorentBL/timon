@@ -28,6 +28,8 @@ NOTICE.*
 
 # Governance: CI, code owners, the rules contributors and agents follow
 .github/**
+# Decides which CI suites a pull request skips: as much CI as the workflows.
+scripts/ci-changes.mjs
 AGENTS.md
 CONTRIBUTING.md
 CONTRIBUTING-TRANSLATIONS.md
