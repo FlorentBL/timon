@@ -260,8 +260,13 @@ up to the version manager's own folder, belongs to another user or is writable
 by its group or by everyone (`chmod go-w` on that folder fixes it); on Windows,
 a version manager folder outside your user profile (`FNM_DIR` or `VOLTA_HOME`
 set to `D:\fnm`, say). The Node.js Timon runs on is lent only while it is the
-very file Timon started from: after Node.js is upgraded or removed under a
-running Timon, restart Timon.
+very file Timon started from, or a file only an administrator or Timon's own
+account could have put there (a package manager upgrade, say): after Node.js is
+removed, or replaced by another account, under a running Timon, restart Timon.
+
+When no Node.js passes these checks, a mission on such a CLI does not start and
+reports `no trusted Node.js to run codex` (or the CLI's name): Timon never lets
+the CLI pick the first `node` of the mission's own PATH instead.
 
 If `timon doctor` or the diagnostic report still names the CLI, install Node.js
 system-wide (your package manager, or nodejs.org), or point Timon at yours: run

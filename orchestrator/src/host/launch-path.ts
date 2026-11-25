@@ -255,6 +255,11 @@ export function checkDaemonNode(runtime?: NodeRuntimeFacts, deps: DaemonNodeDeps
   const realpath = deps.realpath ?? realpathSync;
   const stat = deps.stat ?? statSync;
   const executable = deps.executable ?? isExecutable;
+  // A runtime replaced since startup, or whose startup identity is unknown, still stands when
+  // only root or the daemon's account could have put it there (#1102, iteration 4, decision of
+  // the series pilot on the review's strict-refusal finding): whoever holds those rights already
+  // controls the daemon, so refusing would protect nothing, and would fail every mission after
+  // the package manager upgrades `/usr/bin/node`. A file a third party could write is refused.
   const sound = deps.soundTree ?? soundTree(facts.platform);
   // Another runtime than this process's own has no startup identity to compare with.
   const startup = 'startup' in deps ? deps.startup ?? null : runtime ? null : STARTUP?.identity ?? null;
@@ -338,6 +343,13 @@ export function nodeInterpreter(
   read: (file: string) => string = readHead,
 ): LaunchInterpreter | null {
   if (platform === 'win32' || !node || !pathModule(platform).isAbsolute(file)) return null;
+  const line = envNodeLine(file, read);
+  if (!line || (!line.split && line.args.length > 0)) return null;
+  return { file: node, args: line.args };
+}
+
+/** What follows `env [-S] node` on the first line of `file`, or `null` when that line does not look `node` up through `env`. */
+function envNodeLine(file: string, read: (file: string) => string): { split: boolean; args: string[] } | null {
   let head: string;
   try { head = read(file); } catch { return null; }
   if (!head.startsWith('#!')) return null;
@@ -346,8 +358,38 @@ export function nodeInterpreter(
   let rest = words.slice(1);
   const split = rest[0] === '-S';
   if (split) rest = rest.slice(1);
-  if (rest[0] !== 'node' || (!split && rest.length > 1)) return null;
-  return { file: node, args: rest.slice(1) };
+  return rest[0] === 'node' ? { split, args: rest.slice(1) } : null;
+}
+
+/** No `node` the host vouches for, for a CLI whose own line would take the first one on the mission's PATH. */
+export class NoTrustedNodeError extends Error {
+  readonly cli: string;
+  constructor(cli: string) {
+    // The CLI's name only: its path may sit under the user's home, which an error never carries.
+    super(`no trusted Node.js to run ${cli}: install Node.js system-wide, or set host.binaries.node in timon.config.json, then restart Timon`);
+    this.name = 'NoTrustedNodeError';
+    this.cli = cli;
+  }
+}
+
+/**
+ * `nodeInterpreter`, refusing the launch instead of handing it back to the
+ * file's own line when the host chose no `node` (#1102, security review,
+ * iteration 4): `#!/usr/bin/env node` (or `env -S node …`) would then run the
+ * first `node` of the PATH the mission sets, which is exactly the choice the
+ * host declined to make. A native CLI, a line naming an absolute interpreter,
+ * and Windows (whose npm shims the host adapter starts itself) are unchanged.
+ */
+export function launchInterpreter(
+  file: string,
+  node: string | null | undefined,
+  platform: NodeJS.Platform,
+  cli: string,
+  read: (file: string) => string = readHead,
+): LaunchInterpreter | null {
+  if (node || platform === 'win32' || !pathModule(platform).isAbsolute(file)) return nodeInterpreter(file, node, platform, read);
+  if (envNodeLine(file, read)) throw new NoTrustedNodeError(cli);
+  return null;
 }
 
 function readHead(file: string): string {

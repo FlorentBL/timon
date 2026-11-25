@@ -118,7 +118,7 @@ import { baseBackendId, isAccountInstanceId, splitBackendInstance } from './back
 import { backendOwnerPlugin, backendTrust, type BackendTrust } from './backends/registry.js';
 import { DEFAULT_BACKEND_CAPABILITIES } from './backends/types.js';
 import { BUILTIN_DECLARATIONS } from './backends/builtin-declarations.js';
-import { chooseLaunchNode, nodeInterpreter, withLaunchPath } from './host/launch-path.js';
+import { checkDaemonNode, chooseLaunchNode, launchInterpreter, NoTrustedNodeError, withLaunchPath, type DaemonNodeCheck } from './host/launch-path.js';
 import { missionProcessDir, trackMissionProcess } from './host/mission-processes.js';
 import { closeLaunchSeal, openLaunchSeal } from './backends/launch-seal.js';
 import { assertSpawnPinned, buildSealedSpawn } from './backends/sealed-spawn.js';
@@ -1857,7 +1857,10 @@ export async function spawnAgent(
  */
 function launchFailureCause(err: unknown): InterruptionReason | null {
   // Same for a path the fence refuses (`fencePreflight`): the thread's `fence_refused` names it.
-  return err instanceof CwdUnusableError || err instanceof MissionFenceBlockedError ? null : 'crash';
+  // And for an `env node` CLI with no Node the host vouches for: a replay meets the same machine.
+  return err instanceof CwdUnusableError || err instanceof MissionFenceBlockedError || err instanceof NoTrustedNodeError
+    ? null
+    : 'crash';
 }
 
 /**
@@ -1995,6 +1998,13 @@ async function launchMissionProcess(
   }
 }
 
+/** How the daemon's runtime is checked before a launch; replaced by a test to simulate a runtime that fails. */
+let daemonNodeCheck: () => DaemonNodeCheck = () => checkDaemonNode();
+
+export function setDaemonNodeCheckForTest(check: (() => DaemonNodeCheck) | null): void {
+  daemonNodeCheck = check ?? (() => checkDaemonNode());
+}
+
 async function spawnMissionProcess(
   backend: Backend,
   spawnOpts: BuildSpawnOpts,
@@ -2044,8 +2054,11 @@ async function spawnMissionProcess(
     findNode: () => host.bin('node'),
     // Only Electron's binary is no `node`: a daemon run from sources IS on the right one.
     selfExecutable: process.versions.electron ? process.execPath : undefined,
+    runtime: daemonNodeCheck,
   });
-  const interpreter = nodeInterpreter(backendBin, node, host.platform);
+  // No `node` chosen: an `env node` CLI is refused rather than left to its line, which
+  // would take the first `node` of the mission's PATH (#1102, iteration 4).
+  const interpreter = launchInterpreter(backendBin, node, host.platform, backend.name);
   const project = cfg.project ?? projectFromCwd(cwd) ?? '';
   // The fence (`resources.ts`) is the innermost wrapper: what it needs beyond
   // the working directory is the mission's identity, from which it reopens

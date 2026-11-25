@@ -4,9 +4,10 @@ import { accessSync, chmodSync, constants, mkdirSync, mkdtempSync, rmSync, statS
 import { tmpdir } from 'node:os';
 import { join, posix, sep, win32 } from 'node:path';
 import {
-  checkDaemonNode, chooseLaunchNode, daemonNode, designatesDaemonRuntime, launchPath, nodeInDir, nodeInterpreter, nodelessBackends,
-  nodelessBackendText, pathKeyOf, runsOnNode, withLaunchPath,
+  checkDaemonNode, chooseLaunchNode, daemonNode, designatesDaemonRuntime, launchInterpreter, launchPath, nodeInDir, nodeInterpreter,
+  nodelessBackends, nodelessBackendText, NoTrustedNodeError, pathKeyOf, runsOnNode, withLaunchPath,
 } from './launch-path.js';
+import { untrustedPathProblem, type TrustStat } from './trusted-tree.js';
 import { binaryCandidates } from './binary-path.js';
 
 const nvmBin = posix.join('/Users', 'sam', '.nvm', 'versions', 'node', 'v22.11.0', 'bin');
@@ -111,6 +112,28 @@ test('#1102 review: an `env node` script is started with the node the host chose
   assert.equal(nodeInterpreter('codex', node, 'linux', read('#!/usr/bin/env node\n')), null, 'an unresolved name');
   assert.equal(nodeInterpreter('C:\\npm\\codex.cmd', 'C:\\nodejs\\node.exe', 'win32', read('@ECHO off\r\nnode x')), null);
   assert.equal(nodeInterpreter(script, node, 'linux', () => { throw new Error('EACCES'); }), null);
+});
+
+test('#1102 review, iteration 4: with no node chosen, an `env node` CLI is refused, never left to the mission\'s PATH', () => {
+  const node = posix.join('/usr', 'local', 'bin', 'node');
+  const script = posix.join('/home', 'sam', '.npm-global', 'lib', 'node_modules', '@openai', 'codex', 'bin', 'codex.js');
+  const read = (text: string) => () => text;
+  for (const line of ['#!/usr/bin/env node\n', '#!/usr/bin/env -S node --no-warnings\n', '#!/bin/env node --flag\n']) {
+    for (const platform of ['linux', 'darwin'] as const) {
+      assert.throws(() => launchInterpreter(script, null, platform, 'codex', read(line)), (err: unknown) =>
+        err instanceof NoTrustedNodeError && err.cli === 'codex' && /^no trusted Node\.js to run codex/.test(err.message)
+        && !err.message.includes(script) && !err.message.includes('/home'), `${platform}: ${line.trim()}`);
+    }
+  }
+  // A chosen node: the same interpreter as before.
+  assert.deepEqual(launchInterpreter(script, node, 'linux', 'codex', read('#!/usr/bin/env node\n')), { file: node, args: [] });
+  // Native, an absolute interpreter, another runtime, an unreadable file: unchanged, nothing looks `node` up.
+  assert.equal(launchInterpreter(script, null, 'linux', 'codex', read('\u007fELF\u0002')), null);
+  assert.equal(launchInterpreter(script, null, 'linux', 'codex', read('#!/opt/node/bin/node\n')), null);
+  assert.equal(launchInterpreter(script, null, 'linux', 'codex', read('#!/usr/bin/env bun\n')), null);
+  assert.equal(launchInterpreter(script, null, 'linux', 'codex', () => { throw new Error('EACCES'); }), null);
+  // Windows: the host adapter starts an npm shim's script itself.
+  assert.equal(launchInterpreter('C:\\npm\\codex.cmd', null, 'win32', 'codex', read('@ECHO off\r\nnode x')), null);
 });
 
 test('nodeInDir finds an executable node on disk', { skip: process.platform === 'win32' }, () => {
@@ -305,6 +328,56 @@ test('#1102 review: the daemon\'s Node is checked on disk before it stands in', 
     platform: 'linux', resolve: (name) => (name === 'codex' ? codex : name === 'node' ? runtimeFile : null), read: () => '#!/usr/bin/env node\n',
     hasNode: () => false, runtimeNode: null, runtimeProblem: 'replaced', isRuntime: (file) => file === runtimeFile,
   }), [{ name: 'codex', path: codex, runtimeProblem: 'replaced' }]);
+});
+
+/**
+ * A `/usr/bin/node` replaced since the daemon started, its folders as a table:
+ * `owner` and `folderMode` say who could have written it. Nothing reads the
+ * machine's own folders, whose owners differ from one runner to the next.
+ */
+function replacedSystemNode(owner: number, folderMode = 0o755) {
+  const DAEMON = 1000;
+  const file = posix.join('/usr', 'bin', 'node');
+  const table: Record<string, TrustStat> = {
+    '/': { uid: 0, mode: 0o755, kind: 'directory' },
+    '/usr': { uid: 0, mode: 0o755, kind: 'directory' },
+    '/usr/bin': { uid: 0, mode: folderMode, kind: 'directory' },
+    [file]: { uid: owner, mode: 0o755, kind: 'file' },
+  };
+  const lstat = (path: string): TrustStat => {
+    const entry = table[path];
+    if (!entry) throw new Error(`ENOENT ${path}`);
+    return entry;
+  };
+  const soundTree = (path: string) =>
+    untrustedPathProblem(path, { platform: 'linux', uid: DAEMON, lstat, readlink: () => { throw new Error('EINVAL'); } }) === null;
+  const now = { dev: 1, ino: 2, size: 3, mtimeMs: 4 };
+  const deps = {
+    realpath: (path: string) => path,
+    stat: () => ({ ...now, isFile: () => true }),
+    executable: () => true,
+    soundTree,
+  };
+  return { facts: { execPath: file, platform: 'linux' as const }, file, deps, before: { ...now, ino: 99 }, DAEMON };
+}
+
+test('#1102 review, iteration 4: a replaced runtime put there by a third party is refused', () => {
+  const other = replacedSystemNode(1001);
+  assert.deepEqual(checkDaemonNode(other.facts, { ...other.deps, startup: other.before }), { node: null, problem: 'replaced' });
+  assert.deepEqual(checkDaemonNode(other.facts, { ...other.deps, startup: null }), { node: null, problem: 'unverified' });
+  // Root's file in a folder its group can write: the group could have swapped it.
+  const group = replacedSystemNode(0, 0o775);
+  assert.deepEqual(checkDaemonNode(group.facts, { ...group.deps, startup: group.before }), { node: null, problem: 'replaced' });
+});
+
+test('#1102 review, iteration 4: a replaced runtime written only by root or the daemon account is accepted', () => {
+  // Decision of the series pilot: whoever holds those rights already controls the daemon, and a
+  // strict refusal would fail every mission after the package manager upgrades `/usr/bin/node`.
+  const apt = replacedSystemNode(0);
+  assert.deepEqual(checkDaemonNode(apt.facts, { ...apt.deps, startup: apt.before }), { node: apt.file, problem: null });
+  assert.deepEqual(checkDaemonNode(apt.facts, { ...apt.deps, startup: null }), { node: apt.file, problem: null });
+  const own = replacedSystemNode(apt.DAEMON);
+  assert.deepEqual(checkDaemonNode(own.facts, { ...own.deps, startup: own.before }), { node: own.file, problem: null });
 });
 
 /**
