@@ -19,6 +19,7 @@ export type PullReview = {
   updated_at: number;
 };
 
+import { currentAccount, onAccountChange } from '@/lib/account-change';
 import type { JobLinks } from './landing-api';
 import type { BranchGestures, BranchLock } from './forge-branch-api';
 
@@ -132,6 +133,15 @@ export function keepPullList(slug: string, list: PullRequestList, at = Date.now(
 export function forgetPullListsForTests(): void {
   lastRead.clear();
 }
+
+// Another account's pull requests are not this one's: a tab remounted within
+// the minute must not show them. Naming the account for the first time is no
+// change.
+let followedAccount: string | null = currentAccount();
+onAccountChange((owner) => {
+  if (followedAccount !== null && owner !== followedAccount) lastRead.clear();
+  followedAccount = owner;
+});
 
 /** A gesture on a pull request, from its row's menu or from its window. */
 export type PullActionId = 'resolveConflict' | 'updateBranch' | 'review' | 'report' | 'askContributor' | 'comment' | 'forge';

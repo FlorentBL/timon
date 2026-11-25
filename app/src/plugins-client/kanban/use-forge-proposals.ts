@@ -1,6 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useSyncExternalStore } from 'react';
+import { currentAccount, onAccountChange } from '@/lib/account-change';
 import { sseOn } from '@/lib/sse-stream';
 import { isPending, listProposals, type ForgeProposal } from './forge-proposals-api';
 
@@ -57,6 +58,24 @@ function hold(slugs: readonly string[]): () => void {
     if (entries.size === 0 && stopSignal) { stopSignal(); stopSignal = null; }
   };
 }
+
+// Another account's proposals are not this one's: what is held is emptied and
+// read again under the new account, and an answer still on its way for the
+// previous one lands nowhere (`read` moves `ask`). Naming the account for the
+// first time is no change.
+let followedAccount: string | null = currentAccount();
+onAccountChange((owner) => {
+  const switched = followedAccount !== null && owner !== followedAccount;
+  followedAccount = owner;
+  if (!switched || entries.size === 0) return;
+  for (const [slug, entry] of entries) {
+    entry.pending = [];
+    // Signed out, there is nothing to read: only the answer in flight is dropped.
+    if (owner === null) entry.ask += 1;
+    else read(slug);
+  }
+  changed();
+});
 
 const subscribe = (listener: () => void) => {
   listeners.add(listener);
