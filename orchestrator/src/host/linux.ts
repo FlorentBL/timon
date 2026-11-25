@@ -179,7 +179,8 @@ export function createLinuxHost(config: TimonConfig, pins?: BinaryPins): Host {
   const capabilities = (): Capability[] => {
     const out: Capability[] = ['systemd'];
     if (base.containers) out.push('containers');
-    if (config.host.traefik) out.push('traefik');
+    // Traefik is reached as a container: without Docker the flag claims nothing.
+    if (base.containers && config.host.traefik) out.push('traefik');
     if (guiEnabled) out.push('gui');
     if (keyring) out.push('keyring');
     for (const capability of ['git', 'grepai', 'uvx'] as const) {

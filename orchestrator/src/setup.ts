@@ -20,7 +20,7 @@ import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { usableProviders } from './backends/usable.js';
 import { config, configSource, CONFIG_FILE } from './config/load.js';
-import { EditionSchema, ProfileSchema, TimonConfigSchema } from './config/schema.js';
+import { EditionSchema, ProfileSchema, TimonConfigSchema, profileForPlatform } from './config/schema.js';
 
 /**
  * Values the environment decided for THIS run, which the file must inherit
@@ -102,9 +102,7 @@ export function isFirstRun(file: string = CONFIG_FILE): boolean {
 
 /** The profile that matches this machine, used as the wizard's default. */
 export function defaultProfile(platform: NodeJS.Platform = process.platform): string {
-  if (platform === 'darwin') return 'macos';
-  if (platform === 'win32') return 'windows';
-  return 'linux-desktop';
+  return profileForPlatform(platform);
 }
 
 /**

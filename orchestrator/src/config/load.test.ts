@@ -8,7 +8,7 @@ const HOME = mkdtempSync(join(tmpdir(), 'timon-config-test-'));
 process.env.TIMON_HOME = HOME;
 
 const { loadConfig, migrateConfig, applyEnvOverrides, ConfigError } = await import('./load.js');
-const { TimonConfigSchema } = await import('./schema.js');
+const { TimonConfigSchema, profileForPlatform } = await import('./schema.js');
 
 function writeConfig(obj: unknown): string {
   const file = join(HOME, `cfg-${Math.random().toString(36).slice(2)}.json`);
@@ -19,10 +19,11 @@ function writeConfig(obj: unknown): string {
 test('missing file → defaults', () => {
   const cfg = loadConfig(join(HOME, 'absent.json'));
   assert.equal(cfg.version, 1);
-  assert.equal(cfg.profile, 'linux-desktop');
+  // Derived from the running OS, so a config-less home never reports Linux on macOS or Windows.
+  assert.equal(cfg.profile, profileForPlatform(process.platform));
   assert.equal(cfg.edition, 'expert');
   assert.equal(cfg.daemon.listen.port, 3000);
-  assert.equal(cfg.host.traefik, true);
+  assert.equal(cfg.host.traefik, process.platform === 'linux');
   assert.deepEqual(cfg.modules, {});
   // Unset, not `false`: the parsed config carries the operator's wish, and
   // `unsignedPluginsAllowed()` turns its absence into a decision against the
@@ -189,4 +190,12 @@ test('the packaged shell can turn the app on and move it', () => {
   assert.equal(cfg.app.enabled, true);
   assert.equal(cfg.app.listen.port, 3110);
   assert.equal(cfg.daemon.listen.port, 3010);
+});
+
+test('profile default follows the operating system', () => {
+  assert.equal(profileForPlatform('darwin'), 'macos');
+  assert.equal(profileForPlatform('win32'), 'windows');
+  assert.equal(profileForPlatform('linux'), 'linux-desktop');
+  // An explicit profile still wins over the platform.
+  assert.equal(TimonConfigSchema.parse({ profile: 'linux-server' }).profile, 'linux-server');
 });
