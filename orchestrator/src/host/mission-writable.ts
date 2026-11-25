@@ -26,7 +26,9 @@
  * Not refused, on purpose: the system temporary folders the fence leaves
  * writable, and a backend's own state folder (`~/.claude`…). Neither is on
  * the daemon's PATH, which a mission cannot change, and an older Claude Code
- * install keeps its CLI in the latter.
+ * install keeps its CLI in the latter. A version manager root may sit in a
+ * temporary folder, though: `binary-path.ts` refuses those for the `node` it
+ * finds there (`alsoRoots`).
  */
 import { realpathSync } from 'node:fs';
 import { homedir } from 'node:os';
@@ -90,7 +92,7 @@ function isAbsoluteFor(platform: NodeJS.Platform, path: string): boolean {
 
 /** `child` equals `parent` or lies beneath it. Case-insensitive on Windows and
  *  macOS, whose default volumes are. */
-function within(platform: NodeJS.Platform, parent: string, child: string): boolean {
+export function pathWithin(platform: NodeJS.Platform, parent: string, child: string): boolean {
   const fold = (p: string) => (platform === 'win32' || platform === 'darwin' ? p.toLowerCase() : p);
   const rel = platform === 'win32'
     ? win32.relative(fold(parent), fold(child))
@@ -125,16 +127,16 @@ export function missionWritableProblem(path: string, options: MissionWritableOpt
   const pathJoin = platform === 'win32' ? win32.join : (...parts: string[]) => resolve(...parts);
   for (const p of candidates) {
     for (const h of homes) {
-      if (!within(platform, h, p)) continue;
-      if (TIMON_HOME_EXECUTABLE_DIRS.some((dir) => within(platform, pathJoin(h, dir), p))) continue;
+      if (!pathWithin(platform, h, p)) continue;
+      if (TIMON_HOME_EXECUTABLE_DIRS.some((dir) => pathWithin(platform, pathJoin(h, dir), p))) continue;
       return 'inside the Timon home';
     }
     for (const root of options.extraRoots ?? safeRoots()) {
-      if (within(platform, root, p)) return `inside ${root}`;
+      if (pathWithin(platform, root, p)) return `inside ${root}`;
     }
     for (const root of options.alsoRoots ?? []) {
       const spellings = platform === process.platform ? [root, canonical(root)] : [root];
-      if (spellings.some((r) => within(platform, r, p))) return `inside ${root}`;
+      if (spellings.some((r) => pathWithin(platform, r, p))) return `inside ${root}`;
     }
   }
   return null;

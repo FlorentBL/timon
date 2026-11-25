@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { accessSync, chmodSync, constants, mkdirSync, mkdtempSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, posix, sep, win32 } from 'node:path';
-import { daemonNode, launchPath, nodeInDir, nodelessBackends, nodelessBackendText, pathKeyOf, runsOnNode, withLaunchPath } from './launch-path.js';
+import { checkDaemonNode, daemonNode, launchPath, nodeInDir, nodelessBackends, nodelessBackendText, pathKeyOf, runsOnNode, withLaunchPath } from './launch-path.js';
 import { binaryCandidates } from './binary-path.js';
 
 const nvmBin = posix.join('/Users', 'sam', '.nvm', 'versions', 'node', 'v22.11.0', 'bin');
@@ -150,16 +150,86 @@ test('#1102: the daemon\'s own Node is the last resort, after the machine\'s', (
   }).split(posix.delimiter), [...linuxPath.split(posix.delimiter), posix.dirname(bundled)]);
 });
 
-test('#1102: daemonNode is the runtime only when it is a node, never Electron', () => {
+test('#1102 review: a relative PATH entry never counts as holding a node', () => {
   const bundled = posix.join('/opt', 'Timon', 'resources', 'node', 'node');
-  assert.equal(daemonNode({ execPath: bundled, platform: 'linux' }), bundled);
-  assert.equal(daemonNode({ execPath: bundled, electron: '33.0.0', platform: 'linux' }), null);
-  assert.equal(daemonNode({ execPath: posix.join('/opt', 'Timon', 'timon'), platform: 'linux' }), null);
-  assert.equal(daemonNode({ execPath: posix.join('/usr', 'bin', 'nodejs'), platform: 'linux' }), null);
-  assert.equal(daemonNode({ execPath: 'node', platform: 'linux' }), null);
+  const probed: string[] = [];
+  const hasNode = (dir: string) => { probed.push(dir); return true; };
+  // `bin` and `./tools` would be read against the daemon's cwd here, against the project's by the CLI.
+  const path = ['bin', './tools', '/usr/bin'].join(posix.delimiter); // portability: simulated Linux PATH
+  assert.equal(launchPath(path, { platform: 'linux', hasNode, runtimeNode: bundled }), path);
+  assert.deepEqual(probed, ['/usr/bin']); // portability: simulated Linux PATH
+  const relativeOnly = ['bin', './tools'].join(posix.delimiter);
+  assert.deepEqual(launchPath(relativeOnly, { platform: 'linux', hasNode, runtimeNode: bundled }).split(posix.delimiter),
+    ['bin', './tools', posix.dirname(bundled)]);
+  const windows = ['tools', 'C:\\Windows'].join(';');
+  const winProbed: string[] = [];
+  launchPath(windows, { platform: 'win32', hasNode: (dir) => { winProbed.push(dir); return false; }, findNode: () => null });
+  assert.deepEqual(winProbed, ['C:\\Windows']);
+});
+
+test('#1102: daemonNode is the runtime only when it is a node, never Electron', () => {
+  // The name alone rules these out, before any file is looked at.
+  const none = { node: null, problem: null };
+  const bundled = posix.join('/opt', 'Timon', 'resources', 'node', 'node');
+  assert.deepEqual(checkDaemonNode({ execPath: bundled, electron: '33.0.0', platform: 'linux' }), none);
+  assert.deepEqual(checkDaemonNode({ execPath: posix.join('/opt', 'Timon', 'timon'), platform: 'linux' }), none);
+  assert.deepEqual(checkDaemonNode({ execPath: posix.join('/usr', 'bin', 'nodejs'), platform: 'linux' }), none);
+  assert.deepEqual(checkDaemonNode({ execPath: 'node', platform: 'linux' }), none);
+  assert.deepEqual(checkDaemonNode({ execPath: win32.join('C:\\', 'Program Files', 'Timon', 'Timon.exe'), platform: 'win32' }), none);
+  // A Windows package's node.exe, its file as the disk reports it.
   const windows = win32.join('C:\\', 'Program Files', 'Timon', 'resources', 'node', 'node.exe');
-  assert.equal(daemonNode({ execPath: windows, platform: 'win32' }), windows);
-  assert.equal(daemonNode({ execPath: win32.join('C:\\', 'Program Files', 'Timon', 'Timon.exe'), platform: 'win32' }), null);
+  const identity = { dev: 1, ino: 2, size: 3, mtimeMs: 4 };
+  const deps = { realpath: (file: string) => file, stat: () => ({ ...identity, isFile: () => true }), executable: () => true, startup: identity };
+  assert.equal(daemonNode({ execPath: windows, platform: 'win32' }, deps), windows);
+  assert.deepEqual(checkDaemonNode({ execPath: windows, platform: 'win32' }, { ...deps, startup: { ...identity, ino: 9 } }),
+    { node: null, problem: 'replaced' });
+});
+
+test('#1102 review: the daemon\'s Node is checked on disk before it stands in', { skip: process.platform === 'win32' && 'POSIX modes and links' }, (t) => {
+  const base = mkdtempSync(join(tmpdir(), 'timon-daemon-node-'));
+  t.after(() => rmSync(base, { recursive: true, force: true }));
+  const real = join(base, 'resources', 'node', 'node');
+  mkdirSync(join(real, '..'), { recursive: true });
+  writeFileSync(real, '#!/bin/sh\n');
+  chmodSync(real, 0o755);
+  const facts = { execPath: real, platform: process.platform };
+  const identity = () => { const s = statSync(real); return { dev: s.dev, ino: s.ino, size: s.size, mtimeMs: s.mtimeMs }; };
+  const startup = identity();
+  assert.deepEqual(checkDaemonNode(facts, { startup }), { node: real, problem: null });
+  // Reached through a link (`/usr/local/bin/node`): the file it leads to is the one a CLI gets.
+  const link = join(base, 'bin', 'node');
+  mkdirSync(join(link, '..'));
+  symlinkSync(real, link);
+  assert.equal(daemonNode({ ...facts, execPath: link }, { startup }), real);
+  assert.deepEqual(launchPath('/usr/bin', { platform: 'linux', hasNode: () => false, runtimeNode: daemonNode({ ...facts, execPath: link }, { startup }) }) // portability: simulated Linux PATH
+    .split(posix.delimiter), ['/usr/bin', join(base, 'resources', 'node')]); // portability: simulated Linux PATH
+  // No longer executable.
+  chmodSync(real, 0o644);
+  assert.deepEqual(checkDaemonNode(facts, { startup }), { node: null, problem: 'not-executable' });
+  chmodSync(real, 0o755);
+  // Another file at the same path.
+  writeFileSync(real, '#!/bin/sh\necho someone else\n');
+  assert.deepEqual(checkDaemonNode(facts, { startup }), { node: null, problem: 'replaced' });
+  // The link now leads to the Electron binary: refused, with or without a startup identity to compare.
+  const electron = join(base, 'timon');
+  writeFileSync(electron, '\u007fELF');
+  chmodSync(electron, 0o755);
+  rmSync(link);
+  symlinkSync(electron, link);
+  assert.deepEqual(checkDaemonNode({ ...facts, execPath: link }, { startup }), { node: null, problem: 'replaced' });
+  assert.deepEqual(checkDaemonNode({ ...facts, execPath: link }, { startup: null }), { node: null, problem: 'not-node' });
+  // Gone.
+  rmSync(real);
+  assert.deepEqual(checkDaemonNode(facts, { startup }), { node: null, problem: 'missing' });
+  // The diagnostic says so instead of counting on it.
+  const codex = join(base, 'codex');
+  const nodeless = nodelessBackends(['codex'], {
+    platform: 'linux', resolve: (name) => (name === 'codex' ? codex : null), read: () => '#!/usr/bin/env node\n', hasNode: () => false,
+    runtimeNode: null, runtimeProblem: 'missing',
+  });
+  assert.deepEqual(nodeless, [{ name: 'codex', path: codex, runtimeProblem: 'missing' }]);
+  assert.match(nodelessBackendText(nodeless[0]!), /started on was removed, replaced or made non-executable/);
+  assert.doesNotMatch(nodelessBackendText({ name: 'codex', path: codex }), /started on/);
 });
 
 /**

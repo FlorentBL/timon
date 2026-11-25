@@ -1,4 +1,4 @@
-import { accessSync, constants, openSync, readSync, closeSync, statSync } from 'node:fs';
+import { accessSync, constants, openSync, readSync, closeSync, realpathSync, statSync } from 'node:fs';
 import { posix, win32 } from 'node:path';
 
 /**
@@ -84,7 +84,10 @@ export function launchPath(path: string, opts: LaunchPathOptions): string {
     if (!listed(dir)) out.unshift(dir);
   }
   const hasNode = opts.hasNode ?? nodeInDir;
-  if ((opts.findNode || opts.runtimeNode) && !out.some((dir) => hasNode(dir, platform))) {
+  // A relative entry (a mission's own PATH may carry one) is read here against the daemon's cwd
+  // and by the CLI's `env node` against the mission's: it never proves a `node` is there.
+  const offersNode = (dir: string) => isAbsoluteFor(dir, platform) && hasNode(dir, platform);
+  if ((opts.findNode || opts.runtimeNode) && !out.some(offersNode)) {
     const self = opts.selfExecutable;
     const usable = (file: string | null | undefined): file is string =>
       !!file && isAbsoluteFor(file, platform) && !(self && sameDir(file, self, platform));
@@ -105,23 +108,96 @@ export type NodeRuntimeFacts = {
   platform: NodeJS.Platform;
 };
 
+/** What tells one file from its replacement at the same path. */
+export type FileIdentity = { dev: number; ino: number; size: number; mtimeMs: number };
+
+/** Why the daemon's runtime, a Node when the daemon started, can no longer stand in for one. */
+export type DaemonNodeProblem = 'missing' | 'not-executable' | 'not-node' | 'replaced';
+
+export type DaemonNodeCheck =
+  | { node: string; problem: null }
+  /** `problem: null`: the daemon does not run on a Node at all (Electron, a `nodejs` binary). */
+  | { node: null; problem: DaemonNodeProblem | null };
+
+export type DaemonNodeDeps = {
+  realpath?: (file: string) => string;
+  stat?: (file: string) => FileIdentity & { isFile(): boolean };
+  executable?: (file: string, platform: NodeJS.Platform) => boolean;
+  /** The runtime's identity when the daemon started; `null` = unknown, not compared. */
+  startup?: FileIdentity | null;
+};
+
+function currentRuntime(): NodeRuntimeFacts {
+  return { execPath: process.execPath, electron: process.versions.electron, platform: process.platform };
+}
+
+function identityOf(stat: FileIdentity): FileIdentity {
+  return { dev: stat.dev, ino: stat.ino, size: stat.size, mtimeMs: stat.mtimeMs };
+}
+
+function isExecutable(file: string, platform: NodeJS.Platform): boolean {
+  try { accessSync(file, platform === 'win32' ? constants.F_OK : constants.X_OK); return true; } catch { return false; }
+}
+
+function nodeNamed(file: string, platform: NodeJS.Platform): boolean {
+  return (platform === 'win32' ? /^node\.exe$/i : /^node$/).test(pathModule(platform).basename(file));
+}
+
+/** The file this process was started from, as it was then: a later replacement must not inherit its trust. */
+const STARTUP_IDENTITY: FileIdentity | null = (() => {
+  try { return identityOf(statSync(realpathSync(process.execPath))); } catch { return null; }
+})();
+
 /**
- * The daemon's own runtime when it is a Node a CLI can run on: since 0.1.6 a
+ * The daemon's own runtime when it is a Node a CLI can run on, checked on
+ * disk right before each launch (#1102, security review): since 0.1.6 a
  * desktop package runs its daemon on the Node it ships
  * (`resources/node/node[.exe]`), and a source install runs on the Node it was
  * started with. The fence already opens that runtime to the mission, whose
  * Timon MCP servers start with it. Electron is never one: its binary runs as
  * Node only with `ELECTRON_RUN_AS_NODE`, which the package's fuse turns off.
- * Only a file named `node` helps: `#!/usr/bin/env node` looks for that name.
+ *
+ * What the process was started from says nothing of the file now at that
+ * path: it must still exist, be executable, be named `node` once its links are
+ * resolved (`#!/usr/bin/env node` looks for that name, and a link to the
+ * Electron binary resolves to another one), and be the very file the daemon
+ * started from. The resolved path is the one returned: the CLI runs that file.
  */
-export function daemonNode(runtime: NodeRuntimeFacts = {
-  execPath: process.execPath, electron: process.versions.electron, platform: process.platform,
-}): string | null {
-  if (runtime.electron) return null;
-  const path = pathModule(runtime.platform);
-  if (!path.isAbsolute(runtime.execPath)) return null;
-  const name = path.basename(runtime.execPath);
-  return (runtime.platform === 'win32' ? /^node\.exe$/i : /^node$/).test(name) ? runtime.execPath : null;
+export function checkDaemonNode(runtime?: NodeRuntimeFacts, deps: DaemonNodeDeps = {}): DaemonNodeCheck {
+  const facts = runtime ?? currentRuntime();
+  const none = { node: null, problem: null } as const;
+  if (facts.electron) return none;
+  const path = pathModule(facts.platform);
+  if (!path.isAbsolute(facts.execPath) || !nodeNamed(facts.execPath, facts.platform)) return none;
+  const realpath = deps.realpath ?? realpathSync;
+  const stat = deps.stat ?? statSync;
+  const executable = deps.executable ?? isExecutable;
+  // Another runtime than this process's own has no startup identity to compare with.
+  const startup = 'startup' in deps ? deps.startup ?? null : runtime ? null : STARTUP_IDENTITY;
+  let real: string;
+  let info: FileIdentity & { isFile(): boolean };
+  try {
+    real = realpath(facts.execPath);
+    info = stat(real);
+  } catch {
+    return { node: null, problem: 'missing' };
+  }
+  if (!info.isFile()) return { node: null, problem: 'missing' };
+  const now = identityOf(info);
+  if (startup && (now.dev !== startup.dev || now.ino !== startup.ino || now.size !== startup.size || now.mtimeMs !== startup.mtimeMs)) {
+    return { node: null, problem: 'replaced' };
+  }
+  if (!path.isAbsolute(real) || !nodeNamed(real, facts.platform)) {
+    // The same file as at startup was never one by name (`node` linked to `nodejs`): nothing changed to report.
+    return { node: null, problem: startup ? null : 'not-node' };
+  }
+  if (!executable(real, facts.platform)) return { node: null, problem: 'not-executable' };
+  return { node: real, problem: null };
+}
+
+/** `checkDaemonNode`'s path: the daemon's Node as it may run a CLI now, or `null`. */
+export function daemonNode(runtime?: NodeRuntimeFacts, deps?: DaemonNodeDeps): string | null {
+  return checkDaemonNode(runtime, deps).node;
 }
 
 /** The key holding PATH: Windows keeps the case it was read with (`Path`), and two spellings would be two variables. */
@@ -170,7 +246,12 @@ function readHead(file: string): string {
   }
 }
 
-export type NodelessBackend = { name: string; path: string };
+export type NodelessBackend = {
+  name: string;
+  path: string;
+  /** Why the daemon's own Node, which would have stood in, no longer can. */
+  runtimeProblem?: DaemonNodeProblem;
+};
 
 /**
  * The CLIs among `names` that are found, run on Node, and would get no `node`
@@ -188,6 +269,8 @@ export function nodelessBackends(
     hasNode?: (dir: string, platform: NodeJS.Platform) => boolean;
     /** The daemon's own Node (`daemonNode`), which a launch falls back on. */
     runtimeNode?: string | null;
+    /** Why that Node is missing when the daemon started on one (`checkDaemonNode`). */
+    runtimeProblem?: DaemonNodeProblem | null;
   },
 ): NodelessBackend[] {
   const hasNode = opts.hasNode ?? nodeInDir;
@@ -197,14 +280,17 @@ export function nodelessBackends(
     if (!path || !runsOnNode(path, opts.platform, opts.read)) return [];
     node ??= opts.resolve('node') ?? opts.runtimeNode ?? null;
     if (node || hasNode(pathModule(opts.platform).dirname(path), opts.platform)) return [];
-    return [{ name, path }];
+    return [opts.runtimeProblem ? { name, path, runtimeProblem: opts.runtimeProblem } : { name, path }];
   });
 }
 
 /** The sentence both diagnostics print for one such CLI. */
 export function nodelessBackendText(backend: NodelessBackend): string {
-  return `${backend.name} (${backend.path}) runs on Node.js, which Timon cannot find: its missions fail with `
+  const text = `${backend.name} (${backend.path}) runs on Node.js, which Timon cannot find: its missions fail with `
     + '"env: node: No such file or directory". Install Node.js system-wide (your package manager, or nodejs.org), '
     + 'or set host.binaries.node in timon.config.json to the path `node -p process.execPath` prints in your terminal, '
     + 'then restart Timon.';
+  if (!backend.runtimeProblem) return text;
+  return `${text} The Node.js Timon itself started on was removed, replaced or made non-executable since, `
+    + 'so it cannot stand in for one until Timon restarts.';
 }

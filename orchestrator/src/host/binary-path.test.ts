@@ -19,9 +19,10 @@ test('the Codex CLI embedded in the ChatGPT app is a macOS candidate', { skip: P
   assert.ok(codex.includes('/Users/sam/Applications/ChatGPT.app/Contents/Resources/codex'));
 });
 
-import { chmodSync, existsSync, mkdtempSync, mkdirSync, realpathSync, symlinkSync, writeFileSync, rmSync } from 'node:fs';
+import { chmodSync, existsSync, mkdtempSync, mkdirSync, readdirSync, realpathSync, statSync, symlinkSync, writeFileSync, rmSync } from 'node:fs';
+import { untrustedTreeProblem } from './trusted-tree.js';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, sep } from 'node:path';
 import { findExecutableBinary } from './binary-path.js';
 
 test('Windows discovers npm and per-user programs with a stale PATH', (t) => {
@@ -764,14 +765,100 @@ test('#1102: Windows looks in fnm\'s versions and VOLTA_HOME for node.exe', () =
   };
   const windows = binaryCandidates('node', {
     platform: 'win32', path: '', homeDir: 'C:\\Users\\Sam', installedBinariesFile: absentInstalled, directoryReader: reader,
-    env: { APPDATA: appData, VOLTA_HOME: 'D:\\volta' },
+    env: { APPDATA: appData, LOCALAPPDATA: 'C:\\Users\\Sam\\AppData\\Local', VOLTA_HOME: 'D:\\volta' },
   });
   const newest = windows.indexOf(`${versions}\\v22.3.0\\installation\\node.exe`);
   assert.ok(newest >= 0, windows.join('\n'));
   assert.ok(newest < windows.indexOf(`${versions}\\v20.0.0\\installation\\node.exe`));
   assert.ok(windows.includes(`${appData}\\fnm\\aliases\\default\\node.exe`));
+  assert.ok(windows.includes('C:\\Users\\Sam\\AppData\\Local\\fnm\\aliases\\default\\node.exe'));
   assert.ok(windows.includes('D:\\volta\\bin\\node.exe'));
   assert.ok(!windows.some((c) => c.includes('junk')));
+});
+
+/** Folders as a umask of 022 leaves them: the machine running the tests may use 002. */
+function tightenTree(dir: string): void {
+  chmodSync(dir, 0o755);
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    if (entry.isDirectory()) tightenTree(join(dir, entry.name));
+  }
+}
+
+test('#1102 review: a node under a manager root another account can write is passed over', { skip: process.platform === 'win32' && 'POSIX owner and mode bits' }, (t) => {
+  const base = realpathSync(mkdtempSync(join(tmpdir(), 'timon-fnm-trust-')));
+  t.after(() => { chmodSync(base, 0o700); rmSync(base, { recursive: true, force: true }); });
+  const home = join(base, 'home');
+  const root = join(base, 'shared-fnm');
+  const node = stubBinary(join(root, 'node-versions', 'v22.3.0', 'installation', 'bin', 'node'));
+  tightenTree(root);
+  const options = { platform: process.platform, path: '', homeDir: home, env: { FNM_DIR: root } };
+  // A node the machine already offers earlier in the order (a CI runner's /usr/local/bin) wins anyway.
+  const candidates = binaryCandidates('node', options);
+  const earlier = candidates.slice(0, candidates.indexOf(node)).find((file) => findExecutableBinary(file) !== null) ?? null;
+  assert.equal(findExecutableBinary('node', options), earlier ?? node);
+  assert.equal(untrustedTreeProblem(node, root), null);
+  for (const [folder, mode] of [[root, 0o777], [root, 0o775], [join(root, 'node-versions'), 0o757]] as const) {
+    chmodSync(folder, mode);
+    assert.match(untrustedTreeProblem(node, root) ?? '', /writable by its group or by others/);
+    assert.equal(findExecutableBinary('node', options), earlier);
+    chmodSync(folder, 0o755);
+  }
+  chmodSync(node, 0o775);
+  assert.match(untrustedTreeProblem(node, root) ?? '', /writable/);
+  assert.equal(findExecutableBinary('node', options), earlier);
+  chmodSync(node, 0o755);
+  assert.equal(findExecutableBinary('node', options), earlier ?? node);
+});
+
+test('#1102 review: a link out of the manager root into another account\'s folder is refused', { skip: process.platform === 'win32' && 'POSIX links and owners' }, (t) => {
+  const base = realpathSync(mkdtempSync(join(tmpdir(), 'timon-fnm-link-')));
+  t.after(() => rmSync(base, { recursive: true, force: true }));
+  const root = join(base, 'fnm');
+  const theirs = join(base, 'someone-else', 'v22');
+  stubBinary(join(theirs, 'bin', 'node'));
+  mkdirSync(join(root, 'aliases'), { recursive: true });
+  symlinkSync(theirs, join(root, 'aliases', 'default'));
+  tightenTree(base);
+  const node = join(root, 'aliases', 'default', 'bin', 'node');
+  const uid = process.getuid?.() ?? 1000;
+  // The other account's folder, as `stat` would report it: chown needs root, so its owner is simulated.
+  const stat = (path: string) => {
+    const info = statSync(path);
+    const other = path === join(base, 'someone-else') || path.startsWith(join(base, 'someone-else') + sep);
+    return { uid: other ? uid + 4242 : info.uid, mode: info.mode, isDirectory: info.isDirectory() };
+  };
+  assert.match(untrustedTreeProblem(node, root, { uid, stat }) ?? '', /belongs to another account/);
+  // The same link, every folder the daemon's own: kept, the folders above the root included.
+  assert.equal(untrustedTreeProblem(node, root, { uid }), null);
+  // A sticky folder owned by root (`/tmp`) is no reason to refuse; a sticky one of another account is.
+  const sticky = (owner: number) => (path: string) => {
+    const info = statSync(path);
+    return path === base ? { uid: owner, mode: 0o41777, isDirectory: true } : { uid: info.uid, mode: info.mode, isDirectory: info.isDirectory() };
+  };
+  assert.equal(untrustedTreeProblem(node, root, { uid, stat: sticky(0) }), null);
+  assert.match(untrustedTreeProblem(node, root, { uid, stat: sticky(uid + 1) }) ?? '', /belongs to another account/);
+  assert.match(untrustedTreeProblem(node, root, { uid, stat: sticky(uid) }) ?? '', /writable/);
+});
+
+test('#1102 review: on Windows a manager root outside the user\'s profile is not used', (t) => {
+  const base = mkdtempSync(join(tmpdir(), 'timon-fnm-win-'));
+  t.after(() => rmSync(base, { recursive: true, force: true }));
+  const home = join(base, 'Users', 'Sam');
+  const outside = join(base, 'fnm');
+  const inside = join(home, 'AppData', 'Local', 'fnm');
+  const plant = (root: string) => {
+    const file = join(root, 'node-versions', 'v22.3.0', 'installation', 'node.exe');
+    mkdirSync(join(file, '..'), { recursive: true });
+    writeFileSync(file, 'MZ');
+    return file;
+  };
+  plant(outside);
+  const kept = plant(inside);
+  const options = (FNM_DIR: string) => ({ platform: 'win32' as const, path: '', homeDir: home, installedBinariesFile: join(base, 'none.json'), env: { FNM_DIR } });
+  assert.equal(findExecutableBinary('node', options(outside)), null);
+  assert.equal(findExecutableBinary('node', options(inside)), kept);
+  // Without FNM_DIR, fnm's local application data folder is looked in too.
+  assert.equal(findExecutableBinary('node', { ...options(inside), env: { LOCALAPPDATA: join(home, 'AppData', 'Local') } }), kept);
 });
 
 test('SUG-0006: Linuxbrew, Volta and nvm-windows folders are candidates', () => {
