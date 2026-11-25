@@ -28,7 +28,7 @@ import { isDeltaQuery, parseHistoryQuery, readHistoryDelta, readHistoryPage, rea
 import { MISSION_ORIGIN_FILTERS, isMissionOriginFilter } from '../../mission-origin.js';
 import { parseTimeBound } from '../../mission-search.js';
 import { APPROVAL_SCOPES } from '../../backends/types.js';
-import { DENY_REASONS, expirePendingForMission, listPending as listPendingPermissions, parseDecisionOrigin, requestPermission, resolvePermission, type PermissionAnswer, type PermissionDecision } from '../../permissions.js';
+import { DENY_REASONS, expirePendingForMission, listPending as listPendingPermissions, parseDecisionOrigin, pendingPermissionSummary, requestPermission, resolvePermission, type PermissionAnswer, type PermissionDecision } from '../../permissions.js';
 import { decideAccess } from '../terminal-web/access.js';
 import { resolve } from '../../settings.js';
 import { expandSlashCommand } from '../../slash.js';
@@ -980,6 +980,9 @@ export function registerRoutes(
       turn_since: turn?.turnSince ?? null,
       pending_action_at: pa?.created_at ?? null,
       pending_action_id: pa?.id ?? null,
+      // Tool and clock only (TODO #1094): the CLI and MCP readers learn the
+      // mission waits on a person without the command it would run.
+      pending_permission: pendingPermissionSummary(m.id),
       // Persisted end-of-turn marker: `status` alone says nothing once the
       // backend keeps its process alive between turns. cf. mission-turn-end.test.ts
       turn_complete: turnComplete,

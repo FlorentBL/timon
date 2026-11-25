@@ -55,6 +55,7 @@ import { isOwnMissionTask, ownMissionTaskId } from './own-task.js';
 import { parseTaskCreateBody, type TaskCreateBody } from './task-create-body.js';
 import { countTaskAttachments, publicTaskAttachment, taskAttachmentsWithInherited } from '../../attachments.js';
 import { apiError, type ApiErrorBody } from '../../api-error.js';
+import { pendingPermissionSummary, type PendingPermissionSummary } from '../../permissions.js';
 
 /** `:id` of a series route, resolved by the shared rule (`series-service.ts`). */
 function resolveSeriesParam(req: express.Request): string | null {
@@ -87,6 +88,13 @@ const BOARD_STATUSES: readonly string[] = ['PENDING', 'IN_PROGRESS', 'DONE', 'BL
  */
 export function boardStatusRow<T extends TaskRow>(task: T): T {
   return BOARD_STATUSES.includes(task.status) ? task : { ...task, status: 'DONE' };
+}
+
+/** The card a running task's mission waits on (TODO #1094), absent otherwise. */
+function withPendingPermission(task: TaskRow): { pending_permission?: PendingPermissionSummary } {
+  if (task.status !== 'IN_PROGRESS') return {};
+  const pending = pendingPermissionSummary(task.mission_id);
+  return pending ? { pending_permission: pending } : {};
 }
 
 /** A task as the list sends it by default: every column, long texts cut. */
@@ -1103,6 +1111,7 @@ export function registerRoutes(app: Router, deps: KanbanRouteDeps = {}): void {
         effective_model: model,
         attachment_count: attachmentCounts.get(t.id) ?? 0,
         ...(runner ? { run_by: runner } : {}),
+        ...withPendingPermission(t),
         ...(codeAwaitsMerge(t, listChain) ? { awaiting_merge: true } : {}),
         // Only on a chain merged into an integration branch: 'integrated'
         // until that branch lands, then 'landed' (or 'closed').
@@ -1449,7 +1458,10 @@ export function registerRoutes(app: Router, deps: KanbanRouteDeps = {}): void {
     const runner = taskRunner(task);
     // Inherited ones included: an iteration works with its root's files.
     const attachments = taskAttachmentsWithInherited(task).map(publicTaskAttachment);
-    res.json({ task: { ...task, effective_backend: backend, effective_model: model, attachments, ...(runner ? { run_by: runner } : {}) } });
+    res.json({ task: {
+      ...task, effective_backend: backend, effective_model: model, attachments,
+      ...(runner ? { run_by: runner } : {}), ...withPendingPermission(task),
+    } });
   });
 
   app.put('/api/tasks/:id', (req, res) => {
