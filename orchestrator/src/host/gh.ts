@@ -9,8 +9,9 @@
  * one behind the daemon.
  *
  * The folder's content is never read by Timon beyond the names of the hosts
- * `hosts.yml` signs in to (`ghForgeHost`), and its path never reaches a log or
- * an error: only `gh` opens the rest.
+ * `hosts.yml` signs in to (`ghForgeHost`) and whether each one keeps its token
+ * in that file (the `oauth_token` key, never its value), and its path never
+ * reaches a log or an error: only `gh` opens the rest.
  */
 import { readFileSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
@@ -35,16 +36,56 @@ export function ghEnv(configDir: string | null, base: NodeJS.ProcessEnv = proces
 const GITHUB_HOST = 'github.com';
 const HOST_NAME = /^[a-z0-9](?:[a-z0-9-]{0,62})(?:\.[a-z0-9](?:[a-z0-9-]{0,62}))*$/;
 
-/** The top-level keys of a `hosts.yml`: the hosts `gh` signs in to. Nothing
- *  under them (users, tokens) is read. */
-export function parseGhHosts(text: string): string[] {
-  const hosts: string[] = [];
+type GhHostEntry = { host: string; tokenInFile: boolean };
+
+/** An `oauth_token` key, and the forms of it that hold nothing. Only matched,
+ *  never captured: the token itself is not read. */
+const TOKEN_KEY = /^[ \t]+oauth_token[ \t]*:/;
+const EMPTY_TOKEN = /^[ \t]+oauth_token[ \t]*:[ \t]*(?:(?:""|''|~|null)[ \t]*)?(?:#.*)?$/;
+
+/**
+ * The hosts of a `hosts.yml`, and for each whether its active token is stored
+ * in the file: a non-empty `oauth_token` directly under the host. Without it,
+ * gh reads the token from the system keyring. A host listed twice counts as
+ * not storing it, the safe answer.
+ */
+function readGhHosts(text: string): GhHostEntry[] {
+  const hosts: GhHostEntry[] = [];
+  let current: GhHostEntry | null = null;
+  let childIndent: number | null = null;
   for (const line of text.split(/\r?\n/)) {
-    const m = /^(?:"([^"]+)"|'([^']+)'|([^\s#'"][^\s:]*)):\s*(?:#.*)?$/.exec(line);
-    const host = (m?.[1] ?? m?.[2] ?? m?.[3])?.toLowerCase();
-    if (host && HOST_NAME.test(host) && !hosts.includes(host)) hosts.push(host);
+    if (line.trim() === '' || line.trimStart().startsWith('#')) continue;
+    const indent = line.length - line.trimStart().length;
+    if (indent === 0) {
+      const m = /^(?:"([^"]+)"|'([^']+)'|([^\s#'"][^\s:]*)):\s*(?:#.*)?$/.exec(line);
+      const host = (m?.[1] ?? m?.[2] ?? m?.[3])?.toLowerCase();
+      current = null;
+      childIndent = null;
+      if (!host || !HOST_NAME.test(host)) continue;
+      const known = hosts.find((h) => h.host === host);
+      if (known) { known.tokenInFile = false; continue; }
+      current = { host, tokenInFile: false };
+      hosts.push(current);
+      continue;
+    }
+    if (!current) continue;
+    childIndent ??= indent;
+    // Deeper lines are a user's own entry (`users:`), not the host's token.
+    if (indent === childIndent && TOKEN_KEY.test(line) && !EMPTY_TOKEN.test(line)) current.tokenInFile = true;
   }
   return hosts;
+}
+
+/** The top-level keys of a `hosts.yml`: the hosts `gh` signs in to. */
+export function parseGhHosts(text: string): string[] {
+  return readGhHosts(text).map((h) => h.host);
+}
+
+/** The host a call reaches among the hosts a folder signs in to (see
+ *  `ghForgeHost`). */
+function forgeHostAmong(hosts: string[]): string | null {
+  if (hosts.length === 0 || hosts.includes(GITHUB_HOST)) return GITHUB_HOST;
+  return hosts.length === 1 ? hosts[0]! : null;
 }
 
 /**
@@ -57,8 +98,7 @@ export function ghForgeHost(configDir: string | null, read: (file: string) => st
   if (!configDir) return GITHUB_HOST;
   let hosts: string[];
   try { hosts = parseGhHosts(read(join(configDir, 'hosts.yml'))); } catch { return GITHUB_HOST; }
-  if (hosts.length === 0 || hosts.includes(GITHUB_HOST)) return GITHUB_HOST;
-  return hosts.length === 1 ? hosts[0]! : null;
+  return forgeHostAmong(hosts);
 }
 
 /**
@@ -77,19 +117,33 @@ export function ghConfigFolder(
   return join(homedir(), '.config', 'gh');
 }
 
+export type GhCredentialsIo = {
+  stat?: (file: string) => { ino: bigint; size: bigint; mtimeNs: bigint };
+  read?: (file: string) => string;
+};
+
 /**
  * A stamp of the credentials `gh` signs in with for `configDir`: the inode,
- * size and modification time of its `hosts.yml`, read by one `stat`, never
- * its content. `gh auth login`, `logout` and `switch` all rewrite that file,
- * the last one even when the tokens live in the keyring (it changes the
- * host's active `user`), so a stamp that moved means the account may have.
- * Null when the file cannot be read: nothing can then be trusted from before.
+ * size and modification time of its `hosts.yml`, when the token of the host gh
+ * reaches is stored in that file. Logging in, out or switching accounts then
+ * rewrites the file, so a stamp that moved means the account may have.
+ *
+ * Null when the token lives in the system keyring: its active entry is keyed
+ * by host alone (`gh:<host>`), shared by every config folder, so a
+ * `gh auth switch` or `gh auth login` run with another folder changes this
+ * folder's account without touching its `hosts.yml`. Null too when the file
+ * cannot be read. Nothing can be cached on a null stamp.
  */
-export function ghCredentialsStamp(
-  configDir: string | null, stat: (file: string) => { ino: bigint; size: bigint; mtimeNs: bigint } = (file) => statSync(file, { bigint: true }),
-): string | null {
+export function ghCredentialsStamp(configDir: string | null, io: GhCredentialsIo = {}): string | null {
+  const stat = io.stat ?? ((file: string) => statSync(file, { bigint: true }));
+  const read = io.read ?? ((file: string) => readFileSync(file, 'utf8'));
   try {
-    const s = stat(join(ghConfigFolder(configDir), 'hosts.yml'));
+    const file = join(ghConfigFolder(configDir), 'hosts.yml');
+    // Stat first: a write that lands between the two moves the next stamp.
+    const s = stat(file);
+    const hosts = readGhHosts(read(file));
+    const host = forgeHostAmong(hosts.map((h) => h.host));
+    if (!host || !hosts.find((h) => h.host === host)?.tokenInFile) return null;
     // Nanoseconds: two writes within the same millisecond still differ.
     return `${s.ino}:${s.size}:${s.mtimeNs}`;
   } catch {
