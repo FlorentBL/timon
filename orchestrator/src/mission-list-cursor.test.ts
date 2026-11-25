@@ -7,6 +7,9 @@
  * 400, every page says whether another follows and how to reach it, the pages
  * chain without a duplicate or a gap even when missions share a start time,
  * `?task_id=` keeps the owner scope, and an anonymous caller is refused.
+ * A restricted reader cannot tell another account's task from an unknown id,
+ * neither by the answer nor by its timing: its scan starts with the owner and
+ * the route publishes no `Server-Timing` for it.
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -21,7 +24,7 @@ import type { RequestAuth } from './users/identity.js';
 
 process.env.TIMON_HOME = mkdtempSync(join(tmpdir(), 'timon-mission-list-cursor-test-'));
 
-const { db, dbApi } = await import('./db.js');
+const { db, dbApi, missionListQuery } = await import('./db.js');
 const { registerRoutes, MISSION_LIST_MAX } = await import('./plugins-bundled/missions/routes.js');
 
 type ListBody = {
@@ -35,7 +38,7 @@ type ListBody = {
 const ROOT: RequestAuth = { kind: 'api-token', user: null, isSuperadmin: true, permissions: ['*'] };
 const asUser = (id: string): RequestAuth => ({ kind: 'api-token', user: null, isSuperadmin: false, actorId: id, permissions: ['missions:read'] });
 
-async function list(path: string, auth: RequestAuth | null = ROOT): Promise<{ status: number; body: ListBody }> {
+async function list(path: string, auth: RequestAuth | null = ROOT): Promise<{ status: number; body: ListBody; timing: string | null }> {
   const app = express();
   app.use((req, _res, next) => {
     if (auth) req.auth = auth;
@@ -47,7 +50,7 @@ async function list(path: string, auth: RequestAuth | null = ROOT): Promise<{ st
   const { port } = server.address() as AddressInfo;
   try {
     const r = await fetch(`http://127.0.0.1:${port}${path}`);
-    return { status: r.status, body: await r.json() as ListBody };
+    return { status: r.status, body: await r.json() as ListBody, timing: r.headers.get('server-timing') };
   } finally {
     server.close();
   }
@@ -163,4 +166,41 @@ test('?task_id= keeps the missions of that task only, within the owner scope', a
   const none = await list(`/api/missions?task_id=${randomUUID()}`);
   assert.deepEqual(none.body.missions, []);
   assert.equal(none.body.has_more, false);
+});
+
+test('a restricted task page walks the index that starts with the owner', () => {
+  const viewer = { id: 'user-a', isSuperadmin: false, permissions: ['missions:read'] };
+  for (const page of [{ taskId: 'some-task' }, { taskId: 'some-task', before: { startedAt: 30_000, id: 'zzz' } }]) {
+    const query = missionListQuery(undefined, undefined, viewer, undefined, page);
+    assert.ok(typeof query === 'object');
+    // Pinned, not only chosen: a home with ANALYZE statistics must not drift back.
+    assert.match(query.sql, /INDEXED BY idx_missions_owner_task/);
+    const plan = db.prepare(`EXPLAIN QUERY PLAN ${query.sql}`).all(...query.params, 51) as { detail: string }[];
+    const scans = plan.map((row) => row.detail).filter((detail) => /\bm\b/.test(detail) && /missions/.test(detail));
+    assert.ok(scans.some((detail) => detail.includes('idx_missions_owner_task')), JSON.stringify(plan));
+    assert.ok(!plan.some((row) => row.detail.includes('idx_missions_task ')), JSON.stringify(plan));
+  }
+});
+
+test('a foreign task and an unknown id look the same to a restricted reader, cursor included', async () => {
+  const foreign = randomUUID();
+  dbApi.createTask(foreign, 'foreign task', 'probe.main');
+  for (let i = 0; i < 5; i++) setTask.run(foreign, mission('probe.main', 40_000 + i, 'user-b'));
+  mission('probe.main', 39_000, 'user-a');
+  const cursor = encodeURIComponent('50000,zzzzzzzz');
+
+  const seen: { status: number; body: ListBody; timing: string | null }[] = [];
+  for (const taskId of [foreign, randomUUID()]) {
+    const r = await list(`/api/missions?task_id=${taskId}&before=${cursor}&limit=2`, asUser('user-a'));
+    seen.push({ status: r.status, body: r.body, timing: r.timing });
+  }
+  assert.deepEqual(seen[0], seen[1]);
+  assert.deepEqual(seen[0], { status: 200, body: { missions: [], has_more: false, next_cursor: null }, timing: null });
+
+  // The owner of the task still pages through it; the root still gets its timing.
+  const own = await list(`/api/missions?task_id=${foreign}&before=${cursor}&limit=2`, asUser('user-b'));
+  assert.equal(own.body.missions?.length, 2);
+  assert.equal(own.body.has_more, true);
+  assert.equal(own.timing, null);
+  assert.ok((await list(`/api/missions?task_id=${foreign}`)).timing?.startsWith('db;dur='));
 });
