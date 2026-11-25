@@ -89,10 +89,23 @@ test('markdown from the forge keeps no raw HTML, and a link leaves only for http
   assert.equal(links[0]!.getAttribute('target'), '_blank');
   assert.match(links[0]!.getAttribute('rel') ?? '', /noopener/);
   assert.match(links[0]!.getAttribute('rel') ?? '', /noreferrer/);
+  assert.equal(links[0]!.getAttribute('rel'), 'noopener noreferrer', 'rel is set once, not doubled');
   assert.match(doc.body.textContent ?? '', /bad/);
   assert.equal(forgeMarkdownHtml('   '), '');
   // A bot's signature, as GitHub's CLA action writes it.
   const bot = new JSDOM(`<div>${forgeMarkdownHtml('All signed.<br/><sub>Posted by the **CLA Assistant**</sub>')}</div>`).window.document;
   assert.ok(!bot.querySelector('sub'));
   assert.match(bot.body.textContent ?? '', /All signed\. Posted by the CLA Assistant/);
+});
+
+test('an `<a ` quoted in a text is not mistaken for a link, and a link with a title keeps one target', async () => {
+  const { JSDOM } = await import('jsdom');
+  const html = forgeMarkdownHtml('Use `<a href="x">` here. [docs](https://example.com/docs "Docs <a title>")');
+  const doc = new JSDOM(`<div>${html}</div>`).window.document;
+  const links = Array.from(doc.querySelectorAll('a'));
+  assert.equal(links.length, 1);
+  assert.equal(links[0]!.getAttribute('target'), '_blank');
+  assert.equal(links[0]!.getAttribute('rel'), 'noopener noreferrer');
+  assert.equal(html.match(/target=/g)?.length, 1, 'one target in the whole text');
+  assert.match(doc.querySelector('code')?.textContent ?? '', /<a href="x">/);
 });

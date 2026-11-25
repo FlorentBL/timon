@@ -660,6 +660,21 @@ export const PUBLISH_DIALOG_SLOT = 'forge.publish.dialog';
 export const CONFLICT_DIALOG_SLOT = 'forge.conflict.dialog';
 
 /**
+ * Slot of a pull request's detail window, opened by a click on its row in the
+ * Pull requests widget: GitHub's page read only (conversation, commits,
+ * checks, files), where it stands and its gestures, and Timon's links. The
+ * occupant reads `usePullRequestDialog()` and draws the whole window, closing
+ * it through `close()`; the reads and the gestures stay the host's. A boot
+ * slot like `kanban.job.dialog`: the product's window is the fallback and
+ * comes back when a replacement leaves.
+ *
+ * Not in the plugin contract yet: API 19 shipped, so the hook would open a new
+ * wave (docs/SDK-COMPAT.md §131). Until then only a bundled occupant, which
+ * imports the context, can take the slot.
+ */
+export const PULL_REQUEST_DIALOG_SLOT = 'kanban.pull.dialog';
+
+/**
  * Slot of the rows plugins add to a project's settings (client API 19), in the
  * project's window under "Integrations": one row each, a title and a status on
  * the left, one action on the right, the rest in a "…" menu. The occupant reads
@@ -803,6 +818,7 @@ function declareBootSlots(): void {
   declareSlot(JOB_DIALOG_SLOT, 'single');
   declareSlot(PUBLISH_DIALOG_SLOT, 'single');
   declareSlot(CONFLICT_DIALOG_SLOT, 'single');
+  declareSlot(PULL_REQUEST_DIALOG_SLOT, 'single');
   declareSlot(PAGE_TOC_SLOT, 'single');
   declareSlot(PROJECT_SETTINGS_SLOT, 'list');
   declareSlot(CHAT_SECRET_REQUEST_SLOT, 'single');
