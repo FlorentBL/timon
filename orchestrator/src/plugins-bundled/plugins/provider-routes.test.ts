@@ -164,7 +164,7 @@ test('authorize: a program without the declared identity is a 409 saying why; no
     const res = await call('POST', '/acme-route/authorize', { paths: [AGENT] });
     assert.equal(res.status, 409, res.text);
     assert.equal(res.json.error, 'binary-identity');
-    assert.match(String(res.json.message), /grok-cli 0\.9\.1/);
+    assert.doesNotMatch(String(res.json.message), /grok-cli/, 'what it printed is not quoted');
     assert.match(String(res.json.message), /Acme's CLI/);
     assert.equal(updates, 0);
     let written: string[] = [];

@@ -226,9 +226,17 @@ test('a pin on another program is not ok, and the report says so without quoting
   };
   const ollama = stubOf('ollama', 'ollama version is 0.16.2');
   const codex = stubOf('codex', 'codex-cli 0.169.0');
+  // A machine loaded by the whole suite can starve the 250 ms pattern limit; such an answer is never kept for
+  // a launch, and the CLI's fresh check asks again: so does the test, a few times at most.
+  const settle = async (): Promise<void> => {
+    await refreshPinnedIdentities();
+    for (let i = 0; i < 3 && /ran past/.test(diagnose().binaries.find((b) => b.name === 'codex')?.error ?? ''); i++) {
+      await refreshPinnedIdentities({ fresh: true });
+    }
+  };
   try {
     setConfig(TimonConfigSchema.parse({ host: { binaries: { codex: ollama } } }));
-    await refreshPinnedIdentities();
+    await settle();
     const wrong = diagnose().binaries.find((b) => b.name === 'codex')!;
     assert.equal(wrong.ok, false);
     assert.equal(wrong.path, ollama);
@@ -237,7 +245,7 @@ test('a pin on another program is not ok, and the report says so without quoting
     assert.match(formatDoctor(diagnose()), /codex\s+✗/);
 
     setConfig(TimonConfigSchema.parse({ host: { binaries: { codex } } }));
-    await refreshPinnedIdentities();
+    await settle();
     const right = diagnose().binaries.find((b) => b.name === 'codex')!;
     assert.deepEqual([right.ok, right.path, right.error], [true, codex, undefined]);
   } finally {
