@@ -18,12 +18,14 @@
  *
  * Each pass also moves the repairs a person asked for (`landing-repair.ts`):
  * once a repair's chain integrated its work, the branch is pushed forward to
- * its pull request.
+ * its pull request. The armed poller then lands the imported ideas whose issue
+ * a contributor's merged pull request closed (`contributor-landing.ts`).
  *
  * Every network gesture goes through `host/forge.ts`; the local reads through
  * the host adapter.
  */
 import { existsSync } from 'node:fs';
+import { landContributorClosings, type ContributorLandingDeps } from './contributor-landing.js';
 import { dbApi, type IntegrationRow } from './db.js';
 import {
   githubForge, githubRepoFromUrl, gitTransport,
@@ -57,6 +59,8 @@ export type PollerDeps = {
   repairs?: RepairDeps;
   /** What the cleanup after a landing reaches (`integration-cleanup.ts`). */
   cleanup?: CleanupDeps;
+  /** What reading the issues of imported ideas reaches (`contributor-landing.ts`). */
+  contributors?: ContributorLandingDeps;
 };
 
 /**
@@ -262,7 +266,8 @@ export async function pollOpenIntegrations(deps: PollerDeps = {}): Promise<Map<s
 }
 
 /** Arms the poller; returns its stop. One pass at a time, each one followed
- *  by the cleanup of what the jobs concluded so far left behind. */
+ *  by the cleanup of what the jobs concluded so far left behind, then by the
+ *  imported ideas a contributor's merged pull request closed. */
 export function startIntegrationPoller(intervalMs: number = POLL_INTERVAL_MS, deps: PollerDeps = {}): () => void {
   let running = false;
   const pass = (): void => {
@@ -275,6 +280,8 @@ export function startIntegrationPoller(intervalMs: number = POLL_INTERVAL_MS, de
         ...(deps.transport ? { transport: deps.transport } : {}),
       }))
       .catch((err) => console.error(`[integration-cleanup] pass failed: ${(err as Error).message}`))
+      .then(() => landContributorClosings(deps.contributors ?? (deps.runners ? { runners: deps.runners } : {})))
+      .catch((err) => console.error(`[landing-poller] contributor closings: ${(err as Error).message}`))
       .finally(() => { running = false; });
   };
   const first = setTimeout(pass, Math.min(FIRST_POLL_DELAY_MS, intervalMs));

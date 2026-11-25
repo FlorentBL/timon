@@ -16,10 +16,14 @@
  *
  * Idempotent: the key `todo:<id>:issue:<n>:comment` gives one proposal however
  * many times the merge is concluded, and a discarded one is not made again.
+ *
+ * A public note written after the merge still reaches the draft: until a
+ * person edits it, the draft is written again from the job and the ideas'
+ * notes whenever it is read (`registerDraftRefresher`).
  */
 import { db, dbApi, type IntegrationRow } from './db.js';
 import { projectRepository } from './external-pr-review.js';
-import { proposeForgeWrite, type ForgeProposalDeps } from './forge-proposals.js';
+import { proposeForgeWrite, registerDraftRefresher, type ForgeProposalDeps, type ForgeProposalRow } from './forge-proposals.js';
 import { jobIssueClosings } from './issue-closing.js';
 
 /** Characters of an idea's public note carried into the comment. */
@@ -36,7 +40,7 @@ export function defuseMentions(text: string): string {
 }
 
 /** The public note of an idea, when `@timon/todo-outcomes` stored one. */
-function publicNote(todoId: number): string | null {
+export function publicNote(todoId: number): string | null {
   try {
     const row = db.prepare(`SELECT public_note FROM todo_outcome WHERE todo_id = ?`).get(todoId) as { public_note: string | null } | undefined;
     const note = row?.public_note?.trim();
@@ -58,6 +62,31 @@ export function resolutionComment(input: { prNumber: number | null; target: stri
   return [head, ...notes].join('\n\n');
 }
 
+/** The comment of one issue the job fixed, with its ideas' notes as they stand. */
+function commentOf(row: IntegrationRow, todoIds: readonly number[]): string {
+  const notes = [...new Set(todoIds.map(publicNote).filter((n): n is string => n !== null))];
+  return resolutionComment({ prNumber: row.pr_number, target: row.target, notes });
+}
+
+const RESOLUTION_KEY = /^todo:\d+:issue:(\d+):comment$/;
+const INTEGRATION_REF = /^integration:(.+)$/;
+
+/** The text a landing's draft holds now: the same template, the notes of today. */
+export function refreshedResolutionComment(proposal: ForgeProposalRow): string | null {
+  if (proposal.trigger !== 'landing') return null;
+  const key = RESOLUTION_KEY.exec(proposal.idem_key);
+  const ref = proposal.source_ref ? INTEGRATION_REF.exec(proposal.source_ref) : null;
+  if (!key?.[1] || !ref?.[1]) return null;
+  const row = dbApi.getIntegrationById(ref[1]);
+  if (!row || row.project !== proposal.project) return null;
+  const number = Number(key[1]);
+  const issue = jobIssueClosings(row)
+    .find((i) => i.number === number && i.repo.toLowerCase() === proposal.repo.toLowerCase());
+  return issue ? commentOf(row, issue.todoIds) : null;
+}
+
+registerDraftRefresher(refreshedResolutionComment);
+
 export type ResolutionOutcome = { proposed: number; existing: number };
 
 /**
@@ -73,12 +102,11 @@ export function proposeResolutionComments(row: IntegrationRow, deps: ForgePropos
   for (const issue of jobIssueClosings(row)) {
     if (issue.keyword !== 'Fixes' || issue.repo.toLowerCase() !== repo) continue;
     const todoId = Math.min(...issue.todoIds);
-    const notes = [...new Set(issue.todoIds.map(publicNote).filter((n): n is string => n !== null))];
     const made = proposeForgeWrite({
       project: row.project,
       kind: 'comment',
       target: { type: 'issue', number: issue.number },
-      body: resolutionComment({ prNumber: row.pr_number, target: row.target, notes }),
+      body: commentOf(row, issue.todoIds),
       trigger: 'landing',
       key: resolutionKey(todoId, issue.number),
       sourceRef: `integration:${row.id}`,

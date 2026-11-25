@@ -30,6 +30,8 @@ export type Candidates = {
   repo: string;
   url: string;
   label: string;
+  /** False when the project switched its list off; absent from an older host. */
+  enabled?: boolean;
   issues: Candidate[];
   hidden: number;
 };
@@ -49,7 +51,26 @@ export type IssueDetails = {
   todo: IssueTodo | null;
 };
 
-export type ProjectLabel = { project: string; repo: string; label: string; custom: boolean; hidden: number };
+export type ProjectLabel = { project: string; repo: string; label: string; custom: boolean; hidden: number; enabled?: boolean };
+
+/** One issue the project hid, as `GET hidden` lists it. Its title is data. */
+export type HiddenIssue = { number: number; title: string | null; url: string };
+export type HiddenIssues = { project: string; repo: string; issues: HiddenIssue[] };
+
+/** What the plugin's realtime topic says: an imported idea of `project` moved. */
+export type IssuesSignal = { project: string; todo: number };
+
+/** The signal, or null when the payload is not one. */
+export function issuesSignal(payload: unknown): IssuesSignal | null {
+  if (typeof payload !== 'object' || payload === null) return null;
+  const { project, todo } = payload as { project?: unknown; todo?: unknown };
+  return typeof project === 'string' && typeof todo === 'number' ? { project, todo } : null;
+}
+
+/** Whether the project lists its issues: an older host never switches one off. */
+export function isEnabled(value: { enabled?: boolean } | null | undefined): boolean {
+  return value?.enabled !== false;
+}
 
 /** Largest issue number the routes accept. */
 const MAX_NUMBER = 1_000_000_000;
@@ -112,6 +133,7 @@ export function errorKey(code: string | null | undefined): string {
     case 'issue_not_found': return 'error.notFound';
     case 'issue_closed': return 'error.closed';
     case 'invalid_label': return 'error.invalidLabel';
+    case 'disabled': return 'error.disabled';
     default: return 'error.generic';
   }
 }

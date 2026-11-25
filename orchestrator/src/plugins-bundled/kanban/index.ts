@@ -20,6 +20,7 @@ import { startDispatcher } from '../../dispatcher.js';
 import { startTaskChain } from '../../task-chain.js';
 import { startWake } from '../../wake.js';
 import { startIntegrationPoller } from '../../integration-poller.js';
+import { watchIssueOutcomes } from '../../issue-outcome.js';
 import { watchLocalLandings } from '../../local-landing.js';
 import { settingInt } from '../../settings.js';
 import { todoApi, type TodoApi } from './todo-api.js';
@@ -92,6 +93,9 @@ export function apply(ctx: Context): void {
   ctx.effect(() => watchLocalLandings());
   // Brings the verdict of a pull request's relecture back to its row.
   ctx.effect(() => watchReviewMissions());
+  // An imported idea declined, duplicated or short of details: its issue's
+  // answer (and closing) wait for a person in the "Publish on GitHub" window.
+  ctx.effect(() => watchIssueOutcomes());
   // A pull request's page read a moment ago is dropped when its job moves.
   ctx.effect(() => watchPullRequestPages());
   // A publication cut by a stop is failed, and looked for on the forge before

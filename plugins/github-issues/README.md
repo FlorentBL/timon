@@ -14,9 +14,17 @@ nothing is written on GitHub.
   or not, with its text cut as the idea will keep it, and the idea it became.
 - `POST import { project, issue }`: one issue, one idea. The idea links to the
   issue (`github`, `owner/repo#n`); a second import answers the same idea.
-- `GET project?project=<slug>`, `PUT project { project, label }`: the
-  project's label (`label: null` goes back to the plugin's setting).
-- `POST dismiss { project, issue, hidden? }`: hides an issue from the list.
+- `GET project?project=<slug>`, `PUT project { project, label?, enabled? }`:
+  the project's label (`label: null` goes back to the plugin's setting) and
+  whether it lists its issues at all (`enabled: false`: nothing is read on
+  GitHub for it, and nothing is imported).
+- `POST dismiss { project, issue, title?, hidden? }`: hides an issue from the
+  list, with the title the list showed; `hidden: false` shows it again.
+- `GET hidden?project=<slug>`: the issues the project hid, newest first.
+
+An imported idea that moves elsewhere (done, resolved, deleted) is announced
+on the plugin's realtime topic `issues`, to the idea's owner only: the
+widget reads its list again.
 
 The browser half (`src/client.tsx`, built into `lib/client.js` by
 `npm run build:client`) paints the Issues widget of the "Git" stack (one row
@@ -29,6 +37,10 @@ and opens an idea with `useTodoOpener`, from `@timon/ui`.
 Every route needs a signed-in account allowed to manage projects. The text of
 an issue was written by someone else: the idea's notes keep it inside an
 `<untrusted-data>` block, as bounded JSON, under a line saying it is data.
+
+The answer to an issue declined, duplicated or short of details, and its
+closing, are not this plugin's: the daemon proposes them on `todo_resolved`,
+and a person publishes them in the "Publish on GitHub" window.
 
 Built in and enabled by default (`orchestrator/builtin-plugins.json`).
 User guide: `public-docs/docs/usage/git.md`.

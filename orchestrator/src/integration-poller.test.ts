@@ -357,6 +357,33 @@ test('a merge proposes the resolution comment of each issue the job fixed, once,
   assert.equal(resolutionComment({ prNumber: null, target: 'main', notes: [] }), 'This is fixed, now merged into `main`.');
 });
 
+test('a public note written after the merge reaches the untouched draft, never a person\'s edit', async () => {
+  const { db } = await import('./db.js');
+  const { TODO_OUTCOME_DDL } = await import('./todo-outcome-migration.js');
+  const { editForgeProposal, getForgeProposal, listForgeProposals } = await import('./forge-proposals.js');
+  db.exec(TODO_OUTCOME_DDL);
+  const job = openJob();
+  dbApi.putTodoExternalRef({
+    todoId: job.todo, provider: 'github', ref: 'acme/app#90', url: 'https://github.com/acme/app/issues/90', label: null, pluginId: 'github-issues',
+  });
+  mergeOnForge(job);
+  assert.equal((await pollOpenIntegrations(deps)).get(job.id), 'merged');
+  const n = Number(job.branch.split('-').at(-1));
+  const [draft] = listForgeProposals(job.slug);
+  assert.equal(draft!.body, `This is fixed by #${n}, now merged into \`main\`.`, 'no note yet');
+
+  db.prepare(`INSERT INTO todo_outcome (todo_id, resolution, public_note, duplicate_of, updated_at) VALUES (?, 'fixed', ?, NULL, 1)`)
+    .run(job.todo, 'Thanks @ada, it ships in 0.3.');
+  const late = `This is fixed by #${n}, now merged into \`main\`.\n\nThanks \`@ada\`, it ships in 0.3.`;
+  assert.equal(getForgeProposal(job.slug, draft!.id)!.body, late, 'read again with the note');
+  assert.equal(listForgeProposals(job.slug)[0]!.body, late);
+
+  const edited = editForgeProposal(job.slug, draft!.id, 'My own words.', 'user-ada');
+  assert.equal(edited.ok, true);
+  db.prepare(`UPDATE todo_outcome SET public_note = 'Changed again' WHERE todo_id = ?`).run(job.todo);
+  assert.equal(getForgeProposal(job.slug, draft!.id)!.body, 'My own words.', 'a person\'s text is never rewritten');
+});
+
 test('the recap goes to the agent of the series pilot', async () => {
   mkdirSync(agentDir('acme.pilot'), { recursive: true });
   const pilot = randomUUID();

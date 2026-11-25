@@ -23,10 +23,11 @@
  * What `gh` prints reaches a row, an answer or a log only through
  * `redactedOutput`, with the config folder masked as well.
  *
- * Three kinds of write: a comment (`comment`), the update of a pull request's
- * branch GitHub performs (`update_branch`, `forge-branch-update.ts`), and the
+ * Four kinds of write: a comment (`comment`), the update of a pull request's
+ * branch GitHub performs (`update_branch`, `forge-branch-update.ts`), the
  * commit that resolves a contributor's conflict, pushed fast-forward to their
- * branch (`conflict_push`, `forge-conflicts.ts`). The last two carry a
+ * branch (`conflict_push`, `forge-conflicts.ts`), and the closing of an issue
+ * declined or duplicated (`close_issue`, `issue-close.ts`). The last three carry a
  * `payload` the daemon wrote when it prepared them (the head they expect, the
  * commit they push) and run through the executor their module registers
  * (`registerForgeProposalExecutor`); the account check above is the same.
@@ -37,13 +38,13 @@ import { daemonMessage } from './daemon-message.js';
 import { projectRepository, type ExternalPrRefusal } from './external-pr-review.js';
 import {
   githubForge, ISSUE_COMMENT_LIMIT, redactedOutput,
-  type ForgeBranchWriter, type ForgeCommentWriter, type ForgeRunners, type GitRunner,
+  type ForgeBranchWriter, type ForgeCommentWriter, type ForgeIssueCloser, type ForgeRunners, type GitRunner,
 } from './host/forge.js';
 import type { SshHostResolver } from './host/forge-scratch.js';
 import type { ProjectIntegration } from './project-integration.js';
 import { createNotification, resolveAnchor } from './notifications.js';
 
-export const FORGE_PROPOSAL_KINDS = ['comment', 'update_branch', 'conflict_push'] as const;
+export const FORGE_PROPOSAL_KINDS = ['comment', 'update_branch', 'conflict_push', 'close_issue'] as const;
 export type ForgeProposalKind = (typeof FORGE_PROPOSAL_KINDS)[number];
 
 export const FORGE_PROPOSAL_TARGETS = ['issue', 'pull'] as const;
@@ -171,6 +172,8 @@ export type ForgeProposalDeps = {
   forge?: (configDir: string | null) => ForgeCommentWriter;
   /** Same, for the branch of a pull request (read, update). */
   branchForge?: (configDir: string | null) => ForgeBranchWriter;
+  /** Same, for an issue to close (read, close). */
+  issueForge?: (configDir: string | null) => ForgeIssueCloser;
   /** Stands in for git in the scratch repository of a conflict resolution. */
   scratchGit?: GitRunner;
   /** Stands in for `ssh -G` in tests: the host an SSH alias of the remote connects to. */
@@ -317,17 +320,58 @@ const interruptedStmt = db.prepare(`
   UPDATE forge_proposals SET state = 'failed', error_code = 'interrupted', error = NULL, updated_at = ? WHERE id = ? AND state = 'publishing'
 `);
 
+const refreshStmt = db.prepare(`
+  UPDATE forge_proposals SET body = ?, updated_at = ?
+  WHERE id = ? AND kind = 'comment' AND state IN ('draft', 'failed') AND edited_by IS NULL
+`);
+
 function get(id: string): ForgeProposalRow | undefined {
   return getStmt.get(id) as ForgeProposalRow | undefined;
 }
 
+/**
+ * The text a comment the daemon drafted should hold now, from what it was
+ * made of (an idea's public note written after the draft), or null to leave
+ * it. Registered by the modules that draft them (`issue-resolution.ts`,
+ * `issue-outcome.ts`), which this module cannot import.
+ */
+export type DraftRefresher = (row: ForgeProposalRow) => string | null;
+const refreshers = new Set<DraftRefresher>();
+
+export function registerDraftRefresher(refresher: DraftRefresher): () => void {
+  refreshers.add(refresher);
+  return () => { refreshers.delete(refresher); };
+}
+
+/**
+ * A comment Timon drafted and no person touched yet follows what it was made
+ * of: read again whenever it is read, so the window and the publication see
+ * the same text. A person's edit, theirs or a plugin's text are never rewritten.
+ */
+function fresh(row: ForgeProposalRow): ForgeProposalRow {
+  if (row.kind !== 'comment' || row.edited_by !== null || (row.state !== 'draft' && row.state !== 'failed')) return row;
+  if (row.trigger !== 'landing' && row.trigger !== 'todo_resolved') return row;
+  for (const refresher of refreshers) {
+    let body: string | null;
+    try { body = refresher(row); } catch (err) {
+      console.error('[forge-proposals] a draft could not be read again:', (err as Error).name);
+      continue;
+    }
+    if (body === null) continue;
+    if (body === row.body || bodyProblem(body)) return row;
+    if (refreshStmt.run(body, Date.now(), row.id).changes === 0) return row;
+    return get(row.id) ?? row;
+  }
+  return row;
+}
+
 export function getForgeProposal(project: string, id: string): ForgeProposalRow | undefined {
   const row = get(id);
-  return row && row.project === project ? row : undefined;
+  return row && row.project === project ? fresh(row) : undefined;
 }
 
 export function listForgeProposals(project: string, state?: ForgeProposalState): ForgeProposalRow[] {
-  return (state ? listByStateStmt.all(project, state) : listStmt.all(project)) as ForgeProposalRow[];
+  return ((state ? listByStateStmt.all(project, state) : listStmt.all(project)) as ForgeProposalRow[]).map(fresh);
 }
 
 /** The proposal a trigger already made under `key`, if any. */
@@ -435,6 +479,11 @@ function pendingNotice(kind: ForgeProposalKind, target: string) {
       title: 'A conflict resolution waits for your approval',
       body: `Read the resolution prepared for ${target}, then publish or discard it.`,
       message: daemonMessage('forge_conflict_push_pending', { target }),
+    };
+    case 'close_issue': return {
+      title: 'Closing a GitHub issue waits for your approval',
+      body: `Close ${target} on GitHub, or leave it open.`,
+      message: daemonMessage('forge_issue_close_pending', { target }),
     };
   }
 }

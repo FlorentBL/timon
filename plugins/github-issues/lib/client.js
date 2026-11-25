@@ -70,7 +70,25 @@ var messages_default = {
     "error.notFound": "No such issue in this repository",
     "error.closed": "This issue is closed",
     "error.invalidLabel": "This label cannot be used",
-    "error.generic": "Something went wrong"
+    "error.generic": "Something went wrong",
+    importAndPlan: "Import and plan\u2026",
+    planHint: "Opens the TO DO: send it to the orchestrator from there to plan it",
+    "notice.disabled": "Issues are off for this project",
+    off: "Issues are off for this project",
+    switchOn: "Switch on",
+    hiddenCount: "{count, plural, one {# hidden issue} other {# hidden issues}}",
+    reviewHidden: "Review",
+    "hidden.title": "Hidden issues of {project}",
+    "hidden.description": "Issues you asked not to suggest again. Show one again to see it in the list.",
+    "hidden.empty": "No hidden issue",
+    "hidden.untitled": "Issue #{number}",
+    "hidden.show": "Show again",
+    "hidden.shown": "#{number} is suggested again",
+    "settings.statusOff": "Off \xB7 label {label}",
+    "settings.switchOff": "Switch off for this project",
+    "settings.switchOn": "Switch on for this project",
+    "settings.reviewHidden": "Review hidden issues ({count})",
+    "error.disabled": "Issues are off for this project"
   },
   fr: {
     "widget.title": "Issues",
@@ -138,11 +156,37 @@ var messages_default = {
     "error.notFound": "Aucune issue de ce num\xE9ro dans ce d\xE9p\xF4t",
     "error.closed": "Cette issue est ferm\xE9e",
     "error.invalidLabel": "Ce label n'est pas utilisable",
-    "error.generic": "Quelque chose n'a pas march\xE9"
+    "error.generic": "Quelque chose n'a pas march\xE9",
+    importAndPlan: "Importer et planifier\u2026",
+    planHint: "Ouvre la TO DO : envoyez-la \xE0 l'orchestrateur depuis l\xE0 pour la planifier",
+    "notice.disabled": "Les issues sont d\xE9sactiv\xE9es pour ce projet",
+    off: "Les issues sont d\xE9sactiv\xE9es pour ce projet",
+    switchOn: "Activer",
+    hiddenCount: "{count, plural, one {# issue masqu\xE9e} other {# issues masqu\xE9es}}",
+    reviewHidden: "Revoir",
+    "hidden.title": "Issues masqu\xE9es de {project}",
+    "hidden.description": "Les issues que vous avez demand\xE9 de ne plus sugg\xE9rer. R\xE9affichez-en une pour la revoir dans la liste.",
+    "hidden.empty": "Aucune issue masqu\xE9e",
+    "hidden.untitled": "Issue #{number}",
+    "hidden.show": "R\xE9afficher",
+    "hidden.shown": "#{number} est de nouveau sugg\xE9r\xE9e",
+    "settings.statusOff": "D\xE9sactiv\xE9 \xB7 label {label}",
+    "settings.switchOff": "D\xE9sactiver pour ce projet",
+    "settings.switchOn": "Activer pour ce projet",
+    "settings.reviewHidden": "Revoir les issues masqu\xE9es ({count})",
+    "error.disabled": "Les issues sont d\xE9sactiv\xE9es pour ce projet"
   }
 };
 
 // ../plugins/github-issues/src/issues-model.ts
+function issuesSignal(payload) {
+  if (typeof payload !== "object" || payload === null) return null;
+  const { project, todo } = payload;
+  return typeof project === "string" && typeof todo === "number" ? { project, todo } : null;
+}
+function isEnabled(value) {
+  return value?.enabled !== false;
+}
 var MAX_NUMBER = 1e9;
 var LABEL_LIMIT = 50;
 function parseIssueInput(text, repo) {
@@ -197,6 +241,8 @@ function errorKey(code) {
       return "error.closed";
     case "invalid_label":
       return "error.invalidLabel";
+    case "disabled":
+      return "error.disabled";
     default:
       return "error.generic";
   }
@@ -244,7 +290,7 @@ var CHIP = "inline-flex shrink-0 items-center gap-1 rounded-md px-1.5 py-0.5 tex
 var LABEL_TONE = "bg-sky-500/15 text-sky-700 dark:text-sky-300";
 var TODO_TONE = "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300";
 var PR_TONE = "bg-amber-500/15 text-amber-700 dark:text-amber-300";
-var MENU_ITEM = "flex cursor-pointer items-center gap-2 rounded-md px-2 py-2 outline-none focus:bg-muted";
+var MENU_ITEM = "flex cursor-pointer items-center gap-2 rounded-md px-2 py-2 outline-none";
 var MENU = "z-50 min-w-44 rounded-lg border border-border bg-popover p-1 text-xs text-popover-foreground shadow-elev-2";
 var ISLAND = "rounded-lg bg-foreground/[0.035]";
 function Icon({ d, className = "size-3.5" }) {
@@ -261,7 +307,10 @@ var ICONS = {
   hide: "M6 6l12 12M18 6L6 18",
   read: "M4 5h7a2 2 0 0 1 2 2v12a2 2 0 0 0-2-2H4zM20 5h-7a2 2 0 0 0-2 2v12a2 2 0 0 1 2-2h7z",
   issue: "M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18zM12 11v.01",
-  pull: "M6 4v16M18 10v10M6 4a2 2 0 1 0 0 .01M18 10a2 2 0 1 0 0 .01M14 6h2a2 2 0 0 1 2 2v2"
+  pull: "M6 4v16M18 10v10M6 4a2 2 0 1 0 0 .01M18 10a2 2 0 1 0 0 .01M14 6h2a2 2 0 0 1 2 2v2",
+  plan: "M8 3v4M16 3v4M4 8h16M5 5h14v15H5zM9 14l2 2 4-4",
+  show: "M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12zM12 10a2 2 0 1 0 0 4 2 2 0 0 0 0-4z",
+  power: "M12 3v8M6.3 6.3a8 8 0 1 0 11.4 0"
 };
 var ISSUES_PICTO = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="#000" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="1.5"/></svg>';
 function LabelChips({ labels }) {
@@ -280,7 +329,7 @@ async function copy(text) {
     return false;
   }
 }
-function IssueRow({ issue, busy, onImport, onOpenTodo, onRead, onCopy, onDismiss }) {
+function IssueRow({ issue, busy, onImport, onImportAndPlan, onOpenTodo, onRead, onCopy, onDismiss }) {
   const imported = issue.todo !== null;
   const href = safeHref(issue.url);
   const pr = safeHref(issue.todo?.pr?.url);
@@ -297,7 +346,7 @@ function IssueRow({ issue, busy, onImport, onOpenTodo, onRead, onCopy, onDismiss
       className: imported ? ICON_BUTTON : PRIMARY_ICON_BUTTON
     },
     /* @__PURE__ */ React.createElement(Icon, { d: imported ? ICONS.todo : ICONS.import })
-  ), /* @__PURE__ */ React.createElement(DropdownMenu2, { modal: false }, /* @__PURE__ */ React.createElement(DropdownMenuTrigger2, { asChild: true }, /* @__PURE__ */ React.createElement("button", { type: "button", "data-issue-more": "", title: t("more"), "aria-label": t("more"), className: ICON_BUTTON }, /* @__PURE__ */ React.createElement(Icon, { d: ICONS.more }))), /* @__PURE__ */ React.createElement(DropdownMenuContent2, { sideOffset: 6, align: "end", className: MENU }, /* @__PURE__ */ React.createElement(NativeViewCover2, null), /* @__PURE__ */ React.createElement(DropdownMenuItem2, { "data-menu-read": "", onSelect: onRead, className: MENU_ITEM }, /* @__PURE__ */ React.createElement(Icon, { d: ICONS.read }), t("readText")), href && /* @__PURE__ */ React.createElement(DropdownMenuItem2, { onSelect: () => {
+  ), /* @__PURE__ */ React.createElement(DropdownMenu2, { modal: false }, /* @__PURE__ */ React.createElement(DropdownMenuTrigger2, { asChild: true }, /* @__PURE__ */ React.createElement("button", { type: "button", "data-issue-more": "", title: t("more"), "aria-label": t("more"), className: ICON_BUTTON }, /* @__PURE__ */ React.createElement(Icon, { d: ICONS.more }))), /* @__PURE__ */ React.createElement(DropdownMenuContent2, { sideOffset: 6, align: "end", className: MENU }, /* @__PURE__ */ React.createElement(NativeViewCover2, null), !imported && /* @__PURE__ */ React.createElement(DropdownMenuItem2, { "data-menu-plan": "", onSelect: onImportAndPlan, className: MENU_ITEM }, /* @__PURE__ */ React.createElement(Icon, { d: ICONS.plan }), t("importAndPlan")), /* @__PURE__ */ React.createElement(DropdownMenuItem2, { "data-menu-read": "", onSelect: onRead, className: MENU_ITEM }, /* @__PURE__ */ React.createElement(Icon, { d: ICONS.read }), t("readText")), href && /* @__PURE__ */ React.createElement(DropdownMenuItem2, { onSelect: () => {
     window.open(href, "_blank", "noopener,noreferrer");
   }, className: MENU_ITEM }, /* @__PURE__ */ React.createElement(Icon, { d: ICONS.external }), t("openOnGitHub")), pr && issue.todo?.pr && /* @__PURE__ */ React.createElement(DropdownMenuItem2, { onSelect: () => {
     window.open(pr, "_blank", "noopener,noreferrer");
@@ -307,6 +356,25 @@ function Empty({ text }) {
   return /* @__PURE__ */ React.createElement("div", { className: "flex flex-col items-center justify-center gap-2 py-6" }, /* @__PURE__ */ React.createElement(Icon, { d: ICONS.issue, className: "size-4 text-muted-foreground/60" }), /* @__PURE__ */ React.createElement("span", { "data-issues-empty": "", className: "text-center text-[12.5px] text-muted-foreground" }, text));
 }
 var lastRead = /* @__PURE__ */ new Map();
+var signalListeners = /* @__PURE__ */ new Set();
+function useIssuesSignal(project, onChange) {
+  const latest = useRef(onChange);
+  latest.current = onChange;
+  useEffect(() => {
+    if (!project) return void 0;
+    const listen = (signal) => {
+      if (signal.project === project) latest.current();
+    };
+    signalListeners.add(listen);
+    return () => {
+      signalListeners.delete(listen);
+    };
+  }, [project]);
+}
+async function setEnabled(api, project, enabled) {
+  const out = await call(api, "project", { method: "PUT", body: { project, enabled } });
+  return out.ok ? null : errorKey(out.code);
+}
 function IssuesWidget({ api, handle, className }) {
   const { project } = ui.useGitStackProject();
   const { openTodo, todoModal } = ui.useTodoOpener();
@@ -314,6 +382,7 @@ function IssuesWidget({ api, handle, className }) {
   const [busy, setBusy] = useState(null);
   const [notice, setNotice] = useState(null);
   const [opened, setOpened] = useState(null);
+  const [reviewing, setReviewing] = useState(false);
   const front = ui.useWidgetInFront();
   const frontNow = useRef(front);
   frontNow.current = front;
@@ -350,6 +419,9 @@ function IssuesWidget({ api, handle, className }) {
     const timer = setTimeout(() => setNotice(null), 4e3);
     return () => clearTimeout(timer);
   }, [notice]);
+  useIssuesSignal(project, () => {
+    void reload(true);
+  });
   const importIssue = useCallback(async (number) => {
     if (!project) return { code: null };
     setBusy(number);
@@ -363,9 +435,19 @@ function IssuesWidget({ api, handle, className }) {
     void reload(true);
     return { id: out.value.todo.id, status: "open", progress: null, pr: null };
   }, [api, project, reload]);
-  const dismiss = async (number) => {
+  const importAndPlan = useCallback(async (number) => {
+    const out = await importIssue(number);
+    if ("id" in out) openTodo(out.id);
+  }, [importIssue, openTodo]);
+  const switchOn = async () => {
     if (!project) return;
-    const out = await call(api, "dismiss", { method: "POST", body: { project, issue: number } });
+    const refused = await setEnabled(api, project, true);
+    if (refused) setNotice({ text: t(refused), tone: "error" });
+    else void reload();
+  };
+  const dismiss = async (number, title) => {
+    if (!project) return;
+    const out = await call(api, "dismiss", { method: "POST", body: { project, issue: number, title } });
     setNotice(out.ok ? { text: t("notice.dismissed", { number }), tone: "info" } : { text: t(errorKey(out.code)), tone: "error" });
     if (out.ok) void reload(true);
   };
@@ -373,7 +455,9 @@ function IssuesWidget({ api, handle, className }) {
     setNotice(await copy(url) ? { text: t("notice.copied"), tone: "info" } : { text: t("notice.copyFailed"), tone: "error" });
   };
   const issues = useMemo(() => load.kind === "ready" ? sortCandidates(load.list.issues) : [], [load]);
-  const left = load.kind === "ready" ? toImport(load.list.issues) : null;
+  const enabled = load.kind !== "ready" || isEnabled(load.list);
+  const hidden = load.kind === "ready" ? load.list.hidden : 0;
+  const left = load.kind === "ready" && enabled ? toImport(load.list.issues) : null;
   const countOnTab = ui.useWidgetCount(left);
   const subtitle = left !== null && !countOnTab ? String(left) : void 0;
   const refreshInMenu = ui.useWidgetMenu(useMemo(() => project ? [{
@@ -384,7 +468,7 @@ function IssuesWidget({ api, handle, className }) {
       void reload();
     }
   }] : [], [project, reload]));
-  const actions = /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement(GitStackProjectPicker2, { none: t("chooseProjectOption"), label: t("selectProject"), className: "max-w-[8rem]" }), project && /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("button", { type: "button", "data-issues-add": "", onClick: () => setOpened({ lookup: true }), title: t("importByNumber"), "aria-label": t("importByNumber"), className: ICON_BUTTON }, /* @__PURE__ */ React.createElement(Icon, { d: ICONS.plus })), !refreshInMenu && /* @__PURE__ */ React.createElement("button", { type: "button", "data-issues-refresh": "", onClick: () => void reload(), disabled: load.kind === "loading", title: t("refresh"), "aria-label": t("refresh"), className: ICON_BUTTON }, /* @__PURE__ */ React.createElement(Icon, { d: ICONS.refresh }))), handle);
+  const actions = /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement(GitStackProjectPicker2, { none: t("chooseProjectOption"), label: t("selectProject"), className: "max-w-[8rem]" }), project && enabled && /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("button", { type: "button", "data-issues-add": "", onClick: () => setOpened({ lookup: true }), title: t("importByNumber"), "aria-label": t("importByNumber"), className: ICON_BUTTON }, /* @__PURE__ */ React.createElement(Icon, { d: ICONS.plus })), !refreshInMenu && /* @__PURE__ */ React.createElement("button", { type: "button", "data-issues-refresh": "", onClick: () => void reload(), disabled: load.kind === "loading", title: t("refresh"), "aria-label": t("refresh"), className: ICON_BUTTON }, /* @__PURE__ */ React.createElement(Icon, { d: ICONS.refresh }))), handle);
   return /* @__PURE__ */ React.createElement(
     Tile2,
     {
@@ -395,7 +479,9 @@ function IssuesWidget({ api, handle, className }) {
       actions
     },
     notice && /* @__PURE__ */ React.createElement("p", { "data-issues-notice": notice.tone, role: "status", className: cn2("px-1 pb-1 text-[11px]", notice.tone === "error" ? "text-red-600 dark:text-red-400" : "text-muted-foreground") }, notice.text),
-    !project ? /* @__PURE__ */ React.createElement(Empty, { text: t("chooseProject") }) : load.kind === "loading" || load.kind === "idle" ? /* @__PURE__ */ React.createElement(Empty, { text: t("loading") }) : load.kind === "error" ? /* @__PURE__ */ React.createElement(Empty, { text: t(errorKey(load.code)) }) : issues.length === 0 ? /* @__PURE__ */ React.createElement(Empty, { text: t("empty", { label: load.kind === "ready" ? load.list.label : "" }) }) : /* @__PURE__ */ React.createElement("ul", { "data-issues-list": "", className: "flex flex-col gap-1" }, issues.map((issue) => /* @__PURE__ */ React.createElement(
+    !project ? /* @__PURE__ */ React.createElement(Empty, { text: t("chooseProject") }) : load.kind === "loading" || load.kind === "idle" ? /* @__PURE__ */ React.createElement(Empty, { text: t("loading") }) : load.kind === "error" ? /* @__PURE__ */ React.createElement(Empty, { text: t(errorKey(load.code)) }) : !enabled ? /* @__PURE__ */ React.createElement("div", { "data-issues-off": "", className: "flex flex-col items-center justify-center gap-2 py-6" }, /* @__PURE__ */ React.createElement(Icon, { d: ICONS.power, className: "size-4 text-muted-foreground/60" }), /* @__PURE__ */ React.createElement("span", { className: "text-center text-[12.5px] text-muted-foreground" }, t("off")), /* @__PURE__ */ React.createElement(Button2, { type: "button", variant: "outline", size: "sm", onClick: () => {
+      void switchOn();
+    } }, /* @__PURE__ */ React.createElement("span", { "data-issues-switch-on": "" }, t("switchOn")))) : issues.length === 0 ? /* @__PURE__ */ React.createElement(Empty, { text: t("empty", { label: load.kind === "ready" ? load.list.label : "" }) }) : /* @__PURE__ */ React.createElement("ul", { "data-issues-list": "", className: "flex flex-col gap-1" }, issues.map((issue) => /* @__PURE__ */ React.createElement(
       IssueRow,
       {
         key: issue.number,
@@ -404,16 +490,23 @@ function IssuesWidget({ api, handle, className }) {
         onImport: () => {
           void importIssue(issue.number);
         },
+        onImportAndPlan: () => {
+          void importAndPlan(issue.number);
+        },
         onOpenTodo: openTodo,
         onRead: () => setOpened({ number: issue.number }),
         onCopy: () => {
           void copyLink(issue.url);
         },
         onDismiss: () => {
-          void dismiss(issue.number);
+          void dismiss(issue.number, issue.title);
         }
       }
     ))),
+    project && enabled && hidden > 0 && /* @__PURE__ */ React.createElement("div", { "data-issues-hidden": "", className: "flex items-center justify-between gap-2 px-1 pt-2 text-[11px] text-muted-foreground" }, /* @__PURE__ */ React.createElement("span", { className: "tabular-nums" }, t("hiddenCount", { count: hidden })), /* @__PURE__ */ React.createElement("button", { type: "button", "data-issues-review": "", onClick: () => setReviewing(true), className: "rounded-md px-1.5 py-0.5 font-medium text-foreground/80 outline-none transition-colors hover:bg-muted hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring" }, t("reviewHidden"))),
+    reviewing && project && /* @__PURE__ */ React.createElement(HiddenDialog, { api, project, onClose: () => setReviewing(false), onChanged: () => {
+      void reload(true);
+    } }),
     opened && project && /* @__PURE__ */ React.createElement(
       IssueDialog,
       {
@@ -422,6 +515,14 @@ function IssuesWidget({ api, handle, className }) {
         repo: load.kind === "ready" ? load.list.repo : null,
         opened,
         onImport: importIssue,
+        onImportAndPlan: async (number) => {
+          const out = await importIssue(number);
+          if ("id" in out) {
+            setOpened(null);
+            openTodo(out.id);
+          }
+          return out;
+        },
         onOpenTodo: (id) => {
           setOpened(null);
           openTodo(id);
@@ -435,7 +536,7 @@ function IssuesWidget({ api, handle, className }) {
 function Row({ label, children }) {
   return /* @__PURE__ */ React.createElement("div", { className: "flex min-w-0 items-baseline justify-between gap-3 rounded-md bg-background/60 px-3 py-2 text-xs" }, /* @__PURE__ */ React.createElement("dt", { className: "shrink-0 text-muted-foreground" }, label), /* @__PURE__ */ React.createElement("dd", { className: "min-w-0 truncate text-right" }, children));
 }
-function IssueDialog({ api, project, repo, opened, onImport, onOpenTodo, onClose }) {
+function IssueDialog({ api, project, repo, opened, onImport, onImportAndPlan, onOpenTodo, onClose }) {
   const lookup = "lookup" in opened;
   const [typed, setTyped] = useState("");
   const [problem, setProblem] = useState(null);
@@ -460,10 +561,10 @@ function IssueDialog({ api, project, repo, opened, onImport, onOpenTodo, onClose
   };
   const issue = read.kind === "ready" ? read.issue : null;
   const closed = issue?.state === "closed";
-  const runImport = async () => {
+  const runImport = async (plan = false) => {
     if (!issue) return;
     setImporting(true);
-    const out = await onImport(issue.number);
+    const out = await (plan ? onImportAndPlan : onImport)(issue.number);
     setImporting(false);
     if ("id" in out) setRead({ kind: "ready", issue: { ...issue, todo: out } });
     else setRead({ kind: "error", text: t(errorKey(out.code)) });
@@ -491,7 +592,20 @@ function IssueDialog({ api, project, repo, opened, onImport, onOpenTodo, onClose
         }
       }
     }
-  )), /* @__PURE__ */ React.createElement(Button2, { type: "button", variant: "outline", onClick: submitLookup, disabled: read.kind === "loading", className: "shrink-0" }, read.kind === "loading" ? t("dialog.reading") : t("dialog.read"))), problem && /* @__PURE__ */ React.createElement("p", { "data-issue-problem": "", className: "text-[11.5px] text-red-600 dark:text-red-400" }, problem), (issue || read.kind === "loading" || read.kind === "error") && /* @__PURE__ */ React.createElement("div", { className: "grid min-h-0 flex-1 grid-cols-1 gap-3 md:grid-cols-[minmax(0,1fr)_19rem]" }, /* @__PURE__ */ React.createElement("section", { className: cn2(ISLAND, "flex min-h-0 min-w-0 flex-col gap-2 p-3"), "aria-label": t("dialog.text") }, /* @__PURE__ */ React.createElement("h3", { className: "text-[11.5px] font-medium text-muted-foreground" }, t("dialog.text")), read.kind === "loading" ? /* @__PURE__ */ React.createElement("p", { className: "text-xs text-muted-foreground" }, t("loading")) : read.kind === "error" ? /* @__PURE__ */ React.createElement("p", { "data-issue-error": "", className: "text-xs text-red-600 dark:text-red-400" }, read.text) : issue && /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("div", { "data-issue-body": "", className: "scrollbar-thin max-h-[45vh] overflow-y-auto whitespace-pre-wrap break-words rounded-md bg-background/60 px-3 py-2 text-[12.5px] leading-relaxed" }, issue.body.trim() ? issue.body : /* @__PURE__ */ React.createElement("span", { className: "text-muted-foreground" }, t("dialog.noText"))), issue.truncated && /* @__PURE__ */ React.createElement("p", { className: "text-[11px] text-muted-foreground" }, t("dialog.cut")))), issue && /* @__PURE__ */ React.createElement("section", { className: cn2(ISLAND, "flex min-w-0 flex-col gap-2 p-3"), "aria-label": t("dialog.importSection") }, /* @__PURE__ */ React.createElement("h3", { className: "text-[11.5px] font-medium text-muted-foreground" }, t("dialog.importSection")), /* @__PURE__ */ React.createElement("dl", { className: "flex flex-col gap-2" }, /* @__PURE__ */ React.createElement(Row, { label: t("dialog.project") }, project), /* @__PURE__ */ React.createElement(Row, { label: t("dialog.link") }, href ? /* @__PURE__ */ React.createElement("a", { href, target: "_blank", rel: "noopener noreferrer", className: "text-primary underline-offset-2 hover:underline" }, `github \xB7 ${issue.repo}#${issue.number}`) : `github \xB7 ${issue.repo}#${issue.number}`), closed && /* @__PURE__ */ React.createElement(Row, { label: t("dialog.state") }, t("dialog.stateClosed")), issue.todo && /* @__PURE__ */ React.createElement(Row, { label: t("chip.todo") }, /* @__PURE__ */ React.createElement("span", { className: cn2(CHIP, TODO_TONE) }, `#${issue.todo.id}`))))), /* @__PURE__ */ React.createElement("div", { className: "flex flex-wrap items-center justify-end gap-2" }, /* @__PURE__ */ React.createElement(Button2, { type: "button", variant: "ghost", size: "sm", onClick: onClose }, t("dialog.close")), issue?.todo ? /* @__PURE__ */ React.createElement(Button2, { type: "button", size: "sm", onClick: () => onOpenTodo(issue.todo.id) }, /* @__PURE__ */ React.createElement("span", { "data-issue-dialog-open": "", className: "inline-flex items-center gap-1.5" }, /* @__PURE__ */ React.createElement(Icon, { d: ICONS.todo }), t("openTodo"))) : /* @__PURE__ */ React.createElement(
+  )), /* @__PURE__ */ React.createElement(Button2, { type: "button", variant: "outline", onClick: submitLookup, disabled: read.kind === "loading", className: "shrink-0" }, read.kind === "loading" ? t("dialog.reading") : t("dialog.read"))), problem && /* @__PURE__ */ React.createElement("p", { "data-issue-problem": "", className: "text-[11.5px] text-red-600 dark:text-red-400" }, problem), (issue || read.kind === "loading" || read.kind === "error") && /* @__PURE__ */ React.createElement("div", { className: "grid min-h-0 flex-1 grid-cols-1 gap-3 md:grid-cols-[minmax(0,1fr)_19rem]" }, /* @__PURE__ */ React.createElement("section", { className: cn2(ISLAND, "flex min-h-0 min-w-0 flex-col gap-2 p-3"), "aria-label": t("dialog.text") }, /* @__PURE__ */ React.createElement("h3", { className: "text-[11.5px] font-medium text-muted-foreground" }, t("dialog.text")), read.kind === "loading" ? /* @__PURE__ */ React.createElement("p", { className: "text-xs text-muted-foreground" }, t("loading")) : read.kind === "error" ? /* @__PURE__ */ React.createElement("p", { "data-issue-error": "", className: "text-xs text-red-600 dark:text-red-400" }, read.text) : issue && /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("div", { "data-issue-body": "", className: "scrollbar-thin max-h-[45vh] overflow-y-auto whitespace-pre-wrap break-words rounded-md bg-background/60 px-3 py-2 text-[12.5px] leading-relaxed" }, issue.body.trim() ? issue.body : /* @__PURE__ */ React.createElement("span", { className: "text-muted-foreground" }, t("dialog.noText"))), issue.truncated && /* @__PURE__ */ React.createElement("p", { className: "text-[11px] text-muted-foreground" }, t("dialog.cut")))), issue && /* @__PURE__ */ React.createElement("section", { className: cn2(ISLAND, "flex min-w-0 flex-col gap-2 p-3"), "aria-label": t("dialog.importSection") }, /* @__PURE__ */ React.createElement("h3", { className: "text-[11.5px] font-medium text-muted-foreground" }, t("dialog.importSection")), /* @__PURE__ */ React.createElement("dl", { className: "flex flex-col gap-2" }, /* @__PURE__ */ React.createElement(Row, { label: t("dialog.project") }, project), /* @__PURE__ */ React.createElement(Row, { label: t("dialog.link") }, href ? /* @__PURE__ */ React.createElement("a", { href, target: "_blank", rel: "noopener noreferrer", className: "text-primary underline-offset-2 hover:underline" }, `github \xB7 ${issue.repo}#${issue.number}`) : `github \xB7 ${issue.repo}#${issue.number}`), closed && /* @__PURE__ */ React.createElement(Row, { label: t("dialog.state") }, t("dialog.stateClosed")), issue.todo && /* @__PURE__ */ React.createElement(Row, { label: t("chip.todo") }, /* @__PURE__ */ React.createElement("span", { className: cn2(CHIP, TODO_TONE) }, `#${issue.todo.id}`))))), /* @__PURE__ */ React.createElement("div", { className: "flex flex-wrap items-center justify-end gap-2" }, /* @__PURE__ */ React.createElement(Button2, { type: "button", variant: "ghost", size: "sm", onClick: onClose }, t("dialog.close")), issue?.todo ? /* @__PURE__ */ React.createElement(Button2, { type: "button", size: "sm", onClick: () => onOpenTodo(issue.todo.id) }, /* @__PURE__ */ React.createElement("span", { "data-issue-dialog-open": "", className: "inline-flex items-center gap-1.5" }, /* @__PURE__ */ React.createElement(Icon, { d: ICONS.todo }), t("openTodo"))) : /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement(
+    Button2,
+    {
+      type: "button",
+      variant: "secondary",
+      size: "sm",
+      onClick: () => {
+        void runImport(true);
+      },
+      disabled: !issue || closed || importing,
+      title: closed ? t("dialog.closedHint") : t("planHint")
+    },
+    /* @__PURE__ */ React.createElement("span", { "data-issue-dialog-plan": "", className: "inline-flex items-center gap-1.5" }, /* @__PURE__ */ React.createElement(Icon, { d: ICONS.plan }), t("importAndPlan"))
+  ), /* @__PURE__ */ React.createElement(
     Button2,
     {
       type: "button",
@@ -503,13 +617,60 @@ function IssueDialog({ api, project, repo, opened, onImport, onOpenTodo, onClose
       title: closed ? t("dialog.closedHint") : void 0
     },
     /* @__PURE__ */ React.createElement("span", { "data-issue-dialog-import": "", className: "inline-flex items-center gap-1.5" }, /* @__PURE__ */ React.createElement(Icon, { d: ICONS.import }), importing ? t("importing") : t("import"))
-  ))));
+  )))));
+}
+function HiddenDialog({ api, project, onClose, onChanged }) {
+  const [load, setLoad] = useState({ kind: "loading" });
+  const [busy, setBusy] = useState(null);
+  const [notice, setNotice] = useState(null);
+  useEffect(() => {
+    let live = true;
+    void call(api, `hidden?${query(project)}`).then((out) => {
+      if (live) setLoad(out.ok ? { kind: "ready", issues: out.value.issues } : { kind: "error", text: t(errorKey(out.code)) });
+    });
+    return () => {
+      live = false;
+    };
+  }, [api, project]);
+  const show = async (number) => {
+    setBusy(number);
+    const out = await call(api, "dismiss", { method: "POST", body: { project, issue: number, hidden: false } });
+    setBusy(null);
+    if (!out.ok) {
+      setNotice({ text: t(errorKey(out.code)), tone: "error" });
+      return;
+    }
+    setLoad((prev) => prev.kind === "ready" ? { kind: "ready", issues: prev.issues.filter((i) => i.number !== number) } : prev);
+    setNotice({ text: t("hidden.shown", { number }), tone: "info" });
+    onChanged();
+  };
+  return /* @__PURE__ */ React.createElement(Dialog2, { open: true, onOpenChange: (open) => {
+    if (!open) onClose();
+  } }, /* @__PURE__ */ React.createElement(DialogContent2, { "data-issues-hidden-dialog": "", className: "flex max-h-[80vh] max-w-[560px] flex-col gap-3 overflow-hidden" }, /* @__PURE__ */ React.createElement(DialogTitle2, { className: "text-sm" }, t("hidden.title", { project })), /* @__PURE__ */ React.createElement(DialogDescription2, { className: "text-[11.5px] text-muted-foreground" }, t("hidden.description")), notice && /* @__PURE__ */ React.createElement("p", { role: "status", className: cn2("text-[11px]", notice.tone === "error" ? "text-red-600 dark:text-red-400" : "text-muted-foreground") }, notice.text), load.kind === "loading" ? /* @__PURE__ */ React.createElement("p", { className: "text-xs text-muted-foreground" }, t("loading")) : load.kind === "error" ? /* @__PURE__ */ React.createElement("p", { className: "text-xs text-red-600 dark:text-red-400" }, load.text) : load.issues.length === 0 ? /* @__PURE__ */ React.createElement(Empty, { text: t("hidden.empty") }) : /* @__PURE__ */ React.createElement("ul", { "data-issues-hidden-list": "", className: cn2(ISLAND, "scrollbar-thin flex min-h-0 flex-col gap-1 overflow-y-auto p-1.5") }, load.issues.map((issue) => {
+    const href = safeHref(issue.url);
+    return /* @__PURE__ */ React.createElement("li", { key: issue.number, "data-hidden-row": String(issue.number), className: "flex items-center gap-1 rounded-lg bg-background/60 py-2 pl-2.5 pr-1" }, /* @__PURE__ */ React.createElement("div", { className: "min-w-0 flex-1" }, /* @__PURE__ */ React.createElement("div", { className: "truncate text-[12.5px] font-medium text-foreground", title: issue.title ?? void 0 }, issue.title ?? t("hidden.untitled", { number: issue.number })), /* @__PURE__ */ React.createElement("div", { className: "text-[11px] tabular-nums text-muted-foreground" }, `#${issue.number}`)), href && /* @__PURE__ */ React.createElement("a", { href, target: "_blank", rel: "noopener noreferrer", title: t("openOnGitHub"), "aria-label": t("openOnGitHub"), className: ICON_BUTTON }, /* @__PURE__ */ React.createElement(Icon, { d: ICONS.external })), /* @__PURE__ */ React.createElement(
+      "button",
+      {
+        type: "button",
+        "data-hidden-show": String(issue.number),
+        onClick: () => {
+          void show(issue.number);
+        },
+        disabled: busy === issue.number,
+        title: t("hidden.show"),
+        "aria-label": t("hidden.show"),
+        className: PRIMARY_ICON_BUTTON
+      },
+      /* @__PURE__ */ React.createElement(Icon, { d: ICONS.show })
+    ));
+  })), /* @__PURE__ */ React.createElement("div", { className: "flex justify-end" }, /* @__PURE__ */ React.createElement(Button2, { type: "button", variant: "ghost", size: "sm", onClick: onClose }, t("dialog.close")))));
 }
 function SettingsRow({ api }) {
   const settings = ui.useProjectSettings();
   const project = settings?.project ?? null;
   const [state, setState] = useState({ kind: "loading" });
   const [editing, setEditing] = useState(false);
+  const [reviewing, setReviewing] = useState(false);
   const reload = useCallback(async () => {
     if (!project) {
       setState({ kind: "hidden" });
@@ -521,22 +682,36 @@ function SettingsRow({ api }) {
       return;
     }
     setState({ kind: "ready", label: out.value, count: null });
+    if (!isEnabled(out.value)) return;
     const list = await call(api, `candidates?${query(project)}`);
     if (list.ok) setState({ kind: "ready", label: out.value, count: toImport(list.value.issues) });
   }, [api, project]);
   useEffect(() => {
     void reload();
   }, [reload]);
+  useIssuesSignal(project, () => {
+    void reload();
+  });
   const useDefault = async () => {
     if (!project) return;
     const out = await call(api, "project", { method: "PUT", body: { project, label: null } });
     if (out.ok) void reload();
   };
+  const toggle = async (on) => {
+    if (!project) return;
+    if (!await setEnabled(api, project, on)) void reload();
+  };
   if (state.kind !== "ready" || !project) return null;
   const { label, count } = state;
-  return /* @__PURE__ */ React.createElement("div", { "data-issues-settings": project, className: "flex min-w-0 items-center gap-2 rounded-md px-2.5 py-2" }, /* @__PURE__ */ React.createElement("div", { className: "min-w-0 flex-1" }, /* @__PURE__ */ React.createElement("div", { className: "text-[12.5px] font-medium text-foreground" }, t("settings.title")), /* @__PURE__ */ React.createElement("div", { "data-issues-settings-status": "", className: "truncate text-[11px] text-muted-foreground" }, count === null ? t("settings.statusNoCount", { label: label.label }) : t("settings.status", { label: label.label, count }))), /* @__PURE__ */ React.createElement(Button2, { type: "button", variant: "outline", size: "sm", onClick: () => setEditing(true), className: "shrink-0" }, /* @__PURE__ */ React.createElement("span", { "data-issues-configure": "" }, t("settings.configure"))), label.custom && /* @__PURE__ */ React.createElement(DropdownMenu2, { modal: false }, /* @__PURE__ */ React.createElement(DropdownMenuTrigger2, { asChild: true }, /* @__PURE__ */ React.createElement("button", { type: "button", title: t("more"), "aria-label": t("more"), className: ICON_BUTTON }, /* @__PURE__ */ React.createElement(Icon, { d: ICONS.more }))), /* @__PURE__ */ React.createElement(DropdownMenuContent2, { sideOffset: 6, align: "end", className: MENU }, /* @__PURE__ */ React.createElement(NativeViewCover2, null), /* @__PURE__ */ React.createElement(DropdownMenuItem2, { "data-menu-default-label": "", onSelect: () => {
+  const enabled = isEnabled(label);
+  const status = !enabled ? t("settings.statusOff", { label: label.label }) : count === null ? t("settings.statusNoCount", { label: label.label }) : t("settings.status", { label: label.label, count });
+  return /* @__PURE__ */ React.createElement("div", { "data-issues-settings": project, className: "flex min-w-0 items-center gap-2 rounded-md px-2.5 py-2" }, /* @__PURE__ */ React.createElement("div", { className: "min-w-0 flex-1" }, /* @__PURE__ */ React.createElement("div", { className: "text-[12.5px] font-medium text-foreground" }, t("settings.title")), /* @__PURE__ */ React.createElement("div", { "data-issues-settings-status": "", className: "truncate text-[11px] text-muted-foreground" }, status)), /* @__PURE__ */ React.createElement(Button2, { type: "button", variant: "outline", size: "sm", onClick: () => setEditing(true), className: "shrink-0" }, /* @__PURE__ */ React.createElement("span", { "data-issues-configure": "" }, t("settings.configure"))), /* @__PURE__ */ React.createElement(DropdownMenu2, { modal: false }, /* @__PURE__ */ React.createElement(DropdownMenuTrigger2, { asChild: true }, /* @__PURE__ */ React.createElement("button", { type: "button", "data-issues-settings-more": "", title: t("more"), "aria-label": t("more"), className: ICON_BUTTON }, /* @__PURE__ */ React.createElement(Icon, { d: ICONS.more }))), /* @__PURE__ */ React.createElement(DropdownMenuContent2, { sideOffset: 6, align: "end", className: MENU }, /* @__PURE__ */ React.createElement(NativeViewCover2, null), /* @__PURE__ */ React.createElement(DropdownMenuItem2, { "data-menu-toggle": enabled ? "off" : "on", onSelect: () => {
+    void toggle(!enabled);
+  }, className: MENU_ITEM }, /* @__PURE__ */ React.createElement(Icon, { d: ICONS.power }), t(enabled ? "settings.switchOff" : "settings.switchOn")), label.hidden > 0 && /* @__PURE__ */ React.createElement(DropdownMenuItem2, { "data-menu-review-hidden": "", onSelect: () => setReviewing(true), className: MENU_ITEM }, /* @__PURE__ */ React.createElement(Icon, { d: ICONS.show }), t("settings.reviewHidden", { count: label.hidden })), label.custom && /* @__PURE__ */ React.createElement(DropdownMenuItem2, { "data-menu-default-label": "", onSelect: () => {
     void useDefault();
-  }, className: MENU_ITEM }, t("settings.useDefault")))), editing && /* @__PURE__ */ React.createElement(LabelDialog, { api, project, current: label.label, onClose: () => setEditing(false), onSaved: () => {
+  }, className: MENU_ITEM }, /* @__PURE__ */ React.createElement(Icon, { d: ICONS.refresh }), t("settings.useDefault")))), reviewing && /* @__PURE__ */ React.createElement(HiddenDialog, { api, project, onClose: () => setReviewing(false), onChanged: () => {
+    void reload();
+  } }), editing && /* @__PURE__ */ React.createElement(LabelDialog, { api, project, current: label.label, onClose: () => setEditing(false), onSaved: () => {
     setEditing(false);
     void reload();
   } }));
@@ -599,7 +774,14 @@ function apply(ctx) {
         minHeight: 160
       }
     }, Widget),
-    ctx.slots.register({ slot: "project.settings" }, Settings)
+    ctx.slots.register({ slot: "project.settings" }, Settings),
+    // An imported idea moved elsewhere: the list read before is stale.
+    ctx.realtime.subscribe("issues", (payload) => {
+      const signal = issuesSignal(payload);
+      if (!signal) return;
+      lastRead.delete(signal.project);
+      for (const listen of signalListeners) listen(signal);
+    })
   ];
   return () => {
     for (const dispose of disposers.reverse()) dispose();
