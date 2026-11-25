@@ -49,6 +49,7 @@ test('a refusal naming no path: the words of the CLI, the fence as the likely ca
   assert.match(notice, /Settings → System → Security/);
   assert.doesNotMatch(fenceSuspicionNotice({}), /undefined|chatPage\./);
   setLocale('fr');
+  // french-ok: the French message is what this line checks
   assert.match(fenceSuspicionNotice({ said: 'EPERM', mechanism: 'landlock', backend: 'codex' }), /clôture des missions \(Landlock\)/);
   setLocale('en');
 });
