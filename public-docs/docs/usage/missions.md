@@ -198,7 +198,7 @@ An agent shows a picture or a video with its `chat_show_media` tool. It appears 
 
 The agent can show:
 
-- **a file of the mission**, by its absolute path inside the mission's working folder, outside any hidden folder (a name starting with `.`, such as `.git`). Images: PNG, JPEG, GIF, WebP, AVIF. Videos: MP4, WebM, MOV, Ogg. A refused path tells the agent why (`path_outside_roots`, `path_hidden_segment` or `not_found`), so it can move the file;
+- **a file of the mission**, by its absolute path inside the mission's working folder, outside any hidden folder (a name starting with `.`, such as `.git`). Images: PNG, JPEG, GIF, WebP, AVIF. Videos: MP4, WebM, MOV, Ogg. A refused path tells the agent why (`path_outside_roots`, `path_hidden_segment` or `not_found`), so it can move the file. A symlink that leads outside the working folder or into a hidden folder answers `not_found`, like a missing file;
 - **an `https://` address on a public site**, for instance the result of an image or video API. Timon downloads it itself and checks it is really an image or a video; your browser never contacts that site. The card says where it came from;
 - **an inline image** (`data:image/…;base64`), up to 10 MB.
 
