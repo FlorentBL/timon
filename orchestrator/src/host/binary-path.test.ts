@@ -765,12 +765,13 @@ test('#1102: Windows looks in fnm\'s versions and VOLTA_HOME for node.exe', () =
   };
   const windows = binaryCandidates('node', {
     platform: 'win32', path: '', homeDir: 'C:\\Users\\Sam', installedBinariesFile: absentInstalled, directoryReader: reader,
-    env: { APPDATA: appData, VOLTA_HOME: 'D:\\volta' },
+    env: { APPDATA: appData, LOCALAPPDATA: 'C:\\Users\\Sam\\AppData\\Local', VOLTA_HOME: 'D:\\volta' },
   });
   const newest = windows.indexOf(`${versions}\\v22.3.0\\installation\\node.exe`);
   assert.ok(newest >= 0, windows.join('\n'));
   assert.ok(newest < windows.indexOf(`${versions}\\v20.0.0\\installation\\node.exe`));
   assert.ok(windows.includes(`${appData}\\fnm\\aliases\\default\\node.exe`));
+  assert.ok(windows.includes('C:\\Users\\Sam\\AppData\\Local\\fnm\\aliases\\default\\node.exe'));
   assert.ok(windows.includes('D:\\volta\\bin\\node.exe'));
   assert.ok(!windows.some((c) => c.includes('junk')));
 });
@@ -856,6 +857,8 @@ test('#1102 review: on Windows a manager root outside the user\'s profile is not
   const options = (FNM_DIR: string) => ({ platform: 'win32' as const, path: '', homeDir: home, installedBinariesFile: join(base, 'none.json'), env: { FNM_DIR } });
   assert.equal(findExecutableBinary('node', options(outside)), null);
   assert.equal(findExecutableBinary('node', options(inside)), kept);
+  // Without FNM_DIR, fnm's local application data folder is looked in too.
+  assert.equal(findExecutableBinary('node', { ...options(inside), env: { LOCALAPPDATA: join(home, 'AppData', 'Local') } }), kept);
 });
 
 test('SUG-0006: Linuxbrew, Volta and nvm-windows folders are candidates', () => {

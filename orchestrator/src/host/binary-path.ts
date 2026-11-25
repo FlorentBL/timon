@@ -314,7 +314,8 @@ function fnmRoots(
   pathJoin: (dir: string, ...parts: string[]) => string,
 ): string[] {
   if (env.FNM_DIR) return [env.FNM_DIR];
-  if (platform === 'win32') return env.APPDATA ? [pathJoin(env.APPDATA, 'fnm')] : [];
+  // Releases have used both the roaming and the local application data folder.
+  if (platform === 'win32') return [env.APPDATA, env.LOCALAPPDATA].filter((dir): dir is string => !!dir).map((dir) => pathJoin(dir, 'fnm'));
   if (!home) return [];
   const xdg = pathJoin(env.XDG_DATA_HOME || pathJoin(home, '.local', 'share'), 'fnm');
   // macOS releases have used both the Apple data folder and the XDG one.
