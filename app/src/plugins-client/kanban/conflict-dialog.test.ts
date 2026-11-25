@@ -126,6 +126,8 @@ async function mount(list: PullRequestItem[]) {
     const method = init.method ?? 'GET';
     const body = typeof init.body === 'string' ? JSON.parse(init.body) as unknown : null;
     calls.push({ url, method, body });
+    // A maintainer: Publish on GitHub greys its button without `forge:publish`.
+    if (url === '/api/ui/auth/me') return Response.json({ user: null, needsSetup: false, can: { 'projects:manage': true, 'forge:publish': true } });
     if (url === '/api/ui/projects') return Response.json({ projects: [{ slug: 'acme', name: 'Acme' }] });
     if (url === '/api/ui/projects/acme/pull-requests') return Response.json({ repo: 'acme/widgets', pulls: list });
     if (url === '/api/ui/projects/acme/integration') return Response.json({ integration: { mode: 'pr', account: 'acme-bot' }, configured: true });
