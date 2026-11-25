@@ -152,7 +152,8 @@ async function isAncestor(repo: string, ancestor: string, descendant: string): P
 }
 
 /** Same remote whatever the ending: a trailing `/` or `.git` does not count. */
-function sameUrl(a: string, b: string): boolean {
+/** Shared with the deletion of a merged job's remote branch (`integration-cleanup.ts`). */
+export function sameUrl(a: string, b: string): boolean {
   const norm = (u: string): string => u.trim().replace(/\/+$/, '').replace(/\.git$/i, '');
   return norm(a) === norm(b);
 }
@@ -564,7 +565,8 @@ export async function openPullRequest(request: PrOpenRequest, deps: PrOpenDeps =
     if (!created.ok) {
       return refuse(502, 'pr_create_failed', `${branch} was pushed, the pull request was not created: ${created.reason}. Run the command again to retry.`, checks);
     }
-    const recorded = { number: created.pr.number, url: created.pr.url, headSha: head };
+    // Where it was opened: the only place the cleanup ever deletes its branch.
+    const recorded = { number: created.pr.number, url: created.pr.url, headSha: head, repository, pushUrl: remoteUrl };
     const opened = reopening ? dbApi.markIntegrationReopened(row.id, recorded) : dbApi.markIntegrationOpen(row.id, recorded);
     if (opened) {
       // A task that opens it reports it to the pilot with its own return: the
