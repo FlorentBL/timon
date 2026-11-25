@@ -19,7 +19,7 @@ import { randomUUID } from 'node:crypto';
 import { isAutonomousMission, missionPermissionModel } from '../../agent.js';
 import { loadConfig } from '../../agent-config.js';
 import type { PermissionModel } from '../../backends/types.js';
-import { MediaError, explainPathRefusal, parseMediaPath, pathRefusal, realOrNull } from '../../chat-media.js';
+import { MediaError, explainPathRefusal, parseMediaPath, resolveMissionPath } from '../../chat-media.js';
 import { dbApi, type MissionRow } from '../../db.js';
 import { auditRequest } from '../../users/audit-actor.js';
 import { forbidden, viewerFromRequest, isPersonAuth } from '../../users/identity.js';
@@ -105,13 +105,13 @@ export function readMissionHtml(raw: string, roots: readonly string[], explain =
     if (err instanceof MediaError) throw new HtmlFileError(400, err.code);
     throw err;
   }
-  const real = realOrNull(path);
-  const refusal = pathRefusal(path, real, roots);
-  if (refusal || !real) {
+  const resolved = resolveMissionPath(path, roots);
+  if ('refusal' in resolved) {
     if (!explain) throw new HtmlFileError(404, 'not_found');
-    const why = explainPathRefusal(refusal ?? 'not_found');
+    const why = explainPathRefusal(resolved.refusal);
     throw new HtmlFileError(why.status, why.code, why.message);
   }
+  const real = resolved.real;
   let fd: number;
   try { fd = openSync(real, 'r'); } catch { throw new HtmlFileError(404, 'not_found'); }
   try {
