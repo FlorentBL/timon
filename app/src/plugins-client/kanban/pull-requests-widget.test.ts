@@ -86,7 +86,7 @@ type Self = { tabbed: boolean; selected: boolean };
  */
 type PageAnswer = object | (() => Promise<Response>);
 
-async function mount(list: PullRequestItem[], self?: Self, keepRead = false, width?: number, page: PageAnswer = PAGE) {
+async function mount(list: PullRequestItem[], self?: Self, keepRead = false, width?: number, page: PageAnswer = PAGE, proposals: object[] = []) {
   const { JSDOM } = await import('jsdom');
   const dom = new JSDOM('<div id="root"></div>', { url: 'http://localhost/', pretendToBeVisual: true });
   const saved = new Map<string, PropertyDescriptor | undefined>();
@@ -123,6 +123,7 @@ async function mount(list: PullRequestItem[], self?: Self, keepRead = false, wid
     calls.push({ url, method: init.method ?? 'GET', body: typeof init.body === 'string' ? init.body : null });
     if (url === '/api/ui/projects') return Response.json({ projects: [{ slug: 'acme', name: 'Acme' }] });
     if (url === '/api/ui/projects/acme/pull-requests') return Response.json({ repo: 'acme/widgets', pulls: list });
+    if (url === '/api/ui/projects/acme/forge-proposals') return Response.json({ proposals });
     if (url.endsWith('/review')) {
       return Response.json({
         review: { id: '7d1c2a43-9b1e-4f3c-8a52-1f0e2d3c4b5a', agent: 'acme.reviewer', state: 'draft' },
@@ -303,11 +304,14 @@ test('a click on a row opens its page in a window, at the mouse and at the keybo
     assert.equal(dialog(), null);
     assert.equal(pageReads(), 0);
 
-    // The keyboard: the row's main zone is a button that takes Enter and Space.
+    // The row opens through one real button, which holds no other control:
+    // the chips and buttons of the row are its siblings.
     const zone = document.querySelector('[data-pull-row="12"] [data-pull-open]')!;
-    assert.equal(zone.getAttribute('role'), 'button');
-    assert.equal(zone.getAttribute('tabindex'), '0');
-    await m.key(zone, 'Enter');
+    assert.equal(zone.tagName, 'BUTTON');
+    assert.equal(zone.getAttribute('role'), null);
+    assert.equal(zone.querySelector('button, a, [role="button"], [tabindex]'), null);
+    assert.equal(document.querySelector('[data-pull-row="12"] [role="button"]'), null);
+    await m.click(zone);
     assert.equal(dialog()?.getAttribute('data-pull-dialog'), '12');
     assert.equal(pageReads(), 1);
     assert.ok(m.calls.some((c) => c.url === '/api/ui/projects/acme/pull-requests/12?updated=2026-11-17T10%3A00%3A00Z'));
@@ -719,6 +723,27 @@ test('the line under the title says what the pull request is; where it stands is
     assert.equal(card.querySelector('[data-pull-box-verdict]')?.textContent, 'Timon: Changes requested');
     await m.key(document.activeElement ?? document.body, 'Escape');
     await new Promise((r) => setTimeout(r, 30));
+  } finally {
+    await m.unmount();
+  }
+});
+
+test('a row\'s proposal chip sits beside its open button, not inside it, and does not open the window', async () => {
+  const proposal = {
+    id: 'p1', project: 'acme', repo: 'acme/widgets', kind: 'comment', target: { type: 'pull', number: 12, url: 'https://github.com/acme/widgets/pull/12' },
+    body: 'Thanks!', state: 'draft', trigger: 'review', key: 'k', source_ref: null, account: null, url: null, error: null, created_at: 1, updated_at: 1,
+  };
+  const m = await mount([pull()], undefined, false, undefined, PAGE, [proposal]);
+  const dialog = () => document.querySelector('[data-pull-dialog]');
+  try {
+    await m.choose(document.querySelector('[data-stack-project]'), 'acme');
+    const row = document.querySelector('[data-pull-row="12"]')!;
+    const chip = row.querySelector('[data-proposal-chip]');
+    assert.ok(chip, 'the chip shows on the row');
+    assert.equal(chip.closest('[data-pull-open]'), null, 'the chip is not inside the open button');
+    assert.equal(row.querySelector('[data-pull-open]')?.querySelector('button'), null);
+    await m.click(chip);
+    assert.equal(dialog(), null, 'the chip opens the publish dialog, not the window');
   } finally {
     await m.unmount();
   }
