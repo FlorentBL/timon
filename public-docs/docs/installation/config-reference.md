@@ -12,7 +12,7 @@ Generated from the configuration schema and the loader's environment override ta
 | Key | Type | Default | Description | Environment |
 | --- | --- | --- | --- | --- |
 | `version` | 1 | 1 | Configuration schema version. | — |
-| `profile` | "linux-desktop" &#124; "linux-server" &#124; "macos" &#124; "windows" | "linux-desktop" | Host platform profile. | — |
+| `profile` | "linux-desktop" &#124; "linux-server" &#124; "macos" &#124; "windows" | Profile of the running OS: "linux-desktop", "macos" or "windows" | Host platform profile; defaults to the profile of the running operating system. | — |
 | `edition` | "expert" &#124; "lite" | "expert" | Requested edition; the effective edition remains constrained by the licence. | — |
 | `workspacesRoot` | string | Not set | Working folder of the agents created during onboarding; when unset, they share the `home` folder inside the workspace folder of the Timon home. | — |
 | `daemon` | object | See child fields | Daemon process and listener configuration. | — |
@@ -28,7 +28,7 @@ Generated from the configuration schema and the loader's environment override ta
 | `daemon.behindTlsProxy` | boolean | false | Force secure session cookies when HTTPS terminates at a reverse proxy. | — |
 | `host` | object | See child fields | Host capabilities and binary configuration. | — |
 | `host.docker` | "auto" &#124; "required" &#124; "disabled" | "auto" | Container capability policy. | — |
-| `host.traefik` | boolean | true | Whether a Traefik deployment is available. | — |
+| `host.traefik` | boolean | true on Linux, false elsewhere | Whether a Traefik deployment is available; defaults to true on Linux only. | — |
 | `host.gui` | "auto" &#124; "disabled" | "auto" | Native graphical integration policy. | — |
 | `host.binaries` | object | {} | Binary names mapped to absolute paths; null uses PATH discovery. | — |
 | `host.isolation` | object | See child fields | Requested mission filesystem restrictions. | — |

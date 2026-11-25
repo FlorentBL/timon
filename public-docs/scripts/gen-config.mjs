@@ -21,7 +21,10 @@ try {
   const compiled = ts.transpileModule(esmFree, {compilerOptions: {module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022}}).outputText;
   const exports = {};
   const allowed = new Set(['zod', 'node:path', 'node:url', 'node:net']);
-  runInNewContext(compiled, {exports, __schemaModuleUrl: 'file:///timon/orchestrator/src/config/schema.ts', require: name => {
+  // Since 25/11/2026 `profile` and `host.traefik` default from the running
+  // OS. The sandbox gets a fixed platform so the page does not depend on the
+  // machine that generates it; both rows describe the rule instead.
+  runInNewContext(compiled, {exports, __schemaModuleUrl: 'file:///timon/orchestrator/src/config/schema.ts', process: {platform: 'linux'}, require: name => {
     if (!allowed.has(name)) throw new Error(`Unexpected schema dependency: ${name}`);
     return require(name);
   }}, {timeout: 5000});
@@ -66,6 +69,8 @@ try {
       // The default is the directory of the running daemon's own code: a
       // machine path, never published. Its meaning is.
       if (path === 'daemon.installDir') displayDefault = "Directory of the running daemon's code";
+      if (path === 'profile') displayDefault = 'Profile of the running OS: "linux-desktop", "macos" or "windows"';
+      if (path === 'host.traefik') displayDefault = 'true on Linux, false elsewhere';
       if (node.properties) displayDefault = 'See child fields';
       const description = applyRewrites(node.description, 'config', usedRewrites);
       rows.push(`| \`${path}\` | ${cell(type(node))} | ${cell(displayDefault)} | ${cell(description.text)} | ${overrides.has(path) ? '`'+overrides.get(path)+'`' : path === 'settings' ? 'Same key as each registry setting' : '—'} |`);

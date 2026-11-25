@@ -26,7 +26,7 @@ For a source installation, create the directory and write the following JSON, re
 }
 ```
 
-Use `profile: "macos"` and `supervisor: "launchd"` on macOS, or `"windows"` for both on Windows. Use `linux-server` for a Linux server. For Docker features, change `host.docker` as needed; do not enable both app serving modes.
+Use `profile: "macos"` and `supervisor: "launchd"` on macOS, or `"windows"` for both on Windows. Use `linux-server` for a Linux server. Without a `profile` key, Timon uses the profile of the operating system it runs on (`linux-desktop` on Linux); `host.traefik` defaults to `true` on Linux only, and Traefik is only used together with Docker. For Docker features, change `host.docker` as needed; do not enable both app serving modes.
 
 ## Where Timon keeps its files
 
