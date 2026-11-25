@@ -337,6 +337,10 @@
       "title": "Réparation de {pr} non poussée",
       "body": "La réparation de {branch} n'a pas été poussée : {reason}"
     },
+    "integration_opened": {
+      "title": "Pull request ouverte : {branch}",
+      "body": "{branch} attend une relecture avant d'atterrir dans {target}. Fusionnez-la sur la forge : Timon le remarque de lui-même."
+    },
     "integration_merged": {
       "title": "{pr, select, none {Branche d'intégration fusionnée : {branch}} other {Pull request fusionnée : {branch}}}",
       "body": "{branch} a atterri dans {target}. Ses idées TO DO et ses tâches de doc suivent d'elles-mêmes."

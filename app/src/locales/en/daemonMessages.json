@@ -337,6 +337,10 @@
       "title": "Repair of {pr} not pushed",
       "body": "The repair of {branch} was not pushed: {reason}"
     },
+    "integration_opened": {
+      "title": "Pull request opened: {branch}",
+      "body": "{branch} waits for a review before it lands in {target}. Merge it on the forge: Timon notices it on its own."
+    },
     "integration_merged": {
       "title": "{pr, select, none {Integration branch merged: {branch}} other {Pull request merged: {branch}}}",
       "body": "{branch} landed in {target}. Its TO DO ideas and doc tasks follow on their own."
