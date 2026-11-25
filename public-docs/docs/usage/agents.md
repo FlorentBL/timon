@@ -417,6 +417,15 @@ project, without going through Timon's catalogue. Other backends, such as
 Codex, do not read that folder, and a project skill cannot be attached to an
 agent.
 
+A plugin's skill is named after its plugin, as in `code-review:review`. Timon
+finds the skills in the plugin's `skills` folder and in the folders its
+`.claude-plugin/plugin.json` manifest lists, including skills filed in category
+folders; a listed path that leads out of the plugin's folder is ignored. When
+two categories of one plugin hold a skill of the same name, the one whose
+folder path comes first alphabetically is used and the other is shown as
+shadowed. In a message, `/review` can stand for `code-review:review` when no
+other plugin has a skill called `review`; when several do, type the full name.
+
 To use one of them in missions, open it and choose **Import into Timon**. Pick
 the ID of the copy (the original ID by default, with a plugin's prefix joined
 by a hyphen, as in `code-review-review`), then **Import**. Timon copies the
