@@ -1,15 +1,17 @@
 import {
   isRemoteDialect, probeLaunchContext,
-  type AccountUsage, type Backend, type BackendLaunchContext, type BackendName, type BuildSpawnOpts, type NormalizedEvent,
+  type AccountUsage, type AnyDialect, type Backend, type BackendLaunchContext, type BackendName, type BuildSpawnOpts, type NormalizedEvent,
   type RemoteDialect, type RemoteSessionOpenArgs, type SessionOpenArgs, type SpawnResult, type UsageProbeOptions,
 } from './types.js';
+import type { ProviderAgentConfig } from './provider-agent-config.js';
+import { providerEnvPlan } from './provider-env.js';
 import { credentialValues, deferredDriver, serializeResumeState } from './remote-session.js';
 import {
   activeProfiles, assertBackendEnabled, dialectDeclarations, installedProfiles, oneShotProfiles, getDialect, dialectTrust, type ResolvedProfile,
 } from './registry.js';
 import { sealMissionToken } from './mission-token-seal.js';
 import { sealFor } from './launch-seal.js';
-import { journalInjectedSecrets } from '../secrets/env.js';
+import { inheritEnvEnabled, injectedSecretsFor, journalInjectedSecrets } from '../secrets/env.js';
 import { dbApi } from '../db.js';
 import { backendIdForModel, catalogBackend } from './catalog.js';
 import { baseBackendId, isAccountInstanceId, splitBackendInstance } from './instance-id.js';
@@ -20,7 +22,7 @@ import type { SecretTarget } from '../secrets/resolve.js';
 
 export type {
   AccountUsage, ApprovalScope, AssistantDeltaPayload, Backend, BackendCapabilities, BackendCapability, BackendName, BackendProfile, BuildSpawnOpts,
-  AnyDialect, BackendLaunchContext, Dialect, ImageAttachment,
+  AnyDialect, BackendLaunchContext, Dialect, ImageAttachment, NativeCompact, NativeCompactContext, NativeCompactResult,
   EnvResolver, EnvValue, NormalizedEvent, OpenSpan, PermissionDecision, PermissionModel, PermissionRequest, PermissionWait,
   ProfileRuntime, ProviderConfig, ProviderRetryKind, ProviderRetryPayload, RateLimitReporting, RemoteDialect, RemoteResumeState,
   RemoteSessionHost, RemoteSessionOpenArgs,
@@ -38,7 +40,7 @@ export {
   backendCatalog, primeModelDiscovery, catalogBackend, backendIdForModel,
   catalogClaimsModel,
 } from './catalog.js';
-export { backendCapabilities, canReadSkillOnDemand, nativeCompactCommand, resolveCapabilities } from './capabilities.js';
+export { backendCapabilities, canReadSkillOnDemand, nativeCompactCommand, nativeCompactOf, resolveCapabilities } from './capabilities.js';
 export { activeProfiles, getDialect, inactiveProfiles, onBackendsChanged, type ResolvedProfile } from './registry.js';
 export { ProfileEnvError } from './credentials.js';
 
@@ -68,7 +70,9 @@ function stampBackend(events: NormalizedEvent[], profileId: string): NormalizedE
  * spawn with no mission row behind it (a daemon one-shot: `summary-…`) is not a
  * mission: it gets the `probe` context, never an id nobody can look up.
  */
-export function launchContextFor(spawn: Pick<BuildSpawnOpts, 'missionId' | 'agentName' | 'cfg'>): BackendLaunchContext {
+export function launchContextFor(
+  spawn: { readonly missionId: string; readonly agentName: string; readonly cfg: Pick<BuildSpawnOpts['cfg'], 'project'> },
+): BackendLaunchContext {
   let owner: string | null | undefined;
   try {
     owner = dbApi.getMission(spawn.missionId)?.owner_user_id;
@@ -93,7 +97,9 @@ export function launchContextFor(spawn: Pick<BuildSpawnOpts, 'missionId' | 'agen
  * else (TODO #531, decision 5-B). The backend is added by the credentials
  * layer, from the profile.
  */
-export function secretTargetFor(spawn: Pick<BuildSpawnOpts, 'agentName' | 'cfg'>): SecretTarget {
+export function secretTargetFor(
+  spawn: { readonly agentName: string; readonly cfg: Pick<BuildSpawnOpts['cfg'], 'cwd' | 'project'> },
+): SecretTarget {
   return { agent: spawn.agentName, project: spawn.cfg.project ?? projectFromCwd(spawn.cfg.cwd) ?? null };
 }
 
@@ -109,14 +115,63 @@ export function secretTargetFor(spawn: Pick<BuildSpawnOpts, 'agentName' | 'cfg'>
  * wins. The names were checked at registration (`passthroughProblem`): nothing that
  * reads like a credential gets here.
  */
-function withPassthroughEnv(spawn: SpawnResult, names: readonly string[] | undefined): SpawnResult {
-  if (!names || names.length === 0) return spawn;
+function passthroughEnvOf(names: readonly string[] | undefined): Record<string, string> | undefined {
+  if (!names || names.length === 0) return undefined;
   const copied: Record<string, string> = {};
   for (const name of names) {
     const value = process.env[name];
     if (value !== undefined) copied[name] = value;
   }
-  return Object.keys(copied).length === 0 ? spawn : { ...spawn, env: { ...copied, ...(spawn.env ?? {}) } };
+  return Object.keys(copied).length === 0 ? undefined : copied;
+}
+
+function withPassthroughEnv(spawn: SpawnResult, names: readonly string[] | undefined): SpawnResult {
+  const copied = passthroughEnvOf(names);
+  return copied ? { ...spawn, env: { ...copied, ...(spawn.env ?? {}) } } : spawn;
+}
+
+function bindNativeCompact(
+  profile: ResolvedProfile['profile'],
+  dialect: AnyDialect,
+  nativeCompact: Backend['nativeCompact'],
+  runtimeFor: ResolvedProfile['runtimeFor'],
+): Backend['runNativeCompact'] {
+  if (!nativeCompact || !('run' in nativeCompact)) return undefined;
+  const trusted = dialectTrust(profile, dialect) !== 'third-party';
+  return async (opts) => {
+    const target = secretTargetFor(opts);
+    const launch = launchContextFor(opts);
+    const { runtime, injected } = await runtimeFor(target, launch);
+    journalInjectedSecrets({ missionId: opts.missionId, agent: opts.agentName, injected });
+    const plan = await providerEnvPlan({
+      spawn: {
+        missionId: opts.missionId,
+        agentName: opts.agentName,
+        cfg: opts.cfg as ProviderAgentConfig,
+        systemPrompt: '',
+        message: '',
+        resumeSession: opts.sessionId,
+      },
+      trusted,
+      passthrough: dialectDeclarations(profile.dialect)?.passthroughEnv,
+    });
+    if (trusted && !inheritEnvEnabled()) {
+      const vault = injectedSecretsFor(target);
+      journalInjectedSecrets({ missionId: opts.missionId, agent: opts.agentName, injected: vault.injected });
+    }
+    return nativeCompact.run({
+      missionId: opts.missionId,
+      sessionId: opts.sessionId,
+      ...(opts.cfg.cwd ? { cwd: opts.cfg.cwd } : {}),
+      ...(opts.cfg.model ? { model: opts.cfg.model } : {}),
+      ...(opts.scratch ? { scratch: opts.scratch } : {}),
+      profile: runtime,
+      launch,
+      env: plan.env,
+      timeoutMs: opts.timeoutMs,
+      ...(opts.signal ? { signal: opts.signal } : {}),
+    });
+  };
 }
 
 function backendFromProfile({ profile, dialect, runtimeFor }: ResolvedProfile): Backend {
@@ -186,6 +241,9 @@ function backendFromProfile({ profile, dialect, runtimeFor }: ResolvedProfile): 
     ...(dialect.setModel ? { setModel: dialect.setModel.bind(dialect) } : {}),
     ...(dialect.maxPromptBytes ? { maxPromptBytes: dialect.maxPromptBytes } : {}),
     ...(dialect.nativeCompact ? { nativeCompact: dialect.nativeCompact } : {}),
+    ...(dialect.nativeCompact && 'run' in dialect.nativeCompact
+      ? { runNativeCompact: bindNativeCompact(profile, dialect, dialect.nativeCompact, runtimeFor) }
+      : {}),
     ...(dialect.dispose ? { dispose: dialect.dispose.bind(dialect) } : {}),
     ...(dialect.enrichEvent ? { enrichEvent: dialect.enrichEvent.bind(dialect) } : {}),
   };
@@ -218,6 +276,9 @@ function remoteBackendFromProfile(
     ...(dialect.browserToolsHint ? { browserToolsHint: dialect.browserToolsHint } : {}),
     ...(dialect.permissionsHint ? { permissionsHint: dialect.permissionsHint } : {}),
     ...(dialect.nativeCompact ? { nativeCompact: dialect.nativeCompact } : {}),
+    ...(dialect.nativeCompact && 'run' in dialect.nativeCompact
+      ? { runNativeCompact: bindNativeCompact(profile, dialect, dialect.nativeCompact, runtimeFor) }
+      : {}),
     ...(dialect.accountUsage
       ? {
         accountUsage: async (options?: UsageProbeOptions): Promise<AccountUsage | null> => {

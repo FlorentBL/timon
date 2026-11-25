@@ -54,7 +54,13 @@ export function dialectFromDefinition(def: NativeProviderDefinition): AnyDialect
     ...(def.lifecycle?.enrich ? { enrichEvent: def.lifecycle.enrich } : {}),
     ...(declares.capabilities ? { capabilities: declares.capabilities } : {}),
     ...(declares.localEnv ? { localEnv: declares.localEnv } : {}),
-    ...(def.session.compact ? { nativeCompact: { command: def.session.compact.command } } : {}),
+    ...(def.session.compact
+      ? {
+          nativeCompact: 'command' in def.session.compact
+            ? { command: def.session.compact.command }
+            : { run: def.session.compact.run },
+        }
+      : {}),
   };
 
   if (isRemoteDefinition(def)) {

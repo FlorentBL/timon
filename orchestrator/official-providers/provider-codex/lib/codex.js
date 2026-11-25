@@ -30,10 +30,11 @@
  * the mission's private folder, the account a launch runs on, the git folders a sandbox must open, the
  * base environment, the program's version and the pictures the CLI generated all come from the daemon.
  */
-import { existsSync, lstatSync, mkdirSync, readFileSync, realpathSync } from 'node:fs';
+import { copyFileSync, existsSync, linkSync, lstatSync, mkdirSync, readFileSync, realpathSync, statSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { codexApiKey, codexAuthPath, inspectCodexAuth } from './auth.js';
+import { compactCodexThread } from './compact.js';
 import { codexContextSnapshot } from './context.js';
 import { mapCodexEvent } from './events.js';
 import { codexAccountLevels, codexAccountSlugs } from './models-cache.js';
@@ -498,6 +499,70 @@ export function createCodexProvider(services, log) {
              *  `thread/resume failed: no rollout found for thread id <id> (code -32600)`. */
             notFound(stderr) {
                 return /no rollout found for thread id/i.test(stderr);
+            },
+            compact: {
+                async run(ctx) {
+                    if (!ctx?.scratch) {
+                        throw new Error('codex native compaction requires a mission scratch directory');
+                    }
+                    const profile = ctx.profile;
+                    const env = { ...(ctx.env ?? {}), ...(profile?.env ?? {}) };
+                    let apiKey;
+                    const account = profile ? services.account.of(profile) : undefined;
+                    const accountAuth = account ? join(account.configDir, 'auth.json') : undefined;
+                    if (account && !existsSync(accountAuth)) {
+                        throw new Error(`The codex account "${account.name}" is not signed in yet: sign it in before running missions on it.`);
+                    }
+                    if (!profile?.providerConfig && !account) {
+                        const auth = inspectCodexAuth(env);
+                        if (!auth.ok)
+                            throw new Error(auth.detail);
+                        if (auth.source === 'environment')
+                            apiKey = codexApiKey(env);
+                    }
+                    const useAuthFile = !apiKey && !profile?.providerConfig;
+                    const authSrc = accountAuth ?? codexAuthPath(env);
+                    if (useAuthFile && existsSync(authSrc)) {
+                        const source = realpathSync(authSrc);
+                        const marker = join(ctx.scratch, '.timon-auth-source');
+                        const dest = join(ctx.scratch, 'auth.json');
+                        let previousSource;
+                        try { previousSource = readFileSync(marker, 'utf8'); } catch { /* first refresh */ }
+                        let staleCopy = false;
+                        if (existsSync(dest)) {
+                            try {
+                                const destStat = lstatSync(dest);
+                                const srcStat = statSync(authSrc);
+                                if (!destStat.isSymbolicLink() && destStat.ino !== srcStat.ino && srcStat.mtimeMs > destStat.mtimeMs) {
+                                    staleCopy = true;
+                                }
+                            } catch { /* re-link below if unreadable */ }
+                        }
+                        if (previousSource !== source || linksElsewhere(dest, authSrc) || staleCopy) {
+                            try { unlinkSync(dest); } catch { /* absent */ }
+                        }
+                        if (!existsSync(dest)) {
+                            let method;
+                            try { symlinkSync(authSrc, dest); method = 'symlink'; }
+                            catch {
+                                try { linkSync(authSrc, dest); method = 'hardlink'; }
+                                catch { copyFileSync(authSrc, dest); method = 'copy'; }
+                            }
+                            if (method === 'copy') {
+                                log.warn('codex: auth.json copied into the mission home (no link possible): a login refresh on the host will not reach running missions');
+                            }
+                        }
+                        writeFileSync(marker, source, 'utf8');
+                    }
+                    const spawnEnv = {
+                        ...(ctx.env ?? {}),
+                        CODEX_HOME: ctx.scratch,
+                        ...(profile?.env ?? {}),
+                        ...(apiKey ? { CODEX_API_KEY: apiKey } : {}),
+                        ...(account ? { CODEX_API_KEY: '' } : {}),
+                    };
+                    return compactCodexThread(services.binary, { ...ctx, env: spawnEnv }, profile?.cmd ?? CODEX.binary.names[0]);
+                },
             },
         },
         // `codex exec` is one-way: no approval round trip during the turn. Rights are

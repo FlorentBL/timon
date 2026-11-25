@@ -89,3 +89,39 @@ export function codexContextSnapshot(codexHome) {
         return null;
     }
 }
+export function codexRolloutMarker(codexHome) {
+    try {
+        const path = newestRollout(join(codexHome, 'sessions'));
+        if (!path)
+            return null;
+        return { path, size: statSync(path).size };
+    }
+    catch {
+        return null;
+    }
+}
+export function codexContextSnapshotAfter(codexHome, marker) {
+    try {
+        const path = newestRollout(join(codexHome, 'sessions'));
+        if (!path)
+            return null;
+        const size = statSync(path).size;
+        const offset = marker && marker.path === path ? marker.size : 0;
+        if (size <= offset)
+            return null;
+        const start = Math.max(offset, size - TAIL_BYTES);
+        const len = size - start;
+        const fd = openSync(path, 'r');
+        try {
+            const buf = Buffer.alloc(len);
+            readSync(fd, buf, 0, len, start);
+            return snapshotFromRolloutTail(buf.toString('utf8'));
+        }
+        finally {
+            closeSync(fd);
+        }
+    }
+    catch {
+        return null;
+    }
+}

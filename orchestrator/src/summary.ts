@@ -59,6 +59,193 @@ next assistant will read this verbatim as durable context — be precise.
 Keep technical terms as they are
 (\`commit\`, \`session_id\`, \`tool_use\`, etc.).`;
 
+const SUMMARY_MERGE_SYSTEM_PROMPT = `You merge chronological summaries of consecutive \
+sections of a single conversation into one coherent, terse handoff summary for \
+another assistant. Preserve:
+
+- The user's goals, constraints and explicit decisions (later decisions supersede earlier ones).
+- The key facts established across the conversation (names, paths, IDs, numbers).
+- Material tool results (files read/written, commands run with relevant output, MCP results).
+- The final state of the task in progress and the immediate next step.
+- Anything the user explicitly asked the assistant to remember.
+
+Deduplicate repeated context and drop intermediate steps superseded by later \
+sections. Format: markdown with short bulleted sections, code spans for paths \
+and identifiers, no meta-commentary.
+
+**Language: write in the language of the section summaries.**
+Keep technical terms as they are
+(\`commit\`, \`session_id\`, \`tool_use\`, etc.).`;
+
+/** Maximum rendered transcript length sent in a single summary request. Kept
+ *  well under provider input caps (e.g. Codex's 1,048,576-char turn/start limit)
+ *  so prompt framing and system instructions always fit with headroom. */
+export const SUMMARY_SINGLE_PASS_MAX_CHARS = 600_000;
+
+/** Maximum length of each transcript section during map-reduce summarization. */
+export const SUMMARY_SECTION_MAX_CHARS = 450_000;
+
+/** Number of transcript sections summarized in parallel per wave. */
+export const SUMMARY_SECTION_CONCURRENCY = 4;
+
+/** Maximum reduction passes when combined section summaries still exceed the
+ *  single-pass limit. */
+export const SUMMARY_MAX_REDUCE_ROUNDS = 3;
+
+/**
+ * Split a rendered transcript into bounded sections of at most `maxChars`
+ * characters, preferring `\n\n` block boundaries so turns stay intact.
+ * Any single block exceeding `maxChars` is sliced at a newline when possible
+ * (otherwise hard-sliced) so no section ever violates the ceiling.
+ */
+export function splitTranscript(transcript: string, maxChars = SUMMARY_SECTION_MAX_CHARS): string[] {
+  if (!Number.isFinite(maxChars) || maxChars <= 0) {
+    throw new RangeError(`maxChars must be a positive finite number, got ${maxChars}`);
+  }
+  if (transcript.length <= maxChars) return [transcript];
+
+  const blocks = transcript.split('\n\n');
+  const sections: string[] = [];
+  let current = '';
+
+  const flush = (): void => {
+    if (current) {
+      sections.push(current);
+      current = '';
+    }
+  };
+
+  for (const block of blocks) {
+    if (block.length > maxChars) {
+      flush();
+      let offset = 0;
+      while (offset < block.length) {
+        const remaining = block.length - offset;
+        if (remaining <= maxChars) {
+          sections.push(block.slice(offset));
+          break;
+        }
+        const window = block.slice(offset, offset + maxChars);
+        const lastNewline = window.lastIndexOf('\n');
+        // Prefer a line break in the second half so we do not produce tiny slivers.
+        const cut = lastNewline >= Math.floor(maxChars / 2) ? lastNewline + 1 : maxChars;
+        sections.push(block.slice(offset, offset + cut));
+        offset += cut;
+      }
+      continue;
+    }
+
+    if (!current) {
+      current = block;
+    } else if (current.length + 2 + block.length <= maxChars) {
+      current = `${current}\n\n${block}`;
+    } else {
+      sections.push(current);
+      current = block;
+    }
+  }
+  flush();
+  return sections;
+}
+
+/** Run `worker` over `items` with at most `concurrency` in flight, preserving order. */
+async function mapWithConcurrency<T, R>(
+  items: readonly T[],
+  concurrency: number,
+  worker: (item: T, index: number) => Promise<R>,
+): Promise<R[]> {
+  const results = new Array<R>(items.length);
+  const limit = Math.max(1, Math.min(concurrency, items.length));
+  let next = 0;
+  let aborted = false;
+
+  const lane = async (): Promise<void> => {
+    while (!aborted) {
+      const idx = next++;
+      if (idx >= items.length) return;
+      try {
+        results[idx] = await worker(items[idx]!, idx);
+      } catch (err) {
+        aborted = true;
+        throw err;
+      }
+    }
+  };
+
+  await Promise.all(Array.from({ length: limit }, lane));
+  return results;
+}
+
+export type SummaryRunner = (prompt: string, systemPrompt: string, timeoutMs: number) => Promise<string>;
+
+/**
+ * Summarize a rendered transcript within a shared timeout budget.
+ *
+ * Short transcripts run in one request (matching the historical single-pass
+ * behavior). Oversized transcripts are split into bounded sections, summarized
+ * in parallel waves so the shared deadline is not exhausted by sequential calls,
+ * and merged into one coherent handoff summary.
+ */
+export async function summarizeTranscript(
+  transcript: string,
+  run: SummaryRunner,
+  opts: {
+    timeoutMs: number;
+    singlePassMaxChars?: number;
+    sectionMaxChars?: number;
+    concurrency?: number;
+    maxReduceRounds?: number;
+    now?: () => number;
+  },
+): Promise<string> {
+  const singlePassMaxChars = opts.singlePassMaxChars ?? SUMMARY_SINGLE_PASS_MAX_CHARS;
+  const sectionMaxChars = opts.sectionMaxChars ?? SUMMARY_SECTION_MAX_CHARS;
+  const concurrency = opts.concurrency ?? SUMMARY_SECTION_CONCURRENCY;
+  const maxReduceRounds = opts.maxReduceRounds ?? SUMMARY_MAX_REDUCE_ROUNDS;
+  const now = opts.now ?? Date.now;
+  const deadline = now() + opts.timeoutMs;
+
+  const remainingMs = (): number => {
+    const left = deadline - now();
+    if (left <= 0) {
+      throw new Error(`summary timeout after ${Math.round(opts.timeoutMs / 1000)}s`);
+    }
+    return left;
+  };
+
+  if (transcript.length <= singlePassMaxChars) {
+    return run(`# Transcript to summarize\n\n${transcript}`, SUMMARY_SYSTEM_PROMPT, remainingMs());
+  }
+
+  let current = transcript;
+  let round = 0;
+  while (true) {
+    round += 1;
+    const sections = splitTranscript(current, sectionMaxChars);
+    const total = sections.length;
+    const isFirstRound = round === 1;
+    const sectionSystem = isFirstRound ? SUMMARY_SYSTEM_PROMPT : SUMMARY_MERGE_SYSTEM_PROMPT;
+    const parts = await mapWithConcurrency(sections, concurrency, (section, idx) => {
+      const header = isFirstRound
+        ? `# Transcript section ${idx + 1} of ${total} to summarize`
+        : `# Section summaries batch ${idx + 1} of ${total} to merge`;
+      return run(`${header}\n\n${section}`, sectionSystem, remainingMs());
+    });
+
+    const combined = parts
+      .map((text, idx) => `## Section ${idx + 1} of ${parts.length}\n\n${text}`)
+      .join('\n\n');
+
+    if (combined.length <= singlePassMaxChars || round >= maxReduceRounds) {
+      const mergeInput = combined.length > singlePassMaxChars
+        ? combined.slice(0, singlePassMaxChars)
+        : combined;
+      return run(`# Section summaries to merge\n\n${mergeInput}`, SUMMARY_MERGE_SYSTEM_PROMPT, remainingMs());
+    }
+    current = combined;
+  }
+}
+
 /** Render the persisted event log as a plain-text dialogue the model can
  *  read. We collapse tool_use + tool_result into one block per call so
  *  the transcript stays compact. */
@@ -501,16 +688,22 @@ export async function summarizeMission(
     // An effort level belongs to the provider it was set for.
     cfg.reasoningEffort = undefined;
   }
-  const summary = await oneShotPrompt(
-    mission.agent_name,
-    cfg,
-    `# Transcript to summarize\n\n${transcript}`,
-    undefined,
-    undefined,
-    // Unbounded, this one-shot can hang forever: it is not a tracked mission,
-    // so no reaper kills it, and every caller waiting on a summary (a backend
-    // switch above all) waits with it.
-    settingNum('TIMON_SUMMARY_TIMEOUT_MS'),
+  const summary = await summarizeTranscript(
+    transcript,
+    (prompt, systemPrompt, timeoutMs) => oneShotPrompt(
+      mission.agent_name,
+      cfg,
+      prompt,
+      systemPrompt,
+      undefined,
+      timeoutMs,
+    ),
+    {
+      // Unbounded, this one-shot can hang forever: it is not a tracked mission,
+      // so no reaper kills it, and every caller waiting on a summary (a backend
+      // switch above all) waits with it.
+      timeoutMs: settingNum('TIMON_SUMMARY_TIMEOUT_MS'),
+    },
   );
   dbApi.setMissionSummary(missionId, summary, lastEventId);
   return { summary, cached: false, eventId: lastEventId };

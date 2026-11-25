@@ -387,7 +387,7 @@ The ring beside the send button, under the message box, shows how full the model
 
 **Compact** works in one click, on the same model:
 
-- **Claude** and **Grok** compact the conversation in place: it goes on in the same chat with a shorter context, and the gauge drops at once.
+- **Claude**, **Codex** and **Grok** compact the conversation in place: it goes on in the same chat with a shorter context, and the gauge drops at once.
 - Other backends summarise the conversation and continue in a **new conversation** on the same model, which opens by itself when it is ready; the old one stays in your conversations. The button then reads **Compact into a new conversation**.
 
 The steps show in the panel (summarising, opening the new conversation, compacting) and the ring turns while it runs, even with the panel closed; a reload picks the progress back up. An in-place compaction waits for the agent to finish its reply. If the compaction fails, the panel and a notice say why.

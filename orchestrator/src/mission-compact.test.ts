@@ -8,8 +8,12 @@ import './test-home.js';
 import { test, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { bus, type BusEvent } from './bus.js';
+import { killAgent, respawnWithResume, sendToAgent } from './agent.js';
+import { dbApi } from './db.js';
+import { registerProfile, registerProvider } from './backends/registry.js';
+import type { NativeProviderDefinition } from './backends/types.js';
 import {
-  compactOperation, planCompaction, resetCompactOperations, startCompaction,
+  compactOperation, defaultCompactDeps, planCompaction, resetCompactOperations, startCompaction,
   type CompactDeps, type MissionLlm,
 } from './mission-compact.js';
 
@@ -227,4 +231,142 @@ test('a finished operation stays readable for a while, then is forgotten', async
   assert.equal(compactOperation(id)?.phase, 'done');
   assert.equal(compactOperation(id, Date.now() + 16 * 60_000), null);
   assert.equal(compactOperation(id), null);
+});
+
+test('programmatic native: runs hook in place, records metadata, and delivers follow-up message', async () => {
+  const id = 'm-prog-ok';
+  const codex: MissionLlm = { agent: 'acme.main', backend: 'codex', model: 'gpt-6.2-sol', reasoningEffort: null };
+  const runHook = async () => ({ metadata: { method: 'thread/compact/start', context_compaction: true } });
+  const called: { missionId: string; backend: string; timeoutMs: number }[] = [];
+  const deps = fakeDeps({
+    currentLlm: () => codex,
+    nativeCompact: (backend) => (backend === 'codex' ? { run: runHook } : null),
+    runNativeCompact: async (missionId, backend, run, timeoutMs) => {
+      called.push({ missionId, backend, timeoutMs });
+      return run({ missionId, sessionId: 'thr-1', timeoutMs });
+    },
+  });
+
+  const plan = planCompaction(codex, {}, deps.nativeCompact!);
+  assert.equal(plan.mode, 'native');
+  assert.ok('run' in plan && plan.run === runHook);
+
+  const seen = phases(id);
+  const out = startCompaction(id, { message: 'continue here' }, deps);
+  assert.equal(out.status, 202);
+  assert.equal(out.body.operation?.mode, 'native');
+  assert.equal(out.body.operation?.targetMissionId, id);
+
+  const list = await seen.ended;
+  assert.deepEqual(list.map((p) => p.phase), ['started', 'compacting', 'done']);
+  assert.deepEqual(called, [{ missionId: id, backend: 'codex', timeoutMs: 5_000 }]);
+  assert.equal(deps.recorded[0]!.outcome, 'done');
+  assert.deepEqual(deps.recorded[0]!.compact_metadata, { method: 'thread/compact/start', context_compaction: true });
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(deps.sent, ['continue here']);
+});
+
+test('programmatic native: non-resumable session, hook error, and timeout all end in error', async () => {
+  const codex: MissionLlm = { agent: 'acme.main', backend: 'codex', model: 'gpt-6.2-sol', reasoningEffort: null };
+  const runHook = async () => undefined;
+
+  const idGone = 'm-prog-gone';
+  const seenGone = phases(idGone);
+  startCompaction(idGone, {}, fakeDeps({
+    currentLlm: () => codex,
+    nativeCompact: () => ({ run: runHook }),
+    runNativeCompact: async () => 'not_resumable',
+  }));
+  const listGone = await seenGone.ended;
+  assert.equal(listGone.at(-1)?.phase, 'error');
+  assert.match(String(listGone.at(-1)?.error), /no session left to compact/);
+
+  const idErr = 'm-prog-err';
+  const seenErr = phases(idErr);
+  startCompaction(idErr, {}, fakeDeps({
+    currentLlm: () => codex,
+    nativeCompact: () => ({ run: runHook }),
+    runNativeCompact: async () => { throw new Error('thread/compact/start failed'); },
+  }));
+  const listErr = await seenErr.ended;
+  assert.equal(listErr.at(-1)?.phase, 'error');
+  assert.equal(listErr.at(-1)?.error, 'compaction: thread/compact/start failed');
+
+  const idSlow = 'm-prog-slow';
+  const seenSlow = phases(idSlow);
+  startCompaction(idSlow, {}, fakeDeps({
+    currentLlm: () => codex,
+    nativeCompact: () => ({ run: runHook }),
+    timeoutMs: () => 40,
+    runNativeCompact: () => new Promise(() => {}),
+  }));
+  const listSlow = await seenSlow.ended;
+  assert.equal(listSlow.at(-1)?.phase, 'error');
+  assert.match(String(listSlow.at(-1)?.error), /no compaction after/);
+});
+
+test('programmatic native: blocks concurrent sendToAgent/respawnWithResume and aborts on killAgent', async () => {
+  const id = 'm-prog-mutex';
+  const codex: MissionLlm = { agent: 'acme.main', backend: 'codex', model: 'gpt-6.2-sol', reasoningEffort: null };
+  let capturedSignal: AbortSignal | undefined;
+  let started!: () => void;
+  const hookStarted = new Promise<void>((resolve) => { started = resolve; });
+
+  const seen = phases(id);
+  startCompaction(id, {}, fakeDeps({
+    currentLlm: () => codex,
+    nativeCompact: () => ({ run: async () => undefined }),
+    runNativeCompact: (_missionId, _backend, _run, _timeoutMs, signal) => {
+      capturedSignal = signal;
+      started();
+      return new Promise((_resolve, reject) => {
+        signal?.addEventListener('abort', () => reject(signal.reason ?? new Error('aborted')), { once: true });
+      });
+    },
+  }));
+
+  await hookStarted;
+  assert.equal(await sendToAgent(id, 'hello'), 'turn_in_flight');
+  assert.equal(await respawnWithResume(id, 'hello'), false);
+
+  assert.equal(killAgent(id, { source: 'test' }), 'killed');
+  assert.equal(capturedSignal?.aborted, true);
+
+  const list = await seen.ended;
+  assert.equal(list.at(-1)?.phase, 'error');
+  assert.match(String(list.at(-1)?.error), /mission killed/);
+});
+
+test('defaultCompactDeps.runNativeCompact: returns not_resumable when per-mission scratch is missing', async () => {
+  const backendId = 'test-per-mission-compact';
+  const def = {
+    id: backendId,
+    transport: { kind: 'process-per-turn' },
+    launch: async () => ({ cmd: 'acme', args: [], initialStdin: null }),
+    codec: { kind: 'lines', parseLine: () => [], extractSessionId: () => null },
+    session: { store: 'per-mission', resumable: true, compact: { run: async () => undefined } },
+    permission: { model: 'sandbox' },
+    limits: { reporting: 'none' },
+    mcp: { timon: false },
+    declares: { binary: { names: ['acme'] } },
+  } as unknown as NativeProviderDefinition;
+  const releaseProvider = registerProvider('test-per-mission-compact', def);
+  const releaseProfile = registerProfile('test-per-mission-compact', {
+    id: backendId,
+    dialect: backendId,
+    label: 'Test Per-Mission',
+    models: ['m-1'],
+    defaultModel: 'm-1',
+  });
+  try {
+    const missionId = 'm-missing-scratch';
+    dbApi.createMission(missionId, 'acme.main', 'test prompt');
+    dbApi.setMissionSession(missionId, 'thr-1');
+    const deps = defaultCompactDeps();
+    const outcome = await deps.runNativeCompact!(missionId, backendId, async () => undefined, 5_000);
+    assert.equal(outcome, 'not_resumable');
+  } finally {
+    releaseProfile();
+    releaseProvider();
+  }
 });

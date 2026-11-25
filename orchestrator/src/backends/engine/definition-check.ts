@@ -103,9 +103,12 @@ export function definitionProblems(definition: unknown): string[] {
       else if (!persistent) problems.push('`session.setModel` switches the model of a live process: without `transport: stdio-persistent` there is none, the next turn is a new launch');
     }
     if (session.compact !== undefined) {
-      const command = isRecord(session.compact) ? session.compact.command : undefined;
-      if (typeof command !== 'string' || command.trim() === '') {
-        problems.push('`session.compact` must be `{ command: string }`: the non-empty message that makes the agent compact its own session');
+      const rec = isRecord(session.compact) ? session.compact : undefined;
+      const hasCommand = typeof rec?.command === 'string' && rec.command.trim() !== '';
+      const hasRun = isFunction(rec?.run);
+      const valid = (hasCommand && rec?.run === undefined) || (hasRun && rec?.command === undefined);
+      if (!valid) {
+        problems.push('`session.compact` must be `{ command: string }` or `{ run: Function }`: how the agent compacts its own session');
       }
     }
     if (session.maxPromptBytes !== undefined && !(Number.isInteger(session.maxPromptBytes) && (session.maxPromptBytes as number) > 0)) {

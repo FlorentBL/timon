@@ -150,7 +150,7 @@ export type ProviderServer = {
 export type ProviderConverseOptions = {
   /** Variables for the process, on top of the system whitelist. The daemon's own environment and the mission's token are never inherited. */
   readonly env?: Readonly<Record<string, string>>;
-  /** Default 20 000 ms, ceiling 60 000: a conversation is a question, not a job. The daemon stops the process when the time is up. */
+  /** Default 20 000 ms, ceiling 600 000: short probes stay near the default, while protocol operations such as session compaction can request a longer budget. The daemon stops the process when the time is up. */
   readonly timeoutMs?: number;
 };
 

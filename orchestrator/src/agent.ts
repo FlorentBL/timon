@@ -2830,6 +2830,18 @@ async function outliveStoppingProcess(live: RunningAgent): Promise<RunningAgent 
  */
 export type SendOutcome = 'delivered' | 'turn_in_flight' | 'no_live_process';
 
+export type CompactionHook = {
+  isActive: (missionId: string) => boolean;
+  abort: (missionId: string, reason?: string) => boolean;
+};
+
+let compactionHook: CompactionHook | null = null;
+
+/** Registers the mission-compaction guard without creating a circular import at init time. */
+export function registerCompactionHook(hook: CompactionHook | null): void {
+  compactionHook = hook;
+}
+
 export async function sendToAgent(
   missionId: string,
   input: string,
@@ -2845,7 +2857,7 @@ export async function sendToAgent(
 ): Promise<SendOutcome> {
   assertLicensedExecution(licenseState());
   assertFreeAccountAccess(dbApi.getMission(missionId)?.owner_user_id);
-  if (backendSwitches.has(missionId)) return 'turn_in_flight';
+  if (backendSwitches.has(missionId) || compactionHook?.isActive(missionId)) return 'turn_in_flight';
   // A new input starts a new turn: a replay still waiting would answer a
   // request nobody is asking any more.
   if (origin?.turn_retry === undefined) cancelTurnRetry(missionId);
@@ -3072,6 +3084,7 @@ export async function respawnWithResume(
   /** Cf. `sendToAgent`. */
   turn: { agentCommand?: boolean; replayContext?: boolean } = {},
 ): Promise<boolean> {
+  if (backendSwitches.has(missionId) || compactionHook?.isActive(missionId)) return false;
   const live = running.get(missionId);
   if (live && (!live.terminationIntent || await outliveStoppingProcess(live))) return false; // still alive → sendToAgent
   const m = dbApi.getMission(missionId);
@@ -3942,15 +3955,16 @@ export function describeKillOrigin(origin: KillOrigin): string {
  */
 export function killAgent(missionId: string, origin: KillOrigin): 'killed' | 'closed' | 'not_found' {
   cancelTurnRetry(missionId);
+  const abortedCompaction = compactionHook?.abort(missionId, 'mission killed') === true;
   const agent = running.get(missionId);
   if (!agent) {
     const m = dbApi.getMission(missionId);
-    if (!m || m.status !== 'running') return 'not_found';
+    if (!m || m.status !== 'running') return abortedCompaction ? 'killed' : 'not_found';
     const reason = dbApi.finishMission(missionId, 'terminated', 0, 'killed');
     bus.publish({ kind: 'mission_complete', missionId, status: 'terminated', exitCode: 0, reason });
     notifyParentOnComplete(missionId, 'terminated');
     console.warn(`[kill] mission ${missionId.slice(0, 8)} (${m.agent_name}) had no process — row closed, ${describeKillOrigin(origin)}`);
-    return 'closed';
+    return abortedCompaction ? 'killed' : 'closed';
   }
   console.warn(`[kill] mission ${missionId.slice(0, 8)} (${agent.agentName}) stopped, ${describeKillOrigin(origin)}`);
   agent.terminationIntent = 'stopped'; // deliberate stop → terminal `completed`, not `failed`

@@ -49,7 +49,8 @@ const PROVIDER_TYPE_NAMES = ['BackendProfile', 'RegisteredProfile', 'Dialect', '
   'RemoteDialect', 'RemoteSessionOpenArgs', 'RemoteSessionHost', 'SessionEnd', 'SessionDriver', 'SessionHost',
   'SessionInfo', 'SessionCapabilities', 'TurnOutcome', 'PermissionRequest', 'PermissionDecision', 'PermissionWait', 'ApprovalScope',
   'BackendCapabilities', 'BackendLaunchContext', 'RemoteResumeState', 'RemoteSessionResume',
-  'SessionAskRequest', 'SessionAskOutcome', 'SessionAnswer', 'SessionQuestion', 'SessionQuestionOption'];
+  'SessionAskRequest', 'SessionAskOutcome', 'SessionAnswer', 'SessionQuestion', 'SessionQuestionOption',
+  'NativeCompact', 'NativeCompactContext', 'NativeCompactResult'];
 
 /**
  * The shape of the named exports of `entry`, as the contract freezes it.
@@ -126,7 +127,8 @@ const KIT_TYPE_NAMES: Record<'provider' | 'testing', readonly string[]> = {
     'ProviderAccount', 'ProviderAccountContext', 'ProviderAccountsDeclaration', 'ProviderLoginDriver', 'ProviderHostSignInDeclaration',
     'ProviderTokenDriver', 'AcpAgentSpec', 'AcpSignIn',
     'AcpExtensionHandler', 'AcpExtensionCards', 'AcpCardQuestion', 'AcpCardOption', 'AcpCardAnswer', 'AcpCardOutcome',
-    'AcpPlanApproval', 'AcpPlanVerdict', 'ProviderBinaryIdentity', 'ProviderUnverified'],
+    'AcpPlanApproval', 'AcpPlanVerdict', 'ProviderBinaryIdentity', 'ProviderUnverified',
+    'NativeCompact', 'NativeCompactContext', 'NativeCompactResult'],
   testing: ['ConformanceCheck', 'ConformanceContext', 'LineExpectation', 'RemoteExpectation', 'TestFn', 'BoundProfile',
     'FakeCli', 'FakeCliOptions', 'ReplayResult', 'Chunking', 'ProviderContextOptions', 'LoggedLine',
     // The dictation bench (API 14): what an engine author writes a test against.

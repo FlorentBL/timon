@@ -44,9 +44,9 @@ export {
 export type {
   AccountUsage, AnyDialect, ApprovalScope, AssistantDeltaPayload, Backend, BackendCapabilities, BackendCapability,
   BackendLaunchContext, BackendName, BackendProfile, BuildSpawnOpts, Dialect, DiscoveredModel, EnvResolver,
-  EnvValue, ImageAttachment, LocalEnvPolicy, NormalizedEvent, OpenSpan, PermissionDecision, PermissionModel,
+  EnvValue, ImageAttachment, LocalEnvPolicy, NativeCompact, NativeCompactContext, NativeCompactResult, NormalizedEvent, OpenSpan, PermissionDecision, PermissionModel,
   PermissionRequest, PermissionWait, ProfileRuntime, ProviderConfig, ProviderRetryKind, ProviderRetryPayload, RateLimitReporting, RegisteredProfile, RemoteDialect,
-  RemoteResumeState, RemoteSessionHost, RemoteSessionOpenArgs, RemoteSessionResume, SecretRef, SessionCapabilities,
+  RemoteResumeState, RemoteSessionHost, RemoteSessionOpenArgs, RemoteSessionResume, RunNativeCompactOpts, SecretRef, SessionCapabilities,
   SessionAnswer, SessionAskOutcome, SessionAskRequest, SessionDriver, SessionEnd, SessionHost, SessionInfo, SessionOpenArgs,
   SessionQuestion, SessionQuestionOption, SessionStdio, SessionStore, SpanOp,
   SpanState, SpawnResult, TurnOutcome, UsageProbeOptions, UsageWindow,
