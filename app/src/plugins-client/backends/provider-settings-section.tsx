@@ -116,7 +116,7 @@ function BackendSettings({ backend, protocols, onSaved, onRemoved }: {
           </Button>
         ) : null}
         menu={handMade ? (
-          <DropdownMenuItem className="text-destructive focus:text-destructive" disabled={busy} onSelect={() => void remove()}>
+          <DropdownMenuItem variant="destructive" disabled={busy} onSelect={() => void remove()}>
             {t('providerPage.settings.remove')}
           </DropdownMenuItem>
         ) : null}

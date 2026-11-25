@@ -1782,8 +1782,11 @@
     "interruptionUnknown": "Mission beendet: Ursache unbestimmt (kein verwertbares Signal)",
     "interruptionDefault": "Mission unterbrochen",
     "runBy": {
-      "label": "ausgeführt von {agent}",
+      "assigned": "zugewiesen an {named}",
       "title": "Zugewiesen an {named}, ausgeführt von {agent}: {reason}",
+      "titlePlanned": "Zugewiesen an {named}, wird ausgeführt von {agent}: {reason}",
+      "detail": "Ausgeführt von {agent}",
+      "detailPlanned": "Wird ausgeführt von {agent}",
       "reasonPinned": "das Projekt heftet diese Rolle an {agent} (roles.json)",
       "reasonMissing": "{named} existiert nicht",
       "reasonOtherProject": "{named} gehört nicht zum Projekt der Aufgabe",
@@ -1840,7 +1843,12 @@
       "openMission": "Mission öffnen",
       "stop": "Mission stoppen",
       "stopConfirm": "Die Mission dieser Aufgabe stoppen?",
-      "stopFailed": "Die Mission konnte nicht gestoppt werden (HTTP {status})."
+      "stopFailed": "Die Mission konnte nicht gestoppt werden (HTTP {status}).",
+      "underMinute": "< 1 Min.",
+      "pendingPermission": "Wartet seit {age} auf eine Berechtigung ({tool})",
+      "pendingQuestion": "Wartet seit {age} auf eine Antwort",
+      "pendingDeadline": "automatische Ablehnung in {left}",
+      "pendingOthers": "{count, plural, one {# weitere Karte wartet} other {# weitere Karten warten}}"
     }
   },
   "agentsPage": {
@@ -3100,8 +3108,8 @@
     "local_free": "Auf diesem Rechner ist keine Lizenz zu verwalten.",
     "client_upgrade_required": "Aktualisiere Timon auf eine unterstützte Version und versuche es dann erneut.",
     "plugin_composition_fixed": "Dieses Angebot hat eine feste Plugin-Zusammenstellung. Konfiguriere die enthaltenen Plugins oder steige um, um sie zu ändern.",
-    "single_superadmin_required": "Diese Lizenz erlaubt ein aktives Konto, und das muss ein Superadmin sein.",
-    "free_incompatible": "Diese Lizenz kann auf die aktuelle Installation nicht angewendet werden. Behalte einen aktiven Superadmin, deaktiviere die anderen Konten und versuche es erneut. Deine Daten und deine aktuelle Lizenz wurden behalten.",
+    "single_superadmin_required": "Diese Lizenz erlaubt nur ein aktives Konto, und es muss ein Superadmin sein.",
+    "free_incompatible": "Diese Lizenz kann auf die aktuelle Installation nicht angewendet werden. Behalte einen aktiven Superadmin, deaktiviere die anderen Konten und versuche es erneut. Deine Daten und deine aktuelle Lizenz bleiben erhalten.",
     "license_changed": "Die Lizenz hat sich während dieser Anfrage geändert. Lade neu und versuche es erneut.",
     "activation_key_missing": "Auf diesem Gerät ist kein Aktivierungsschlüssel gespeichert. Nutze dein Lizenzkonto oder wende dich an den Support, um ihn freizugeben.",
     "deactivate": "Diesen Rechner deaktivieren",

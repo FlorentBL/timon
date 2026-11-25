@@ -437,7 +437,7 @@
   "binariesSettings": {
     "brokenPin": "No se puede ejecutar la ruta fijada: {path}",
     "pathLabel": "Ruta del binario de {name}",
-    "placeholder": "Ruta completa, por ejemplo /usr/local/bin/claude o C:\\Users\\you\\AppData\\Roaming\\npm\\claude.cmd",
+    "placeholder": "Ruta completa, por ejemplo {example}",
     "browse": "Examinar…",
     "save": "Guardar ruta",
     "clear": "Quitar la ruta fijada",
@@ -450,8 +450,13 @@
       "path_missing": "No hay nada en esta ruta.",
       "path_not_file": "Esto es una carpeta. Elige el archivo del programa.",
       "path_not_executable": "Este archivo no se puede ejecutar: no es ejecutable.",
+      "wrong_program": "Este archivo no es la CLI de {name}.",
+      "no_answer": "Este programa no respondió a `--version`: falló, tardó demasiado o escribió demasiado.",
+      "unsupported_program": "En Windows, elige el .exe del programa o el archivo .cmd que npm instaló para él.",
       "no_config": "Termina primero la configuración.",
       "config_unreadable": "No se puede leer timon.config.json. Corrígelo o restáuralo y vuelve a comprobar.",
+      "pin_write_failed": "No se pudo escribir timon.config.json. Comprueba que Timon puede escribir en su carpeta y vuelve a intentarlo.",
+      "probe_setup_failed": "No se pudo comprobar este archivo: no se pudo preparar la carpeta donde se hace la comprobación. Vuelve a intentarlo.",
       "invalid_body": "No se puede guardar esta ruta.",
       "browse": "No se pudo abrir el selector de archivos.",
       "generic": "El cambio falló (error {status})."

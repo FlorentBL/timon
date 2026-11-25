@@ -110,7 +110,7 @@ export function LayoutPicker({
           <Dropdown.Item
             disabled={!canClear}
             onSelect={onClear}
-            className="flex cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-xs text-muted-foreground outline-none transition-colors data-[disabled]:pointer-events-none data-[highlighted]:bg-muted data-[highlighted]:text-destructive data-[disabled]:opacity-50"
+            className="flex cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-xs text-muted-foreground outline-none transition-colors data-[disabled]:pointer-events-none data-[highlighted]:bg-destructive/10 data-[highlighted]:text-destructive data-[disabled]:opacity-50"
           >
             <Trash2 className="size-3.5" />
             {t('multichat.grid.clear')}

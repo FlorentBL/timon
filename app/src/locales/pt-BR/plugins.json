@@ -437,7 +437,7 @@
   "binariesSettings": {
     "brokenPin": "O caminho fixado não pode ser executado: {path}",
     "pathLabel": "Caminho do binário {name}",
-    "placeholder": "Caminho completo, por exemplo /usr/local/bin/claude ou C:\\Users\\you\\AppData\\Roaming\\npm\\claude.cmd",
+    "placeholder": "Caminho completo, por exemplo {example}",
     "browse": "Procurar…",
     "save": "Salvar caminho",
     "clear": "Remover fixação",
@@ -450,8 +450,13 @@
       "path_missing": "Não existe nada neste caminho.",
       "path_not_file": "Isto é uma pasta. Escolha o próprio arquivo do programa.",
       "path_not_executable": "Este arquivo não pode ser executado: não é executável.",
+      "wrong_program": "Este arquivo não é a CLI do {name}.",
+      "no_answer": "Este programa não respondeu a `--version`: falhou, demorou demais ou escreveu demais.",
+      "unsupported_program": "No Windows, escolha o .exe do programa ou o arquivo .cmd que o npm instalou para ele.",
       "no_config": "Conclua a configuração primeiro.",
       "config_unreadable": "Não é possível ler timon.config.json. Corrija-o ou restaure-o e verifique novamente.",
+      "pin_write_failed": "Não foi possível gravar timon.config.json. Verifique se o Timon pode gravar na pasta dele e tente novamente.",
+      "probe_setup_failed": "Não foi possível verificar este arquivo: a pasta da verificação não pôde ser preparada. Tente novamente.",
       "invalid_body": "Este caminho não pode ser salvo.",
       "browse": "Não foi possível abrir o seletor de arquivos.",
       "generic": "A alteração falhou (erro {status})."

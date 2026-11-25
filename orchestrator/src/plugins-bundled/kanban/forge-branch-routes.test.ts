@@ -58,6 +58,7 @@ const reads: number[] = [];
 const fakeBranches: ForgeBranchWriter = {
   login: async () => ({ ok: true, login }),
   pullRequestBranch: async (_repo, number) => { reads.push(number); return branch; },
+  repositorySize: async () => ({ ok: true, kib: 1024 }),
   updatePullRequestBranch: async (repo, number, sha) => { updates.push({ repo, number, sha }); return update; },
   commitParents: async () => ({ ok: true, parents }),
 };
@@ -316,4 +317,30 @@ test('while Timon resolves conflicts, where it fetches and pushes and as whom is
   assert.equal((await PUT('daemon', { contributor_conflicts: 'ask' })).status, 200);
   assert.equal((await PUT('daemon', { remote_url: before.remote_url, branch_prefix: 'feat/' })).status, 200);
   assert.deepEqual(await stored(), { ...before, contributor_conflicts: 'ask' });
+});
+
+test('switching back to "ask" and repointing the remote each leave an audit row naming who did it, never the URL', async () => {
+  const PUT = (who: 'daemon' | 'mission' | 'person', body: Record<string, unknown>) =>
+    call('PUT', '/api/projects/acme/integration', who, body);
+  assert.equal((await PUT('person', { contributor_conflicts: 'resolve' })).status, 200);
+  const original = ((await (await call('GET', '/api/projects/acme/integration', 'person')).json()) as {
+    integration: { remote_url: string };
+  }).integration.remote_url;
+  const seen = new Set(dbApi.listAuditLog(500).map((a) => a.id));
+  const fresh = () => dbApi.listAuditLog(500).filter((a) => !seen.has(a.id));
+  assert.equal((await PUT('mission', { contributor_conflicts: 'ask' })).status, 200);
+  assert.equal((await PUT('mission', { remote_url: 'https://github.com/someone-else/widgets.git' })).status, 200);
+  assert.equal((await PUT('mission', { branch_prefix: 'sec/' })).status, 200);
+  const rows = fresh();
+  const conflicts = rows.filter((a) => a.action === 'project.contributor_conflicts_set');
+  assert.deepEqual(conflicts.map((a) => [a.target, a.actor]), [['acme:ask', 'api-token']]);
+  const pushTarget = rows.filter((a) => a.action === 'project.push_target_changed');
+  assert.deepEqual(pushTarget.map((a) => [a.target, a.actor]), [['acme:remote_url', 'api-token']], 'the prefix is no push target');
+  assert.equal(JSON.stringify(rows).includes('someone-else'), false);
+  // A person turning it back on is journaled too.
+  for (const row of rows) seen.add(row.id);
+  assert.equal((await PUT('person', { contributor_conflicts: 'resolve', remote_url: original })).status, 200);
+  const back = fresh().filter((a) => a.action !== 'project.integration_set').map((a) => [a.action, a.target]).sort();
+  assert.deepEqual(back, [['project.contributor_conflicts_set', 'acme:resolve'], ['project.push_target_changed', 'acme:remote_url']]);
+  assert.equal((await PUT('person', { contributor_conflicts: 'ask', branch_prefix: 'feat/' })).status, 200);
 });

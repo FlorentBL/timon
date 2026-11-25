@@ -26,10 +26,12 @@
  * malformed frontmatter is skipped, never fatal.
  */
 import {
-  constants as fsConstants, copyFileSync, existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync,
+  constants as fsConstants, copyFileSync, existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, realpathSync, rmSync,
+  statSync,
 } from 'node:fs';
 import { homedir } from 'node:os';
-import { basename, dirname, join, relative, resolve, sep } from 'node:path';
+import { basename, dirname, isAbsolute, join, relative, resolve, sep, win32 } from 'node:path';
+import { z } from 'zod';
 import { TIMON_HOME, SKILLS_DIR, skillFile } from './paths.js';
 import { SkillExistsError, readToolsValue, writeSkillFile } from './skills.js';
 
@@ -179,6 +181,31 @@ function listMarkdownFiles(dir: string): string[] {
   return out;
 }
 
+/** One folder-format skill (`<dir>/SKILL.md`), or null when the folder holds none. */
+function readSkillFolder(
+  dir: string, source: SkillSource, scope: 'global' | 'project',
+  editable: boolean, idPrefix = '',
+): SkillEntry | null {
+  const name = basename(dir);
+  const file = join(dir, 'SKILL.md');
+  const st = safeStat(file);
+  if (!st) return null;
+  const content = safeRead(file);
+  if (content == null) return null;
+  const { fm, body } = parseFrontmatter(content);
+  const id = idPrefix ? `${idPrefix}:${name}` : name;
+  if (!ID_RE.test(id)) return null;
+  return {
+    id,
+    title: deriveTitle(content, fm, name),
+    description: deriveDescription(body, fm),
+    source, format: source === 'timon' ? 'timon' : 'claude-skill', scope,
+    path: file, editable,
+    allowed_tools: fm.allowed_tools,
+    size: st.size, updated_at: st.mtimeMs,
+  };
+}
+
 /** Skills format-dossier (`<dir>/<id>/SKILL.md`) : TIMON, claude skills, plugin skills. */
 function scanSkillDir(
   baseDir: string, source: SkillSource, scope: 'global' | 'project',
@@ -186,23 +213,8 @@ function scanSkillDir(
 ): SkillEntry[] {
   const out: SkillEntry[] = [];
   for (const name of listDirs(baseDir)) {
-    const file = join(baseDir, name, 'SKILL.md');
-    const st = safeStat(file);
-    if (!st) continue;
-    const content = safeRead(file);
-    if (content == null) continue;
-    const { fm, body } = parseFrontmatter(content);
-    const id = idPrefix ? `${idPrefix}:${name}` : name;
-    if (!ID_RE.test(id)) continue;
-    out.push({
-      id,
-      title: deriveTitle(content, fm, name),
-      description: deriveDescription(body, fm),
-      source, format: source === 'timon' ? 'timon' : 'claude-skill', scope,
-      path: file, editable,
-      allowed_tools: fm.allowed_tools,
-      size: st.size, updated_at: st.mtimeMs,
-    });
+    const entry = readSkillFolder(join(baseDir, name), source, scope, editable, idPrefix);
+    if (entry) out.push(entry);
   }
   return out;
 }
@@ -240,6 +252,86 @@ function scanCommandDir(
   return out;
 }
 
+/** The part of `.claude-plugin/plugin.json` read here: where the plugin keeps its skills. */
+const PluginManifestSchema = z.object({
+  skills: z.union([z.string(), z.array(z.string())]).optional(),
+});
+
+/** Is `target` inside `root` (or `root` itself)? Both already resolved. */
+function isInside(root: string, target: string): boolean {
+  const rel = relative(root, target);
+  return rel === '' || (rel !== '..' && !rel.startsWith(`..${sep}`) && !isAbsolute(rel));
+}
+
+/**
+ * The skill folders a plugin's manifest declares (`"skills"`: one path or an
+ * array), resolved under `root`. A path that is absolute, climbs out with
+ * `..`, or reaches out through a link is dropped: a manifest is the plugin
+ * author's text, and the Skills page must not list files from elsewhere.
+ */
+export function pluginManifestSkillDirs(root: string): string[] {
+  const raw = safeRead(join(root, '.claude-plugin', 'plugin.json'));
+  if (raw == null) return [];
+  let json: unknown;
+  try { json = JSON.parse(raw); } catch { return []; }
+  const parsed = PluginManifestSchema.safeParse(json);
+  if (!parsed.success || parsed.data.skills === undefined) return [];
+  const declared = typeof parsed.data.skills === 'string' ? [parsed.data.skills] : parsed.data.skills;
+  let realRoot: string;
+  try { realRoot = realpathSync(root); } catch { return []; }
+  const out: string[] = [];
+  for (const p of declared) {
+    if (p.trim() === '' || isAbsolute(p) || win32.isAbsolute(p)) continue;
+    const abs = resolve(root, p);
+    if (!isInside(resolve(root), abs)) continue;
+    let real: string;
+    try { real = realpathSync(abs); } catch { continue; }
+    if (!isInside(realRoot, real)) continue;
+    out.push(abs);
+  }
+  return out;
+}
+
+/**
+ * The skills of one plugin install. The manifest's folders come first (a
+ * folder with a `SKILL.md` is one skill, any other is a folder of skills),
+ * then the flat `skills/` scans as a fallback. One folder reached twice is
+ * listed once; two folders giving the same id (one skill name in two
+ * categories) keep the one with the smallest relative path and mark the other
+ * `shadowed`, so the outcome does not depend on the manifest's order or on
+ * the file system's listing order.
+ */
+function scanPluginSkills(root: string, pluginName: string): SkillEntry[] {
+  const found: SkillEntry[] = [];
+  for (const dir of pluginManifestSkillDirs(root)) {
+    const one = readSkillFolder(dir, 'plugin', 'global', false, pluginName);
+    if (one) found.push(one);
+    else found.push(...scanSkillDir(dir, 'plugin', 'global', false, pluginName));
+  }
+  // skills : <root>/skills/ ou <root>/.claude/skills/
+  for (const sub of ['skills', join('.claude', 'skills')]) {
+    found.push(...scanSkillDir(join(root, sub), 'plugin', 'global', false, pluginName));
+  }
+
+  const byPath = new Map<string, SkillEntry>();
+  for (const e of found) {
+    const key = resolve(e.path);
+    if (!byPath.has(key)) byPath.set(key, e);
+  }
+  const relKey = (e: SkillEntry) => relative(root, e.path).split(sep).join('/');
+  const unique = [...byPath.values()].sort((a, b) => {
+    const ka = relKey(a);
+    const kb = relKey(b);
+    return ka < kb ? -1 : ka > kb ? 1 : 0;
+  });
+  const seen = new Set<string>();
+  for (const e of unique) {
+    if (seen.has(e.id)) e.shadowed = true;
+    else seen.add(e.id);
+  }
+  return unique;
+}
+
 /** Installed plugins: skills + commands under each installPath. */
 function scanPlugins(): SkillEntry[] {
   const manifest = safeRead(join(CLAUDE_HOME, 'plugins', 'installed_plugins.json'));
@@ -252,10 +344,7 @@ function scanPlugins(): SkillEntry[] {
     for (const inst of installs ?? []) {
       const root = inst.installPath;
       if (!root || !existsSync(root)) continue;
-      // skills : <root>/skills/ ou <root>/.claude/skills/
-      for (const sub of ['skills', join('.claude', 'skills')]) {
-        out.push(...scanSkillDir(join(root, sub), 'plugin', 'global', false, pluginName));
-      }
+      out.push(...scanPluginSkills(root, pluginName));
       // commands : <root>/commands/ ou <root>/.claude/commands/
       for (const sub of ['commands', join('.claude', 'commands')]) {
         out.push(...scanCommandDir(join(root, sub), 'plugin', 'global', false, pluginName));
@@ -348,7 +437,27 @@ export function resolveSkill(id: string, opts: ListOptions & { origin?: SkillOri
   const matches = listAllSkills(opts).filter((e) => e.id === id && (origin
     ? e.source === origin.source && (!origin.format || e.format === origin.format)
     : !e.shadowed));
-  return matches[0] ?? null;
+  // Within one source, an id shared by two folders of a plugin keeps the winner.
+  return matches.find((e) => !e.shadowed) ?? matches[0] ?? null;
+}
+
+export type ShortNameResolution =
+  | { entry: SkillEntry; candidates: string[] }
+  | { entry: null; candidates: string[] };
+
+/**
+ * `/handoff` for `mattpocock-skills:handoff`, as Claude Code allows: a name
+ * without a namespace names the plugin skill whose last id segment it is, but
+ * only when exactly one plugin id ends that way. Two or more → nothing is
+ * resolved, and the ids are returned so the caller can say which to type.
+ */
+export function resolvePluginShortName(name: string, opts: ListOptions = {}): ShortNameResolution {
+  if (!ID_RE.test(name) || name.includes(':')) return { entry: null, candidates: [] };
+  const matches = listAllSkills(opts).filter((e) =>
+    e.source === 'plugin' && !e.shadowed && e.id.includes(':') && e.id.slice(e.id.lastIndexOf(':') + 1) === name);
+  const candidates = [...new Set(matches.map((e) => e.id))].sort();
+  if (candidates.length !== 1) return { entry: null, candidates };
+  return { entry: matches[0]!, candidates };
 }
 
 /** Reads the raw content of an entry's file. */

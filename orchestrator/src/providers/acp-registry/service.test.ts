@@ -6,7 +6,7 @@ import '../../test-home.js';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { buildTarGzWithModes, buildZip } from './archive-fixtures.js';
@@ -250,6 +250,56 @@ test('restore registers an intact install and refuses one whose files changed', 
   assert.equal(isBackendName(profileIdOf('rest')), true);
   assert.equal(readFileSync(join(home, 'providers', 'acp-registry', 'agents', 'rest', '1.0.0', 'dist', 'agent'), 'utf8'), '#!/bin/sh\necho one\n');
   tampered.dispose();
+});
+
+test('a bundle with internal links installs, is restored, and a re-pointed link counts as tampering', { skip: !posix }, async () => {
+  const bundle = buildTarGzWithModes([
+    { path: 'vibe-acp', data: '#!/bin/sh\necho vibe\n', mode: 0o755 },
+    { path: '_internal/Python.framework/Versions/3.12/Python', data: 'libpython', mode: 0o755 },
+    { path: '_internal/Python.framework/Versions/3.13/Python', data: 'other', mode: 0o755 },
+    { path: '_internal/Python', type: '2', link: 'Python.framework/Versions/Current/Python' },
+    { path: '_internal/Python.framework/Versions/Current', type: '2', link: '3.12' },
+    // Launched through a link: allowed, the file it reaches is inside.
+    { path: 'bin/vibe', type: '2', link: '../vibe-acp' },
+  ]);
+  const served: Served = new Map([
+    [REGISTRY_URL, registryDoc([agentEntry({ id: 'vibe', archive: 'https://downloads.example.com/v.tar.gz', sha256: sha(bundle), cmd: './bin/vibe' })])],
+    ['https://downloads.example.com/v.tar.gz', bundle],
+  ]);
+  const { service, home } = newService(served);
+  const view = await service.install('vibe');
+  assert.equal(view.installed?.state, 'ok');
+  service.dispose();
+
+  const again = new AcpRegistryService({ home, fetchFn: fakeFetch(served), platform: 'linux', arch: 'x64' });
+  await again.restore();
+  assert.equal(isBackendName(profileIdOf('vibe')), true, 'links hash the same at boot');
+  again.dispose();
+
+  // Same files, one link aimed elsewhere inside the bundle: still a change.
+  const current = join(home, 'providers', 'acp-registry', 'agents', 'vibe', '1.0.0', '_internal', 'Python.framework', 'Versions', 'Current');
+  rmSync(current);
+  symlinkSync('3.13', current);
+  const tampered = new AcpRegistryService({ home, fetchFn: fakeFetch(served), platform: 'linux', arch: 'x64' });
+  await tampered.restore();
+  assert.equal(isBackendName(profileIdOf('vibe')), false, 'a re-pointed link is never registered');
+  tampered.dispose();
+});
+
+test('a registry cmd that is a link, or sits below one, reaching outside the folder is refused', { skip: !posix }, async () => {
+  // Built by hand on disk: the extractor itself never lets such a link in, this is the second fence.
+  const { service } = newService(new Map());
+  const commandWithin = (service as unknown as { commandWithin(dir: string, cmd: string): unknown }).commandWithin.bind(service);
+  const outside = mkdtempSync(join(tmpdir(), 'timon-acp-outside-'));
+  writeFileSync(join(outside, 'agent'), '#!/bin/sh\n');
+  const dir = mkdtempSync(join(tmpdir(), 'timon-acp-cmd-'));
+  symlinkSync(join(outside, 'agent'), join(dir, 'agent'));
+  symlinkSync(outside, join(dir, 'up'));
+  mkdirSync(join(dir, 'folder'));
+  for (const cmd of ['./agent', './up/agent', './folder']) {
+    assert.throws(() => commandWithin(dir, cmd), (e: unknown) => e instanceof AcpRegistryError && e.code === 'command-missing', cmd);
+  }
+  service.dispose();
 });
 
 test('remove unregisters and deletes; an unreachable registry keeps what is installed usable', { skip: !posix }, async () => {

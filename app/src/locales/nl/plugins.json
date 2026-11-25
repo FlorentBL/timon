@@ -437,7 +437,7 @@
   "binariesSettings": {
     "brokenPin": "Het vastgezette pad kan niet worden uitgevoerd: {path}",
     "pathLabel": "Pad naar het programma {name}",
-    "placeholder": "Volledig pad, bijvoorbeeld /usr/local/bin/claude of C:\\Users\\jij\\AppData\\Roaming\\npm\\claude.cmd",
+    "placeholder": "Volledig pad, bijvoorbeeld {example}",
     "browse": "Bladeren…",
     "save": "Pad opslaan",
     "clear": "Vastzetting verwijderen",
@@ -450,8 +450,13 @@
       "path_missing": "Er bestaat niets op dit pad.",
       "path_not_file": "Dit is een map. Kies het programmabestand zelf.",
       "path_not_executable": "Dit bestand kan niet worden uitgevoerd: het is niet uitvoerbaar.",
+      "wrong_program": "Dit bestand is niet de {name}-CLI.",
+      "no_answer": "Dit programma antwoordde niet op `--version`: het mislukte, duurde te lang of schreef te veel.",
+      "unsupported_program": "Kies op Windows het .exe-bestand van het programma, of het .cmd-bestand dat npm ervoor installeerde.",
       "no_config": "Rond eerst de configuratie af.",
       "config_unreadable": "timon.config.json kan niet worden gelezen. Herstel het bestand en controleer opnieuw.",
+      "pin_write_failed": "timon.config.json kon niet worden geschreven. Controleer of Timon in de map mag schrijven en probeer het opnieuw.",
+      "probe_setup_failed": "Dit bestand kon niet worden gecontroleerd: de map voor de controle kon niet worden voorbereid. Probeer het opnieuw.",
       "invalid_body": "Dit pad kan niet worden opgeslagen.",
       "browse": "De bestandskiezer kon niet worden geopend.",
       "generic": "De wijziging is mislukt (fout {status})."

@@ -437,7 +437,7 @@
   "binariesSettings": {
     "brokenPin": "Der angeheftete Pfad lässt sich nicht ausführen: {path}",
     "pathLabel": "Pfad zum Programm {name}",
-    "placeholder": "Vollständiger Pfad, zum Beispiel /usr/local/bin/claude oder C:\\Users\\du\\AppData\\Roaming\\npm\\claude.cmd",
+    "placeholder": "Vollständiger Pfad, zum Beispiel {example}",
     "browse": "Durchsuchen…",
     "save": "Pfad speichern",
     "clear": "Anheftung entfernen",
@@ -450,8 +450,13 @@
       "path_missing": "Unter diesem Pfad existiert nichts.",
       "path_not_file": "Das ist ein Ordner. Wähle die Programmdatei selbst.",
       "path_not_executable": "Diese Datei kann nicht ausgeführt werden: Sie ist nicht ausführbar.",
+      "wrong_program": "Diese Datei ist nicht die {name}-CLI.",
+      "no_answer": "Dieses Programm hat nicht auf `--version` geantwortet: Es ist fehlgeschlagen, hat zu lange gebraucht oder zu viel ausgegeben.",
+      "unsupported_program": "Wähle unter Windows die .exe des Programms oder die .cmd-Datei, die npm dafür installiert hat.",
       "no_config": "Schließe zuerst die Einrichtung ab.",
       "config_unreadable": "timon.config.json kann nicht gelesen werden. Repariere oder stelle sie wieder her und prüfe dann erneut.",
+      "pin_write_failed": "timon.config.json konnte nicht geschrieben werden. Prüfe, ob Timon in seinen Ordner schreiben darf, und versuche es erneut.",
+      "probe_setup_failed": "Diese Datei konnte nicht geprüft werden: Der Ordner für die Prüfung konnte nicht vorbereitet werden. Versuche es erneut.",
       "invalid_body": "Dieser Pfad kann nicht gespeichert werden.",
       "browse": "Die Dateiauswahl konnte nicht geöffnet werden.",
       "generic": "Die Änderung ist fehlgeschlagen (Fehler {status})."

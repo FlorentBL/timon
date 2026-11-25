@@ -3,7 +3,7 @@ import { ZodError } from 'zod';
 import { dbApi } from '../../db.js';
 import { listAgents } from '../../agent.js';
 import { readRoles } from '../../projects.js';
-import { resolveTaskLlm } from '../../dispatcher.js';
+import { previewTaskRouting, resolveTaskLlm } from '../../dispatcher.js';
 import { activeProfiles, installedProfiles, inactiveProfiles, registeredBackendOwners } from '../../backends/registry.js';
 import { saveBackendOverlay } from '../../backends/overlays.js';
 import { modelPreferences, mergeModelPreferences } from '../../backends/model-preferences.js';
@@ -32,7 +32,7 @@ function references(id: string, req: Request) {
       const role = project ? readRoles(project)[routine.task_type] : undefined;
       return (role?.backend ?? agent?.backend) === id;
     }).map((routine) => ({ id: routine.id, label: routine.name, enabled: !!routine.enabled })),
-    tasks: scopedDb(viewerFromRequest(req)).listTasks('PENDING').filter((task) => resolveTaskLlm(task).backend === id || task.fallback_backend_override === id)
+    tasks: scopedDb(viewerFromRequest(req)).listTasks('PENDING').filter((task) => resolveTaskLlm(task, undefined, previewTaskRouting(task).agent).backend === id || task.fallback_backend_override === id)
       .map((task) => ({ id: task.id, label: task.title })),
   };
 }

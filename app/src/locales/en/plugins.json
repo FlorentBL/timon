@@ -513,7 +513,7 @@
   "binariesSettings": {
     "brokenPin": "The pinned path cannot be run: {path}",
     "pathLabel": "Path to the {name} binary",
-    "placeholder": "Full path, for example /usr/local/bin/claude or C:\\Users\\you\\AppData\\Roaming\\npm\\claude.cmd",
+    "placeholder": "Full path, for example {example}",
     "browse": "Browse…",
     "save": "Save path",
     "clear": "Remove pin",
@@ -526,8 +526,13 @@
       "path_missing": "Nothing exists at this path.",
       "path_not_file": "This is a folder. Pick the program file itself.",
       "path_not_executable": "This file cannot be run: it is not executable.",
+      "wrong_program": "This file is not the {name} CLI.",
+      "no_answer": "This program did not answer `--version`: it failed, took too long or printed too much.",
+      "unsupported_program": "On Windows, pick the program's .exe, or the .cmd file npm installed for it.",
       "no_config": "Finish the setup first.",
       "config_unreadable": "timon.config.json cannot be read. Fix or restore it, then check again.",
+      "pin_write_failed": "timon.config.json could not be written. Check that Timon may write to its folder, then try again.",
+      "probe_setup_failed": "This file could not be checked: the folder the check runs in could not be prepared. Try again.",
       "invalid_body": "This path cannot be saved.",
       "browse": "The file picker could not open.",
       "generic": "The change failed (error {status})."
@@ -628,8 +633,8 @@
         "unsupported": "Version {version} is not supported"
       },
       "pin": {
-        "title": "Set the path",
-        "description": "If the program is somewhere Timon does not look, give its full path. It applies to the next mission, without restarting Timon."
+        "title": "Path to the {name} CLI",
+        "description": "If the {name} CLI is somewhere Timon does not look, give its full path. It applies to the next mission, without restarting Timon."
       },
       "authorization": {
         "title": "Security authorization",

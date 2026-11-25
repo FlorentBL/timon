@@ -10,14 +10,16 @@
  * The gestures (read the checks again, ask for a repair, land a job kept on
  * its branch) belong to the host:
  * it keeps the job fresh in the window and hands it back to the screen that
- * opened it (`onChange`), so its row shows the same counter.
+ * opened it (`onChange`), so its row shows the same counter. It also reads the
+ * job again when the daemon announces that it moved (`integration_changed`),
+ * so a window left open follows its pull request without being reopened.
  *
  * The product's dialog is painted directly while only its registered fallback
  * holds the slot, as `TodoFormModal` does: the fallback is a chunk loaded on
  * demand, and the dialog must not wait for it.
  */
 
-import { useCallback, useEffect, useMemo, useState, type ReactElement } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactElement } from 'react';
 import { toast } from 'sonner';
 import { SlotSingle, useSlotEntries } from '@/lib/plugin-host/render';
 import { JOB_DIALOG_SLOT } from '@/lib/plugin-host/slots';
@@ -27,9 +29,10 @@ import { requestNavigation } from '@/lib/navigate-proposals';
 import { ProductJobDialog } from './landing-preview-dialog';
 import { JobDialogContext, type JobDialogValue } from './job-dialog-context';
 import { useAccess } from '@/hooks/use-me';
-import { previewLanding, refreshLandingChecks, type Landing, type LandRequest, type RepairKind } from './landing-api';
+import { getLanding, landable, previewLanding, refreshLandingChecks, type Landing, type LandRequest, type RepairKind } from './landing-api';
 import { askLand, landBlocked } from './landing-land';
 import { askRepair } from './landing-repair';
+import { useLandingChanges } from './landing-events';
 
 export function JobDialog({ landing, onClose, openTodo = null, onChange }: {
   landing: Landing;
@@ -46,6 +49,18 @@ export function JobDialog({ landing, onClose, openTodo = null, onChange }: {
     setCurrent(fresh);
     onChange?.(fresh);
   }, [onChange]);
+
+  // Only the latest read lands, and none after the window closed or moved to
+  // another job: a slower read must not paint an older job over a newer one.
+  const reads = useRef(0);
+  useEffect(() => () => { reads.current += 1; }, [current.id]);
+  useLandingChanges(() => {
+    const read = ++reads.current;
+    const id = current.id;
+    void getLanding(id).then((out) => {
+      if (out.ok && read === reads.current) update(out.value);
+    });
+  }, (change) => change.integrationId === current.id, current.id);
 
   const refresh = useCallback(async () => {
     setBusy('refresh');
@@ -79,7 +94,7 @@ export function JobDialog({ landing, onClose, openTodo = null, onChange }: {
       setBusy(null);
     }
   }, [current, update]);
-  const kept = current.kept === true && current.state === 'branch';
+  const kept = landable(current);
 
   const value = useMemo<JobDialogValue>(() => ({
     landing: current,

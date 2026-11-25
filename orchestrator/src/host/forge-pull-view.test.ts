@@ -7,8 +7,9 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import type { GhRunner } from './gh.js';
 import {
-  githubPullPageReader, githubUrl, parsePullRequestPage, parseReviewThreadsPage, PULL_PAGE_FIELDS, VIEW_BODY_LIMIT,
-  VIEW_COMMENT_LIMIT, VIEW_FILE_LIMIT, VIEW_THREAD_COMMENTS, VIEW_TIMELINE_LIMIT, viewText,
+  githubPullPageReader, githubUrl, THREAD_PAGE_CALLS, THREADS_READ_DEADLINE_MS, parsePullEventsPage, parsePullRequestPage, parseReviewThreadsPage, PULL_PAGE_FIELDS, reactionsOf, VIEW_BODY_LIMIT,
+  VIEW_EVENT_LIMIT,
+  VIEW_COMMENT_LIMIT, VIEW_FILE_LIMIT, VIEW_THREAD_COMMENT_BUDGET, VIEW_THREAD_COMMENTS, VIEW_THREAD_LIMIT, VIEW_TIMELINE_LIMIT, viewText,
 } from './forge-pull-view.js';
 
 const SHA = 'b'.repeat(40);
@@ -38,13 +39,17 @@ const PAGE = {
   deletions: 8,
   changedFiles: 2,
   body: '## Why\n\nThe app hurts at night. <script>alert(1)</script>',
+  reactionGroups: [{ content: 'THUMBS_UP', users: { totalCount: 3 } }, { content: 'ROCKET', users: { totalCount: 1 } }],
   labels: [{ name: 'ui', color: 'A2EEEF' }, { name: 'bad', color: 'url(x)' }],
   milestone: { number: 3, title: '0.2', url: 'https://github.com/acme/widgets/milestone/3' },
   assignees: [{ login: 'maintainer' }],
   reviewRequests: [{ __typename: 'User', login: 'reviewer' }, { __typename: 'Team', name: 'Core', slug: 'core', organization: { login: 'acme' } }],
   closingIssuesReferences: [{ number: 7, url: 'https://github.com/acme/widgets/issues/7', repository: { name: 'widgets', owner: { login: 'acme' } } }],
   comments: [
-    { author: { login: 'maintainer' }, body: 'Thanks!', createdAt: '2026-11-17T12:00:00Z', url: 'https://github.com/acme/widgets/pull/42#issuecomment-1' },
+    {
+      author: { login: 'maintainer' }, body: 'Thanks!', createdAt: '2026-11-17T12:00:00Z', url: 'https://github.com/acme/widgets/pull/42#issuecomment-1',
+      reactionGroups: [{ content: 'HEART', users: { totalCount: 2 } }, { content: 'THUMBS_DOWN', users: { totalCount: 0 } }],
+    },
     { author: { login: 'spammer' }, body: 'buy now', createdAt: '2026-11-17T13:00:00Z', url: 'https://evil.example/x', isMinimized: true },
   ],
   reviews: [
@@ -227,4 +232,203 @@ test('a failed read says why, without a token', async () => {
   const out = await githubPullPageReader(null, { gh }).pullRequestPage('acme/widgets', 42);
   assert.equal(out.ok, false);
   assert.doesNotMatch(JSON.stringify(out), /ghp_/);
+});
+
+const threadNode = (i: number, extra: Record<string, unknown> = {}) => ({
+  id: `T${i}`, isResolved: false, isOutdated: false, path: 'src/theme.ts', line: i + 1, originalLine: null,
+  comments: { totalCount: 1, nodes: [{ author: { login: 'reviewer' }, body: `note ${i}`, createdAt: '2026-11-17T11:00:00Z', url: null }] },
+  ...extra,
+});
+
+const threadsAnswer = (nodes: unknown[], totalCount: number, endCursor: string | null) => JSON.stringify({
+  data: { repository: { pullRequest: { reviewThreads: { totalCount, pageInfo: { hasNextPage: endCursor !== null, endCursor }, nodes } } } },
+});
+
+const valueOf = (raw: string[], key: string) => raw.find((a) => a.startsWith(`--raw-field=${key}=`))?.slice(`--raw-field=${key}=`.length);
+
+test('review threads are read page after page, past the forge\'s hundred, up to the bound', async () => {
+  const calls: string[][] = [];
+  const total = VIEW_THREAD_LIMIT + 40;
+  const gh: GhRunner = async (args) => {
+    calls.push(args);
+    const after = valueOf(args, 'after');
+    const start = after ? Number(after.slice(1)) : 0;
+    const nodes = Array.from({ length: Math.min(100, total - start) }, (_, i) => threadNode(start + i));
+    const next = start + nodes.length < total ? `c${start + nodes.length}` : null;
+    return { code: 0, stdout: threadsAnswer(nodes, total, next), stderr: '' };
+  };
+  const out = await githubPullPageReader(null, { gh }).pullRequestThreadsPage('acme/widgets', 42);
+  assert.ok(out.ok);
+  assert.equal(out.value.threads.length, VIEW_THREAD_LIMIT);
+  assert.equal(out.value.threadsMore, 40);
+  assert.equal(out.value.threads[150]!.comments[0]!.body, 'note 150');
+  // Three pages of a hundred: the bound is reached, the fourth is never asked.
+  assert.deepEqual(calls.map((c) => valueOf(c, 'after') ?? null), [null, 'c100', 'c200']);
+});
+
+test('a page of threads that fails past the first keeps what was read', async () => {
+  let n = 0;
+  const gh: GhRunner = async () => {
+    n += 1;
+    return n === 1
+      ? { code: 0, stdout: threadsAnswer([threadNode(0), threadNode(1)], 150, 'c2'), stderr: '' }
+      : { code: 1, stdout: '', stderr: 'HTTP 502' };
+  };
+  const out = await githubPullPageReader(null, { gh }).pullRequestThreadsPage('acme/widgets', 42);
+  assert.ok(out.ok);
+  assert.equal(out.value.threads.length, 2);
+  assert.equal(out.value.threadsMore, 148);
+});
+
+test('a long thread\'s next comments are read through its id, within the bound per thread', async () => {
+  const calls: string[][] = [];
+  const first = Array.from({ length: 20 }, (_, i) => ({ author: { login: 'a' }, body: `c${i}`, createdAt: '2026-11-17T11:00:00Z', url: null }));
+  const long = threadNode(0, { comments: { totalCount: 130, pageInfo: { hasNextPage: true, endCursor: 'k20' }, nodes: first } });
+  // A cursor that is not one GitHub writes is never asked back.
+  const odd = threadNode(1, { comments: { totalCount: 40, pageInfo: { hasNextPage: true, endCursor: 'bad cursor' }, nodes: first } });
+  const gh: GhRunner = async (args) => {
+    calls.push(args);
+    if (valueOf(args, 'id')) {
+      const nodes = Array.from({ length: 100 }, (_, i) => ({ author: { login: 'b' }, body: `c${20 + i}`, createdAt: '2026-11-17T12:00:00Z', url: null }));
+      return { code: 0, stdout: JSON.stringify({ data: { node: { comments: { totalCount: 130, pageInfo: { hasNextPage: true, endCursor: 'k120' }, nodes } } } }), stderr: '' };
+    }
+    return { code: 0, stdout: threadsAnswer([long, odd], 2, null), stderr: '' };
+  };
+  const out = await githubPullPageReader(null, { gh }).pullRequestThreadsPage('acme/widgets', 42);
+  assert.ok(out.ok);
+  const [a, b] = out.value.threads;
+  assert.equal(a!.comments.length, VIEW_THREAD_COMMENTS);
+  assert.equal(a!.comments[20]!.body, 'c20');
+  assert.equal(a!.commentsMore, 130 - VIEW_THREAD_COMMENTS);
+  assert.equal(b!.comments.length, 20);
+  assert.equal(b!.commentsMore, 20);
+  const followUps = calls.filter((c) => valueOf(c, 'id'));
+  assert.deepEqual(followUps.map((c) => [valueOf(c, 'id'), valueOf(c, 'after')]), [['T0', 'k20']]);
+  assert.ok(!calls.flat().some((x) => /mutation/i.test(x)));
+});
+
+test('pages of threads left empty keep coming: the calls stop at their bound', async () => {
+  const calls: string[][] = [];
+  // Every page holds nothing a thread is made of, and always names a next one.
+  const gh: GhRunner = async (args) => {
+    calls.push(args);
+    return { code: 0, stdout: threadsAnswer([{ junk: true }], 9_999, `c${calls.length}`), stderr: '' };
+  };
+  const out = await githubPullPageReader(null, { gh }).pullRequestThreadsPage('acme/widgets', 42);
+  assert.ok(out.ok);
+  assert.equal(out.value.threads.length, 0);
+  assert.equal(out.value.threadsMore, 9_999);
+  assert.equal(calls.length, THREAD_PAGE_CALLS);
+  assert.equal(THREAD_PAGE_CALLS, 3);
+});
+
+test('a cursor the forge already gave ends the list of threads', async () => {
+  const calls: string[][] = [];
+  const gh: GhRunner = async (args) => {
+    calls.push(args);
+    // The second page sends back the cursor that led to it.
+    return { code: 0, stdout: threadsAnswer([threadNode(calls.length)], 500, 'same'), stderr: '' };
+  };
+  const out = await githubPullPageReader(null, { gh }).pullRequestThreadsPage('acme/widgets', 42);
+  assert.ok(out.ok);
+  assert.equal(out.value.threads.length, 2);
+  assert.deepEqual(calls.map((c) => valueOf(c, 'after') ?? null), [null, 'same']);
+});
+
+test('the whole read of the threads has a deadline, each call within what is left', async () => {
+  let clock = 1_000;
+  const timeouts: number[] = [];
+  const first = Array.from({ length: 20 }, (_, i) => ({ author: { login: 'a' }, body: `c${i}`, createdAt: '2026-11-17T11:00:00Z', url: null }));
+  const gh: GhRunner = async (args, opts) => {
+    timeouts.push(opts.timeout ?? -1);
+    clock += 40_000;
+    if (valueOf(args, 'id')) throw new Error('no follow-up past the deadline');
+    const long = threadNode(timeouts.length, { comments: { totalCount: 130, pageInfo: { hasNextPage: true, endCursor: 'k20' }, nodes: first } });
+    return { code: 0, stdout: threadsAnswer([long], 500, `c${timeouts.length}`), stderr: '' };
+  };
+  const out = await githubPullPageReader(null, { gh, now: () => clock }).pullRequestThreadsPage('acme/widgets', 42);
+  assert.ok(out.ok);
+  // 90 s in all: two pages of 40 s, then a call that may last 10 s, then none.
+  assert.deepEqual(timeouts, [60_000, 50_000, 10_000]);
+  assert.equal(out.value.threads.length, 3);
+  assert.equal(out.value.threads[0]!.comments.length, 20);
+  assert.equal(THREADS_READ_DEADLINE_MS, 90_000);
+});
+
+test('thread comments stay within the page\'s budget, the rest counted', () => {
+  const comments = Array.from({ length: 20 }, (_, i) => ({ author: null, body: `x${i}`, createdAt: '', url: null }));
+  const n = Math.ceil(VIEW_THREAD_COMMENT_BUDGET / 20) + 5;
+  const read = parseReviewThreadsPage(threadsAnswer(
+    Array.from({ length: n }, (_, i) => threadNode(i, { comments: { totalCount: 20, nodes: comments } })), n, null,
+  ));
+  assert.ok(read);
+  const kept = read.threads.reduce((sum, t) => sum + t.comments.length, 0);
+  assert.equal(kept, VIEW_THREAD_COMMENT_BUDGET);
+  const last = read.threads[read.threads.length - 1]!;
+  assert.equal(last.comments.length, 0);
+  assert.equal(last.commentsMore, 20);
+});
+
+test('reactions keep each emoji someone gave, in GitHub\'s order, and nothing else', () => {
+  const page = parsePullRequestPage(JSON.stringify(PAGE));
+  assert.ok(page);
+  assert.deepEqual(page.reactions, [{ content: 'thumbs_up', count: 3 }, { content: 'rocket', count: 1 }]);
+  const comment = page.timeline.find((e) => e.kind === 'comment' && !e.hidden);
+  assert.ok(comment && comment.kind === 'comment');
+  assert.deepEqual(comment.reactions, [{ content: 'heart', count: 2 }]);
+  assert.deepEqual(reactionsOf([
+    { content: 'EYES', reactors: { totalCount: 4 } },
+    { content: 'SHRUG', users: { totalCount: 9 } },
+    { content: 'HEART', users: { totalCount: -1 } },
+    'junk',
+  ]), [{ content: 'eyes', count: 4 }]);
+  assert.deepEqual(reactionsOf(null), []);
+});
+
+const EVENTS = (nodes: unknown[], totalCount = nodes.length) => JSON.stringify({
+  data: { repository: { pullRequest: { timelineItems: { totalCount, nodes } } } },
+});
+
+test('timeline events: labels added or removed, force-pushes with their comparison, nothing else', () => {
+  const before = 'c'.repeat(40);
+  const after = 'd'.repeat(40);
+  const read = parsePullEventsPage(EVENTS([
+    { __typename: 'HeadRefForcePushedEvent', createdAt: '2026-11-18T09:00:00Z', actor: { login: 'stranger' }, beforeCommit: { oid: before }, afterCommit: { oid: after } },
+    { __typename: 'LabeledEvent', createdAt: '2026-11-17T10:30:00Z', actor: { login: 'maintainer' }, label: { name: 'ui', color: 'A2EEEF' } },
+    { __typename: 'UnlabeledEvent', createdAt: '2026-11-17T10:40:00Z', actor: null, label: { name: 'bad', color: 'url(x)' } },
+    { __typename: 'HeadRefForcePushedEvent', createdAt: '2026-11-18T09:10:00Z', actor: { login: 'stranger' }, beforeCommit: null, afterCommit: { oid: 'nope' } },
+    { __typename: 'MentionedEvent', createdAt: '2026-11-17T10:50:00Z' },
+    { __typename: 'LabeledEvent', createdAt: 'yesterday', label: { name: 'x' } },
+  ], 9), 'acme/widgets');
+  assert.ok(read);
+  assert.deepEqual(read.events.map((e) => e.kind), ['labeled', 'unlabeled', 'force_pushed', 'force_pushed']);
+  assert.deepEqual(read.events[0], { kind: 'labeled', actor: 'maintainer', createdAt: '2026-11-17T10:30:00Z', label: { name: 'ui', color: 'a2eeef' } });
+  assert.equal(read.events[1]!.kind === 'unlabeled' && read.events[1]!.label.color, null);
+  const push = read.events[2]!;
+  assert.ok(push.kind === 'force_pushed');
+  assert.equal(push.url, `https://github.com/acme/widgets/compare/${before}..${after}`);
+  const odd = read.events[3]!;
+  assert.ok(odd.kind === 'force_pushed');
+  assert.deepEqual([odd.before, odd.after, odd.url], [null, null, null]);
+  assert.equal(read.eventsMore, 5);
+  assert.equal(parsePullEventsPage('{"data":{}}', 'acme/widgets'), null);
+  const many = parsePullEventsPage(EVENTS(Array.from({ length: VIEW_EVENT_LIMIT + 5 }, (_, i) => ({
+    __typename: 'LabeledEvent', createdAt: `2026-11-17T10:${String(i % 60).padStart(2, '0')}:00Z`, label: { name: `l${i}` },
+  }))), 'acme/widgets');
+  assert.equal(many!.events.length, VIEW_EVENT_LIMIT);
+  assert.equal(many!.eventsMore, 5);
+});
+
+test('the timeline events are one more read of gh, never a write', async () => {
+  const calls: string[][] = [];
+  const gh: GhRunner = async (args) => { calls.push(args); return { code: 0, stdout: EVENTS([]), stderr: '' }; };
+  const out = await githubPullPageReader(null, { gh }).pullRequestEvents('acme/widgets', 42);
+  assert.ok(out.ok);
+  assert.deepEqual(out.value, { events: [], eventsMore: 0 });
+  assert.equal(calls.length, 1);
+  assert.deepEqual(calls[0]!.slice(0, 2), ['api', 'graphql']);
+  assert.match(calls[0]!.find((a) => a.startsWith('--raw-field=query='))!, /timelineItems/);
+  assert.ok(!calls[0]!.some((a) => /mutation/i.test(a)));
+  assert.equal((await githubPullPageReader(null, { gh }).pullRequestEvents('../x', 1)).ok, false);
+  assert.equal(calls.length, 1);
 });

@@ -16,7 +16,7 @@ import { cooldownReason, fallbackFor } from '../../backend-fallback.js';
 import { messageDateTime } from '../../message-dates.js';
 import { asBackendName, defaultBackendName } from '../../backends/index.js';
 import { config } from '../../config/load.js';
-import { db, dbApi, SPAN_CURSOR_PATTERN, type EventRow, type MissionRow } from '../../db.js';
+import { db, dbApi, SPAN_CURSOR_PATTERN, viewerSeesAll, type EventRow, type MissionRow } from '../../db.js';
 import { handleSpawn } from '../../http-helpers.js';
 import { agentCommunicationAllowed, developerAutoAllows } from '../../users/agent-permissions.js';
 import { createDelegationHandler } from '../../mission-delegation.js';
@@ -28,7 +28,7 @@ import { isDeltaQuery, parseHistoryQuery, readHistoryDelta, readHistoryPage, rea
 import { MISSION_ORIGIN_FILTERS, isMissionOriginFilter } from '../../mission-origin.js';
 import { parseTimeBound } from '../../mission-search.js';
 import { APPROVAL_SCOPES } from '../../backends/types.js';
-import { DENY_REASONS, expirePendingForMission, listPending as listPendingPermissions, parseDecisionOrigin, requestPermission, resolvePermission, type PermissionAnswer, type PermissionDecision } from '../../permissions.js';
+import { DENY_REASONS, expirePendingForMission, listPending as listPendingPermissions, parseDecisionOrigin, pendingPermissionSummary, requestPermission, resolvePermission, type PermissionAnswer, type PermissionDecision } from '../../permissions.js';
 import { decideAccess } from '../terminal-web/access.js';
 import { resolve } from '../../settings.js';
 import { expandSlashCommand } from '../../slash.js';
@@ -57,7 +57,7 @@ import { backfillTraceSpans, rebuildMissionSpans } from '../../trace-span-backfi
 import { recordRequestDelivery } from '../../agent-request-replies.js';
 import { stopScope, StopBodySchema, UnknownScopeError } from '../../scope-stop.js';
 import { buildTraceView } from '../../trace-view.js';
-import { forbidden, rejectUnlessAny, requireAuth } from '../../users/identity.js';
+import { forbidden, rejectIfDenied, rejectUnlessAny, requireAuth } from '../../users/identity.js';
 import { RESTRICTED, canonicalPermissionMode, isKnownPermissionMode, overrideAuthority, permissionModeRefusal, rejectOverride } from '../../users/privileged-overrides.js';
 import { missionPermissionState, missionPermissionSwitchable } from '../../mission-permission-mode.js';
 import { resolvedPermissionModeFor } from '../../backends/catalog.js';
@@ -175,6 +175,29 @@ const SpansQuerySchema = z.object({
   ids: z.string().max(6_500).transform((value) => value.split(',').filter(Boolean))
     .pipe(z.array(z.string().max(128)).max(50)).optional(),
 }).refine((query) => !(query.before && query.from), { message: 'before and from are exclusive' });
+/**
+ * `GET /api/missions`: the page size is bounded, and refused beyond rather
+ * than clamped — a silent cap at 1000 read as "there are 1000 missions"
+ * (TIM-0161). `before` is the `next_cursor` of the previous page.
+ */
+export const MISSION_LIST_MAX = 1000;
+const MISSION_LIST_CURSOR = /^(\d{1,15}),([A-Za-z0-9._:-]{1,128})$/;
+const MissionListQuerySchema = z.object({
+  limit: z.coerce.number().int().min(1).max(MISSION_LIST_MAX).default(100),
+  task_id: z.string().min(1).max(128).optional(),
+  before: z.string().regex(MISSION_LIST_CURSOR, 'expected <started_at>,<mission id>')
+    .transform((cursor) => {
+      const [, startedAt, id] = MISSION_LIST_CURSOR.exec(cursor) as RegExpExecArray;
+      return { startedAt: Number(startedAt), id: id as string };
+    })
+    .optional(),
+});
+
+/** The cursor of the page after the one ending on `row`. */
+export function missionListCursor(row: { started_at: number; id: string }): string {
+  return `${row.started_at},${row.id}`;
+}
+
 const TraceQuerySchema = z.object({
   span_limit: z.coerce.number().int().min(1).max(2000).default(500),
   payload: z.enum(['0', '1']).default('1').transform((value) => value === '1'),
@@ -201,7 +224,9 @@ function stopActor(auth: RequestAuth, viewer: DbViewer): string {
  * reaches the browser. Who may ask is the caller's to decide (`mayShowMedia`
  * for a request, the owner check of the plugin facade).
  */
-export async function showMissionMedia(mission: MissionRow, rawBody: unknown): Promise<{ status: number; body: unknown }> {
+export async function showMissionMedia(
+  mission: MissionRow, rawBody: unknown, opts: { explain?: boolean } = {},
+): Promise<{ status: number; body: unknown }> {
   const parsed = MediaRequestSchema.safeParse(rawBody);
   if (!parsed.success) {
     return { status: 400, body: { error: 'invalid_request', message: 'expected { src: string, caption?: string }' } };
@@ -214,7 +239,7 @@ export async function showMissionMedia(mission: MissionRow, rawBody: unknown): P
     ...providerMediaRoots(mission.id),
   ].filter((root): root is string => typeof root === 'string' && root.length > 0);
   try {
-    const block = await addMissionMedia(mission.id, parsed.data, { roots });
+    const block = await addMissionMedia(mission.id, parsed.data, { roots, explain: opts.explain === true });
     const row = dbApi.insertEvent(mission.id, 'media', block);
     bus.publish({ kind: 'event', missionId: mission.id, type: 'media', timestamp: row.timestamp, payload: block });
     return { status: 201, body: { block } };
@@ -292,6 +317,49 @@ export function sendMissionTurn(
   // From the request on: the sender's indicator is up, and expanding a command
   // or re-testing a quota comes before anything the turn state can show.
   return whileTurnPrepares(m.id, () => deliverMissionTurn(m, body, inputOrigin, shown));
+}
+
+/** What `POST /api/missions` carries when it may continue an open mission. */
+const ContinueSessionSchema = z.object({
+  resume_session_id: z.string().min(1).max(200),
+  agent_name: z.string().optional(),
+  agent: z.string().optional(),
+  mission: z.string().optional(),
+  input: z.string().optional(),
+  images: z.array(z.object({ media_type: z.string().max(100), data: z.string() })).optional(),
+  attachments: z.unknown().optional(),
+  pasted: z.unknown().optional(),
+  voiceContext: z.unknown().optional(),
+});
+
+/**
+ * `POST /api/missions` asking to resume a session that an open mission of the
+ * same agent already carries continues that mission instead of starting a twin:
+ * two live missions on one session split the thread and its Kanban returns
+ * (TIM-0167). The chat ends up here when its `/send` failed while the reaper
+ * was stopping the process, or when the view lost the mission it showed. The
+ * caller must be able to read that mission, as for `/send`; anything else
+ * spawns as before.
+ */
+async function spawnOrContinueSession(req: Request, res: Response): Promise<void> {
+  // The spawn route's own permission first: continuing never needs less than spawning.
+  if (rejectIfDenied(req, res, 'missions:spawn')) return;
+  const parsed = ContinueSessionSchema.safeParse(req.body ?? {});
+  const agent = parsed.success ? parsed.data.agent_name ?? parsed.data.agent : undefined;
+  const openId = parsed.success && agent ? dbApi.openMissionIdForSession(parsed.data.resume_session_id, agent) : null;
+  const open = openId ? scopedDb(viewerFromRequest(req)).getMission(openId) : null;
+  if (!parsed.success || !open) return handleSpawn(req, res);
+  const { images, attachments, pasted, voiceContext } = parsed.data;
+  const input = parsed.data.mission ?? parsed.data.input ?? '';
+  const origin = agentCallerOrigin(req);
+  const outcome = await sendMissionTurn(open, { input, images, attachments, pasted, voiceContext }, origin);
+  if (outcome.status >= 300) {
+    res.status(outcome.status).json(outcome.body);
+    return;
+  }
+  if (personWrote(req, origin)) dbApi.markMissionUserEngaged(open.id);
+  console.log(`[spawn] session already carried by open mission ${open.id.slice(0, 8)} (${open.agent_name}) → continued in place`);
+  res.status(200).json({ ...outcome.body, mission_id: open.id, continued: true });
 }
 
 async function deliverMissionTurn(
@@ -534,11 +602,22 @@ export function registerRoutes(
     res.json({ value: value === null ? null : parseTitleModelChoice(serializeTitleModelChoice(value)), effective: effectiveTitleModel(userId).choice });
   });
 
-  app.post('/api/missions', handleSpawn);
+  app.post('/api/missions', spawnOrContinueSession);
   app.post('/api/missions/delegate', delegate);
 
   app.get('/api/missions', (req, res) => {
-    const limit = Math.min(Number(req.query.limit ?? 100), 1000);
+    if (!requireAuth(req, res)) return;
+    const query = MissionListQuerySchema.safeParse({
+      limit: req.query.limit,
+      task_id: req.query.task_id,
+      before: req.query.before,
+    });
+    if (!query.success) {
+      res.status(400).json({ ...apiError('invalid_query', 'invalid query'), issues: query.error.issues.map((issue) => `${issue.path.join('.')}: ${issue.message}`) });
+      return;
+    }
+    const { limit, task_id: taskFilter, before } = query.data;
+    const page = { taskId: taskFilter, before };
     const projectFilter = typeof req.query.project === 'string' ? req.query.project : null;
     const agentFilter = typeof req.query.agent === 'string' ? req.query.agent : null;
     // Statuses actually represented by the `missions.status` column. REJECT an
@@ -559,19 +638,19 @@ export function registerRoutes(
     }
     const originFilter = originParam;
     const timing = new ServerTiming();
-    const scope = scopedDb(viewerFromRequest(req));
-    let rows: ReturnType<typeof scope.listMissions>;
-    if (agentFilter) {
-      // Exact agent filter — single agent name, highest precision.
-      rows = scope.listMissions(limit, [agentFilter], statusFilter ?? undefined, originFilter);
-    } else if (projectFilter) {
-      const projectAgentNames = listAgents()
-        .filter((a) => a.project === projectFilter)
-        .map((a) => a.name);
-      rows = scope.listMissions(limit, projectAgentNames, statusFilter ?? undefined, originFilter);
-    } else {
-      rows = scope.listMissions(limit, undefined, statusFilter ?? undefined, originFilter);
-    }
+    const viewer = viewerFromRequest(req);
+    const scope = scopedDb(viewer);
+    // One row past the page tells whether another page exists.
+    const agentNames = agentFilter
+      ? [agentFilter]
+      : projectFilter
+        ? listAgents().filter((a) => a.project === projectFilter).map((a) => a.name)
+        : undefined;
+    const fetched = scope.listMissions(limit + 1, agentNames, statusFilter ?? undefined, originFilter, page);
+    const hasMore = fetched.length > limit;
+    const rows = hasMore ? fetched.slice(0, limit) : fetched;
+    const last = rows[rows.length - 1];
+    const nextCursor = hasMore && last ? missionListCursor(last) : null;
     timing.mark('db');
     // Group pending permission requests by mission so each card can flag
     // "action required" and deep-link to the earliest unresolved request.
@@ -663,7 +742,13 @@ export function registerRoutes(
     });
     // Per-row reads (liveness, pending work, event count, agent config).
     timing.mark('enrich');
-    sendTimedJson(res, timing, { missions });
+    // Fields next to `missions`: existing clients read only that key.
+    const body = { missions, has_more: hasMore, next_cursor: nextCursor };
+    // A reader confined to its own missions gets no timing: the `db` phase of
+    // a `?task_id=` page, even an empty one, would measure work done on rows
+    // it cannot see (TIM-0161). One who sees every mission learns nothing new.
+    if (!viewer || viewerSeesAll(viewer, 'missions')) sendTimedJson(res, timing, body);
+    else res.json(body);
   });
 
   /**
@@ -937,6 +1022,9 @@ export function registerRoutes(
       turn_since: turn?.turnSince ?? null,
       pending_action_at: pa?.created_at ?? null,
       pending_action_id: pa?.id ?? null,
+      // Tool and clock only (TODO #1094): the CLI and MCP readers learn the
+      // mission waits on a person without the command it would run.
+      pending_permission: pendingPermissionSummary(m.id),
       // Persisted end-of-turn marker: `status` alone says nothing once the
       // backend keeps its process alive between turns. cf. mission-turn-end.test.ts
       turn_complete: turnComplete,
@@ -1049,7 +1137,9 @@ export function registerRoutes(
       forbidden(req, res, { kind: 'scope', reason: 'only this mission\'s agent or its owner can show media in it' });
       return;
     }
-    const reply = await showMissionMedia(mission, req.body);
+    // Only the mission's own agent learns why a path was refused (TODO #1160).
+    const explain = req.auth?.kind === 'api-token' && req.auth.missionId === mission.id;
+    const reply = await showMissionMedia(mission, req.body, { explain });
     res.status(reply.status).json(reply.body);
   });
 
@@ -1086,7 +1176,9 @@ export function registerRoutes(
     // mission override (worktree), otherwise the agent cwd.
     const m = scopedDb(viewerFromRequest(req)).getMission(req.params.id);
     if (!m) {
-      res.status(404).json(apiError('mission_not_running', 'no running agent for that mission'));
+      // The one answer that lets the chat start over on a new mission: anything
+      // else means the conversation still exists (TIM-0167).
+      res.status(404).json(apiError('mission_not_found', 'mission not found'));
       return;
     }
     const origin = agentCallerOrigin(req);

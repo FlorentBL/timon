@@ -1,31 +1,32 @@
 'use client';
 
 /**
- * The project's row of `project.settings`: the extra folders of the project's
- * agents, counted on the row, listed and edited in a dialog
- * (`AgentFoldersSection`). One place to see what every agent of the project
- * may reach outside its working folder.
+ * The project's row of `project.settings`: the extra folders of the project
+ * itself (TODO #1168) and of its agents, counted on the row, listed and
+ * edited in a dialog (`AgentFoldersSection`). One place to see what every
+ * agent of the project may reach outside its working folder.
  */
 import { useCallback, useEffect, useState, type ReactElement } from 'react';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { useProjectSettings } from '@/components/project-settings-slot';
 import { t } from '@/lib/i18n';
-import type { AgentFolders } from '@/lib/agent-folders';
+import { fetchFolders, type AgentFolders } from '@/lib/agent-folders';
 import { AgentFoldersSection } from './agent-folders-section';
 
 type ListedAgent = { name: string; project?: string | null; ephemeral?: boolean; extra_dirs?: unknown[] };
 
-/** The project's agents and how many folders they hold, from the agents list. */
+/** The project's agents and how many folders they and the project hold, from the agents list and the project's own. */
 async function projectAgents(project: string): Promise<{ names: string[]; folders: number } | null> {
   try {
     const res = await fetch('/api/ui/agents', { cache: 'no-store' });
     if (!res.ok) return null;
     const body = (await res.json()) as { agents?: ListedAgent[] };
     const agents = (body.agents ?? []).filter((a) => a.project === project && a.ephemeral !== true);
+    const own = await fetchFolders({ kind: 'project', slug: project }).then((l) => l.folders.length).catch(() => 0);
     return {
       names: agents.map((a) => a.name).sort((a, b) => a.localeCompare(b)),
-      folders: agents.reduce((n, a) => n + (Array.isArray(a.extra_dirs) ? a.extra_dirs.length : 0), 0),
+      folders: own + agents.reduce((n, a) => n + (Array.isArray(a.extra_dirs) ? a.extra_dirs.length : 0), 0),
     };
   } catch {
     return null;
@@ -43,7 +44,8 @@ export function ProjectAgentFoldersSetting(): ReactElement | null {
   }, [project]);
   useEffect(() => { void reload(); }, [reload]);
 
-  if (!project || !state || state.names.length === 0) return null;
+  // The folders belong to the project: the row stays without an agent, to prepare one before the first.
+  if (!project || !state) return null;
   const onChanged = (lists: readonly AgentFolders[]): void => {
     setState((current) => current && { ...current, folders: lists.reduce((n, l) => n + l.folders.length, 0) });
   };
@@ -70,6 +72,7 @@ export function ProjectAgentFoldersSetting(): ReactElement | null {
             </DialogHeader>
             <AgentFoldersSection
               agents={state.names}
+              project={project}
               showAgent
               emptyStatus={t('agentFolders.project.emptyStatus')}
               onChanged={onChanged}

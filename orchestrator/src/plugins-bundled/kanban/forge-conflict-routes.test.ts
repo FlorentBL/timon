@@ -53,6 +53,9 @@ const suggestions: Array<{ system: string; user: string }> = [];
 /** What `ssh -G` would answer for an alias of the remote. */
 const sshAliases = new Map<string, string>([['github-acme', 'github.com'], ['github-evil', 'evil.example']]);
 const sshLogins: Array<[string, string | undefined, string | null | undefined]> = [];
+/** What GitHub reports of each repository's size, in KiB; absent = 1 MB. */
+const repoSizes = new Map<string, number | null>();
+const sizeReads: string[] = [];
 let suggestAnswer = '<resolved>\none\nTWO and 2\nthree\n</resolved>';
 
 function branchNow(): PullRequestBranch {
@@ -66,6 +69,11 @@ function branchNow(): PullRequestBranch {
 const fakeBranches: ForgeBranchWriter = {
   login: async () => ({ ok: true, login: 'ai-bot' }),
   pullRequestBranch: async () => ({ ok: true, branch: branchNow() }),
+  repositorySize: async (repo) => {
+    sizeReads.push(repo);
+    const kib = repoSizes.has(repo) ? repoSizes.get(repo)! : 1024;
+    return kib === null ? { ok: false, code: 'gh_failed', reason: 'HTTP 502' } : { ok: true, kib };
+  },
   updatePullRequestBranch: async () => { throw new Error('no branch update in this test'); },
   commitParents: async () => ({ ok: true, parents: [] }),
 };
@@ -111,6 +119,9 @@ app.use((req, _res, next) => {
 registerForgeProposalRoutes(app, deps);
 registerForgeBranchRoutes(app, deps);
 const server = app.listen(0, '127.0.0.1');
+// The git fixtures run synchronously and block the loop for seconds on Windows: the server's 5 s idle
+// timer and fetch's reuse of the kept-alive socket then fire together, and the request dies with "fetch failed".
+server.keepAliveTimeout = 0;
 await once(server, 'listening');
 after(() => { server.close(); });
 const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
@@ -144,6 +155,8 @@ beforeEach(() => {
   branchOverride = {};
   commentFails = false;
   pushDenied = false;
+  repoSizes.clear();
+  sizeReads.length = 0;
   posted.length = 0;
   suggestions.length = 0;
   suggestAnswer = '<resolved>\none\nTWO and 2\nthree\n</resolved>';
@@ -220,6 +233,26 @@ test('refused before any fetch: closed, our own branch, not modifiable, deleted 
   setting('resolve', 'file://localhost/acme/widgets.git');
   assert.ok(['conflict_unsupported', 'pr_repository_unknown'].includes((await prepare()).json.code));
   assert.equal(f.calls.length, 0, 'git never ran');
+});
+
+test('a repository GitHub reports larger than the cap, or whose size it does not tell, is never fetched', async () => {
+  for (const [repo, kib, code] of [
+    ['acme/widgets', 600 * 1024, 'conflict_fetch_too_large'],
+    ['contrib/widgets', 513 * 1024, 'conflict_fetch_too_large'],
+    ['contrib/widgets', null, 'forge_read_failed'],
+  ] as const) {
+    repoSizes.clear();
+    repoSizes.set(repo, kib);
+    const out = await prepare();
+    assert.equal(out.json.code, code, `${repo} ${kib}`);
+  }
+  assert.equal(f.calls.length, 0, 'git never ran');
+  // Both sides read, once each; exactly the cap passes.
+  repoSizes.clear();
+  repoSizes.set('acme/widgets', 512 * 1024);
+  sizeReads.length = 0;
+  assert.equal((await prepare()).status, 201);
+  assert.deepEqual(sizeReads, ['acme/widgets', 'contrib/widgets']);
 });
 
 test('the remote must lead to the forge gh reads the pull request from: refused before any fetch', async () => {
@@ -498,6 +531,28 @@ test('the contributor pushed since the merge: nothing is pushed, whether GitHub 
   const out2 = await publish(r2.proposalId);
   assert.equal(out2.json.code, 'forge_head_moved', JSON.stringify(out2.json));
   assert.equal(f.head(f.fork, 'refs/heads/fix/typo'), late);
+  assert.equal(posted.length, 0);
+});
+
+test('the publication reads both sizes again before git: a fork grown past the cap, or that no longer tells its size, is never fetched nor pushed', async () => {
+  for (const [repo, kib, code] of [
+    ['contrib/widgets', 513 * 1024, 'conflict_fetch_too_large'],
+    ['contrib/widgets', null, 'forge_read_failed'],
+    ['acme/widgets', 600 * 1024, 'conflict_fetch_too_large'],
+  ] as const) {
+    conflictingFixture();
+    repoSizes.clear();
+    const r = await proposedResolution();
+    repoSizes.set(repo, kib);
+    sizeReads.length = 0;
+    const gitBefore = f.calls.length;
+    const out = await publish(r.proposalId);
+    assert.equal(out.json.code, code, `${repo} ${kib}`);
+    assert.equal(out.json.proposal.state, 'failed');
+    assert.equal(f.calls.length, gitBefore, `${repo} ${kib}: git never ran`);
+    assert.ok(sizeReads.includes(repo), `${repo} was read again at publication`);
+    assert.equal(f.head(f.fork, 'refs/heads/fix/typo'), r.head);
+  }
   assert.equal(posted.length, 0);
 });
 

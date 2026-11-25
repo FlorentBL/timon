@@ -14,7 +14,7 @@
  * replaced — refuses the registration instead of running it.
  */
 import { createHash } from 'node:crypto';
-import { createReadStream, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, statSync, writeFileSync } from 'node:fs';
+import { createReadStream, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, readlinkSync, renameSync, writeFileSync } from 'node:fs';
 import { join, relative, sep } from 'node:path';
 import { z } from 'zod';
 import { COMMAND_WORD_RE } from '../../backends/acp/auth.js';
@@ -94,28 +94,43 @@ export function writeState(paths: AcpRegistryPaths, agents: Record<string, Insta
   renameSync(tmp, paths.state);
 }
 
-function* walk(dir: string, base: string): Generator<string> {
+type TreeEntry = { rel: string; link: string | null };
+
+/** Never follows a link: one pointing at a folder would be walked twice, a loop forever. */
+function* walk(dir: string, base: string): Generator<TreeEntry> {
   for (const name of readdirSync(dir).sort()) {
     const full = join(dir, name);
-    const info = statSync(full);
-    if (info.isDirectory()) yield* walk(full, base);
-    else if (info.isFile()) yield relative(base, full).split(sep).join('/');
+    const info = lstatSync(full);
+    const rel = relative(base, full).split(sep).join('/');
+    if (info.isSymbolicLink()) yield { rel, link: readlinkSync(full) };
+    else if (info.isDirectory()) yield* walk(full, base);
+    else if (info.isFile()) yield { rel, link: null };
   }
 }
 
 function hashFile(file: string): Promise<string> {
   return new Promise((resolve, reject) => {
     const hash = createHash('sha256');
-    createReadStream(file).on('data', (chunk) => hash.update(chunk)).on('error', reject).on('end', () => resolve(hash.digest('hex')));
+    // Settled once the file is closed, not at its last byte: Windows refuses to rename a folder that holds an open
+    // file, and an install renames the folder it has just hashed.
+    createReadStream(file).on('data', (chunk) => hash.update(chunk)).on('error', reject).on('close', () => resolve(hash.digest('hex')));
   });
 }
 
-/** Digest of a folder: every file's path, size, executable bit and content hash. */
+/**
+ * Digest of a folder: every file's path, size, executable bit and content hash,
+ * and every link's target as written (re-pointing a link is a change too). A
+ * tree without links digests exactly as before links were accepted.
+ */
 export async function hashTree(dir: string): Promise<string> {
   const outer = createHash('sha256');
-  for (const rel of walk(dir, dir)) {
+  for (const { rel, link } of walk(dir, dir)) {
+    if (link !== null) {
+      outer.update(`${rel}\0link\0${link}\n`);
+      continue;
+    }
     const full = join(dir, ...rel.split('/'));
-    const info = statSync(full);
+    const info = lstatSync(full);
     const exec = process.platform !== 'win32' && info.mode & 0o111 ? 'x' : '-';
     outer.update(`${rel}\0${info.size}\0${exec}\0${await hashFile(full)}\n`);
   }

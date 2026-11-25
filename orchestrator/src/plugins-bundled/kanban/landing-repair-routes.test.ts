@@ -19,9 +19,9 @@ import express from 'express';
 import { createTestAccount } from '../../../tests/helpers/accounts.js';
 import { db, dbApi } from '../../db.js';
 import type {
-  FailedCheckLogOutcome, PullRequestChecks, ReviewThread, ReviewThreadsOutcome,
+  FailedCheckLogOutcome, GeneralReviewsOutcome, PullRequestChecks, ReviewThread, ReviewThreadsOutcome,
 } from '../../host/forge.js';
-import { REPAIR_CAP, REPAIR_THREAD_LIMIT, type RepairDeps } from '../../landing-repair.js';
+import { REPAIR_CAP, REPAIR_REVIEW_LIMIT, REPAIR_THREAD_LIMIT, type RepairDeps } from '../../landing-repair.js';
 import { updateProjectIntegration } from '../../project-integration.js';
 import { registerLandingRoutes } from './landing-routes.js';
 
@@ -89,6 +89,7 @@ function thread(i: number): ReviewThread {
 
 let view: PullRequestChecks = viewOf();
 let threads: ReviewThreadsOutcome = { ok: true, threads: [], unresolved: 0, truncated: false };
+let reviews: GeneralReviewsOutcome = { ok: true, reviews: [], truncated: false };
 let forgeCalls = 0;
 const logsRead: string[] = [];
 
@@ -98,6 +99,7 @@ const deps: RepairDeps = {
     async createPullRequest() { throw new Error('a repair never opens a pull request'); },
     async pullRequestChecks() { forgeCalls += 1; return { ok: true, view }; },
     async pullRequestReviewThreads() { forgeCalls += 1; return threads; },
+    async pullRequestReviews() { forgeCalls += 1; return reviews; },
     async failedCheckLog(_repo, url): Promise<FailedCheckLogOutcome> {
       forgeCalls += 1;
       logsRead.push(url);
@@ -154,6 +156,7 @@ beforeEach(() => {
   db.prepare('DELETE FROM landing_repairs').run();
   view = viewOf();
   threads = { ok: true, threads: [], unresolved: 0, truncated: false };
+  reviews = { ok: true, reviews: [], truncated: false };
   forgeCalls = 0;
   logsRead.length = 0;
 });
@@ -272,6 +275,38 @@ test('review comments: the unresolved threads, bounded, as data; conflict: the m
   assert.match(text, /git merge --no-edit -m "merge: bring origin\/main into the task branch" origin\/main/);
   assert.match(text, /"conflicting_files": \[\s*"a\.txt"\s*\]/);
   assert.match(text, /never a rebase/);
+  settle();
+});
+
+test('a change requested in the review\'s own text, with no thread, reaches the brief as data, the latest reviews only', async () => {
+  view = viewOf({ review: 'changes_requested' });
+  reviews = {
+    ok: true,
+    truncated: false,
+    reviews: Array.from({ length: REPAIR_REVIEW_LIMIT + 2 }, (_, i) => ({
+      state: 'changes_requested' as const, author: 'reviewer', body: `review-${i}: rename the helper. ${INJECTION}`,
+      url: null, submittedAt: '2026-11-20T10:00:00.000Z',
+    })),
+  };
+  const out = await ask('comments');
+  assert.equal(out.status, 201);
+  const brief = dbApi.getTask(out.task_id!)!.description ?? '';
+  assert.equal(brief.split('rename the helper').length - 1, REPAIR_REVIEW_LIMIT);
+  assert.doesNotMatch(brief, /review-0:/, 'the oldest go first');
+  assert.match(brief, /review-6:/);
+  assert.match(brief, /"reviews_truncated": true/);
+  assert.equal(brief.split('</untrusted-data>').length, 2, 'the reviewer\'s text cannot close the block');
+  assert.match(brief, /the text of the reviews/);
+  settle();
+
+  // Unreadable reviews leave the threads' brief standing.
+  threads = { ok: true, threads: [thread(1)], unresolved: 1, truncated: false };
+  reviews = { ok: false, code: 'gh_failed', reason: 'HTTP 502' };
+  const degraded = await ask('comments');
+  assert.equal(degraded.status, 201);
+  const text = dbApi.getTask(degraded.task_id!)!.description ?? '';
+  assert.match(text, /"reviews_unavailable": true/);
+  assert.match(text, /src\/f1\.ts/);
   settle();
 });
 

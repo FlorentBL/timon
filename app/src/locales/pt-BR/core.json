@@ -1782,8 +1782,11 @@
     "interruptionUnknown": "missão encerrada: causa indeterminada (nenhum sinal utilizável)",
     "interruptionDefault": "missão interrompida",
     "runBy": {
-      "label": "executada por {agent}",
+      "assigned": "atribuída a {named}",
       "title": "Atribuída a {named}, executada por {agent}: {reason}",
+      "titlePlanned": "Atribuída a {named}, será executada por {agent}: {reason}",
+      "detail": "Executada por {agent}",
+      "detailPlanned": "Será executada por {agent}",
       "reasonPinned": "o projeto fixa este papel em {agent} (roles.json)",
       "reasonMissing": "{named} não existe",
       "reasonOtherProject": "{named} não pertence ao projeto da tarefa",
@@ -1840,7 +1843,12 @@
       "openMission": "Abrir a missão",
       "stop": "Parar a missão",
       "stopConfirm": "Parar a missão desta tarefa?",
-      "stopFailed": "Não foi possível parar a missão (HTTP {status})."
+      "stopFailed": "Não foi possível parar a missão (HTTP {status}).",
+      "underMinute": "< 1 min",
+      "pendingPermission": "Aguardando uma permissão ({tool}) há {age}",
+      "pendingQuestion": "Aguardando uma resposta há {age}",
+      "pendingDeadline": "recusa automática em {left}",
+      "pendingOthers": "{count, plural, one {mais # cartão aguardando} other {mais # cartões aguardando}}"
     }
   },
   "agentsPage": {

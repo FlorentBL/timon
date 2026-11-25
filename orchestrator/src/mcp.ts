@@ -24,15 +24,17 @@ import { isInjectedMcpServer, isInjectedMcpStubId } from './injected-mcp.js';
 import {
   serializeCodexMcpToml, serializeGrokMcpToml, serializeMcpJson, type McpLaunchServer,
 } from './backends/mcp-serialize.js';
-import { OAuthRefreshError, refreshTokens } from './oauth.js';
+import { forgetOAuthFlows, OAuthRefreshError, refreshTokens } from './oauth.js';
 import { mcpHostAddressRefusal } from './mcp-url-guard.js';
 import { pinnedLaunchTarget } from './mcp-launch-proxy.js';
 import { vaultEnabled } from './secrets/availability.js';
 import { SecretStoreError, createSecret, deleteSecret, readSecretValue } from './secrets/store.js';
 import { mcpRelayRoute } from './mcp-relay-route.js';
 import {
-  McpOAuthVaultUnavailableError, forgetMcpOAuthTokens, mcpOAuthVaultAvailable, readMcpOAuthTokens, storeMcpOAuthTokens,
+  McpOAuthVaultUnavailableError, forgetMcpOAuthTokens, mcpOAuthVaultAvailable, readMcpOAuthClientSecret, readMcpOAuthTokens,
+  storeMcpOAuthClientSecret, storeMcpOAuthTokens,
 } from './mcp-oauth-store.js';
+import type { OAuthClient } from './plugins/contract/mcp-servers.js';
 import type {
   McpExternalConfig, McpServer, McpSummary, McpHttpConfig, McpSource, McpStdioConfig, OAuthStatus, OAuthTokens,
 } from './plugins/contract/mcp-servers.js';
@@ -67,9 +69,20 @@ export type McpStoredHttpConfig = McpHttpConfig & {
   header_secrets?: Record<string, McpHeaderSecret>;
 };
 
+/**
+ * A stdio transport as its file holds it. `env_secrets` names, by variable, a
+ * secret of the vault holding its value (TODO #1071), like `header_secrets`:
+ * a storage detail no reader is handed and no caller writes. `env` holds only
+ * what the vault could not take (an empty value, or every value of a server
+ * written while the vault was off or locked).
+ */
+export type McpStoredStdioConfig = McpStdioConfig & {
+  env_secrets?: Record<string, McpHeaderSecret>;
+};
+
 /** A server as its file holds it (`McpServer` plus the storage-only fields). */
 export type McpStoredServer = Omit<McpServer, 'transport'> & {
-  transport: McpStdioConfig | McpStoredHttpConfig | McpExternalConfig;
+  transport: McpStoredStdioConfig | McpStoredHttpConfig | McpExternalConfig;
 };
 
 export const MCP_DIR = join(TIMON_HOME, 'mcp');
@@ -156,9 +169,55 @@ function moveTokensToVault(s: McpStoredServer): { record: McpStoredServer; moved
 }
 
 function readRaw(id: string): McpStoredServer | null {
-  const s = readFileRecord(id);
+  let s = readFileRecord(id);
   // A file from before the vault held the tokens is cleaned at first read, not only at boot.
-  return s && fileTokens(s) ? moveTokensToVault(s).record : s;
+  if (s && fileTokens(s)) s = moveTokensToVault(s).record;
+  if (s && fileClientSecret(s) && vaultEnabled()) s = moveClientSecretToVault(s).record;
+  return s;
+}
+
+/** The client secret a record still carries in its file: written before the vault held it, or while it was off. */
+function fileClientSecret(s: McpServer): string | undefined {
+  return s.transport.type === 'http' ? s.transport.oauth?.client?.client_secret : undefined;
+}
+
+function withoutClientSecret(s: McpStoredServer): McpStoredServer {
+  if (s.transport.type !== 'http' || !s.transport.oauth?.client?.client_secret) return s;
+  const { client_secret: _sealed, ...client } = s.transport.oauth.client;
+  return { ...s, transport: { ...s.transport, oauth: { ...s.transport.oauth, client } } };
+}
+
+/**
+ * Moves a client secret its file holds into the vault: sealed, read back, and
+ * only then taken out of the file. Unlike tokens, nothing is dropped when the
+ * vault cannot take it (it opens nothing on its own, and a lost one means
+ * registering the client again): it waits in the file for the vault.
+ */
+function moveClientSecretToVault(s: McpStoredServer): { record: McpStoredServer; moved: boolean } {
+  const secret = fileClientSecret(s);
+  if (!secret || s.transport.type !== 'http') return { record: s, moved: false };
+  try {
+    storeMcpOAuthClientSecret(s.id, s.transport.url, secret);
+    if (readMcpOAuthClientSecret(s.id, s.transport.url) !== secret) return { record: s, moved: false };
+  } catch {
+    return { record: s, moved: false };
+  }
+  const stripped = withoutClientSecret(s);
+  writeFileRecord(stripped);
+  return { record: stripped, moved: true };
+}
+
+/**
+ * The OAuth client of a server as the token endpoint needs it: its
+ * `client_secret` read back from the vault (or from the file, while the vault
+ * could not take it). For the daemon's own OAuth code only.
+ */
+export function mcpOAuthClient(s: McpServer): OAuthClient | undefined {
+  if (s.transport.type !== 'http' || !s.transport.oauth?.client) return undefined;
+  const client = s.transport.oauth.client;
+  if (client.client_secret) return client;
+  const secret = readMcpOAuthClientSecret(s.id, s.transport.url);
+  return secret ? { ...client, client_secret: secret } : client;
 }
 
 /**
@@ -166,7 +225,10 @@ function readRaw(id: string): McpStoredServer | null {
  * vault, tokens are refused (`McpOAuthVaultUnavailableError`) rather than
  * written in clear.
  */
-function writeRaw(server: McpStoredServer): void {
+function writeRaw(input: McpStoredServer): void {
+  let server = input;
+  // The client secret goes to the vault when it can take it; otherwise it waits in the file.
+  if (fileClientSecret(server) && vaultEnabled()) server = moveClientSecretOut(server);
   const tokens = fileTokens(server);
   if (!tokens || server.transport.type !== 'http') {
     writeFileRecord(server);
@@ -175,6 +237,16 @@ function writeRaw(server: McpStoredServer): void {
   // Throws when the vault is off or its master key unreadable (a locked keyring).
   storeMcpOAuthTokens(server.id, server.transport.url, tokens);
   writeFileRecord(withoutTokens(server));
+}
+
+function moveClientSecretOut(server: McpStoredServer): McpStoredServer {
+  const secret = fileClientSecret(server);
+  if (!secret || server.transport.type !== 'http') return server;
+  try {
+    storeMcpOAuthClientSecret(server.id, server.transport.url, secret);
+    if (readMcpOAuthClientSecret(server.id, server.transport.url) === secret) return withoutClientSecret(server);
+  } catch { /* kept in the file until the vault can take it */ }
+  return server;
 }
 
 /**
@@ -225,7 +297,7 @@ function summarise(s: McpStoredServer): McpSummary {
     oauth_status: oauthStatus(s),
     // Said on the list, not only in the daemon's log: the page is where a user
     // looks for why an agent did not get the server.
-    ...(relayedServer(s) && !vaultEnabled() ? { held_back: 'vault_off' as const } : {}),
+    ...((relayedServer(s) || bridgedStdioServer(s)) && !vaultEnabled() ? { held_back: 'vault_off' as const } : {}),
   };
 }
 
@@ -329,6 +401,7 @@ function maskedHeaders(transport: McpStoredHttpConfig): Record<string, string> |
  * that sends `***` back keeps the stored value (`upsertMcp`).
  */
 export function presentMcpServer(s: McpStoredServer): McpServer {
+  if (s.transport.type === 'stdio') return { ...s, transport: publicStdio(s.transport) };
   if (s.transport.type !== 'http') return s;
   const { header_secrets: _vaultRefs, headers: _stored, ...rest } = s.transport;
   const headers = maskedHeaders(s.transport);
@@ -346,10 +419,7 @@ export function presentMcpServer(s: McpStoredServer): McpServer {
  */
 export function redactMcpServer(s: McpStoredServer): McpServer {
   const transport = s.transport;
-  if (transport.type === 'stdio') {
-    const env = transport.env ? maskValues(transport.env) : transport.env;
-    return { ...s, transport: { ...transport, ...(env ? { env } : {}) } };
-  }
+  if (transport.type === 'stdio') return { ...s, transport: publicStdio(transport) };
   if (transport.type === 'http') {
     const headers = maskedHeaders(transport);
     let oauth = transport.oauth;
@@ -403,19 +473,16 @@ export function missionTransport(
 ): { transport: McpStdioConfig | McpHttpConfig } | { refusal: string } {
   const stored = existing?.transport;
   if (incoming.type === 'stdio') {
-    const env = incoming.env;
-    if (!env || !Object.values(env).includes(SECRET_MASK)) return { transport: incoming };
-    const sameTarget = stored?.type === 'stdio'
-      && stored.command === incoming.command
-      && JSON.stringify(stored.args ?? []) === JSON.stringify(incoming.args ?? []);
-    const kept: Record<string, string> = {};
-    for (const [key, value] of Object.entries(env)) {
-      if (value !== SECRET_MASK) { kept[key] = value; continue; }
-      const old = sameTarget && stored?.type === 'stdio' ? stored.env?.[key] : undefined;
-      if (old === undefined) return { refusal: maskedRefusal('env', key, sameTarget ? 'no stored value' : 'command or args changed') };
-      kept[key] = old;
+    const { env_secrets: _dropped, ...rest } = incoming as McpStoredStdioConfig;
+    // A masked variable stays masked: `upsertMcp` carries the stored value over
+    // itself, from the vault or the file. Refused here first, so that the
+    // mission's refusal is audited and says why.
+    for (const [key, value] of Object.entries(rest.env ?? {})) {
+      if (value !== SECRET_MASK) continue;
+      const why = maskedEnvGap(stored ?? null, rest, key);
+      if (why) return { refusal: maskedRefusal('env', key, why) };
     }
-    return { transport: { ...incoming, env: kept } };
+    return { transport: rest };
   }
   const rest: McpHttpConfig = { ...incoming };
   delete rest.oauth;
@@ -435,6 +502,30 @@ function maskedHeaderGap(stored: McpStoredServer['transport'] | null, url: strin
   if (stored?.type !== 'http' || stored.url !== url) return stored?.type === 'http' ? 'url changed' : 'no stored value';
   if (stored.headers?.[header] !== undefined || stored.header_secrets?.[header]?.typed) return null;
   return 'no stored value';
+}
+
+function sameStdioTarget(stored: McpStoredServer['transport'] | null, incoming: Pick<McpStdioConfig, 'command' | 'args'>): boolean {
+  return stored?.type === 'stdio'
+    && stored.command === incoming.command
+    && JSON.stringify(stored.args ?? []) === JSON.stringify(incoming.args ?? []);
+}
+
+/** Why a masked variable cannot keep its stored value for this command; `null` when it can. */
+function maskedEnvGap(stored: McpStoredServer['transport'] | null, incoming: Pick<McpStdioConfig, 'command' | 'args'>, key: string): string | null {
+  if (!sameStdioTarget(stored, incoming)) return stored?.type === 'stdio' ? 'command or args changed' : 'no stored value';
+  if (stored?.type !== 'stdio') return 'no stored value';
+  return stored.env?.[key] !== undefined || stored.env_secrets?.[key] ? null : 'no stored value';
+}
+
+/**
+ * A stdio transport as any reader is shown it: every variable, from the file
+ * or the vault, worth `***`, and never which secret holds one. The superadmin's
+ * editor too: a value the vault holds is not read back (TODO #1071).
+ */
+function publicStdio(transport: McpStoredStdioConfig): McpStdioConfig {
+  const { env_secrets: refs, env: stored, ...rest } = transport;
+  const names = [...Object.keys(stored ?? {}), ...Object.keys(refs ?? {})];
+  return names.length ? { ...rest, env: maskValues(Object.fromEntries(names.map((name) => [name, '']))) } : rest;
 }
 
 function maskedRefusal(field: 'env' | 'headers', key: string, why: string): string {
@@ -485,13 +576,27 @@ export function upsertMcp(input: UpsertMcpInput): McpStoredServer {
   const sameTarget = transport.type === 'http' && existing?.transport.type === 'http'
     && existing.transport.url === transport.url;
   let sealed: Record<string, McpHeaderSecret> = {};
+  if (transport.type === 'stdio') {
+    // Same rule as headers: a stored variable keeps reaching the command it was
+    // given for, and is never carried to another one.
+    const { kept, clear } = resolveEnv(input.id, transport, existing?.transport ?? null);
+    const { refs, file } = sealOrKeep(input.id, clear, 'env');
+    sealed = refs;
+    const { env: _incoming, ...rest } = transport;
+    const vaultHeld = { ...kept, ...refs };
+    transport = {
+      ...rest,
+      ...(hasEntries(file) ? { env: file } : {}),
+      ...(hasEntries(vaultHeld) ? { env_secrets: vaultHeld } : {}),
+    } as McpStoredStdioConfig;
+  }
   if (transport.type === 'http') {
     // Same rule as oauth: a stored key keeps reaching the url it was given
     // for, and is never carried to another one.
     const before = sameTarget && existing?.transport.type === 'http' ? existing.transport : undefined;
     const daemonKeys = input.headerSecrets ?? daemonHeaderSecrets(before?.header_secrets);
     const { kept, clear } = resolveHeaders(input.id, transport.headers, existing?.transport ?? null, transport.url);
-    const { refs, file } = sealOrKeep(input.id, clear);
+    const { refs, file } = sealOrKeep(input.id, clear, 'header');
     sealed = refs;
     const { headers: _incoming, ...rest } = transport;
     const vaultHeld = { ...daemonKeys, ...kept, ...refs };
@@ -567,9 +672,33 @@ function resolveHeaders(
   return { kept, clear };
 }
 
-/** `MCP_<ID>_<HEADER>`: the vault names secrets like environment variables. */
-function headerSecretName(id: string, header: string): string {
-  return `MCP_${`${id}_${header}`.toUpperCase().replace(/[^A-Z0-9]+/g, '_')}`;
+/**
+ * The variables a write of a stdio server asks for, split like `resolveHeaders`:
+ * the vault-held ones a masked value keeps, and the values to store.
+ */
+function resolveEnv(
+  id: string,
+  incoming: McpStdioConfig,
+  stored: McpStoredServer['transport'] | null,
+): { kept: Record<string, McpHeaderSecret>; clear: Record<string, string> } {
+  const kept: Record<string, McpHeaderSecret> = {};
+  const clear: Record<string, string> = {};
+  for (const [key, value] of Object.entries(incoming.env ?? {})) {
+    if (value !== SECRET_MASK) { clear[key] = value; continue; }
+    const why = maskedEnvGap(stored, incoming, key);
+    if (why || stored?.type !== 'stdio') throw new Error(`mcp ${id}: ${maskedRefusal('env', key, why ?? 'no stored value')}`);
+    const ref = stored.env_secrets?.[key];
+    if (ref) kept[key] = ref;
+    else clear[key] = stored.env?.[key] ?? '';
+  }
+  return { kept, clear };
+}
+
+type VaultKind = 'header' | 'env';
+
+/** `MCP_<ID>_<HEADER>` / `MCP_<ID>_ENV_<VAR>`: the vault names secrets like environment variables. */
+function headerSecretName(id: string, header: string, kind: VaultKind = 'header'): string {
+  return `MCP_${`${id}_${kind === 'env' ? 'ENV_' : ''}${header}`.toUpperCase().replace(/[^A-Z0-9]+/g, '_')}`;
 }
 
 /**
@@ -578,12 +707,13 @@ function headerSecretName(id: string, header: string): string {
  * secrets already created are deleted and the reason is returned — never the
  * value: the caller then keeps the headers in the file.
  */
-function sealHeaders(id: string, headers: Record<string, string>): { refs: Record<string, McpHeaderSecret> } | { failure: string } {
+function sealHeaders(id: string, headers: Record<string, string>, kind: VaultKind = 'header'): { refs: Record<string, McpHeaderSecret> } | { failure: string } {
   if (!vaultEnabled()) return { failure: 'the secrets vault is switched off' };
   const refs: Record<string, McpHeaderSecret> = {};
   try {
     for (const [header, value] of Object.entries(headers)) {
-      const secret = createSecret({ name: headerSecretName(id, header), value, note: `MCP server ${id}: header ${header}` });
+      const what = kind === 'env' ? 'variable' : 'header';
+      const secret = createSecret({ name: headerSecretName(id, header, kind), value, note: `MCP server ${id}: ${what} ${header}` });
       refs[header] = { secret_id: secret.id, typed: true };
       if (readSecretValue(secret.id) !== value) return abandon(refs, 'the vault did not give the value back');
     }
@@ -608,10 +738,11 @@ function abandon(refs: Record<string, McpHeaderSecret>, failure: string): { fail
 // A read retries nothing, but a boot and each save do: one warning per server and process is enough.
 const headersKeptWarned = new Set<string>();
 
-function warnHeadersKept(id: string, why: string): void {
+function warnHeadersKept(id: string, why: string, kind: VaultKind = 'header'): void {
   if (headersKeptWarned.has(id)) return;
   headersKeptWarned.add(id);
-  console.warn(`[timon] mcp ${id}: its headers stay in its file, the secrets vault could not take them (${why}); agents do not get this server until it can`);
+  const what = kind === 'env' ? 'variables' : 'headers';
+  console.warn(`[timon] mcp ${id}: its ${what} stay in its file, the secrets vault could not take them (${why}); agents do not get this server until it can`);
 }
 
 /**
@@ -620,12 +751,12 @@ function warnHeadersKept(id: string, why: string): void {
  * (not a secret, and one the vault refuses), or every value when the vault is
  * off or locked, as the server was written before the vault held headers.
  */
-function sealOrKeep(id: string, clear: Record<string, string>): { refs: Record<string, McpHeaderSecret>; file: Record<string, string> } {
+function sealOrKeep(id: string, clear: Record<string, string>, kind: VaultKind): { refs: Record<string, McpHeaderSecret>; file: Record<string, string> } {
   const values = Object.fromEntries(Object.entries(clear).filter(([, value]) => value !== ''));
   if (!hasEntries(values)) return { refs: {}, file: clear };
-  const sealed = sealHeaders(id, values);
+  const sealed = sealHeaders(id, values, kind);
   if ('failure' in sealed) {
-    warnHeadersKept(id, sealed.failure);
+    warnHeadersKept(id, sealed.failure, kind);
     return { refs: {}, file: clear };
   }
   headersKeptWarned.delete(id);
@@ -633,8 +764,10 @@ function sealOrKeep(id: string, clear: Record<string, string>): { refs: Record<s
 }
 
 /**
- * Moves into the vault the headers a server's file still holds in clear
- * (written before the vault held them, or while it was off or locked). Unlike
+ * Moves into the vault the headers (http) or variables (stdio) a server's file
+ * still holds in clear (written before the vault held them, or while it was off
+ * or locked). Run at every boot and whenever the vault module is switched on
+ * again (`secrets-vault/index.ts`). Unlike
  * OAuth tokens, nothing is dropped: when the vault cannot take them — switched
  * off, its master key unreadable — the file is left as it is and a warning
  * names the server, never a value; the server stays out of the launches as it
@@ -648,32 +781,44 @@ export function migrateMcpHeadersToVault(): { moved: string[]; kept: string[] } 
     if (!f.endsWith('.json')) continue;
     const id = f.slice(0, -'.json'.length);
     if (!ID_RE.test(id)) continue;
-    const s = readFileRecord(id);
-    if (!s || s.transport.type !== 'http') continue;
-    if (!Object.values(s.transport.headers ?? {}).some((value) => value !== '')) continue;
-    const { refs, file } = sealOrKeep(id, s.transport.headers ?? {});
+    let s = readFileRecord(id);
+    // An OAuth client secret written while the vault was off, too (it is not a header: moved on its own).
+    if (s && fileClientSecret(s) && vaultEnabled() && moveClientSecretToVault(s).moved) {
+      s = readFileRecord(id);
+      if (!moved.includes(id)) moved.push(id);
+    }
+    if (!s || (s.transport.type !== 'http' && s.transport.type !== 'stdio')) continue;
+    const kind: VaultKind = s.transport.type === 'stdio' ? 'env' : 'header';
+    const clear = (s.transport.type === 'stdio' ? s.transport.env : s.transport.headers) ?? {};
+    if (!Object.values(clear).some((value) => value !== '')) continue;
+    const { refs, file } = sealOrKeep(id, clear, kind);
     if (!hasEntries(refs)) { kept.push(id); continue; }
-    const { headers: _clear, ...rest } = s.transport;
-    const next: McpStoredServer = {
-      ...s,
-      transport: { ...rest, ...(hasEntries(file) ? { headers: file } : {}), header_secrets: { ...rest.header_secrets, ...refs } },
-    };
+    let next: McpStoredServer;
+    if (s.transport.type === 'stdio') {
+      const { env: _clear, ...rest } = s.transport;
+      next = { ...s, transport: { ...rest, ...(hasEntries(file) ? { env: file } : {}), env_secrets: { ...rest.env_secrets, ...refs } } };
+    } else {
+      const { headers: _clear, ...rest } = s.transport;
+      next = { ...s, transport: { ...rest, ...(hasEntries(file) ? { headers: file } : {}), header_secrets: { ...rest.header_secrets, ...refs } } };
+    }
     try {
       writeFileRecord(next);
     } catch (err) {
       deleteRefs(refs);
-      warnHeadersKept(id, (err as Error).name);
+      warnHeadersKept(id, (err as Error).name, kind);
       kept.push(id);
       continue;
     }
     forgetUnreferencedKeys(id, s, next);
-    moved.push(id);
+    if (!moved.includes(id)) moved.push(id);
   }
   return { moved, kept };
 }
 
 function headerSecretIds(s: McpStoredServer | null): string[] {
-  return s?.transport.type === 'http' ? Object.values(s.transport.header_secrets ?? {}).map((ref) => ref.secret_id) : [];
+  if (s?.transport.type === 'http') return Object.values(s.transport.header_secrets ?? {}).map((ref) => ref.secret_id);
+  if (s?.transport.type === 'stdio') return Object.values(s.transport.env_secrets ?? {}).map((ref) => ref.secret_id);
+  return [];
 }
 
 /**
@@ -693,8 +838,13 @@ function forgetUnreferencedKeys(id: string, before: McpStoredServer | null, afte
   }
 }
 
-function withoutHeaderSecrets(transport: McpStdioConfig | McpStoredHttpConfig): McpStdioConfig | McpStoredHttpConfig {
-  if (transport.type !== 'http' || !('header_secrets' in transport)) return transport;
+function withoutHeaderSecrets(transport: McpStoredStdioConfig | McpStoredHttpConfig): McpStdioConfig | McpStoredHttpConfig {
+  if (transport.type === 'stdio') {
+    if (!('env_secrets' in transport)) return transport;
+    const { env_secrets: _dropped, ...rest } = transport;
+    return rest;
+  }
+  if (!('header_secrets' in transport)) return transport;
   const { header_secrets: _dropped, ...rest } = transport;
   return rest;
 }
@@ -777,6 +927,7 @@ export function deleteMcp(id: string): boolean {
   rmSync(p);
   forgetUnreferencedKeys(id, s, null);
   forgetMcpOAuthTokens(id);
+  forgetOAuthFlows(id);
   return true;
 }
 
@@ -803,6 +954,16 @@ function vaultHeaders(id: string, transport: McpStoredHttpConfig): Record<string
     }
   }
   return out;
+}
+
+/**
+ * A stdio server's variables: the file's, then the ones `env_secrets` names,
+ * read from the vault; `null` when one cannot be read — the server is then
+ * left out rather than started without its variable.
+ */
+function stdioEnv(id: string, transport: McpStoredStdioConfig): Record<string, string> | null {
+  const fromVault = vaultHeaders(id, { type: 'http', url: '', header_secrets: transport.env_secrets });
+  return fromVault ? { ...(transport.env ?? {}), ...fromVault } : null;
 }
 
 /**
@@ -836,7 +997,8 @@ async function maybeRefreshTokens(s: McpServer, force = false): Promise<McpServe
   if (s.transport.type !== 'http' || !s.transport.oauth) return s;
   const tokens = oauthTokensOf(s);
   if (!tokens?.refresh_token) return s;
-  const { metadata, client } = s.transport.oauth;
+  const { metadata } = s.transport.oauth;
+  const client = mcpOAuthClient(s) ?? s.transport.oauth.client;
   // Refresh ~30s before actual expiry to avoid races.
   const fresh = tokens.expires_at && tokens.expires_at - 30_000 > Date.now();
   if (fresh && !force) return s;
@@ -909,8 +1071,34 @@ function relayedServer(s: McpStoredServer): s is McpStoredServer & { transport: 
   return Boolean(s.transport.oauth) || hasEntries(s.transport.headers) || hasEntries(s.transport.header_secrets);
 }
 
+/**
+ * A stdio server the daemon runs itself and the CLI reaches through the relay
+ * (`mcp-stdio-bridge.ts`): one with environment variables, which must not be
+ * written into the CLI's configuration. Without any, there is nothing to hide
+ * and the CLI starts it as before.
+ */
+export function bridgedStdioServer(s: McpStoredServer): s is McpStoredServer & { transport: McpStoredStdioConfig } {
+  return s.transport.type === 'stdio' && (hasEntries(s.transport.env) || hasEntries(s.transport.env_secrets));
+}
+
+/**
+ * What a bridged stdio server's relay route derives from, in place of an url:
+ * its command and arguments — another command is another route, and the
+ * old one leads nowhere.
+ */
+export function stdioRelayTarget(transport: Pick<McpStdioConfig, 'command' | 'args'>): string {
+  return `stdio:${JSON.stringify([transport.command, ...(transport.args ?? [])])}`;
+}
+
 /** What a launch hands a CLI for a server that carries a credential (`mcp-relay.ts`). */
 export type McpRelayMinter = (server: { id: string; url: string }) => { url: string; headers: Record<string, string> } | null;
+
+/**
+ * Starts the daemon's bridge of a stdio server for the mission being launched
+ * and returns what the CLI is handed, or `null` when it could not start: the
+ * server is then left out, never written with its variables.
+ */
+export type McpStdioBridgeStarter = (server: { id: string; target: string }) => Promise<{ url: string; headers: Record<string, string> } | null>;
 
 /**
  * The servers `ids` name, ready to be written for a CLI: external connectors
@@ -921,7 +1109,9 @@ export type McpRelayMinter = (server: { id: string; url: string }) => { url: str
  * to — or without a relay key (vault off), such a server is left out. The
  * CLI-specific text is `backends/mcp-serialize.ts`, which a provider plugin shares.
  */
-export async function resolveLaunchServers(ids: string[], relay?: McpRelayMinter): Promise<McpLaunchServer[]> {
+export async function resolveLaunchServers(
+  ids: string[], relay?: McpRelayMinter, bridge?: McpStdioBridgeStarter,
+): Promise<McpLaunchServer[]> {
   const out: McpLaunchServer[] = [];
   for (const id of ids) {
     const s = readRaw(id);
@@ -957,13 +1147,22 @@ export async function resolveLaunchServers(ids: string[], relay?: McpRelayMinter
       out.push({ type: 'http', name, ...target });
       continue;
     }
+    if (bridgedStdioServer(s) && bridge) {
+      // The daemon runs it; the CLI gets the relay, never the variables.
+      const target = await bridge({ id, target: stdioRelayTarget(s.transport) });
+      if (target) out.push({ type: 'http', name, ...target });
+      continue;
+    }
     if (s.transport.type === 'stdio') {
+      // The bridge switched off (`TIMON_MCP_STDIO_BRIDGE`): the variables are written as before.
+      const env = stdioEnv(id, s.transport);
+      if (!env) continue;
       out.push({
         type: 'stdio',
         name,
         command: s.transport.command,
         args: s.transport.args ?? [],
-        env: s.transport.env ?? {},
+        env,
       });
     } else if (s.transport.type === 'http') {
       if (s.public_only) {
@@ -989,10 +1188,35 @@ export function mcpRelayServerForRoute(route: string): string | null {
     const id = f.slice(0, -'.json'.length);
     if (!ID_RE.test(id)) continue;
     const s = readRaw(id);
-    if (!s || !relayedServer(s)) continue;
-    if (mcpRelayRoute(id, s.transport.url) === route) return id;
+    if (!s) continue;
+    if (relayedServer(s) && mcpRelayRoute(id, s.transport.url) === route) return id;
+    if (bridgedStdioServer(s) && mcpRelayRoute(id, stdioRelayTarget(s.transport)) === route) return id;
   }
   return null;
+}
+
+/** What the daemon's bridge runs for a stdio server; `null` once it is gone or no longer bridged. */
+export type McpStdioLaunch = { command: string; args: string[]; env: Record<string, string>; target: string };
+
+export function mcpStdioBridgeLaunch(id: string): McpStdioLaunch | null {
+  validId(id);
+  const s = readRaw(id);
+  if (!s || !bridgedStdioServer(s)) return null;
+  const env = stdioEnv(id, s.transport);
+  if (!env) return null;
+  return {
+    command: s.transport.command,
+    args: [...(s.transport.args ?? [])],
+    env,
+    target: stdioRelayTarget(s.transport),
+  };
+}
+
+/** Whether a relay route leads to a bridged stdio server (rather than an http upstream). */
+export function isBridgedStdioMcp(id: string): boolean {
+  if (!ID_RE.test(id)) return false;
+  const s = readRaw(id);
+  return s !== null && bridgedStdioServer(s);
 }
 
 /** Where the relay sends a request for a server, with what. Never leaves the daemon. */

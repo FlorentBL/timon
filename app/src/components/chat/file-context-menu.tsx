@@ -5,6 +5,7 @@ import { createPortal } from 'react-dom';
 import { ChevronRight } from 'lucide-react';
 
 import { cn } from '@/lib/utils';
+import { DESTRUCTIVE_MENU_ITEM } from '@/components/ui/dropdown-menu';
 import { NativeViewCover } from '@/lib/native-view-cover';
 
 export type FileMenuItem = {
@@ -91,7 +92,7 @@ export function FileContextMenu({
           role="menuitem"
           aria-haspopup={it.submenu ? 'menu' : undefined}
           title={it.title}
-          className={cn(ITEM, it.danger && 'text-destructive hover:text-destructive')}
+          className={cn(ITEM, it.danger && DESTRUCTIVE_MENU_ITEM)}
           onClick={() => {
             if (it.submenu) { setSub(it.submenu); return; }
             onClose();

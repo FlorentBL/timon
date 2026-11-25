@@ -81,6 +81,25 @@ const COPILOT_DENY_RULES = [
  * @param {{ timonCliCommands: readonly string[] }} policy
  * @param {string} formsServer
  */
+/**
+ * The agent's extra folders (`opts.extraDirs`, checked by the daemon) as `--add-dir`, so the
+ * CLI's file tools reach them like the working directory. Copilot has no rule that refuses a
+ * write under one path only, and the dialect cannot tell whether a fence holds this launch
+ * (Windows has none, and it can be switched off): a `read` folder is only handed over when
+ * the mode already refuses every write (`plan`, `read-only`), never in a mode where the file
+ * tools could write in it.
+ */
+export function extraDirArgs(extraDirs, permissionMode) {
+    const writesRefused = permissionMode === 'plan' || permissionMode === 'read-only';
+    const args = [];
+    for (const dir of extraDirs ?? []) {
+        if (dir.mode === 'read' && !writesRefused)
+            continue;
+        args.push('--add-dir', dir.path);
+    }
+    return args;
+}
+
 export function copilotRules(policy, formsServer) {
     /** MCP servers a read-only agent may still call: the Timon bridge (Kanban,
      *  questions to the human) and the project's semantic index. */
@@ -567,6 +586,7 @@ export function createCopilotProvider(services) {
                 args.push('--reasoning-effort', opts.cfg.reasoningEffort);
             if (opts.memoryDir)
                 args.push('--add-dir', opts.memoryDir);
+            args.push(...extraDirArgs(opts.extraDirs, opts.cfg.permission_mode));
             for (const image of writeTurnImages(scratch, opts.images))
                 args.push('--attachment', image);
             // Always with its value: a bare `--resume` opens an interactive picker.

@@ -31,7 +31,9 @@ import { applyMissionMcpServers } from './mission-mcp-servers.js';
 import { agentConfig } from './paths.js';
 import { isConversionSource } from './users/conversion-mission.js';
 import { isLoopbackPeer, proxyHeaderOf } from './http-peer.js';
-import { mcpRelayServerForRoute, mcpRelayUpstream, type McpRelayUpstream } from './mcp.js';
+import { isBridgedStdioMcp, mcpRelayServerForRoute, mcpRelayUpstream, type McpRelayUpstream } from './mcp.js';
+import type { StdioBridge } from './mcp-stdio-bridge.js';
+import { stdioBridgeFor } from './mcp-stdio-bridges.js';
 import { MCP_RELAY_HEADER, isMcpRelayAgent, isMcpRelayRoute, mcpRelayKey, verifyMcpRelayToken } from './mcp-relay.js';
 import { assertMcpLiteralAllowed, mcpPinnedLookup } from './mcp-url-guard.js';
 import { DestinationRefusedError, guardedFetch, type DestinationPolicy } from './plugins/net-guard.js';
@@ -71,6 +73,10 @@ export type McpRelayDeps = {
   /** Whether the server is, right now, among the servers this agent's mission runs with. */
   attached: (missionId: string, agent: string, serverId: string) => boolean;
   upstream: (id: string, rejected?: string) => Promise<McpRelayUpstream | null>;
+  /** Whether the server is a stdio one the daemon runs itself (`mcp-stdio-bridge.ts`). */
+  bridged: (serverId: string) => boolean;
+  /** Its running bridge for this mission, started when none runs; `null` when it cannot start. */
+  bridge: (missionId: string, agent: string, serverId: string) => Promise<StdioBridge | null>;
 };
 
 const DEFAULT_DEPS: McpRelayDeps = {
@@ -79,6 +85,8 @@ const DEFAULT_DEPS: McpRelayDeps = {
   serverForRoute: mcpRelayServerForRoute,
   attached: missionHasServer,
   upstream: mcpRelayUpstream,
+  bridged: isBridgedStdioMcp,
+  bridge: stdioBridgeFor,
 };
 
 /**
@@ -237,6 +245,10 @@ async function relay(req: Request, res: ExpressResponse, deps: McpRelayDeps): Pr
     res.status(413).json({ error: 'request body too large' });
     return;
   }
+  if (deps.bridged(serverId)) {
+    await toBridge(req, res, deps, { missionId, agent, serverId }, method, body);
+    return;
+  }
   let upstream = await deps.upstream(serverId);
   if (!upstream) {
     notConnected(res, method, body, serverId);
@@ -280,6 +292,27 @@ async function relay(req: Request, res: ExpressResponse, deps: McpRelayDeps): Pr
   const stream = Readable.fromWeb(response.body as NodeReadableStream<Uint8Array>);
   stream.on('error', () => res.destroy());
   stream.pipe(res);
+}
+
+/**
+ * A stdio server the daemon runs: the request goes to its process, not to an
+ * url. `DELETE` ends no session — the process lives as long as its mission.
+ */
+async function toBridge(
+  req: Request, res: ExpressResponse, deps: McpRelayDeps,
+  caller: { missionId: string; agent: string; serverId: string }, method: string, body: Buffer | undefined,
+): Promise<void> {
+  if (method !== 'POST' && method !== 'GET') {
+    res.writeHead(405, { allow: 'GET, POST' }).end();
+    return;
+  }
+  const bridge = await deps.bridge(caller.missionId, caller.agent, caller.serverId);
+  if (!bridge) {
+    notConnected(res, method, body, caller.serverId);
+    return;
+  }
+  if (method === 'GET') await bridge.openStream(req, res);
+  else await bridge.post(req, res, body ?? Buffer.alloc(0));
 }
 
 /** Answers every `/mcp-relay…` path itself; anything else goes on to the API. */

@@ -104,6 +104,8 @@ async function wire(model: string, thinking: ClaudeThinking): Promise<Body | nul
       child.on('close', (code) => {
         clearTimeout(timer);
         if (code === 0) resolve('done');
+        // 127 is the shell's "command not found": a wrapper script on PATH (macOS ships the CLI inside the desktop app) that finds no build under the test's own HOME.
+        else if (code === 127) resolve('missing');
         else reject(new Error(`claude exited with ${code}: ${stderr.slice(0, 500)}`));
       });
     });

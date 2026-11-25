@@ -31,6 +31,7 @@ app.use((req, _res, next) => {
   if (who === 'manager') req.auth = { kind: 'api-token', user: null, isSuperadmin: false, permissions: ['projects:manage'] };
   else if (who === 'reader') req.auth = { kind: 'api-token', user: null, isSuperadmin: false, permissions: ['projects:read', 'kanban:write'] };
   else if (who === 'viewer') req.auth = { kind: 'api-token', user: null, isSuperadmin: false, permissions: ['projects:read'] };
+  else if (who === 'bare') req.auth = { kind: 'api-token', user: null, isSuperadmin: false, permissions: [] };
   next();
 });
 registerIntegrationRoutes(app, {
@@ -42,7 +43,7 @@ await once(server, 'listening');
 after(() => server.close());
 const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
 
-function call(method: string, path: string, who: 'anonymous' | 'viewer' | 'reader' | 'manager', body?: unknown) {
+function call(method: string, path: string, who: 'anonymous' | 'bare' | 'viewer' | 'reader' | 'manager', body?: unknown) {
   const headers: Record<string, string> = { 'content-type': 'application/json' };
   if (who !== 'anonymous') headers['x-test-who'] = who;
   return fetch(`${base}${path}`, { method, headers, body: body === undefined ? undefined : JSON.stringify(body) });
@@ -66,6 +67,32 @@ test('a caller without projects:manage is refused, reads included', async () => 
   assert.equal((await call('POST', `${URL_}/check`, 'reader')).status, 403);
   assert.equal(dbApi.getProjectRow('acme')?.integration, null);
   assert.deepEqual(ghCalls, []);
+});
+
+test('the mode alone is read by any signed-in caller, never anonymously', async () => {
+  const MODE = `${URL_}/mode`;
+  assert.equal((await call('GET', MODE, 'anonymous')).status, 401);
+  for (const who of ['bare', 'viewer', 'reader'] as const) {
+    const res = await call('GET', MODE, who);
+    assert.equal(res.status, 200, who);
+    assert.deepEqual(await res.json(), { mode: 'local', configured: false, valid: true }, who);
+  }
+  // No write hides behind the read: the setting itself stays a manager's.
+  assert.equal((await call('PUT', MODE, 'viewer', { mode: 'pr' })).status, 404);
+  assert.equal((await call('GET', '/api/projects/nope/integration/mode', 'viewer')).status, 404);
+
+  assert.equal((await call('PUT', URL_, 'manager', { mode: 'pr', account: 'ai-bot', gh_config_dir: ghDir })).status, 200);
+  try {
+    const res = await call('GET', MODE, 'viewer');
+    const text = await res.text();
+    assert.deepEqual(JSON.parse(text), { mode: 'pr', configured: true, valid: true });
+    // The account and the folder are a manager's to read.
+    assert.ok(!text.includes('ai-bot') && !text.includes(ghDir), text);
+    dbApi.setProjectIntegration('acme', '{"mode":"sideways"}');
+    assert.deepEqual(await (await call('GET', MODE, 'bare')).json(), { mode: 'local', configured: true, valid: false });
+  } finally {
+    assert.equal((await call('DELETE', URL_, 'manager')).status, 200);
+  }
 });
 
 test('a manager reads the default, sets, reads back and resets the setting', async () => {

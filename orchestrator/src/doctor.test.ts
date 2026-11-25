@@ -11,7 +11,7 @@ import './test-home.js';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-const { whichBin, diagnose, formatDoctor, BINARIES } = await import('./doctor.js');
+const { whichBin, diagnose, formatDoctor, BINARIES, refreshPinnedIdentities } = await import('./doctor.js');
 const { TimonConfigSchema } = await import('./config/schema.js');
 const { setConfig, resetConfig } = await import('./config/load.js');
 
@@ -205,4 +205,122 @@ test('an empty main seat names the command that fills it', () => {
   assert.match(empty, /main orchestrator NONE .*eligible: Atlas, Zeus; run "timon agent set-main <name>"/);
   const none = formatDoctor({ ...r, mainSeat: { holder: null, empty: true, candidates: [] } });
   assert.doesNotMatch(none, /set-main/, 'no command to suggest when nobody is eligible');
+});
+
+/**
+ * #1101: `codex ✓ /usr/local/bin/ollama (pinned in timon.config.json)`, and every mission died on
+ * `ollama exec`. A pin whose program does not describe itself as its provider declared is ✗, says so in a
+ * fixed sentence, and counts as no backend.
+ */
+// Windows starts only a `.exe` or a known npm shim to check it, and these stubs are batch files.
+test('a pin on another program is not ok, and the report says so without quoting it', { skip: process.platform === 'win32' }, async () => {
+  const { mkdtempSync, writeFileSync, rmSync } = await import('node:fs');
+  const { tmpdir } = await import('node:os');
+  const { join } = await import('node:path');
+  const dir = mkdtempSync(join(tmpdir(), 'timon-doctor-pin-'));
+  const ext = process.platform === 'win32' ? '.cmd' : '';
+  const stubOf = (name: string, line: string): string => {
+    const file = join(dir, `${name}${ext}`);
+    writeFileSync(file, process.platform === 'win32' ? `@echo ${line}\r\n` : `#!/bin/sh\necho "${line}"\n`, { mode: 0o755 });
+    return file;
+  };
+  const ollama = stubOf('ollama', 'ollama version is 0.16.2');
+  const codex = stubOf('codex', 'codex-cli 0.169.0');
+  // A machine loaded by the whole suite can starve the 250 ms pattern limit; such an answer is never kept for
+  // a launch, and the CLI's fresh check asks again: so does the test, a few times at most.
+  const settle = async (): Promise<void> => {
+    await refreshPinnedIdentities();
+    for (let i = 0; i < 3 && /ran past/.test(diagnose().binaries.find((b) => b.name === 'codex')?.error ?? ''); i++) {
+      await refreshPinnedIdentities({ fresh: true });
+    }
+  };
+  try {
+    setConfig(TimonConfigSchema.parse({ host: { binaries: { codex: ollama } } }));
+    await settle();
+    const wrong = diagnose().binaries.find((b) => b.name === 'codex')!;
+    assert.equal(wrong.ok, false);
+    assert.equal(wrong.path, ollama);
+    assert.match(wrong.error ?? '', /^`ollama(\.cmd)?` is not the Codex CLI, the program the `codex` pin runs: its `--version` answer does not match/);
+    assert.doesNotMatch(wrong.error ?? '', /0\.16\.2|timon-doctor-pin-/, 'neither what it printed nor its folder');
+    assert.match(formatDoctor(diagnose()), /codex\s+✗/);
+
+    setConfig(TimonConfigSchema.parse({ host: { binaries: { codex } } }));
+    await settle();
+    const right = diagnose().binaries.find((b) => b.name === 'codex')!;
+    assert.deepEqual([right.ok, right.path, right.error], [true, codex, undefined]);
+  } finally {
+    resetConfig();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+/** The report's error is read alone (a log, a support message): it names the pin's key, never its path. */
+test('a pin whose file is missing: a fixed error, without the path', async () => {
+  const { tmpdir } = await import('node:os');
+  const { join } = await import('node:path');
+  const missing = join(tmpdir(), 'timon-doctor-missing-pin', 'codex');
+  try {
+    setConfig(TimonConfigSchema.parse({ host: { binaries: { codex: missing } } }));
+    const dead = diagnose().binaries.find((b) => b.name === 'codex')!;
+    assert.deepEqual([dead.ok, dead.path, dead.pinned], [false, null, true]);
+    assert.equal(dead.error, 'host.binaries.codex: the pinned file is missing or cannot be run');
+    assert.equal((dead.error ?? '').includes(tmpdir()), false);
+  } finally {
+    resetConfig();
+  }
+});
+
+/**
+ * `/api/doctor` answers from `diagnose()`, in the daemon's thread. A pinned program that hangs on `--version`
+ * used to hold every request for seconds, at each report. The report now reads what the daemon last learned
+ * about the file, asks it in the background when it never did, and `timon doctor` asks again on purpose.
+ */
+test('a pin that hangs silently never holds the report, is asked once per file, and again when the CLI asks', { skip: process.platform === 'win32' }, async () => {
+  const { mkdtempSync, writeFileSync, readFileSync, rmSync } = await import('node:fs');
+  const { tmpdir } = await import('node:os');
+  const { join } = await import('node:path');
+  const { resetBinaryIdentityCache } = await import('./backends/binary-identity.js');
+  const dir = mkdtempSync(join(tmpdir(), 'timon-doctor-slow-'));
+  const counter = join(dir, 'runs');
+  writeFileSync(counter, '');
+  const silent = join(dir, 'codex');
+  writeFileSync(silent, `#!/bin/sh\necho x >> "${counter}"\nexec sleep 30\n`, { mode: 0o755 });
+  const runs = (): number => readFileSync(counter, 'utf8').split('\n').filter(Boolean).length;
+  const until = async (done: () => boolean, ms: number): Promise<void> => {
+    for (const end = Date.now() + ms; !done() && Date.now() < end;) await new Promise((r) => { setTimeout(r, 25); });
+  };
+  resetBinaryIdentityCache();
+  try {
+    setConfig(TimonConfigSchema.parse({ host: { binaries: { codex: silent } } }));
+    let ticks = 0;
+    const clock = setInterval(() => { ticks++; }, 20);
+    const started = Date.now();
+    const first = diagnose().binaries.find((b) => b.name === 'codex')!;
+    diagnose();
+    const took = Date.now() - started;
+    assert.ok(took < 1_000, `the report took ${took} ms`);
+    assert.equal(first.error, undefined, 'never asked yet: nothing to say');
+    await until(() => runs() >= 1, 2_000);
+    // The probe runs while the event loop keeps turning.
+    await new Promise((r) => { setTimeout(r, 300); });
+    clearInterval(clock);
+    assert.ok(ticks >= 5, `the event loop was held: ${ticks} ticks`);
+    assert.equal(runs(), 1, 'two reports, one run: the second waits for the first');
+
+    await refreshPinnedIdentities();
+    const answered = diagnose().binaries.find((b) => b.name === 'codex')!;
+    assert.equal(answered.ok, false);
+    assert.match(answered.error ?? '', /^`codex`, the program the `codex` pin runs, did not answer `--version`/);
+    diagnose();
+    diagnose();
+    await new Promise((r) => { setTimeout(r, 200); });
+    assert.equal(runs(), 1, 'the answer is kept for this file: no run per report');
+
+    await refreshPinnedIdentities({ fresh: true });
+    assert.equal(runs(), 2, 'the CLI asks the program again');
+  } finally {
+    resetConfig();
+    resetBinaryIdentityCache();
+    rmSync(dir, { recursive: true, force: true });
+  }
 });

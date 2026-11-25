@@ -4,7 +4,7 @@ import { readFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { APPROVAL_LABEL, PACKAGE_DEPENDENCY_FIELDS, decide, evaluate, packageFieldChanges, parseProtectedList, patternToRegExp, protectedBy } from './check-protected-paths.mjs';
+import { APPROVAL_LABEL, MAX_LISTED_FILES, PACKAGE_DEPENDENCY_FIELDS, decide, evaluate, listPullFiles, packageFieldChanges, parseProtectedList, patternToRegExp, protectedBy } from './check-protected-paths.mjs';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const list = parseProtectedList(readFileSync(join(ROOT, '.github', 'protected-paths'), 'utf8'));
@@ -140,4 +140,71 @@ test('a maintainer label approves the protected changes it saw, and a new push w
   assert.deepEqual(decide({ violations, labels: [APPROVAL_LABEL], action: 'labeled' }), { pass: true, removeLabel: false, approved: true });
   assert.deepEqual(decide({ violations, labels: [APPROVAL_LABEL], action: 'synchronize' }), { pass: false, removeLabel: true, approved: false });
   assert.equal(decide({ violations, labels: ['other'], action: 'labeled' }).pass, false);
+});
+
+/** A fake GitHub: `changed_files` on the pull request, then `pages` of the files list. */
+function fakeApi({ changed, pages }) {
+  const calls = [];
+  const get = async (path) => {
+    calls.push(path);
+    if (/\/pulls\/7$/.test(path)) return changed === undefined ? null : { changed_files: changed };
+    const page = Number(new URL(path, 'https://x').searchParams.get('page'));
+    return page in pages ? pages[page] : [];
+  };
+  return { get, calls };
+}
+const named = (count, from = 0) => Array.from({ length: count }, (_, i) => ({ filename: `f${from + i}.ts`, status: 'modified' }));
+
+test('the files list is read page by page until it matches the pull request count', async () => {
+  const { get, calls } = fakeApi({ changed: 250, pages: { 1: named(100), 2: named(100, 100), 3: named(50, 200) } });
+  const files = await listPullFiles(get, 'o/r', 7);
+  assert.equal(files.length, 250);
+  assert.equal(calls.length, 4);
+  const exact = fakeApi({ changed: 200, pages: { 1: named(100), 2: named(100, 100) } });
+  assert.equal((await listPullFiles(exact.get, 'o/r', 7)).length, 200);
+});
+
+test('a pull request with more files than GitHub lists fails before reading them', async () => {
+  const { get, calls } = fakeApi({ changed: MAX_LISTED_FILES + 1, pages: {} });
+  await assert.rejects(listPullFiles(get, 'o/r', 7), /too many files to verify.*split the pull request/);
+  assert.equal(calls.length, 1);
+});
+
+test('a truncated list fails: GitHub stopping at its limit cannot hide a protected file', async () => {
+  const full = Object.fromEntries(Array.from({ length: 30 }, (_, i) => [i + 1, named(100, i * 100)]));
+  const { get } = fakeApi({ changed: MAX_LISTED_FILES, pages: { ...full, 30: named(40, 2900) } });
+  await assert.rejects(listPullFiles(get, 'o/r', 7), /listed 2940 changed files but the pull request changes 3000/);
+});
+
+test('a list whose length differs from the pull request count fails, in both directions', async () => {
+  const fewer = fakeApi({ changed: 120, pages: { 1: named(100) } });
+  await assert.rejects(listPullFiles(fewer.get, 'o/r', 7), /listed 100 changed files but the pull request changes 120/);
+  const more = fakeApi({ changed: 3, pages: { 1: named(4) } });
+  await assert.rejects(listPullFiles(more.get, 'o/r', 7), /listed 4 changed files but the pull request changes 3/);
+});
+
+test('a repeated name fails even when the total matches: it could hide the file never listed', async () => {
+  // f100.ts..f199.ts minus f150.ts, with f0.ts listed again on page 2: 200 entries, 199 distinct names.
+  const page2 = [...named(50, 100), ...named(49, 151), { filename: 'f0.ts', status: 'modified' }];
+  const { get } = fakeApi({ changed: 200, pages: { 1: named(100), 2: page2 } });
+  await assert.rejects(listPullFiles(get, 'o/r', 7), /names f0\.ts twice/);
+  const sameEntry = fakeApi({ changed: 2, pages: { 1: [{ filename: 'a.ts', status: 'modified' }, { filename: 'a.ts', status: 'modified' }] } });
+  await assert.rejects(listPullFiles(sameEntry.get, 'o/r', 7), /names a\.ts twice/);
+});
+
+test('a rename next to a new file at its old name is not a repeat', async () => {
+  const pages = { 1: [{ filename: 'b.ts', previous_filename: 'a.ts', status: 'renamed' }, { filename: 'a.ts', status: 'added' }] };
+  const { get } = fakeApi({ changed: 2, pages });
+  assert.equal((await listPullFiles(get, 'o/r', 7)).length, 2);
+});
+
+test('an unreadable page or pull request fails the check', async () => {
+  const missing = fakeApi({ changed: 150, pages: { 1: named(100), 2: null } });
+  await assert.rejects(listPullFiles(missing.get, 'o/r', 7), /page 2 of the changed files is unreadable/);
+  const garbled = fakeApi({ changed: 1, pages: { 1: { message: 'oops' } } });
+  await assert.rejects(listPullFiles(garbled.get, 'o/r', 7), /page 1 of the changed files is unreadable/);
+  const noName = fakeApi({ changed: 1, pages: { 1: [{ status: 'modified' }] } });
+  await assert.rejects(listPullFiles(noName.get, 'o/r', 7), /page 1 of the changed files is unreadable/);
+  const noPull = fakeApi({ changed: undefined, pages: {} });
+  await assert.rejects(listPullFiles(noPull.get, 'o/r', 7), /cannot read how many files/);
 });

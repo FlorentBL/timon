@@ -110,6 +110,24 @@ export function isPersonAuth(auth: RequestAuth | undefined | null): auth is Requ
   return auth?.kind === 'session' || auth?.kind === 'device';
 }
 
+/**
+ * A session of its own, not a paired device: the rights that speak for the
+ * project outside this machine (`forge:publish`) are exercised by the person
+ * at the screen, never relayed by another machine.
+ */
+export function isSessionAuth(auth: RequestAuth | undefined | null): auth is RequestAuth & { kind: 'session' } {
+  return auth?.kind === 'session';
+}
+
+/**
+ * The one rule for a right only a session may exercise, read by the route
+ * that refuses and by `/api/auth/me` that greys the button: a signed-in
+ * session holding `permission` (an explicit deny still wins over `*`).
+ */
+export function sessionHoldsPermission(req: Request, permission: string): boolean {
+  return isSessionAuth(req.auth) && !!req.auth.user && requestHasPermission(req, permission);
+}
+
 /** 401 unless a real user (session) or the daemon-token is on the request. */
 export function requireAuth(req: Request, res: Response): RequestAuth | null {
   if (req.auth) return req.auth;

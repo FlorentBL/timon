@@ -357,6 +357,33 @@ test('a merge proposes the resolution comment of each issue the job fixed, once,
   assert.equal(resolutionComment({ prNumber: null, target: 'main', notes: [] }), 'This is fixed, now merged into `main`.');
 });
 
+test('a public note written after the merge reaches the untouched draft, never a person\'s edit', async () => {
+  const { db } = await import('./db.js');
+  const { TODO_OUTCOME_DDL } = await import('./todo-outcome-migration.js');
+  const { editForgeProposal, getForgeProposal, listForgeProposals } = await import('./forge-proposals.js');
+  db.exec(TODO_OUTCOME_DDL);
+  const job = openJob();
+  dbApi.putTodoExternalRef({
+    todoId: job.todo, provider: 'github', ref: 'acme/app#90', url: 'https://github.com/acme/app/issues/90', label: null, pluginId: 'github-issues',
+  });
+  mergeOnForge(job);
+  assert.equal((await pollOpenIntegrations(deps)).get(job.id), 'merged');
+  const n = Number(job.branch.split('-').at(-1));
+  const [draft] = listForgeProposals(job.slug);
+  assert.equal(draft!.body, `This is fixed by #${n}, now merged into \`main\`.`, 'no note yet');
+
+  db.prepare(`INSERT INTO todo_outcome (todo_id, resolution, public_note, duplicate_of, updated_at) VALUES (?, 'fixed', ?, NULL, 1)`)
+    .run(job.todo, 'Thanks @ada, it ships in 0.3.');
+  const late = `This is fixed by #${n}, now merged into \`main\`.\n\nThanks \`@ada\`, it ships in 0.3.`;
+  assert.equal(getForgeProposal(job.slug, draft!.id)!.body, late, 'read again with the note');
+  assert.equal(listForgeProposals(job.slug)[0]!.body, late);
+
+  const edited = editForgeProposal(job.slug, draft!.id, 'My own words.', 'user-ada');
+  assert.equal(edited.ok, true);
+  db.prepare(`UPDATE todo_outcome SET public_note = 'Changed again' WHERE todo_id = ?`).run(job.todo);
+  assert.equal(getForgeProposal(job.slug, draft!.id)!.body, 'My own words.', 'a person\'s text is never rewritten');
+});
+
 test('the recap goes to the agent of the series pilot', async () => {
   mkdirSync(agentDir('acme.pilot'), { recursive: true });
   const pilot = randomUUID();
@@ -384,4 +411,58 @@ test('a pilot that no longer exists gets no recap: the card alone tells, once', 
   assert.equal(notifyIntegrationOutcome(job.id, 'merged', [], () => {}), false);
   assert.deepEqual(cardsFor(job.id), [`report: Pull request merged: ${job.branch}`]);
   assert.deepEqual(noticesFor(job.branch), []);
+});
+
+test('an opened pull request is told once, before its merge: a recap to the pilot and a report card', async () => {
+  mkdirSync(agentDir('acme.pilot'), { recursive: true });
+  const pilot = randomUUID();
+  dbApi.createMission(pilot, 'acme.pilot', 'plan the job');
+  const job = openJob({ pilot });
+  const woken: string[] = [];
+  assert.equal(notifyIntegrationOutcome(job.id, 'open', [], (a) => woken.push(a)), true);
+  assert.equal(notifyIntegrationOutcome(job.id, 'open', [], (a) => woken.push(a)), false, 'told once');
+  assert.deepEqual(woken, ['acme.pilot']);
+  assert.deepEqual(noticesFor(job.branch), [`Pull request opened: ${job.branch}`]);
+  assert.deepEqual(cardsFor(job.id), [`report: Pull request opened: ${job.branch}`]);
+  const recap = dbApi.listAllInbox({ limit: 1000 }).find((m) => m.payload.includes(job.branch))!;
+  assert.equal(recap.to_agent, 'acme.pilot');
+  assert.match((JSON.parse(recap.payload) as { body: string }).body, /waits for a review/);
+  assert.equal(notifyIntegrationOutcome(job.id, 'merged', [], () => {}), false, 'an open row is never told merged');
+
+  // The merge is told after the opening.
+  mergeOnForge(job);
+  assert.equal((await pollOpenIntegrations(deps)).get(job.id), 'merged');
+  assert.deepEqual(noticesFor(job.branch).sort(), [`Pull request merged: ${job.branch}`, `Pull request opened: ${job.branch}`]);
+  assert.deepEqual(cardsFor(job.id).sort(), [`report: Pull request merged: ${job.branch}`, `report: Pull request opened: ${job.branch}`]);
+});
+
+test('an opening its own task reports gets the card alone', async () => {
+  mkdirSync(agentDir('acme.pilot'), { recursive: true });
+  const pilot = randomUUID();
+  dbApi.createMission(pilot, 'acme.pilot', 'plan the job');
+  const job = openJob({ pilot });
+  const woken: string[] = [];
+  assert.equal(notifyIntegrationOutcome(job.id, 'open', [], (a) => woken.push(a), { recap: false }), true);
+  assert.deepEqual(woken, []);
+  assert.deepEqual(noticesFor(job.branch), []);
+  assert.deepEqual(cardsFor(job.id), [`report: Pull request opened: ${job.branch}`]);
+  dbApi.markIntegrationClosed(job.id);
+  dbApi.claimIntegrationNotice(job.id, 'closed');
+});
+
+test('a sequential job, no task on its branch yet: the series that cut it names the pilot', async () => {
+  mkdirSync(agentDir('acme.seq-pilot'), { recursive: true });
+  const pilot = randomUUID();
+  dbApi.createMission(pilot, 'acme.seq-pilot', 'code the job in a mission');
+  counter += 1;
+  const repo = join(root, `seq-${counter}`);
+  execFileSync('git', ['init', '-q', '-b', 'main', repo]);
+  const branch = `feat/sequential-${counter}`;
+  const row = dbApi.recordIntegration({ repo, branch, remote: 'origin', target: 'main', mode: 'pr', project: null, seriesId: pilot });
+  dbApi.markIntegrationOpen(row.id, { number: 900 + counter, url: `https://github.com/acme/app/pull/${900 + counter}`, headSha: 'a'.repeat(40) });
+  assert.equal(notifyIntegrationOutcome(row.id, 'open', [], () => {}), true);
+  const recaps = dbApi.listAllInbox({ limit: 1000 }).filter((m) => m.payload.includes(branch));
+  assert.deepEqual(recaps.map((m) => m.to_agent), ['acme.seq-pilot']);
+  dbApi.markIntegrationClosed(row.id);
+  dbApi.claimIntegrationNotice(row.id, 'closed');
 });

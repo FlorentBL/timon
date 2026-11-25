@@ -18,8 +18,52 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # Which suites a pull request needs (scripts/ci-changes.mjs): one that only
+  # changes documentation pages, changelog fragments or root Markdown runs the
+  # tests that read those paths, not the half hour of daemon and app suites.
+  # Pushes and manual runs always run everything.
+  changes:
+    name: changed paths
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      suites: ${{ steps.decide.outputs.suites }}
+      guards: ${{ steps.decide.outputs.guards }}
+    steps:
+      # A pull request checks out its merge commit: its first parent is the
+      # base, so the diff between the two is what the pull request brings.
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      # The classifier as the base holds it, run from outside the checkout: a
+      # pull request cannot decide with its own copy. Without it in the base
+      # (the pull request that adds it), nothing decides: every suite runs,
+      # and the job says so instead of failing.
+      - name: Decide which suites run
+        id: decide
+        env:
+          EVENT: ${{ github.event_name }}
+        run: |
+          if ! git cat-file -e HEAD^1:scripts/ci-changes.mjs 2>/dev/null; then
+            echo "::notice title=Every suite runs::The base has no scripts/ci-changes.mjs yet: nothing decides, so no suite is skipped."
+            echo "suites=full" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          git show HEAD^1:scripts/ci-changes.mjs > "$RUNNER_TEMP/ci-changes.mjs"
+          node "$RUNNER_TEMP/ci-changes.mjs" --event "$EVENT" --base HEAD^1 --head HEAD
+
   test:
     name: ${{ matrix.os }} · ${{ matrix.part.suite }}${{ matrix.part.shard && format(' {0}', matrix.part.shard) || '' }}
+    needs: changes
+    # The checks of this job are required to merge, and GitHub counts a skipped
+    # job as passed: it is never skipped, even on a cancelled run, and skips its
+    # heavy steps instead of itself. Its last step fails it unless the suites or
+    # the guard tests passed.
+    if: ${{ always() }}
     runs-on: ${{ matrix.os }}
     # Linux gates the merge. macOS and Windows report without blocking until
     # their suites have been green for a while: they never ran in CI before.
@@ -40,6 +84,9 @@ jobs:
           - { suite: app, shard: '' }
     env:
       NODE_ENV: test
+      # `guards` only from a `changes` that succeeded and said exactly that;
+      # failed, cancelled, skipped or anything else: every suite.
+      SUITES: ${{ needs.changes.result == 'success' && needs.changes.outputs.suites == 'guards' && 'guards' || 'full' }}
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
@@ -48,6 +95,13 @@ jobs:
       - name: Temporary Timon home
         shell: bash
         run: echo "TIMON_HOME=${RUNNER_TEMP}/timon-home" >> "$GITHUB_ENV"
+
+      # Skipped suites: every required job runs the guard tests instead, so
+      # each check stands on a test run of its own.
+      - name: Suites skipped
+        if: env.SUITES == 'guards'
+        shell: bash
+        run: echo "::notice title=Suites skipped::Only workflows, public docs, changelog fragments or root Markdown changed (scripts/ci-changes.mjs)."
 
       - uses: actions/setup-node@v4
         with:
@@ -63,45 +117,81 @@ jobs:
         run: npm ci --include=dev
 
       - name: Install the web app
+        if: env.SUITES != 'guards'
         working-directory: app
         run: npm ci --include=dev
 
       # Daemon tests import desktop/src and the agent-import plugin, which carry their own dependencies.
       - name: Install the desktop app
-        if: matrix.part.suite == 'daemon'
+        if: env.SUITES != 'guards' && matrix.part.suite == 'daemon'
         working-directory: desktop
         run: npm ci --include=dev --ignore-scripts
 
       - name: Install the agent-import plugin
-        if: matrix.part.suite == 'daemon'
+        if: env.SUITES != 'guards' && matrix.part.suite == 'daemon'
         working-directory: plugins/agent-import
         run: npm install --no-audit --no-fund --ignore-scripts
 
       - name: Typecheck the daemon
         # Checked once, by the first half.
-        if: matrix.part.suite == 'daemon' && matrix.part.shard == '1/2'
+        if: env.SUITES != 'guards' && matrix.part.suite == 'daemon' && matrix.part.shard == '1/2'
         working-directory: orchestrator
         run: npx tsc --noEmit
 
       - name: Portability
         # Checked once, by the first half.
-        if: matrix.part.suite == 'daemon' && matrix.part.shard == '1/2'
+        if: env.SUITES != 'guards' && matrix.part.suite == 'daemon' && matrix.part.shard == '1/2'
         run: node scripts/check-portability.mjs
 
       - name: Test the daemon
-        if: matrix.part.suite == 'daemon'
+        id: daemon
+        if: env.SUITES != 'guards' && matrix.part.suite == 'daemon'
         working-directory: orchestrator
         run: npm test -- --test-shard=${{ matrix.part.shard }}
 
+      - name: Test what the changed paths can break
+        id: guards
+        if: env.SUITES == 'guards'
+        working-directory: orchestrator
+        shell: bash
+        env:
+          GUARDS: ${{ needs.changes.outputs.guards }}
+        # GUARDS is a space-separated list of test files: split on purpose.
+        run: npm test -- $GUARDS
+
       - name: Typecheck the web app
-        if: matrix.part.suite == 'app'
+        if: env.SUITES != 'guards' && matrix.part.suite == 'app'
         working-directory: app
         run: npm run typecheck
 
       - name: Test the web app
-        if: matrix.part.suite == 'app'
+        id: app
+        if: env.SUITES != 'guards' && matrix.part.suite == 'app'
         working-directory: app
         run: npm test
+
+      # The check passes on a test run that passed, never on steps that all
+      # stood down: a cancelled run, a failed install or an unknown mode fails.
+      - name: Verdict
+        if: ${{ always() }}
+        shell: bash
+        env:
+          PART: ${{ matrix.part.suite }}
+          DAEMON: ${{ steps.daemon.outcome }}
+          APP: ${{ steps.app.outcome }}
+          GUARDS: ${{ steps.guards.outcome }}
+        run: |
+          case "$SUITES/$PART" in
+            guards/*) outcome="$GUARDS" ;;
+            full/daemon) outcome="$DAEMON" ;;
+            full/app) outcome="$APP" ;;
+            *) outcome="" ;;
+          esac
+          if [ "$outcome" != success ]; then
+            echo "::error title=No passing test run::suites=$SUITES, part=$PART, outcome=${outcome:-none}"
+            exit 1
+          fi
+          echo "suites=$SUITES: the $PART tests passed"
 
   docs:
     name: public docs policy

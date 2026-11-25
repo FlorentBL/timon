@@ -10,7 +10,8 @@ import type { WidgetProps } from '@/components/widget-host/widget-props';
 import type { BundledClientPlugin } from './types';
 import { widgetPicto } from './widget-pictos';
 import {
-  JOB_DIALOG_SLOT, KANBAN_CARD_SLOT, PROJECT_SETTINGS_SLOT, PUBLISH_DIALOG_SLOT, TASK_FORM_SLOT, TODO_FORM_SLOT, TODO_LANDING_SLOT,
+  CONFLICT_DIALOG_SLOT, JOB_DIALOG_SLOT, KANBAN_CARD_SLOT, PROJECT_SETTINGS_SLOT, PUBLISH_DIALOG_SLOT, PULL_REQUEST_DIALOG_SLOT, TASK_FORM_SLOT,
+  TODO_FORM_SLOT, TODO_LANDING_SLOT,
 } from '@/lib/plugin-host/slots';
 
 // Loaded on demand (docs/BUNDLE-SIZE.md): statically imported, every page of the app paid for it.
@@ -28,6 +29,8 @@ const ProductKanbanCard = dynamic(() => import('./kanban/product-kanban-card').t
 const ProductTodoLanding = dynamic(() => import('./kanban/product-todo-landing').then((m) => m.ProductTodoLanding), { ssr: false });
 const ProductJobDialog = dynamic(() => import('./kanban/landing-preview-dialog').then((m) => m.ProductJobDialog), { ssr: false });
 const ProductPublishDialog = dynamic(() => import('./kanban/product-publish-dialog').then((m) => m.ProductPublishDialog), { ssr: false });
+const ProductConflictDialog = dynamic(() => import('./kanban/product-conflict-dialog').then((m) => m.ProductConflictDialog), { ssr: false });
+const ProductPullRequestDialog = dynamic(() => import('./kanban/product-pull-request-dialog').then((m) => m.ProductPullRequestDialog), { ssr: false });
 const PullRequestSetting = dynamic(() => import('./kanban/pull-request-setting').then((m) => m.PullRequestSetting), { ssr: false });
 const ContributorConflictsSetting = dynamic(() => import('./kanban/contributor-conflicts-setting').then((m) => m.ContributorConflictsSetting), { ssr: false });
 
@@ -78,6 +81,12 @@ export const kanbanClient: BundledClientPlugin = {
     // Default occupant of `forge.publish.dialog` (a boot slot): the one dialog
     // through which a text of Timon's reaches GitHub, read and approved first.
     ctx.register({ slot: PUBLISH_DIALOG_SLOT, fallback: true }, ProductPublishDialog);
+    // Default occupant of `forge.conflict.dialog` (a boot slot): the four
+    // steps of a contributor's conflict, read from the host's context.
+    ctx.register({ slot: CONFLICT_DIALOG_SLOT, fallback: true }, ProductConflictDialog);
+    // Default occupant of `kanban.pull.dialog` (a boot slot): a pull request's
+    // page as GitHub shows it, opened from the Pull requests widget.
+    ctx.register({ slot: PULL_REQUEST_DIALOG_SLOT, fallback: true }, ProductPullRequestDialog);
     // A row of a project's window: whether the project's jobs merge locally
     // or land through a pull request, and where it goes.
     ctx.register({ slot: PROJECT_SETTINGS_SLOT, key: 'pull-requests', order: 10 }, PullRequestSetting);

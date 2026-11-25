@@ -15,7 +15,7 @@
  * its configuration (long-lived token, reconnecting) lives on its own page.
  */
 import { useCallback, useEffect, useRef, useState, type ReactElement } from 'react';
-import { ExternalLink, Loader2, LogIn, RefreshCw } from 'lucide-react';
+import { ExternalLink, KeyRound, Loader2, LogIn, RefreshCw } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { CommandToRun } from '@/components/command-to-run';
 import { ProviderRow } from '@/components/provider-list/provider-row';
@@ -180,6 +180,14 @@ function OnboardingProviderRow({ cli, job, chained, unfound, outcome, onInstall,
         <Loader2 className="size-3.5 animate-spin" aria-hidden />{t('providerClis.installing')}
       </span>
     );
+  } else if (signingIn && cli.host?.tokenOnly === true) {
+    // A macOS service outside the session reads no sign-in: the long-lived token alone runs it.
+    action = (
+      <Button type="button" size="sm" variant="secondary" className="gap-1.5" disabled={blocked}
+        onClick={() => setDialog('token')} data-host-sign-in-offer="token">
+        <KeyRound className="size-3.5" aria-hidden />{t('hostSignIn.token.createAction')}
+      </Button>
+    );
   } else if (signingIn) {
     // Signed in in the app when Timon can keep the sign-in; else the terminal's command.
     const inApp = cli.host?.browser === true;
@@ -208,6 +216,9 @@ function OnboardingProviderRow({ cli, job, chained, unfound, outcome, onInstall,
       <ProviderRow provider={onboardingProvider(cli)} mode="onboarding" action={action} />
       {cli.unsupportedVersion && (
         <p className="pb-2 pl-[52px] pr-2 text-xs text-amber-700 dark:text-amber-300">{t('providerClis.unsupportedVersion', { name: cli.label, version: cli.version ?? '' })}</p>
+      )}
+      {signingIn && cli.host?.tokenOnly === true && (
+        <p role="status" className="pb-2 pl-[52px] pr-2 text-xs text-muted-foreground">{t('hostSignIn.tokenOnlyHint')}</p>
       )}
       {unfound && state === 'missing' && !running && (
         <p role="alert" className="pb-2 pl-[52px] pr-2 text-xs text-amber-700 dark:text-amber-300">{t('providerClis.rows.installedNotFound')}</p>

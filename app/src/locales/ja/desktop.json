@@ -10,6 +10,12 @@
       "daemon": "デーモン: {state, select, running {実行中} other {接続できません}} ({origin})",
       "quit": "終了"
     },
+    "contextMenu": {
+      "cut": "切り取り",
+      "copy": "コピー",
+      "paste": "貼り付け",
+      "selectAll": "すべてを選択"
+    },
     "tray": {
       "iconMissing": "通知領域のアイコンを読み込めませんでした。",
       "iconMissingDetail": "アイコンを復元するには Timon を再インストールしてください。このウィンドウは引き続き使えます。閉じると Timon は終了します。"

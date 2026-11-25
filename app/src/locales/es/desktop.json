@@ -10,6 +10,12 @@
       "daemon": "Daemon: {state, select, running {en ejecución} other {inaccesible}} ({origin})",
       "quit": "Salir"
     },
+    "contextMenu": {
+      "cut": "Cortar",
+      "copy": "Copiar",
+      "paste": "Pegar",
+      "selectAll": "Seleccionar todo"
+    },
     "tray": {
       "iconMissing": "No se pudo cargar el icono del área de notificación.",
       "iconMissingDetail": "Reinstala Timon para restaurar el icono. Puedes seguir usando esta ventana; al cerrarla, Timon se cerrará."

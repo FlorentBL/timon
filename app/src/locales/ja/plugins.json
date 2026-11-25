@@ -437,7 +437,7 @@
   "binariesSettings": {
     "brokenPin": "固定したパスは実行できません: {path}",
     "pathLabel": "{name} バイナリのパス",
-    "placeholder": "フルパス (例: /usr/local/bin/claude または C:\\Users\\you\\AppData\\Roaming\\npm\\claude.cmd)",
+    "placeholder": "フルパス (例: {example})",
     "browse": "参照…",
     "save": "パスを保存",
     "clear": "固定を解除",
@@ -450,8 +450,13 @@
       "path_missing": "このパスには何もありません。",
       "path_not_file": "これはフォルダーです。プログラムのファイル自体を選んでください。",
       "path_not_executable": "このファイルは実行可能ではないため、実行できません。",
+      "wrong_program": "このファイルは {name} CLI ではありません。",
+      "no_answer": "このプログラムは `--version` に応答しませんでした。失敗したか、時間がかかりすぎたか、出力が多すぎました。",
+      "unsupported_program": "Windows では、プログラムの .exe か、npm がインストールした .cmd ファイルを選んでください。",
       "no_config": "先にセットアップを完了してください。",
       "config_unreadable": "timon.config.json を読み取れません。修正または復元してから、再確認してください。",
+      "pin_write_failed": "timon.config.json を書き込めませんでした。Timon がそのフォルダーに書き込めることを確認してから、もう一度お試しください。",
+      "probe_setup_failed": "このファイルを確認できませんでした。確認用のフォルダーを準備できませんでした。もう一度お試しください。",
       "invalid_body": "このパスは保存できません。",
       "browse": "ファイルの選択画面を開けませんでした。",
       "generic": "変更に失敗しました (エラー {status})。"

@@ -10,6 +10,12 @@
       "daemon": "Daemon : {state, select, running {en marche} other {injoignable}} ({origin})",
       "quit": "Quitter"
     },
+    "contextMenu": {
+      "cut": "Couper",
+      "copy": "Copier",
+      "paste": "Coller",
+      "selectAll": "Tout sélectionner"
+    },
     "tray": {
       "iconMissing": "L’icône de la zone de notification n’a pas pu être chargée.",
       "iconMissingDetail": "Réinstallez Timon pour retrouver l’icône. Vous pouvez continuer à utiliser cette fenêtre ; la fermer quittera Timon."

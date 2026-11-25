@@ -14,6 +14,8 @@ The section is provided by the **Official connectors** plugin, on by default (**
 Each connector connects in one of three ways:
 
 - **Sign-in with the publisher** (most connectors). Press **Connect**. The publisher's sign-in page opens in a new tab, or in your system browser in the desktop app. Sign in, approve access, and come back. The card switches to **Connected** within a few seconds. If the page did not open, for example because the browser blocked it, open the card and choose **Open the sign-in page again**.
+
+After you approve access, the publisher sends your browser to a short Timon page that takes you back to the app. If the sign-in fails, that page stays open with the reason and a link back to Timon. A sign-in has to be finished within 10 minutes and is lost if Timon restarts in the meantime: start it again from the card. Opening the same sign-in link a second time only says whether the connector is already connected.
 - **A key** (GitHub, for example). Open the card, paste the key in the masked field, then press **Connect**. The **Get a key** link opens the publisher's page that issues it. For GitHub, use a fine-grained personal access token: the token decides which repositories and actions your agents can reach. Timon keeps the key in its secrets vault, where it appears in **Settings → Secrets** as `MCP_APP_GITHUB_KEY`. No agent receives the key itself, and Timon sends it only to that connector. If the vault is switched off, a key connector cannot be connected.
 - **No account** (Context7, for example). Press **Connect** and the connector is ready.
 
@@ -35,7 +37,13 @@ If you added an MCP server called `app-<name>` by hand, the matching card shows 
 
 **New MCP**, in the tab's toolbar, opens the MCP server form. There you can add any MCP server: a remote address with its own headers, or a program that runs on your machine.
 
-The headers of a remote server, an API key for example, are kept in the secrets vault and are not written into the agents' configuration: the agent talks to Timon, which adds the headers when it relays each call to the server. Once saved, a header value shows as `***` in the form: leave it as is to keep the value, or type a new one to replace it. This needs the secrets vault. If it is switched off, the server's card reads **Needs the secrets vault** and agents do not get the server until you switch the vault back on; the headers you typed are kept and move into the vault at the next start of Timon.
+The headers of a remote server, an API key for example, are kept in the secrets vault and are not written into the agents' configuration: the agent talks to Timon, which adds the headers when it relays each call to the server. Once saved, a header value shows as `***` in the form: leave it as is to keep the value, or type a new one to replace it. This needs the secrets vault. If it is switched off, the server's card reads **Needs the secrets vault** and agents do not get the server until you switch the vault back on; the headers you typed are kept and move into the vault as soon as you switch it back on.
+
+A program that runs on your machine (a `stdio` server) with environment variables is handled the same way: its variables are kept in the secrets vault, show as `***` in the form, and are never written into the agent's configuration. Timon starts the program itself for each conversation that uses it, gives it its variables, and the agent reaches it through Timon. The program runs in the conversation's folder and stops when the conversation ends. If it cannot start (the command is not found, for example), the agent runs without it and you receive a notification; its variables are never handed to the agent instead. A program without variables is started by the agent's own tool, as before. Agents that cannot reach an MCP server through Timon yet, such as opencode and Hermes, start the program themselves and receive its variables, as in earlier versions. The **Run MCP servers with variables outside the agent** setting, under **Settings → Missions → Permissions**, turns this off: the agent's tool then starts the program and its variables are written into the agent's configuration, as in earlier versions.
+
+Agents on opencode and Hermes do not receive a remote server that Timon relays, since they only load programs they start themselves.
+
+When a server signs in with OAuth, the secret the publisher gives Timon at registration is kept in the secrets vault too.
 
 ## What a connector receives
 

@@ -33,9 +33,13 @@ When something goes wrong, send the **diagnostic report** with your support requ
 - **The tray or menu bar icon**: **Support diagnostic…**.
 - **A terminal**: `timon doctor --report` prints it, `timon doctor --report --save report.txt` writes it to a file. It works while the daemon is stopped.
 
-**What it contains**: the versions of the app, the daemon and your data; the operating system and, on Windows, whether the computer is joined to a work domain or Microsoft Entra ID; how the daemon runs (background service or inside the app), what answers on its port; the state of the background service and its last run; the problems Timon recognises (a service installed without the app's marker, a Windows task that never ran, data last opened by an older version, a port held by another program, a Timon background service left behind for a data directory that no longer exists, with the commands that remove it); and the last 100 lines of each log, **newest first**, including on Windows what the last installers found running and ended (`timon-service-pause.log`). Tokens, keys, passwords and e-mail addresses are masked; read it before posting it publicly if you want to. Licence: only its edition and status.
+**What it contains**: the versions of the app, the daemon and your data; the operating system and, on Windows, whether the computer is joined to a work domain or Microsoft Entra ID; how the daemon runs (background service or inside the app), what answers on its port; the state of the background service and its last run; the problems Timon recognises (a service installed without the app's marker, a Windows task that never ran, data last opened by an older version, a port held by another program, a Timon background service left behind for a data directory that no longer exists, with the commands that remove it; what `timon doctor` reports as blocking, a built-in terminal that cannot start, and missions that run without the mission fence); and the last 100 lines of each log, **newest first**, including on Windows what the last installers found running and ended (`timon-service-pause.log`). Tokens, keys, passwords and e-mail addresses are masked; read it before posting it publicly if you want to. Licence: only its edition and status.
 
 **Logs**: one file per day in the `tmp` folder of the Timon data directory (`~/.timon/tmp/` on Linux and macOS, `%USERPROFILE%\.timon\tmp\` on Windows): `daemon-<date>.log` for the daemon, `desktop-<date>.log` for the desktop app. Every line starts with the local date and time. Inside a file, lines are in the order they were written, newest at the end; the report, the settings and `timon logs` show them newest first. Files older than 14 days are deleted, and the oldest go first past 200 MB in total: change it with the **Log retention** and **Log size ceiling** settings (type *log* in the settings search), or `TIMON_LOG_RETENTION_DAYS` and `TIMON_LOG_MAX_MB`. `timon logs` shows the last 100 daemon lines (`--desktop` for the app, `-n 300` for more).
+
+## The built-in terminal does not start (Linux, TIM-0162)
+
+The terminal opens on "node-pty unavailable", or the diagnostic report says *The built-in terminal cannot start*. Its native module did not load on this system. Packages built before the fix needed a recent glibc for it, newer than the 2.28 the [requirements](requirements.md) state, so the terminal failed on Debian 13 and older: update Timon. `ldd --version` prints the glibc of your system; the report and `timon doctor` name the library or version the module asked for (for example ``version `GLIBC_2.42' not found``). If your glibc is 2.28 or later and a current Timon still shows this, send the diagnostic report.
 
 ## Reading a 403 refusal
 
@@ -245,9 +249,32 @@ does not contact the provider or verify whether a session has expired.
 ## Codex fails with "env: node: No such file or directory"
 
 Codex installed with npm runs on Node.js. Timon launches it with the folder it
-was found in and with the Node.js it finds on the machine (nvm, Volta,
-nvm-windows, Homebrew, `~/.local/bin`, the PATH). When none is found,
-`timon doctor` and the diagnostic report name the CLI: install Node.js.
+was found in and with the Node.js it finds on the machine: the PATH, then the
+places version managers keep it without telling a background service (nvm,
+fnm, mise, asdf, Volta, nvm-windows, Homebrew, `~/.local/bin`). When the
+machine has none, Timon lends the CLI the Node.js it runs on itself.
+
+A Node.js found under a version manager is skipped when another account could
+have replaced it: on Linux and macOS, the file or one of the folders above it,
+up to the version manager's own folder, belongs to another user or is writable
+by its group or by everyone (`chmod go-w` on that folder fixes it); on Windows,
+a version manager folder outside your user profile (`FNM_DIR` or `VOLTA_HOME`
+set to `D:\fnm`, say). The Node.js Timon runs on is lent only while it is the
+very file Timon started from, or a file only an administrator or Timon's own
+account could have put there (a package manager upgrade, say): after Node.js is
+removed, or replaced by another account, under a running Timon, restart Timon.
+
+When no Node.js passes these checks, a mission on such a CLI does not start and
+reports `no trusted Node.js to run codex` (or the CLI's name): Timon never lets
+the CLI pick the first `node` of the mission's own PATH instead. The same holds
+for a CLI whose first line hands `env` options, variables or quotes Timon cannot
+read with certainty (`#!/usr/bin/env -S "node --flag"`, say): without a trusted
+Node.js, it does not start either.
+
+If `timon doctor` or the diagnostic report still names the CLI, install Node.js
+system-wide (your package manager, or nodejs.org), or point Timon at yours: run
+`node -p process.execPath` in a terminal, put the path it prints under
+`host.binaries.node` in `timon.config.json`, then restart Timon.
 
 The same Node.js runs Timon's own tools inside a Claude session: without it,
 Claude reports that `mcp__timon_ask__request` was not found.
@@ -379,7 +406,7 @@ Before it replaces anything, the installer checks that nothing of Timon still ru
 - **With its window**, it says "Timon is still running in the background and could not be stopped". Choose **Retry** and allow the Windows permission prompt; without that permission, a background service that keeps running when you are logged out cannot be ended. **Cancel** leaves the installed version as it is. Restarting the computer and running the installer again also works.
 - **From Timon's update window** (no installer window), Timon opens again on the current version and tells you the update was not installed. Install it again and allow the permission prompt.
 
-The installer stops the same way when it could not make that check at all: "The check that Timon is stopped in the background did not run: Windows PowerShell failed". It uses Windows PowerShell for it, and installs nothing over a Timon it could not look at. Choose **Retry**, or restart the computer and run the installer again. If the message comes back every time, Windows PowerShell (`powershell.exe`) or its scripts are blocked on this computer, usually by your organisation's policy: ask its administrator to allow the Timon installer, and send the diagnostic report.
+The installer stops the same way when it could not make that check at all: "The check that Timon is stopped in the background did not run: Windows PowerShell failed". It uses Windows PowerShell for it, and installs nothing over a Timon it could not look at. Choose **Retry**, or restart the computer and run the installer again. If the message comes back every time, Windows PowerShell (`powershell.exe`) or its scripts are blocked on this computer, usually by your organisation's policy: ask its administrator to allow the Timon installer, and send the diagnostic report. This also stops a new installation when an earlier Timon left its `timon-service.*` files in `%USERPROFILE%\.timon\run` on the computer: removing the `TimonOrchestrator` task with administrator rights, then those files, lets it through.
 
 What the installer found and ended is written to `%USERPROFILE%\.timon\tmp\timon-service-pause.log`, and the diagnostic report includes it.
 

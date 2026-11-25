@@ -8,6 +8,7 @@
     "fence_grant_invalid": "This answer is not valid: allow or refuse.",
     "fence_refusal_not_found": "This card no longer offers a folder to open.",
     "fence_grant_settled": "This card was already answered.",
+    "fence_grant_no_project": "This card offers no project to open the folder to: allow it for the agent instead.",
     "fence_coverage_failed": "The fence coverage check failed: see the daemon log.",
     "cwd_unusable": "Timon could not start this mission: its working directory {path} is missing or cannot be opened. Restore the folder, or change the folder of the agent or of its project.",
     "unknown": "Something went wrong.",

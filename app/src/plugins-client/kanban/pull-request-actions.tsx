@@ -12,12 +12,13 @@
 import { useId, type ComponentType, type ReactElement } from 'react';
 import * as Dropdown from '@radix-ui/react-dropdown-menu';
 import {
-  ExternalLink, FileText, GitMerge, GitPullRequestArrow, Loader2, MessageSquarePlus, MessageSquareWarning, ScanSearch,
+  ExternalLink, Eye, FileText, GitMerge, GitPullRequestArrow, Loader2, MessageSquarePlus, MessageSquareWarning, ScanSearch,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { t } from '@/lib/i18n';
 import { cn } from '@/lib/utils';
-import type { PullAction, PullActionBlock, PullActionId } from './pull-requests-model';
+import { JobLinksMenuItems } from './job-links-menu';
+import type { PullAction, PullActionBlock, PullActionId, PullRequestItem } from './pull-requests-model';
 
 const ICON: Record<PullActionId, ComponentType<{ className?: string }>> = {
   review: ScanSearch,
@@ -134,4 +135,23 @@ export function PullActionMenuItems({ actions, onRun }: {
   onRun: (id: PullActionId) => void;
 }): ReactElement {
   return <>{actions.map((action) => <PullActionMenuItem key={action.id} action={action} onRun={onRun} />)}</>;
+}
+
+/** The way from a pull request to its job and its ideas, after its gestures in a "…" menu. */
+export function PullLinkItems({ pull, onOpenJob, onOpenTodo }: {
+  pull: PullRequestItem;
+  onOpenJob: (id: string) => void;
+  onOpenTodo: (id: number) => void;
+}) {
+  const jobId = pull.links?.job_id ?? null;
+  return (
+    <>
+      {jobId && (
+        <Dropdown.Item data-menu-job={jobId} onSelect={() => onOpenJob(jobId)} className={PULL_MENU_ITEM}>
+          <Eye className="size-3.5" />{t('pullRequests.showJob')}
+        </Dropdown.Item>
+      )}
+      <JobLinksMenuItems links={pull.links} onOpenTodo={onOpenTodo} itemClassName={PULL_MENU_ITEM} />
+    </>
+  );
 }

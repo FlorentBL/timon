@@ -16,12 +16,21 @@
  * point `remote_url` elsewhere would choose where the next push a person
  * validates goes. Refused rather than silently switched back to "ask": the
  * caller learns why, and a person's choice is never undone behind them.
+ * Every change of the setting itself and of those fields, by anyone, gets its
+ * own audit row, so an agent that switches back to "ask" and repoints the
+ * remote leaves a trail before a person turns "resolve" on again.
  *
  * One exception, `POST …/integration/branch`: the Kanban planner checks the
  * branch of a new job while the person types or picks it, a new one or one
  * the repository has (`kind`), in any project. It needs `kanban:write` (the
  * plan creates Kanban tasks) and answers nothing of the setting beyond the
  * name the job would get.
+ *
+ * Another, `GET …/integration/mode`: whether the project's jobs merge locally
+ * or land through pull requests, for any signed-in caller, like the project
+ * list. The widgets of the Git stack read it to say "this project merges
+ * locally" to whoever sees the project, `projects:manage` or not. It answers
+ * the mode and nothing else: never the account, the folder or the remote.
  */
 import type { Request, Response, Router } from 'express';
 import { z } from 'zod';
@@ -57,6 +66,21 @@ function projectForRoute(req: Request, res: Response): string | null {
   }
   // `readMeta` validates the slug and brings a project still described by its
   // legacy file into the table, where the setting lives.
+  try { readMeta(slug); } catch {
+    res.status(400).json(apiError('project_refused', 'invalid project slug', { detail: 'invalid project slug' }));
+    return null;
+  }
+  return slug;
+}
+
+/** Auth and an existing project, with no permission beyond being signed in. */
+function visibleProject(req: Request, res: Response): string | null {
+  if (!requireAuth(req, res)) return null;
+  const slug = req.params.slug;
+  if (typeof slug !== 'string') {
+    res.status(400).json(apiError('project_refused', 'invalid project slug', { detail: 'invalid project slug' }));
+    return null;
+  }
   try { readMeta(slug); } catch {
     res.status(400).json(apiError('project_refused', 'invalid project slug', { detail: 'invalid project slug' }));
     return null;
@@ -113,6 +137,17 @@ function plannerProject(req: Request, res: Response): string | null {
 export function registerIntegrationRoutes(app: Router, deps: IntegrationRouteDeps = {}): void {
   const login = deps.ghLogin ?? ((dir: string | null) => ghLogin(dir));
 
+  // `valid: false` when the stored setting no longer validates: the jobs then
+  // land with the default, and the screen says so rather than "local".
+  app.get('/api/projects/:slug/integration/mode', (req, res) => {
+    const slug = visibleProject(req, res);
+    if (!slug) return;
+    try {
+      const read = readProjectIntegration(slug);
+      res.json({ mode: read.integration.mode, configured: read.configured, valid: !read.invalid });
+    } catch (err) { answerError(res, err); }
+  });
+
   app.get('/api/projects/:slug/integration', (req, res) => {
     const slug = projectForRoute(req, res);
     if (!slug) return;
@@ -123,7 +158,12 @@ export function registerIntegrationRoutes(app: Router, deps: IntegrationRouteDep
     const slug = projectForRoute(req, res);
     if (!slug) return;
     const person = !!req.auth && isPersonAuth(req.auth);
+    let journal: { conflicts: string | null; pushTarget: string[] } = { conflicts: null, pushTarget: [] };
     const guard = (current: ProjectIntegration, next: ProjectIntegration): void => {
+      journal = {
+        conflicts: current.contributor_conflicts !== next.contributor_conflicts ? next.contributor_conflicts : null,
+        pushTarget: changedPushTargetFields(current, next),
+      };
       if (person || next.contributor_conflicts !== 'resolve') return;
       if (current.contributor_conflicts !== 'resolve') {
         throw new PersonRequired('only a signed-in person lets Timon resolve a contributor\'s conflict');
@@ -138,6 +178,11 @@ export function registerIntegrationRoutes(app: Router, deps: IntegrationRouteDep
     try {
       const integration = updateProjectIntegration(slug, req.body, { ...(deps.home ? { home: deps.home } : {}), guard });
       auditRequest(req, 'project.integration_set', `${slug}:${integration.mode}`);
+      // Their own rows: an agent may switch back to "ask", repoint the remote,
+      // then wait for a person to turn "resolve" on again. The journal shows
+      // who did each step; the field names only, a URL may carry a credential.
+      if (journal.conflicts) auditRequest(req, 'project.contributor_conflicts_set', `${slug}:${journal.conflicts}`);
+      if (journal.pushTarget.length > 0) auditRequest(req, 'project.push_target_changed', `${slug}:${journal.pushTarget.join(',')}`);
       announceProjectUpdated(slug, ['integration'], todoOriginFromRequest(req));
       res.json({ integration, configured: true });
     } catch (err) { answerError(res, err); }

@@ -14,7 +14,7 @@ import type { AddressInfo } from 'node:net';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import express from 'express';
-import { postTestAccount } from '../../../tests/helpers/accounts.js';
+import { grantTestPermissions, postTestAccount } from '../../../tests/helpers/accounts.js';
 
 const HOME = mkdtempSync(join(tmpdir(), 'timon-binary-pins-'));
 process.env.TIMON_HOME = HOME;
@@ -23,10 +23,11 @@ process.env.TIMON_RESOURCE_GUARD_ENABLED = '0';
 
 const { createDaemonAuthMiddleware } = await import('../http/auth.js');
 const { registerRoutes: registerUserRoutes } = await import('../users/routes.js');
-const { registerBinaryRoutes } = await import('./binary-routes.js');
+const { registerBinaryRoutes, sendBinaryRouteError } = await import('./binary-routes.js');
 const { dbApi } = await import('../../db.js');
 const { SESSION_COOKIE } = await import('../../users/session.js');
 const { issueMissionApiToken } = await import('../../users/api-tokens.js');
+const { issuePairingCode, redeemPairingCode } = await import('../../users/devices.js');
 const { CONFIG_FILE, config } = await import('../../config/load.js');
 const { checkBackendBinaries } = await import('../../backends/binary-check.js');
 const { assertExecutablePin, normalizePinPath, runnableOnWindows } = await import('../../backends/binary-pins.js');
@@ -85,6 +86,10 @@ const admin = dbApi.listUsers().find((u) => u.email === 'admin@example.com')!;
 dbApi.createMission('mission-binary-pins', 'admin.agent', 'work', undefined, admin.id);
 const missionToken = issueMissionApiToken('mission-binary-pins');
 assert.ok(adaId);
+// The superadmin's own paired machine: it acts with the owner's rights, but it is not the person.
+const paired = redeemPairingCode({ code: issuePairingCode(admin.id).code, name: 'laptop', ip: null, userAgent: null });
+assert.equal(paired.kind, 'ok');
+const deviceToken = paired.kind === 'ok' ? paired.token : '';
 
 // What a configured install looks like: a file the person wrote, four-space
 // indent, keys this feature must not touch.
@@ -135,6 +140,32 @@ test('daemon token, mission token, non-superadmin session: 403, nothing written'
   }
   assert.equal(readFileSync(CONFIG_FILE, 'utf8'), before);
   assert.equal(config().host.binaries[CMD], undefined);
+});
+
+/**
+ * A pin is the program the daemon runs at every mission, and the PUT runs it once to check it: a setting of
+ * the host. `providers:manage` opens the Providers screen and the list of programs, not this.
+ */
+test('pinning and unpinning: a superadmin in a session only — not providers:manage, not a paired device', async () => {
+  grantTestPermissions(dbApi, adaId, ['providers:manage']);
+  try {
+    const before = readFileSync(CONFIG_FILE, 'utf8');
+    for (const [method, path, body] of ROUTES) {
+      const manager = await call(method, path, { body, cookie: adaCookie });
+      const device = await call(method, path, { body, bearer: deviceToken });
+      if (method === 'PUT' || method === 'DELETE') {
+        assert.equal(manager.status, 403, `providers:manage ${method} ${path}: ${manager.text}`);
+        assert.equal(device.status, 403, `device ${method} ${path}: ${device.text}`);
+      } else {
+        assert.equal(manager.status, 200, `providers:manage still reads: ${method} ${path}`);
+        assert.equal(device.status, 200, `the superadmin's device still reads: ${method} ${path}`);
+      }
+    }
+    assert.equal(readFileSync(CONFIG_FILE, 'utf8'), before);
+    assert.equal(config().host.binaries[CMD], undefined);
+  } finally {
+    grantTestPermissions(dbApi, adaId, []);
+  }
 });
 
 test('refusals: unknown name, relative, missing, folder, not executable — none echoes the input', async () => {
@@ -227,6 +258,199 @@ test('no config file yet: the pin is refused rather than ending the first run', 
   } finally {
     writeFileSync(CONFIG_FILE, saved);
   }
+});
+
+/**
+ * #1101: a tester pinned `/usr/local/bin/ollama` for Ollama Cloud, which runs on the Codex CLI, and every
+ * mission ran `ollama exec …`. The Codex provider declares how its CLI describes itself: the pin asks first.
+ */
+// Windows starts only a `.exe` or a known npm shim to check it, and these stubs are batch files: the format
+// itself is tested in `binary-identity.test.ts`.
+test('a pin on another program is refused, naming the CLI expected; the right one is saved', { skip: process.platform === 'win32' }, async () => {
+  const stubOf = (name: string, line: string): string => {
+    const file = join(BIN_DIR, `${name}${RUNNABLE}`);
+    writeFileSync(file, process.platform === 'win32' ? `@echo ${line}\r\n` : `#!/bin/sh\necho "${line}"\n`, { mode: 0o755 });
+    return file;
+  };
+  const ollama = stubOf('ollama', 'ollama version is 0.16.2');
+  const codex = stubOf('codex', 'codex-cli 0.169.0');
+  const before = readFileSync(CONFIG_FILE, 'utf8');
+
+  const wrong = await call('PUT', '/api/host/binaries/codex', { cookie: adminCookie, body: { path: ollama } });
+  assert.equal(wrong.status, 400, wrong.text);
+  assert.deepEqual(wrong.json, { error: 'wrong_program', message: 'This file is not the Codex CLI: its `--version` answer does not match.' });
+  assert.equal(readFileSync(CONFIG_FILE, 'utf8'), before, 'nothing written');
+  assert.equal(config().host.binaries.codex, undefined);
+
+  // The right version, then a failure: the identity is read only from a run that succeeded.
+  const failing = join(BIN_DIR, `codex-failing${RUNNABLE}`);
+  writeFileSync(failing, process.platform === 'win32' ? '@echo codex-cli 0.169.0\r\n@exit /b 1\r\n' : '#!/bin/sh\necho "codex-cli 0.169.0"\nexit 1\n', { mode: 0o755 });
+  const failed = await call('PUT', '/api/host/binaries/codex', { cookie: adminCookie, body: { path: failing } });
+  assert.equal(failed.status, 400, failed.text);
+  assert.equal((failed.json as { error: string }).error, 'no_answer');
+  assert.equal(readFileSync(CONFIG_FILE, 'utf8'), before, 'nothing written');
+
+  const right = await call('PUT', '/api/host/binaries/codex', { cookie: adminCookie, body: { path: codex } });
+  assert.equal(right.status, 200, right.text);
+  assert.equal(config().host.binaries.codex, codex);
+  assert.equal((await call('DELETE', '/api/host/binaries/codex', { cookie: adminCookie })).status, 200);
+  assert.equal(readFileSync(CONFIG_FILE, 'utf8'), before);
+});
+
+/**
+ * A file-system failure names its file in full, and the home folder with it: neither the answer nor the log
+ * carries it. One test per branch: the config write, the probe's folder, its removal, the unexpected error.
+ */
+async function capturingLogs<T>(run: () => Promise<T>): Promise<{ out: T; logs: string }> {
+  const lines: string[] = [];
+  const saved = { warn: console.warn, log: console.log, error: console.error };
+  const keep = (...args: unknown[]): void => { lines.push(args.map(String).join(' ')); };
+  console.warn = keep;
+  console.log = keep;
+  console.error = keep;
+  try {
+    return { out: await run(), logs: lines.join('\n') };
+  } finally {
+    Object.assign(console, saved);
+  }
+}
+
+function assertNoPath(text: string, ...paths: string[]): void {
+  for (const path of [HOME, `${HOME}-pins`, tmpdir(), ...paths]) {
+    assert.equal(text.includes(path), false, `${JSON.stringify(path)} leaked in ${text}`);
+  }
+}
+
+// chmod does not refuse root, and Windows has no mode bits to refuse a write with.
+const CANNOT_REFUSE_WRITES = process.platform === 'win32' || process.getuid?.() === 0;
+
+test('a config file the daemon cannot write: pin_write_failed, the errno alone in the log', { skip: CANNOT_REFUSE_WRITES }, async () => {
+  const before = readFileSync(CONFIG_FILE, 'utf8');
+  // The temporary file is written beside the config: a folder that refuses new entries fails `writeFileSync`.
+  chmodSync(HOME, 0o555);
+  let res: Awaited<ReturnType<typeof call>>;
+  let logs: string;
+  try {
+    ({ out: res, logs } = await capturingLogs(() => call('PUT', `/api/host/binaries/${CMD}`, { cookie: adminCookie, body: { path: EXECUTABLE } })));
+  } finally {
+    chmodSync(HOME, 0o755);
+  }
+  assert.equal(res.status, 500, res.text);
+  assert.deepEqual(res.json, {
+    error: 'pin_write_failed', message: 'timon.config.json could not be written: check that the daemon may write to its folder.',
+  });
+  assert.match(logs, /\[backends\] binary pin: pin_write_failed \(EACCES\)/);
+  assertNoPath(`${res.text}\n${logs}`, CONFIG_FILE, EXECUTABLE);
+  assert.equal(readFileSync(CONFIG_FILE, 'utf8'), before, 'nothing written');
+  assert.equal(config().host.binaries[CMD], undefined, 'nothing applied');
+  assert.deepEqual(readdirSync(HOME).filter((f) => f.endsWith('.tmp')), [], 'no temporary file left');
+});
+
+test('a temporary file written but not renamed: pin_write_failed, the errno alone, the temporary file removed', async () => {
+  const fs = (await import('node:fs')).default;
+  const { syncBuiltinESMExports } = await import('node:module');
+  const before = readFileSync(CONFIG_FILE, 'utf8');
+  // No chmod: the rename alone refuses, the way a locked config does on Windows. Node's own message quotes both files.
+  const realRename = fs.renameSync;
+  const renamed: string[] = [];
+  fs.renameSync = (from: Parameters<typeof realRename>[0], to: Parameters<typeof realRename>[1]): void => {
+    if (String(to) !== CONFIG_FILE) { realRename(from, to); return; }
+    renamed.push(String(from));
+    throw Object.assign(new Error(`EBUSY: resource busy or locked, rename '${String(from)}' -> '${String(to)}'`), {
+      code: 'EBUSY', errno: -16, syscall: 'rename', path: String(from), dest: String(to),
+    });
+  };
+  syncBuiltinESMExports();
+  let res: Awaited<ReturnType<typeof call>>;
+  let logs: string;
+  try {
+    ({ out: res, logs } = await capturingLogs(() => call('PUT', `/api/host/binaries/${CMD}`, { cookie: adminCookie, body: { path: EXECUTABLE } })));
+  } finally {
+    fs.renameSync = realRename;
+    syncBuiltinESMExports();
+  }
+  assert.equal(renamed.length, 1, 'the temporary file was written, then its rename refused');
+  assert.equal(res.status, 500, res.text);
+  assert.deepEqual(res.json, {
+    error: 'pin_write_failed', message: 'timon.config.json could not be written: check that the daemon may write to its folder.',
+  });
+  assert.match(logs, /\[backends\] binary pin: pin_write_failed \(EBUSY\)/);
+  assertNoPath(`${res.text}\n${logs}`, CONFIG_FILE, EXECUTABLE, renamed[0]!);
+  assert.equal(existsSync(renamed[0]!), false, 'the temporary file is removed');
+  assert.deepEqual(readdirSync(HOME).filter((f) => f.endsWith('.tmp')), [], 'no temporary file left');
+  assert.equal(readFileSync(CONFIG_FILE, 'utf8'), before, 'nothing written');
+  assert.equal(config().host.binaries[CMD], undefined, 'nothing applied');
+});
+
+// Windows starts only a `.exe` or a known npm shim to check it, and these stubs are shell scripts.
+test('the folder the check runs in cannot be made: probe_setup_failed, the errno alone in the log', { skip: process.platform === 'win32' }, async () => {
+  const before = readFileSync(CONFIG_FILE, 'utf8');
+  // A file never asked before: a known answer would skip the run, and the folder with it.
+  const codex = join(BIN_DIR, 'codex-setup');
+  writeFileSync(codex, '#!/bin/sh\necho "codex-cli 0.169.0"\n', { mode: 0o755 });
+  const missing = join(`${HOME}-pins`, 'no such temp');
+  const savedTmp = process.env.TMPDIR;
+  process.env.TMPDIR = missing;
+  let res: Awaited<ReturnType<typeof call>>;
+  let logs: string;
+  try {
+    ({ out: res, logs } = await capturingLogs(() => call('PUT', '/api/host/binaries/codex', { cookie: adminCookie, body: { path: codex } })));
+  } finally {
+    if (savedTmp === undefined) delete process.env.TMPDIR;
+    else process.env.TMPDIR = savedTmp;
+  }
+  assert.equal(res.status, 500, res.text);
+  assert.equal((res.json as { error: string }).error, 'probe_setup_failed');
+  assert.match(logs, /\[backends\] binary pin: probe_setup_failed \(ENOENT\)/);
+  assertNoPath(`${res.text}\n${logs}`, missing, codex);
+  assert.equal(readFileSync(CONFIG_FILE, 'utf8'), before, 'nothing written');
+});
+
+test('a check whose folder cannot be removed still answers, and logs the errno alone', { skip: CANNOT_REFUSE_WRITES }, async () => {
+  const { rmSync } = await import('node:fs');
+  const temp = join(`${HOME}-pins`, 'probe temp');
+  mkdirSync(temp, { recursive: true });
+  // The program leaves a folder it locked: removing what is inside it is refused.
+  const codex = join(BIN_DIR, 'codex-locking');
+  writeFileSync(codex, '#!/bin/sh\nmkdir locked && touch locked/file && chmod 500 locked\necho "codex-cli 0.169.0"\n', { mode: 0o755 });
+  const savedTmp = process.env.TMPDIR;
+  process.env.TMPDIR = temp;
+  let res: Awaited<ReturnType<typeof call>>;
+  let logs: string;
+  try {
+    ({ out: res, logs } = await capturingLogs(() => call('PUT', '/api/host/binaries/codex', { cookie: adminCookie, body: { path: codex } })));
+  } finally {
+    if (savedTmp === undefined) delete process.env.TMPDIR;
+    else process.env.TMPDIR = savedTmp;
+    for (const left of readdirSync(temp)) chmodSync(join(temp, left, 'locked'), 0o755);
+    rmSync(temp, { recursive: true, force: true });
+  }
+  assert.equal(res.status, 200, res.text);
+  assert.equal(config().host.binaries.codex, codex);
+  assert.match(logs, /\[backends\] identity check: its temporary folder could not be removed \(EACCES\)/);
+  assertNoPath(logs, temp, codex);
+  // The answer lists the pins, so it names the pinned file: neither the probe's folder nor its failure, though.
+  for (const leak of [temp, 'probe temp', 'EACCES', 'locked', 'could not be removed', 'permission denied']) {
+    assert.equal(res.text.toLowerCase().includes(leak.toLowerCase()), false, `${leak} leaked in ${res.text}`);
+  }
+  assert.equal((await call('DELETE', '/api/host/binaries/codex', { cookie: adminCookie })).status, 200);
+});
+
+test('an unexpected failure: a fixed answer, and the errno alone in the log', async () => {
+  const leaked = join(HOME, 'secret folder', 'timon.config.json');
+  const error = Object.assign(new Error(`EPERM: operation not permitted, open '${leaked}'`), { code: 'EPERM', path: leaked });
+  const sent: { status?: number; body?: unknown } = {};
+  const res = {
+    status(code: number) { sent.status = code; return res; },
+    json(body: unknown) { sent.body = body; return res; },
+  };
+  const { logs } = await capturingLogs(async () => {
+    sendBinaryRouteError(res as unknown as Parameters<typeof sendBinaryRouteError>[0], error, 'binary unpin');
+  });
+  assert.equal(sent.status, 500);
+  assert.deepEqual(sent.body, { error: 'pin_failed', message: 'The configuration could not be written.' });
+  assert.equal(logs, '[backends] binary unpin: unexpected failure (EPERM)');
+  assertNoPath(`${JSON.stringify(sent.body)}\n${logs}`, leaked);
 });
 
 test('normalizePinPath: quotes, tilde and Windows paths', () => {

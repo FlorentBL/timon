@@ -1,7 +1,10 @@
 import '../test-home.js';
 import assert from 'node:assert/strict';
+import { mkdtempSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
+import { homedir, tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { test } from 'node:test';
-import { ghEnv, ghForgeHost, ghLogin, parseGhHosts, type GhRunner } from './gh.js';
+import { ghConfigFolder, ghCredentialsStamp, ghEnv, ghForgeHost, ghLogin, parseGhHosts, type GhRunner } from './gh.js';
 import type { ExecOpts } from './types.js';
 
 test('a named config folder wins: the tokens that would override it are removed', () => {
@@ -58,4 +61,62 @@ test('a missing gh, a failure, a timeout or a strange answer are refusals', asyn
   assert.ok(!slow.ok && slow.code === 'timed_out');
   const odd = await ghLogin(null, runner({ stdout: '<html>' }).run);
   assert.ok(!odd.ok && odd.code === 'unexpected_answer');
+});
+
+test('the config folder gh reads: the named one, else its own default order', () => {
+  assert.equal(ghConfigFolder('/x/gh', { GH_CONFIG_DIR: '/y' }), '/x/gh');
+  assert.equal(ghConfigFolder(null, { GH_CONFIG_DIR: '/y', XDG_CONFIG_HOME: '/z' }), '/y');
+  assert.equal(ghConfigFolder(null, { XDG_CONFIG_HOME: join('/z') }, 'linux'), join('/z', 'gh'));
+  assert.equal(ghConfigFolder(null, { APPDATA: join('/app') }, 'win32'), join('/app', 'GitHub CLI'));
+  assert.equal(ghConfigFolder(null, { APPDATA: join('/app') }, 'linux'), join(homedir(), '.config', 'gh'));
+});
+
+test('the credentials stamp follows hosts.yml: rewritten, replaced or gone', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'timon-gh-stamp-'));
+  const file = join(dir, 'hosts.yml');
+  try {
+    assert.equal(ghCredentialsStamp(dir), null);
+    writeFileSync(file, 'github.com:\n    oauth_token: in-file\n    user: alice\n');
+    utimesSync(file, 1_000, 1_000);
+    const first = ghCredentialsStamp(dir);
+    assert.ok(first);
+    assert.equal(ghCredentialsStamp(dir), first);
+    // Same size, same inode, another time.
+    writeFileSync(file, 'github.com:\n    oauth_token: in-file\n    user: carol\n');
+    utimesSync(file, 2_000, 2_000);
+    const second = ghCredentialsStamp(dir);
+    assert.notEqual(second, first);
+    // Another size at the same time.
+    writeFileSync(file, 'github.com:\n    oauth_token: in-file\n    user: bob\n');
+    utimesSync(file, 2_000, 2_000);
+    assert.notEqual(ghCredentialsStamp(dir), second);
+    // Only the stat is read: its content never.
+    const stamp = ghCredentialsStamp(dir, { stat: () => ({ ino: 7n, size: 3n, mtimeNs: 9n }) });
+    assert.equal(stamp, '7:3:9');
+    assert.equal(ghCredentialsStamp(dir, { stat: () => { throw new Error('EACCES'); } }), null);
+    assert.equal(ghCredentialsStamp(dir, { read: () => { throw new Error('EACCES'); } }), null);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('no stamp when the token gh uses lives in the keyring: any folder can switch it', () => {
+  const stat = () => ({ ino: 1n, size: 2n, mtimeNs: 3n });
+  const stampOf = (lines: string[]) => ghCredentialsStamp('/cfg', { stat, read: () => lines.join('\n') });
+  // File storage: the active token sits directly under the host.
+  assert.equal(stampOf(['github.com:', '    users:', '        alice:', '            oauth_token: in-file', '    oauth_token: in-file', '    user: alice']), '1:2:3');
+  assert.equal(stampOf(['ghe.example.com:', '    oauth_token: in-file # kept', '    user: b']), '1:2:3');
+  // Keyring: no token under the host, whatever a user entry holds.
+  assert.equal(stampOf(['github.com:', '    users:', '        alice:', '    git_protocol: https', '    user: alice']), null);
+  assert.equal(stampOf(['github.com:', '    users:', '        alice:', '            oauth_token: in-file', '    user: alice']), null);
+  for (const empty of ['', ' ""', " ''", ' ~', ' null', ' # none']) {
+    assert.equal(stampOf(['github.com:', `    oauth_token:${empty}`, '    user: alice']), null);
+  }
+  // The token of another host than the one gh reaches does not count.
+  assert.equal(stampOf(['github.com:', '    user: a', 'ghe.example.com:', '    oauth_token: in-file']), null);
+  // Several Enterprise hosts: which one gh reaches is unknown.
+  assert.equal(stampOf(['a.example.com:', '    oauth_token: in-file', 'b.example.com:', '    oauth_token: in-file']), null);
+  // A host listed twice: the safe answer.
+  assert.equal(stampOf(['github.com:', '    oauth_token: in-file', 'github.com:', '    user: a']), null);
+  assert.equal(stampOf([]), null);
 });

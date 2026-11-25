@@ -30,6 +30,9 @@ mkdirSync(AUTH_DIR, { recursive: true });
 writeFileSync(join(AUTH_DIR, 'auth.json'), JSON.stringify({ tokens: { access_token: 'test-only' } }));
 process.env.CODEX_AUTH_DIR = AUTH_DIR;
 process.env.PORT = '3010';
+// The core's dialect wrote a stdio server's variables into config.toml: compared on that path,
+// with the daemon's bridge (`mcp-stdio-bridge.ts`) switched off.
+process.env.TIMON_MCP_STDIO_BRIDGE = '0';
 process.env.OLLAMA_API_KEY = 'ollama-key-witness';
 delete process.env.CODEX_API_KEY;
 delete process.env.OPENAI_API_KEY;

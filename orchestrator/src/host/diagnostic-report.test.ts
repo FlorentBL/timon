@@ -7,7 +7,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { TimonConfigSchema } from '../config/schema.js';
 import {
-  buildDiagnosticReport, diagnosticFindings, doctorSummary, knownSecretValues, probeFailureReason, redactReport, type DiagnosticFacts,
+  buildDiagnosticReport, diagnosticFindings, doctorOutcome, doctorSummary, knownSecretValues, probeFailureReason, redactReport, type DiagnosticFacts,
 } from './diagnostic-report.js';
 import { parseDsregcmd } from './machine.js';
 import { instanceId } from './packaged-service.js';
@@ -202,7 +202,7 @@ test('a full report: findings, newest log lines first, secrets masked, no databa
     const { text, findings } = await buildDiagnosticReport({
       source: 'cli', home, cfg, host: { platform: 'linux', execAsync: async () => ({ code: 1, stdout: '', stderr: '' }) },
       serviceOpts, appVersion: '0.1.5', daemonVersion: '0.1.5',
-      doctor: async () => ['ok        yes'],
+      doctor: async () => ({ lines: ['ok        yes'], facts: { blockers: [], terminal: { available: true, reason: null }, isolation: null, platform: 'linux' } }),
       now: new Date(2026, 9, 13, 12),
     });
     assert.deepEqual(findings.map((finding) => finding.id), ['data-version-behind']);
@@ -214,6 +214,45 @@ test('a full report: findings, newest log lines first, secrets masked, no databa
     assert.match(text, /\[desktop\] window shown/);
     assert.ok(!text.includes('Installer service pause'), 'a Windows installer journal, on Windows only');
     assert.ok(!text.includes('secret-daemon-token-value'));
+  } finally {
+    server.close();
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test('TIM-0162: what the doctor calls blocking is a finding, never "none detected"', { timeout: 20_000 }, async () => {
+  const home = mkdtempSync(join(tmpdir(), 'timon-diag-doctor-'));
+  const server = createServer((req, res) => {
+    res.setHeader('content-type', 'application/json');
+    res.end(JSON.stringify({ ok: true, service: 'timon', instance: instanceId(home) }));
+  }).listen(0, '127.0.0.1');
+  await once(server, 'listening');
+  const address = server.address();
+  assert.ok(address && typeof address !== 'string');
+  try {
+    // What the tester's daemon answered on /api/doctor: node off the service's PATH, the terminal addon refused.
+    const doctor = {
+      ok: false, platform: 'linux', supervisor: 'systemd', binaries: [{ name: 'node', ok: false }],
+      blockers: ['node not found'],
+      terminal: { available: false, reason: "pty.node: /lib/x86_64-linux-gnu/libc.so.6: version `GLIBC_2.42' not found" },
+      missionIsolation: { configured: 'auto', enforced: false, launch: 'unfenced', message: 'NOT enforced — the launcher does not answer.' },
+    };
+    const cfg = TimonConfigSchema.parse({ daemon: { listen: { host: '127.0.0.1', port: address.port } } });
+    const exec = () => ({ code: 1, stdout: '', stderr: '' });
+    const serviceOpts: ServiceOpts = {
+      platform: 'linux', homeDir: home, timonHome: home, installDir: join(home, 'install'), userName: 't', uid: 1000,
+      heapMb: 1024, port: address.port, nodePath: process.execPath, exec,
+    };
+    const { text, findings } = await buildDiagnosticReport({
+      source: 'cli', home, cfg, host: { platform: 'linux', execAsync: async () => ({ code: 1, stdout: '', stderr: '' }) },
+      serviceOpts, appVersion: null, daemonVersion: '0.1.9', doctor: async () => doctorOutcome(doctor),
+    });
+    assert.deepEqual(findings.map((finding) => finding.id), ['doctor-blocking-node-not-found', 'terminal-unavailable', 'missions-unfenced']);
+    assert.match(text, /== Findings ==\n- BLOCKING \(timon doctor\): node not found\./);
+    assert.match(text, /GLIBC_2\.42' not found.*ldd --version/);
+    assert.match(text, /== Doctor ==[^]*BLOCKING  node not found/);
+    assert.match(text, /terminal  UNAVAILABLE — pty\.node/);
+    assert.doesNotMatch(text, /none detected/);
   } finally {
     server.close();
     rmSync(home, { recursive: true, force: true });

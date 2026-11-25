@@ -135,6 +135,8 @@
       "title": "Pré-autorisation du shell non utilisée : {named}",
       "body": "La task {task} nomme {named}, qui pré-autorise {rules}, mais elle tourne sur {routed}, qui ne l'a pas ({why}). Ses commandes shell passent par le classifieur, et une commande qu'il ne sait pas juger attend une approbation. Donnez à {routed} les mêmes outils autorisés, ou laissez la task tourner sur {named}."
     },
+    "agent_shell_preallow_inert": "{agent} pré-autorise {rules} mais tourne en mode auto : le CLI claude y ignore une règle qui autorise toutes les commandes shell, et une commande que son classifieur ne sait pas juger attend une approbation (une mission autonome est refusée après le délai). Pour garder la règle, faites tourner l'agent en acceptEdits, ainsi que le rôle de son projet s'il en fixe un ; ou pré-autorisez des motifs plus étroits comme Bash(git:*).",
+    "agent_shell_preallow_mode_unset": "{agent} pré-autorise {rules} mais ne fixe aucun mode de permission : le CLI claude démarre alors dans le mode par défaut de ses propres réglages (permissions.defaultMode), et là où c'est auto, il ignore une règle qui autorise toutes les commandes shell. Pour garder la règle, passez l'agent en acceptEdits ; ou pré-autorisez des motifs plus étroits comme Bash(git:*).",
     "backend_no_credit": {
       "title": "Backend {backend} : plus de crédit",
       "body": "`{backend}` répond par une erreur de paiement (HTTP 402 / solde épuisé) : le compte n’a plus de crédit.\n\nContrairement à une limite d’usage, **cela ne se rouvre pas tout seul** — il faut recharger le compte.\n\n- Backend écarté jusqu’au {until, date, medium} {until, time, short} (ou jusqu’à ce qu’un tour y réussisse de nouveau).\n- Les missions et les tasks qui en dépendent basculent sur leur plan de repli."
@@ -319,6 +321,10 @@
       "title": "Une résolution de conflit attend votre accord",
       "body": "Lisez la résolution préparée pour {target}, puis publiez-la ou abandonnez-la."
     },
+    "forge_issue_close_pending": {
+      "title": "La fermeture d'une issue GitHub attend votre accord",
+      "body": "Fermez {target} sur GitHub, ou laissez-la ouverte."
+    },
     "landing_repair_pushed": {
       "title": "Réparation poussée sur {pr}",
       "body": "La réparation de {branch} a été poussée sur sa pull request {pr} ; GitHub relance ses contrôles."
@@ -330,6 +336,10 @@
     "landing_repair_failed": {
       "title": "Réparation de {pr} non poussée",
       "body": "La réparation de {branch} n'a pas été poussée : {reason}"
+    },
+    "integration_opened": {
+      "title": "Pull request ouverte : {branch}",
+      "body": "{branch} attend une relecture avant d'atterrir dans {target}. Fusionnez-la sur la forge : Timon le remarque de lui-même."
     },
     "integration_merged": {
       "title": "{pr, select, none {Branche d'intégration fusionnée : {branch}} other {Pull request fusionnée : {branch}}}",

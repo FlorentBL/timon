@@ -50,7 +50,7 @@ import {
   type ForgeProposalRefusalCode, type ForgeProposalRow,
 } from './forge-proposals.js';
 import { forgeEndpointOf, forgeNetworkUrl, SSH_ALIAS_NAME, type ForgeEndpoint } from './forge-network-url.js';
-import { plainBranch, type PullRequestBranch } from './host/forge.js';
+import { plainBranch, type ForgeBranchReader, type PullRequestBranch } from './host/forge.js';
 import {
   gitVersionAtLeast, MIN_GIT_VERSION, openScratchRepo, reopenScratchRepo, SCRATCH_SIZE_LIMIT, sshHostName,
   type MergeTreeResult, type ScratchRepo,
@@ -327,6 +327,43 @@ function branchProblem(repo: string, branch: PullRequestBranch): Refusal | null 
   return null;
 }
 
+/**
+ * Refuses before the fetch a repository GitHub already reports larger than the
+ * scratch cap: git has no limit of its own while it fetches, so the check made
+ * after it (`fetchAndMerge`) only comes once the bytes are on the disk. The
+ * fetch reads the project's repository; the fork holds the contributor's own
+ * objects, which `refs/pull/<n>/head` brings along. A size GitHub would not
+ * tell refuses too: the fetch is never started blind.
+ */
+async function sizeProblem(forge: ForgeBranchReader, repos: readonly string[]): Promise<Refusal | null> {
+  const limitKib = SCRATCH_SIZE_LIMIT / 1024;
+  for (const repo of new Set(repos)) {
+    const size = await forge.repositorySize(repo);
+    if (!size.ok) return refuse(502, 'forge_read_failed', `the size of ${repo} could not be read: ${size.reason}`);
+    if (size.kib > limitKib) {
+      return refuse(413, 'conflict_fetch_too_large', `${repo} is larger than ${SCRATCH_SIZE_LIMIT / (1024 * 1024)} MB on GitHub`);
+    }
+  }
+  return null;
+}
+
+/**
+ * The one door to a fresh scratch repository: the sizes GitHub reports for the
+ * project's repository and the fork are read first, and no git command runs
+ * before they pass. Both paths go through it, `prepareConflict` and the
+ * publication's `rebuild`, since a fork may grow past the cap, or stop telling
+ * its size, between the preparation and the publication.
+ */
+async function openSizedScratch(
+  forge: ForgeBranchReader, repos: readonly string[], integration: ProjectIntegration, deps: ForgeProposalDeps,
+): Promise<ScratchRepo | Refusal> {
+  const tooLarge = await sizeProblem(forge, repos);
+  if (tooLarge) return tooLarge;
+  const opened = await openScratchRepo(scratchOptions(integration, deps));
+  if (!('dir' in opened)) return refuse(500, 'conflict_git_unavailable', opened.reason);
+  return opened;
+}
+
 type Merged = { scratch: ScratchRepo; base: string; head: string; result: MergeTreeResult };
 
 /**
@@ -491,10 +528,10 @@ export async function prepareConflict(project: string, number: number, by: strin
   const busyKey = `${project}:${repo}:${number}`;
   if (preparing.has(busyKey)) return refuse(409, 'conflict_invalid', 'this pull request is being merged already');
   preparing.add(busyKey);
-  const opened = await openScratchRepo(scratchOptions(integration, deps));
+  const opened = await openSizedScratch(branchForge(integration.gh_config_dir, deps), [repo, branch.headRepository!], integration, deps);
   if (!('dir' in opened)) {
     preparing.delete(busyKey);
-    return refuse(500, 'conflict_git_unavailable', opened.reason);
+    return opened;
   }
   const scratch = opened;
   let keep = false;
@@ -863,8 +900,8 @@ const unchanged = (code: ForgeProposalRefusalCode, reason: string, status = 409)
 async function rebuild(
   row: ForgeConflictRow, files: readonly StoredFile[], remote: string, run: ForgeProposalExecution,
 ): Promise<{ ok: true; scratch: ScratchRepo } | Refusal> {
-  const opened = await openScratchRepo(scratchOptions(run.integration, run.deps));
-  if (!('dir' in opened)) return refuse(500, 'conflict_git_unavailable', opened.reason);
+  const opened = await openSizedScratch(branchForge(run.configDir, run.deps), [row.repo, row.head_repo], run.integration, run.deps);
+  if (!('dir' in opened)) return { ...opened, reason: run.scrub(opened.reason) };
   let keep = false;
   try {
     const merged = await fetchAndMerge(opened, remote, row.pr_number, row.base_ref, row.head_sha, row.base_sha);

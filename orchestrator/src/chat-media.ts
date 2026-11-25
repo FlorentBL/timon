@@ -21,8 +21,8 @@
  */
 
 import {
-  closeSync, copyFileSync, createReadStream, fstatSync, mkdirSync, openSync, readSync, readdirSync, realpathSync, statSync,
-  type Dirent, type ReadStream,
+  closeSync, copyFileSync, createReadStream, fstatSync, mkdirSync, openSync, readSync, readdirSync,
+  realpathSync, statSync, type Dirent, type ReadStream,
 } from 'node:fs';
 import { isAbsolute, join, relative, resolve, sep, win32 } from 'node:path';
 import { randomUUID } from 'node:crypto';
@@ -111,20 +111,89 @@ export function parseMediaPath(raw: unknown): string {
   return resolve(raw);
 }
 
+/** Where the kernel says `path` leads. The native call, not Node's own walk:
+ *  that one resolves a link target's `..` on its letters, so a link through
+ *  `link-to-elsewhere/..` would read as one file and open as another. */
 export function realOrNull(path: string): string | null {
   try {
-    return realpathSync(path);
+    return realpathSync.native(path);
   } catch {
     return null;
   }
 }
 
-/** True when `target` sits under `root` and no step below the root is hidden
- *  (`.git`, `.ssh`, `.env.d`…): an agent's picture never lives there. */
-export function underRoot(root: string, target: string): boolean {
+/** `target` relative to `root` when it sits strictly below it, else null. */
+function relativeBelow(root: string, target: string): string | null {
   const rel = relative(root, target);
-  if (!rel || rel.startsWith('..') || isAbsolute(rel)) return false;
-  return !rel.split(sep).some((segment) => segment.startsWith('.'));
+  if (!rel || rel.startsWith('..') || isAbsolute(rel)) return null;
+  return rel;
+}
+
+/** A step below the root is hidden (`.git`, `.ssh`, `.env.d`…): an agent's
+ *  picture or page never lives there. */
+function hasHiddenStep(rel: string): boolean {
+  return rel.split(sep).some((segment) => segment.startsWith('.'));
+}
+
+/**
+ * Why a path an agent named is not read. A browser only ever gets a 404, like
+ * a missing file; the agent that named the path gets the reason, or it
+ * concludes the tool is broken (TODO #1160). The rule itself does not change.
+ */
+export type PathRefusal = 'path_hidden_segment' | 'path_outside_roots' | 'not_found';
+
+/** Where `target` sits under `roots`, on its letters alone. A root under
+ *  which it is readable wins over one under which it is hidden: a root may
+ *  live inside another's hidden folder (`.codex/generated_images`). */
+function placeUnder(roots: readonly string[], target: string): Exclude<PathRefusal, 'not_found'> | null {
+  let hidden = false;
+  for (const root of roots) {
+    const rel = relativeBelow(root, target);
+    if (rel === null) continue;
+    if (!hasHiddenStep(rel)) return null;
+    hidden = true;
+  }
+  return hidden ? 'path_hidden_segment' : 'path_outside_roots';
+}
+
+/**
+ * Resolves `path` under `roots`, or says why it may not be read, in two
+ * steps. The kernel resolves the links, never this module: a resolution of
+ * our own would sooner or later open another file than the one it judged.
+ *
+ * 1. The written path, on its letters alone, with no access to the disk: a
+ *    hidden step below a root, or no root above it, is refused with its own
+ *    code. A root counts as written and as resolved, so an alias of a root
+ *    is admitted. These answers depend on nothing but the letters typed,
+ *    so they reveal nothing.
+ * 2. `realpath` of that path. When it fails, or when the real path is not
+ *    strictly under a real root, or goes through a hidden folder below it,
+ *    the answer is one and the same `not_found`: a link that leaves the
+ *    roots answers like a missing file, whether its target exists or not.
+ *
+ * The caller opens the real path returned, the one judged here.
+ */
+export function resolveMissionPath(path: string, roots: readonly string[]): { real: string } | { refusal: PathRefusal } {
+  const realRoots = roots.map(realOrNull).filter((root): root is string => root !== null);
+  const written = placeUnder([...roots.map((root) => resolve(root)), ...realRoots], path);
+  if (written !== null) return { refusal: written };
+  const real = realOrNull(path);
+  if (real === null || placeUnder(realRoots, real) !== null) return { refusal: 'not_found' };
+  return { real };
+}
+
+const PATH_REFUSAL_TEXT: Record<PathRefusal, string> = {
+  path_hidden_segment: 'the path goes through a hidden folder (a name starting with "."): '
+    + 'the file must be under your working directory, outside any hidden folder',
+  path_outside_roots: 'the path is outside your working directory: '
+    + 'the file must be under your working directory, outside any hidden folder',
+  not_found: 'no readable file at this path inside your working directory; '
+    + 'links that leave it or lead into a hidden folder are not followed',
+};
+
+/** The status, code and message an agent reads for a refused path. */
+export function explainPathRefusal(refusal: PathRefusal): { status: 403 | 404; code: PathRefusal; message: string } {
+  return { status: refusal === 'not_found' ? 404 : 403, code: refusal, message: PATH_REFUSAL_TEXT[refusal] };
 }
 
 export type OpenedMedia = {
@@ -158,14 +227,16 @@ function openChecked(real: string, maxBytes: number): OpenedMedia {
 }
 
 /** Opens a file the agent named, provided it resolves — symlinks followed —
- *  under one of `roots`. Missing roots are ignored. */
-export function openMissionMedia(raw: unknown, roots: readonly string[]): OpenedMedia {
-  const path = parseMediaPath(raw);
-  const real = realOrNull(path);
-  if (!real) throw new MediaError(404, 'not found');
-  const realRoots = roots.map(realOrNull).filter((r): r is string => r !== null);
-  if (!realRoots.some((root) => underRoot(root, real))) throw new MediaError(404, 'not found');
-  return openChecked(real, MAX_LOCAL_MEDIA_BYTES);
+ *  under one of `roots`. Missing roots are ignored. With `explain`, a refused
+ *  path says why (`resolveMissionPath`); without, it answers like a missing file. */
+export function openMissionMedia(raw: unknown, roots: readonly string[], explain = false): OpenedMedia {
+  const resolved = resolveMissionPath(parseMediaPath(raw), roots);
+  if ('refusal' in resolved) {
+    if (!explain) throw new MediaError(404, 'not found');
+    const why = explainPathRefusal(resolved.refusal);
+    throw new MediaError(why.status, why.message, why.code);
+  }
+  return openChecked(resolved.real, MAX_LOCAL_MEDIA_BYTES);
 }
 
 /** Where a mission's collected images live: inside its chat attachments, so

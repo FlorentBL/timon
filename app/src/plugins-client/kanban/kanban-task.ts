@@ -1,3 +1,4 @@
+import type { PendingPermission } from '@/lib/kanban-card';
 import type { TaskRunBy } from '@/lib/task-runner';
 
 export type TaskStatus = 'PENDING' | 'IN_PROGRESS' | 'DONE' | 'BLOCKED';
@@ -59,6 +60,8 @@ export type Task = {
   /** Set by the daemon only when the task's mission ran under another agent
    *  than `agent_name` (TIM-0109). */
   run_by?: TaskRunBy | null;
+  /** Running task whose mission waits on a card in the chat (TODO #1094). */
+  pending_permission?: PendingPermission | null;
   /** DONE code task whose chain never landed: its dependents wait (TIM-0109). */
   awaiting_merge?: boolean;
   /** TO DO idea the task carries out; its tags show on the card. */

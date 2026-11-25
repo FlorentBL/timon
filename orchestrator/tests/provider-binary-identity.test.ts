@@ -173,7 +173,7 @@ test('REFUSAL: grok\'s `agent` answers to the alias, and the authorization click
   assert.deepEqual(providerBinaryRequests(manifest), [{ name: 'cursor-agent', found: 'agent', resolved: AGENT, allowed: false, refused: null }]);
   await assert.rejects(grantProviderBinaries(manifest, [AGENT]), (error: Error) =>
     error instanceof ExecGrantError && error.code === 'binary-identity' && error.status === 409
-    && error.message.includes('"grok 1.0.13 (5e9a58528b76) [stable]"') && error.message.includes("Cursor's agent CLI"));
+    && !error.message.includes('grok 1.0.13') && error.message.includes("Cursor's agent CLI"));
   assert.deepEqual(config().pluginPolicy.exec.allow, []);
   await assert.rejects(async () => entry.apply(context()), 'without an authorization the plugin does not register');
   assert.equal(getDialect('cursor'), undefined);
@@ -194,5 +194,31 @@ test('Cursor\'s own `agent` is authorized on the click, and the plugin launches 
 test('REFUSAL: grok\'s installer writes its `agent` over the authorized one — the launch is refused', { skip: !posix }, async () => {
   installAgent(`${GROK_AGENT}# another size, so the answer kept for the previous file is not reused\n`);
   await assert.rejects(assertLaunchIdentity('cursor', 'agent'), (error: Error) =>
-    error instanceof BinaryIdentityError && /printed "grok 1\.0\.13/.test(error.message));
+    error instanceof BinaryIdentityError && /`agent` is not Cursor's agent CLI/.test(error.message) && !error.message.includes('grok'));
+});
+
+/**
+ * A CI runner, or a machine where the daemon's PATH does not list the CLI: before the Codex provider declared
+ * an identity, its launch went on to the spawn, which reports `missing` through the child's `error` event.
+ * The identity check must not turn that into an exception of its own, and must not start anything.
+ */
+test('a declared CLI the daemon\'s PATH does not resolve is not probed: the launch goes on to its spawn', async () => {
+  await mountOfficialProviders();
+  assert.ok(declaredBinary('codex')?.identity, 'the Codex provider declares how its CLI describes itself');
+  const { getHost } = await import('../src/host/index.js');
+  const host = getHost();
+  const { bin, spawn } = host;
+  let started = 0;
+  host.bin = (name: string) => {
+    if (name === 'codex') throw new Error('binary "codex" not found in PATH');
+    return bin.call(host, name);
+  };
+  host.spawn = ((...args: Parameters<typeof spawn>) => { started += 1; return spawn.apply(host, args); }) as typeof spawn;
+  try {
+    await assertLaunchIdentity('codex', 'codex');
+  } finally {
+    host.bin = bin;
+    host.spawn = spawn;
+  }
+  assert.equal(started, 0, 'nothing is started to ask a name that names no file');
 });

@@ -280,6 +280,23 @@ four plain arguments, and an `expected` of one line.
 With an identity, a generic alias becomes safe to declare: a namesake that answers
 to it is refused on the click, and again before every launch.
 
+The same check runs on a path the person pins for your program (**Program →
+Advanced settings** on the provider page): a file that does not match is refused
+before it is saved, and `timon doctor` marks an existing pin that does not match as
+failed. Neither the refusal nor the report quotes what the program printed.
+
+Make sure your program answers the identity question on its own:
+
+- it must exit with code 0, within a few seconds, printing less than 64 KB. A
+  program that prints the expected line and then fails or hangs is refused;
+- it runs in an empty temporary folder, with only `PATH`, `HOME`, `USERPROFILE`,
+  `SystemRoot`, `TEMP`, `TMP` and `LANG` in its environment: no `NODE_*`, no
+  `npm_config_*`, no Timon variable;
+- on Windows, Timon starts a `.exe`, or an npm `.cmd` shim it can read, through the
+  runtime the shim names. Any other file (`.bat`, `.com`, another kind of `.cmd`)
+  is refused without being run;
+- whatever it starts is ended with it, on every system.
+
 ### Updating a provider
 
 Install a newer version of the same plugin and it replaces the running one,
@@ -387,8 +404,17 @@ published checksum · verified 1.5.0 available to replace it*.
   does, a file that does not match is deleted and nothing is installed. When it
   does not (the line says *no published checksum*), Timon asks you to confirm
   before downloading, and records the install as unverified.
-- **Checked on every start.** Timon keeps a digest of the installed files and
-  compares it each time it registers the agent. A file changed afterwards is
+- **Safe unpacking.** An archive that tries to write outside its folder, holds
+  a hard link or a device, or a symbolic link that points outside the agent's
+  folder (or through another link) or to a folder above it is refused with
+  nothing installed. So is, on every system, an archive holding two names for
+  the same path that differ only by case or accent form (many disks treat them
+  as one), or a link whose target the disk cannot identify. Symbolic
+  links that stay inside the agent's folder, such as those of a macOS framework,
+  are kept; on Windows, where creating one needs a privilege, Timon copies what
+  the link points to instead. A `.zip` holding a link is refused.
+- **Checked on every start.** Timon keeps a digest of the installed files, and of
+  where each link points, and compares it each time it registers the agent. A file changed afterwards is
   never launched; the line says its files changed and **Reinstall** repairs it.
 - **Updates.** A newer version appears on the line; installing it keeps the
   working version until the new one is verified, then swaps them. The previous

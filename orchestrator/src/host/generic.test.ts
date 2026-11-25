@@ -27,6 +27,13 @@ test('execAsync tells a command it stopped from a command that failed', async ()
   assert.equal(verbose.timedOut, undefined, 'an output over maxBuffer is no timeout');
 });
 
+test('generic capabilities: traefik is never reported without containers', () => {
+  const noDocker = createGenericHost(TimonConfigSchema.parse({ host: { docker: 'disabled', traefik: true } }));
+  const caps = noDocker.capabilities();
+  assert.equal(caps.includes('containers'), false);
+  assert.equal(caps.includes('traefik'), false);
+});
+
 test('generic bin finds git in the PATH', () => {
   assert.match(host.bin('git'), /git(?:\.exe)?$/);
 });

@@ -10,11 +10,13 @@ import type { TimonConfig } from '../config/schema.js';
 import { TIMON_HOME } from '../paths.js';
 import type { Capability, ExecOpts, ExecResult, Host, SpawnOpts } from './types.js';
 import { findExecutableBinary, resolvePinnedBinary, type BinarySearchOptions } from './binary-path.js';
+import { containersSuppression } from './containers-policy.js';
 import { spawnDetachedGeneric } from './detached.js';
 import { inspectListenPort } from './listen-port.js';
 import { detectDesktopSession, type DesktopSession } from './desktop-session.js';
 import { opensAsFolder, revealInFileManager } from './reveal.js';
 import { windowsDirectLaunch, windowsShimLaunch } from './windows-shell.js';
+import { chooseLaunchNode } from './launch-path.js';
 import {
   fixedGitConfig, gitmodulesScanArgs, gitScanArgs, gitToplevelArgs, neutralGitCall, neutralGitEnv, parseGitConfigList,
   parseSubmoduleNames, type GitConfigEntry,
@@ -76,7 +78,14 @@ export function createGenericHost(
   pins: BinaryPins = () => config.host.binaries,
 ): Host {
   const bin = (name: string) => resolveBin(pins, name, binaryOptions);
+  // A test simulating another machine (`env`, `platform`) never gets this host's runtime.
+  const ownRuntime = binaryOptions.env === undefined && (binaryOptions.platform ?? process.platform) === process.platform;
   const findRuntime = (name: 'node' | 'bun') => {
+    // An npm `.cmd` shim runs on the machine's `node`, else the daemon's own once checked,
+    // however the search reached it (#1102).
+    if (name === 'node' && ownRuntime) {
+      return chooseLaunchNode({ platform: process.platform, findNode: () => bin(name), selfExecutable: process.versions.electron ? process.execPath : undefined });
+    }
     try { return bin(name); } catch { return null; }
   };
   // An npm shim (`.cmd`) cannot be spawned directly on Windows: EINVAL before
@@ -218,6 +227,9 @@ export function createGenericHost(
 
   const docker = (() => {
     if (config.host.docker === 'disabled') return undefined;
+    // Before any probe: a witness daemon does not even ask Docker (#1169).
+    // Silent: the CLI builds this host too, and its stdout may be JSON.
+    if (containersSuppression({ env: process.env, home: TIMON_HOME })) return undefined;
     try {
       bin('docker');
       if (exec('docker', ['info'], { timeout: 5_000 }).code !== 0) return undefined;
@@ -247,7 +259,8 @@ export function createGenericHost(
   const capabilities = (): Capability[] => {
     const out: Capability[] = [];
     if (docker) out.push('containers');
-    if (config.host.traefik) out.push('traefik');
+    // Traefik is reached as a container: without Docker the flag claims nothing.
+    if (docker && config.host.traefik) out.push('traefik');
     if (gui) out.push('gui');
     for (const capability of ['git', 'grepai', 'uvx'] as const) {
       try { bin(capability); out.push(capability); } catch { /* capability missing */ }

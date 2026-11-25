@@ -237,6 +237,69 @@ export function listPending(missionId?: string): PendingView[] {
   return out;
 }
 
+/**
+ * What a task or mission detail says of the card its mission waits on (TODO
+ * #1094): these routes are listed and polled, so they carry the tool and the
+ * clock only. The command, its input and its files stay on the card itself.
+ */
+export type PendingPermissionSummary = {
+  kind: 'permission' | 'question';
+  tool_name: string;
+  /** When the oldest card was raised (ms). */
+  since: number;
+  /** When it is auto-denied (ms), or null when it never is. */
+  expires_at: number | null;
+  /** Time left before that deny, as of the response; null with `expires_at`. */
+  remaining_ms: number | null;
+  /** Cards of the mission waiting, the oldest one included. */
+  count: number;
+};
+
+function summaryOf(oldest: Pending, count: number, now: number): PendingPermissionSummary {
+  const expiresAt = oldest.timeout_ms > 0 ? oldest.created_at + oldest.timeout_ms : null;
+  return {
+    kind: oldest.tool_name === 'ask_user' ? 'question' : 'permission',
+    tool_name: oldest.tool_name,
+    since: oldest.created_at,
+    expires_at: expiresAt,
+    remaining_ms: expiresAt === null ? null : Math.max(0, expiresAt - now),
+    count,
+  };
+}
+
+/** The oldest card a mission waits on, as a public summary; null when none. */
+export function pendingPermissionSummary(
+  missionId: string | null | undefined,
+  now: number = Date.now(),
+): PendingPermissionSummary | null {
+  if (!missionId) return null;
+  let oldest: Pending | null = null;
+  let count = 0;
+  for (const p of PENDING.values()) {
+    if (p.mission_id !== missionId) continue;
+    count += 1;
+    if (!oldest || p.created_at < oldest.created_at) oldest = p;
+  }
+  return oldest ? summaryOf(oldest, count, now) : null;
+}
+
+/**
+ * Every waiting mission's summary, in one pass over the cards: the task list
+ * looks up each running task here instead of scanning every card per task.
+ */
+export function pendingPermissionSummaries(now: number = Date.now()): Map<string, PendingPermissionSummary> {
+  const groups = new Map<string, { oldest: Pending; count: number }>();
+  for (const p of PENDING.values()) {
+    const group = groups.get(p.mission_id);
+    if (!group) { groups.set(p.mission_id, { oldest: p, count: 1 }); continue; }
+    group.count += 1;
+    if (p.created_at < group.oldest.created_at) group.oldest = p;
+  }
+  const out = new Map<string, PendingPermissionSummary>();
+  for (const [missionId, { oldest, count }] of groups) out.set(missionId, summaryOf(oldest, count, now));
+  return out;
+}
+
 /** One pending card, or `undefined` once resolved or expired. */
 export function getPending(id: string): PendingView | undefined {
   const p = PENDING.get(id);

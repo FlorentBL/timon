@@ -18,6 +18,7 @@ import { useProjectMeta } from '@/hooks/use-project-meta';
 import { t as i18n } from '@/lib/i18n';
 import { formatNumber } from '@/lib/intl';
 import { resolveRole } from '@/lib/roles';
+import { taskRunAgent } from '@/lib/task-runner';
 import { SeriesGraphDialog } from '@/components/series-graph-dialog';
 import { useSlotEntries } from '@/lib/plugin-host/render';
 import { PluginBoundary } from '@/lib/plugin-host/plugin-boundary';
@@ -44,6 +45,7 @@ import { KanbanColumnEmpty, KanbanColumnHeader } from './kanban-column-header';
 import { KanbanCardHost } from './kanban-card-slot';
 import type { Agent, Task, TaskStatus } from './kanban-task';
 import type { ProjectTodo } from './project-todo-types';
+import { movesTodoLanding, useLandingChanges } from './landing-events';
 import { confirmAction } from '@/components/confirm-dialog/confirm-dialog-context';
 
 /** `tint`: the theme token (an HSL triple) the column's corner wash is drawn with. */
@@ -159,12 +161,16 @@ export function KanbanClient({ defaultAgent }: { defaultAgent?: string }) {
 
   // Tags of the TO DO ideas the board's tasks carry out. Read again only when
   // that set of ideas changes, not at every poll: a tag rarely moves, and the
-  // notebook can hold far more ideas than the board holds tasks.
+  // notebook can hold far more ideas than the board holds tasks. A job that
+  // lands moves its ideas' progress, which the daemon announces: the tags are
+  // read again then (`todoReads`), not at the next change of the set.
   const todoKey = useMemo(
     () => Array.from(new Set(tasks.map((t) => t.todo_id).filter((id): id is number => typeof id === 'number'))).sort((x, y) => x - y).join(','),
     [tasks],
   );
   const [todos, setTodos] = useState<Map<number, ProjectTodo>>(new Map());
+  const [todoReads, setTodoReads] = useState(0);
+  useLandingChanges(() => setTodoReads((n) => n + 1), movesTodoLanding);
   useEffect(() => {
     if (!todoKey) return;
     let off = false;
@@ -178,7 +184,7 @@ export function KanbanClient({ defaultAgent }: { defaultAgent?: string }) {
       })
       .catch(() => { /* a card without its tags is still a card */ });
     return () => { off = true; };
-  }, [todoKey]);
+  }, [todoKey, todoReads]);
 
   // A task's project is its own when set at creation, else its agent's
   // (`taskProject`, the daemon's rule for `done_project`). We resolve the slug,
@@ -448,7 +454,9 @@ export function KanbanClient({ defaultAgent }: { defaultAgent?: string }) {
                   <KanbanColumnEmpty>{i18n(col.emptyKey)}</KanbanColumnEmpty>
                 ) : (
                   cards.map((t) => {
-                    const known = identities.get(t.agent_name);
+                    // The agent that runs the task, or will: not always the one it names (#1109).
+                    const runAgent = taskRunAgent(t);
+                    const known = identities.get(runAgent);
                     return (
                       <KanbanCardHost
                         key={t.id}
@@ -458,13 +466,13 @@ export function KanbanClient({ defaultAgent }: { defaultAgent?: string }) {
                           task: t,
                           board: taskById,
                           now,
-                          agent: known?.identity ?? pseudoIdentity(t.agent_name),
+                          agent: known?.identity ?? pseudoIdentity(runAgent),
                           agentRole: known?.role ?? null,
                           todo: typeof t.todo_id === 'number' ? todos.get(t.todo_id) ?? null : null,
                           needsAction: !!t.mission_id && agentStateByMission.get(t.mission_id) === 'needs_action',
                           dragging: dragId === t.id,
                           // What the vault sees at spawn: the agent's project, not `task.project`.
-                          modelTarget: { agent: t.agent_name, project: projectByAgent.get(t.agent_name) },
+                          modelTarget: { agent: runAgent, project: projectByAgent.get(runAgent) },
                           // A running task stays in its column: the product card makes the same call.
                           drag: { draggable: t.status !== 'IN_PROGRESS', onDragStart: () => onDragStart(t.id), onDragEnd },
                           open: () => openTask(t),

@@ -101,6 +101,7 @@ export type ExternalPrRefusalCode =
   | 'integration_not_pr'
   | 'pr_repository_unknown'
   | 'forge_read_failed'
+  | 'forge_account_mismatch'
   | 'pr_review_running';
 
 export type ExternalPrRefusal = { ok: false; status: number; code: ExternalPrRefusalCode; reason: string };

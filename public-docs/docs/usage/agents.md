@@ -89,9 +89,9 @@ The **LLM** tab has a **Thinking level** slider over the levels the chosen model
 
 ### Extra folders
 
-An agent works in its working folder. When it also needs other folders, a librarian that reads several projects, or an agent that keeps its notes in a second folder, add them in the **Workspace** tab, under **Extra folders**: **Add a folder** asks for the folder and its access, **Read only** or **Read and write**. Each folder's **…** menu changes its access or removes it. A project's settings list the extra folders of all its agents, under **Agent folders**.
+An agent works in its working folder. When it also needs other folders, a librarian that reads several projects, or an agent that keeps its notes in a second folder, add them in the **Workspace** tab, under **Extra folders**: **Add a folder** asks for the folder and its access, **Read only** or **Read and write**. Each folder shows its name and access; its **…** menu shows the full path, copies it, changes the access or removes the folder. A project's settings list the extra folders of all its agents, under **Agent folders**, where you can also give a folder to the whole project (see [Mission isolation](./mission-isolation.md#a-projects-extra-folders)).
 
-Only a person changes these folders, or a mission whose account holds the **agents:privileged-config** permission, and never for its own agent. Timon's own folder, a folder that contains it, a whole home folder or disk, and folders of credentials (`~/.ssh`, the sign-ins of the AI CLIs…) are refused, with the reason. A change applies from the agent's next mission. How the folders are enforced: [Mission isolation](./mission-isolation.md#an-agents-extra-folders).
+Only a person changes these folders, or a mission whose account holds the **agents:privileged-config** permission, and never for its own agent. Timon's own folder, a folder that contains it, a whole home folder or disk, and folders of credentials (`~/.ssh`, the sign-ins of the AI CLIs…) are refused, with the reason. A change applies from the agent's next mission. From a terminal, `timon agent extra-dirs list|add|rm <agent> [<path>]` does the same (`--write` gives read and write access, `--restart` stops the agent's running processes so they pick up the new list); an agent uses the `agent_extra_dirs` tool, under the same rules. How the folders are enforced: [Mission isolation](./mission-isolation.md#an-agents-extra-folders).
 
 ### Agent names
 
@@ -142,7 +142,7 @@ Imported agents are named `timon.<name>`, or `import.<name>` when agents that th
 
 **Agents** shows your organisation as a graph: poles (workspaces) group projects, each project's orchestrator sits at the top of its agents, and every link is a reporting line. The Company chart shows the same lines.
 
-- **Poles.** Choose **+ New pole** to create one (name, colour, optional lead agent). A pole can exist before any project joins it.
+- **Poles.** Choose **+ New pole** to create one (name, colour, optional lead agent). A pole can exist before any project joins it. Two poles cannot share a name, and a name that only differs in case, accents or punctuation from another pole's name or identifier is refused: projects are filed under their pole's name, so such a pole would take the other one's projects.
 - **Unfold and fold.** At first only the orchestrators show. Select the **+N** badge on an agent to show its sub-agents, and select it again to fold them. A folded agent lights up while one of the agents it hides is working. The graph remembers your choice.
 - **Reorganise.** Drop an agent onto another to make it report to it, or drop a project's lead onto a pole to move the whole project. Every move can be undone from its confirmation. The **Organization** panel lists the same hierarchy as a tree you can reorganise by drag and drop.
 - **Arrange.** Dragging an agent carries its sub-agents with it. A group you drag by its top agent stays where you drop it, even after a reload; right-click it and choose **Reset position** to put it back.
@@ -283,7 +283,7 @@ The **Permissions** tab of the agent lists your always-allowed tools and command
 
 An agent's **allowed tools** (`timon agent update <name> --allowed-tools …`) run without a card. A bare tool name covers every use of it: `Bash` pre-allows every shell command, `Read` every file read. A pattern narrows it: `Bash(git:*)` covers the commands that start with `git`, `Bash(npm test)` that exact command.
 
-In **auto** mode, Claude Code ignores a rule that pre-allows every shell command (`Bash`, `Bash(*)`, `PowerShell`) and lets its classifier judge each command instead. A command the classifier cannot judge then waits for an approval, and an unattended mission is denied once the card's delay runs out. To keep such a rule, run the agent in **acceptEdits**, and its project role too if that role sets a mode: a Kanban task runs in its role's mode, not in the agent's. Narrow patterns such as `Bash(git:*)` keep working in auto mode. A Kanban task can also run on another agent than the one it names (a role pinned to an agent, or a task the agent created for itself goes to the project's agent for that role): it then has that agent's allowed tools, not the named one's. Timon warns you when you save such an agent, and once per agent in the notifications when one of its missions starts in auto mode or when its task runs on an agent without the rule.
+In **auto** mode, Claude Code ignores a rule that pre-allows every shell command (`Bash`, `Bash(*)`, `PowerShell`) and lets its classifier judge each command instead. A command the classifier cannot judge then waits for an approval, and an unattended mission is denied once the card's delay runs out. To keep such a rule, run the agent in **acceptEdits**, and its project role too if that role sets a mode: a Kanban task runs in its role's mode, not in the agent's. Narrow patterns such as `Bash(git:*)` keep working in auto mode. An agent that sets no permission mode starts in the default mode of Claude Code's own settings (`permissions.defaultMode` in its `settings.json`): where that is auto, the same rule is ignored, so give such an agent an explicit mode. A Kanban task can also run on another agent than the one it names (a role pinned to an agent, or a task the agent created for itself goes to the project's agent for that role): it then has that agent's allowed tools, not the named one's. Timon warns you when you save such an agent, on the **Permissions** tab of the agent editor (and in the answer of `timon agent create|update`), and once per agent in the notifications when one of its missions starts in auto mode or when its task runs on an agent without the rule.
 
 Codex has no permission cards: its rights are fixed by its sandbox when the mission starts. Agents that remember approvals themselves, such as Hermes, keep doing so on their side.
 
@@ -416,6 +416,15 @@ Claude Code reads them by itself when a Claude Code agent works in that
 project, without going through Timon's catalogue. Other backends, such as
 Codex, do not read that folder, and a project skill cannot be attached to an
 agent.
+
+A plugin's skill is named after its plugin, as in `code-review:review`. Timon
+finds the skills in the plugin's `skills` folder and in the folders its
+`.claude-plugin/plugin.json` manifest lists, including skills filed in category
+folders; a listed path that leads out of the plugin's folder is ignored. When
+two categories of one plugin hold a skill of the same name, the one whose
+folder path comes first alphabetically is used and the other is shown as
+shadowed. In a message, `/review` can stand for `code-review:review` when no
+other plugin has a skill called `review`; when several do, type the full name.
 
 To use one of them in missions, open it and choose **Import into Timon**. Pick
 the ID of the copy (the original ID by default, with a plugin's prefix joined

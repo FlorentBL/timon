@@ -99,7 +99,8 @@ import {
   type MissionFenceOutcome,
 } from './resources.js';
 import {
-  fencePreflight, fenceRefusal, fenceRefusalInOutput, fenceRefusalMessage, launchFenceNeeds, type FenceRefusal,
+  fencePreflight, fenceRefusal, fenceRefusalInOutput, fenceRefusalMessage, fenceSuspicionMessage, launchFenceNeeds,
+  pathlessRefusalIn, toolResultTexts, FENCE_SETTING, type FenceRefusal, type FenceSuspicion,
 } from './fence-refusal.js';
 import { getHost, type Host } from './host/index.js';
 import {
@@ -117,7 +118,7 @@ import { baseBackendId, isAccountInstanceId, splitBackendInstance } from './back
 import { backendOwnerPlugin, backendTrust, type BackendTrust } from './backends/registry.js';
 import { DEFAULT_BACKEND_CAPABILITIES } from './backends/types.js';
 import { BUILTIN_DECLARATIONS } from './backends/builtin-declarations.js';
-import { withLaunchPath } from './host/launch-path.js';
+import { checkDaemonNode, chooseLaunchNode, launchInterpreter, NoTrustedNodeError, withLaunchPath, type DaemonNodeCheck } from './host/launch-path.js';
 import { missionProcessDir, trackMissionProcess } from './host/mission-processes.js';
 import { closeLaunchSeal, openLaunchSeal } from './backends/launch-seal.js';
 import { assertSpawnPinned, buildSealedSpawn } from './backends/sealed-spawn.js';
@@ -125,7 +126,8 @@ import { parkProviderScratch } from './backends/provider-scratch.js';
 import { packageCacheEnv } from './backends/package-cache-env.js';
 import { launchBackendName, launchForMission, replaceMissionLaunch, resolveLaunchBackend } from './backends/account-launch.js';
 import { servedIconUrl } from './uploads.js';
-import { launchExtraDirs, storedExtraDirs, type AgentExtraDir } from './agent-extra-dirs.js';
+import { storedExtraDirs, type AgentExtraDir } from './agent-extra-dirs.js';
+import { missionExtraDirs } from './project-extra-dirs.js';
 import { withFenceGrantOffer } from './fence-grant.js';
 import {
   systemEnv, secretsEnvFor, inheritEnvEnabled,
@@ -400,6 +402,8 @@ export type RunningAgent = {
   fence?: MissionFenceOutcome | null;
   /** Fence refusals already recorded for this process, by path (`noteFenceRefusalIn`). */
   fenceRefusals?: Map<string, FenceRefusal>;
+  /** A refusal naming no path was already said for this process (`noteFenceSuspicionIn`). */
+  fenceSuspected?: boolean;
   /** Model requested DURING an active turn, to apply at `result`. A hot
    *  switch during a turn would only take effect on the next CLI turn,
    *  while mixing both models in `result.modelUsage` would muddy the trace.
@@ -1853,7 +1857,10 @@ export async function spawnAgent(
  */
 function launchFailureCause(err: unknown): InterruptionReason | null {
   // Same for a path the fence refuses (`fencePreflight`): the thread's `fence_refused` names it.
-  return err instanceof CwdUnusableError || err instanceof MissionFenceBlockedError ? null : 'crash';
+  // And for an `env node` CLI with no Node the host vouches for: a replay meets the same machine.
+  return err instanceof CwdUnusableError || err instanceof MissionFenceBlockedError || err instanceof NoTrustedNodeError
+    ? null
+    : 'crash';
 }
 
 /**
@@ -1941,15 +1948,16 @@ export function missionFenceTarget(input: {
     gitDirs: git.dirs,
     pluginDirs: pluginPackageDirs(commandLines, TIMON_HOME),
     timonRead: attachments ? [attachments] : [],
-    // Read again from the agent's config file, like `agentCwd`: the folders a
-    // person gave the agent, each checked again at this launch.
-    extraDirs: launchExtraDirs(input.agentName),
+    // Read again from the agent's config file and the project's row, like
+    // `agentCwd`: the folders a person gave the agent or its project, each
+    // checked again at this launch.
+    extraDirs: missionExtraDirs(input.agentName, input.project || null),
   };
 }
 
-/** The agent's extra folders for `BuildSpawnOpts`, each checked again; nothing when it has none. */
-function extraDirsOpt(agentName: string, missionId: string): Pick<BuildSpawnOpts, 'extraDirs'> {
-  const dirs = launchExtraDirs(agentName, (message) => console.warn(`[agent] mission ${missionId.slice(0, 8)}: ${message}`));
+/** The agent's and its project's extra folders for `BuildSpawnOpts`, each checked again; nothing when there are none. */
+function extraDirsOpt(agentName: string, project: string | null, missionId: string): Pick<BuildSpawnOpts, 'extraDirs'> {
+  const dirs = missionExtraDirs(agentName, project, (message) => console.warn(`[agent] mission ${missionId.slice(0, 8)}: ${message}`));
   return dirs.length > 0 ? { extraDirs: dirs } : {};
 }
 
@@ -1988,6 +1996,13 @@ async function launchMissionProcess(
   } finally {
     prepared();
   }
+}
+
+/** How the daemon's runtime is checked before a launch; replaced by a test to simulate a runtime that fails. */
+let daemonNodeCheck: () => DaemonNodeCheck = () => checkDaemonNode();
+
+export function setDaemonNodeCheckForTest(check: (() => DaemonNodeCheck) | null): void {
+  daemonNodeCheck = check ?? (() => checkDaemonNode());
 }
 
 async function spawnMissionProcess(
@@ -2031,6 +2046,19 @@ async function spawnMissionProcess(
   // a deny list must never swallow. Inert on the current scope launcher —
   // `host/isolation.ts` says why, at length.
   const backendBin = resolveBackendBin(host, spec.cmd);
+  // Chosen on the host, never from the PATH the mission sets (#1102): the machine's own `node`,
+  // else the daemon's runtime once checked, which the fence already opens to the mission. An npm
+  // CLI (`#!/usr/bin/env node`) is started with it, so no PATH entry decides what runs the CLI.
+  const node = chooseLaunchNode({
+    platform: host.platform,
+    findNode: () => host.bin('node'),
+    // Only Electron's binary is no `node`: a daemon run from sources IS on the right one.
+    selfExecutable: process.versions.electron ? process.execPath : undefined,
+    runtime: daemonNodeCheck,
+  });
+  // No `node` chosen: an `env node` CLI is refused rather than left to its line, which
+  // would take the first `node` of the mission's PATH (#1102, iteration 4).
+  const interpreter = launchInterpreter(backendBin, node, host.platform, backend.name);
   const project = cfg.project ?? projectFromCwd(cwd) ?? '';
   // The fence (`resources.ts`) is the innermost wrapper: what it needs beyond
   // the working directory is the mission's identity, from which it reopens
@@ -2042,6 +2070,7 @@ async function spawnMissionProcess(
     backend: backend.name,
     timonHome: TIMON_HOME,
     nestedSandbox: nestedSandboxOf(backend.name),
+    interpreter,
     ...missionFenceTarget({ missionId, agentName, project, backend: backend.name, cwd: cwd ?? null, mcpServers: cfg.mcp_servers ?? [] }),
   });
   // Vault slice computed HERE so the inject journal (§8 / §12.8) records the
@@ -2075,9 +2104,8 @@ async function spawnMissionProcess(
   }), {
     platform: host.platform,
     binary: backendBin,
-    findNode: () => { try { return host.bin('node'); } catch { return null; } },
-    // Only Electron's binary is no `node`: a daemon run from sources IS on the right one.
-    selfExecutable: process.versions.electron ? process.execPath : undefined,
+    // The same `node` the CLI is started with, for the MCP servers it starts as `node <script>`.
+    node,
   });
   if (launch.fence?.state === 'fenced') {
     // A `mktemp` lands in the mission's own folder, not in a /tmp every other
@@ -2391,7 +2419,7 @@ async function spawnTurn(args: {
     missionId,
     memoryDir,
     // A mission that reads no file is handed no folder either.
-    ...(readOnlyTools ? {} : extraDirsOpt(agentName, missionId)),
+    ...(readOnlyTools ? {} : extraDirsOpt(agentName, cfg.project ?? projectFromCwd(cfg.cwd) ?? null, missionId)),
     // A backend that cannot use Timon's MCP servers is not handed them.
     ...(backendCapabilities(backend.name).timonMcp ? {} : { timonMcp: false }),
     ...(readOnlyTools ? { readOnlyTools: true } : {}),
@@ -2591,6 +2619,7 @@ async function spawnTurn(args: {
         && !agent.terminationIntent && !agent.sessionNotFound) {
       // A path the fence refused, named in what the CLI wrote: the thread says so, and the breaker's line too.
       const fenced = noteFenceRefusalIn(agent, agent.stderrTail ?? '');
+      if (!fenced) noteFenceSuspicionIn(agent, agent.stderrTail ?? '');
       const signature = sterileExitSignature(Date.now() - agent.turnSince);
       const trip = signature ? noteSterileTurn(agent.backend.name, signature) : null;
       if (trip) {
@@ -2771,6 +2800,23 @@ async function spawnTurn(args: {
 }
 
 /**
+ * Waits out a process we already asked to stop (idle reaper, STOP, bounce,
+ * hung turn). Its entry stays in `running` until it exits: writing to it loses
+ * the message, and refusing because it is "still alive" made the chat spawn a
+ * twin mission on the same session (TIM-0167). Such an entry counts as dead,
+ * so the caller resumes the mission in place once it is gone. Returns the
+ * entry a message may use, or `stopping` when one still stands after the wait:
+ * a relaunch owns it (`switching`), or the process outlived the kill.
+ */
+async function outliveStoppingProcess(live: RunningAgent): Promise<RunningAgent | 'stopping' | undefined> {
+  if (live.switching) return 'stopping';
+  await stopProcessAndWait(live);
+  const next = running.get(live.missionId);
+  // Another message may have resumed the mission meanwhile: that process is the one to use.
+  return next?.terminationIntent ? 'stopping' : next;
+}
+
+/**
  * Outcome of a `sendToAgent`. The three cases used to be flattened into a
  * single `false`, and the HTTP caller translated it into a 404 "mission
  * not found": the chat deduced a dead conversation and restarted on a
@@ -2804,7 +2850,13 @@ export async function sendToAgent(
   // request nobody is asking any more.
   if (origin?.turn_retry === undefined) cancelTurnRetry(missionId);
   const cleaned = input.replace(/\n+$/, '');
-  const live = running.get(missionId);
+  let live = running.get(missionId);
+  // Only then: a turn that starts with no wait keeps its preparation synchronous.
+  if (live?.terminationIntent) {
+    const settled = await outliveStoppingProcess(live);
+    if (settled === 'stopping') return 'turn_in_flight';
+    live = settled;
+  }
   if (live) {
     if (live.backend.persistentProcess) {
       if (isBackendCoolingDown(live.backend.name)
@@ -3020,7 +3072,8 @@ export async function respawnWithResume(
   /** Cf. `sendToAgent`. */
   turn: { agentCommand?: boolean; replayContext?: boolean } = {},
 ): Promise<boolean> {
-  if (running.get(missionId)) return false; // still alive → sendToAgent
+  const live = running.get(missionId);
+  if (live && (!live.terminationIntent || await outliveStoppingProcess(live))) return false; // still alive → sendToAgent
   const m = dbApi.getMission(missionId);
   if (!m || (!m.session_id && !turn.replayContext)) return false;
   if (origin?.turn_retry === undefined) cancelTurnRetry(missionId);
@@ -4304,6 +4357,9 @@ function noteFenceRefusalIn(agent: RunningAgent, output: string): FenceRefusal |
   agent.fenceRefusals = seen;
   const known = seen.get(found.path);
   if (known) return known;
+  // A mission that walks the home (`find ~`) meets a refused folder at every step: a few notices
+  // say it, a hundred would bury the thread.
+  if (seen.size >= FENCE_REFUSALS_PER_PROCESS) return null;
   const refusal = fenceRefusal({
     ...found, stage: 'run', policy: fence.policy, mechanism: fence.mechanism, missionId: agent.missionId,
     agent: agent.agentName, backend: agent.backend.name, timonHome: TIMON_HOME,
@@ -4311,6 +4367,36 @@ function noteFenceRefusalIn(agent: RunningAgent, output: string): FenceRefusal |
   seen.set(found.path, refusal);
   logFenceRefused(agent.missionId, refusal);
   return refusal;
+}
+
+/** At most this many paths refused by the fence are said per process (`noteFenceRefusalIn`). */
+const FENCE_REFUSALS_PER_PROCESS = 5;
+
+/**
+ * A bounced turn whose output says "not permitted" without naming a path (codex:
+ * `Operation not permitted (os error 1)`), inside the fence: the thread names the
+ * fence and its setting once per process, as a suspicion (`fence_suspected`).
+ * Outside the launch's pre-flight nothing else would: no path, no refusal to check.
+ */
+function noteFenceSuspicionIn(agent: RunningAgent, output: string): FenceSuspicion | null {
+  const fence = agent.fence;
+  if (fence?.state !== 'fenced' || agent.fenceSuspected) return null;
+  const said = pathlessRefusalIn(output);
+  if (!said) return null;
+  agent.fenceSuspected = true;
+  const suspicion: FenceSuspicion = {
+    missionId: agent.missionId, agent: agent.agentName, backend: agent.backend.name,
+    mechanism: fence.mechanism, stage: 'run', said, setting: FENCE_SETTING,
+  };
+  console.warn(`[fence] mission ${agent.missionId.slice(0, 8)}: ${fenceSuspicionMessage(suspicion)}`);
+  const body = { type: 'fence_suspected', ...suspicion };
+  try {
+    const row = dbApi.insertEvent(agent.missionId, 'fence_suspected', body);
+    bus.publish({ kind: 'event', missionId: agent.missionId, type: 'fence_suspected', timestamp: row.timestamp, payload: body });
+  } catch (insertErr) {
+    console.warn(`[agent] could not record the fence suspicion: ${(insertErr as Error).message}`);
+  }
+  return suspicion;
 }
 
 export function isRunning(missionId: string): boolean {
@@ -6453,7 +6539,9 @@ function processEvent(agent: RunningAgent, ev: NormalizedEvent): void {
     } else if (sterile) {
       // The CLI said so itself: the next choice of a default or fallback backend skips it.
       if (agent.authFailed) noteProviderSignedOut(agent.backend.name);
-      const fenced = noteFenceRefusalIn(agent, `${resultFailureText(payload)}\n${agent.stderrTail ?? ''}`);
+      const output = `${resultFailureText(payload)}\n${agent.stderrTail ?? ''}`;
+      const fenced = noteFenceRefusalIn(agent, output);
+      if (!fenced) noteFenceSuspicionIn(agent, output);
       const trip = noteSterileTurn(
         agent.backend.name, sterile, Date.now(), agent.authFailed ? 'auth' : 'burst',
       );
@@ -6468,6 +6556,12 @@ function processEvent(agent: RunningAgent, ev: NormalizedEvent): void {
       // A turn that got somewhere breaks the burst, and proves the sign-in.
       noteProductiveTurn(agent.backend.name);
       noteProviderSignedIn(agent.backend.name);
+    }
+    // A turn that failed after getting somewhere (codex's `turn.failed`, which is never sterile)
+    // still names what the fence refused, or suspects it of a refusal naming no path (TODO #1167).
+    if (!sterile && (payload as { is_error?: unknown } | null)?.is_error === true) {
+      const output = `${resultFailureText(payload)}\n${agent.stderrTail ?? ''}`;
+      if (!noteFenceRefusalIn(agent, output)) noteFenceSuspicionIn(agent, output);
     }
   }
   // A failed turn judged transient carries the verdict in its own `result`, and
@@ -6513,6 +6607,12 @@ function processEvent(agent: RunningAgent, ev: NormalizedEvent): void {
   // to fail it — `recordSpans` swallows everything (§12.1).
   recordSpans(agent.backend, agent.spans, stored === payload ? ev : { type, payload: stored }, row.id);
   if (type === 'assistant') journalDirectSkillReads(agent.missionId, payload);
+  // A path the fence refused, in what a tool printed: the turn goes on, but the thread names the fence
+  // right after the output that met it, instead of only when a turn bounces (TODO #1167). Outside a
+  // turn a tool output is history, not something this process just met.
+  if (type === 'user' && agent.turnActive && agent.fence?.state === 'fenced') {
+    for (const text of toolResultTexts(payload)) if (noteFenceRefusalIn(agent, text)) break;
+  }
   if (type === 'result') {
     const obj = payload as {
       total_cost_usd?: unknown;

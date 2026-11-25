@@ -23,7 +23,8 @@ import { statusService, WINDOWS_TASK, type ServiceOpts, type ServiceResult } fro
 export const COOPERATIVE_STOP_WAIT_MS = 10_000;
 /** Overrides that wait, in milliseconds; `0` skips the request and kills at once, as before. */
 export const COOPERATIVE_STOP_ENV = 'TIMON_COOPERATIVE_STOP_MS';
-const MAX_WAIT_MS = 120_000;
+/** The longest wait that variable may ask for. `desktop/src/embedded.ts` reads the same three values (`embedded.test.ts`). */
+export const COOPERATIVE_STOP_MAX_WAIT_MS = 120_000;
 const POLL_MS = 250;
 
 export type CooperativeStopOutcome =
@@ -68,7 +69,7 @@ export function probePid(pid: number): PidState {
 export function cooperativeStopWaitMs(env: NodeJS.ProcessEnv = process.env): number {
   const raw = env[COOPERATIVE_STOP_ENV]?.trim();
   if (!raw || !/^\d+$/.test(raw)) return COOPERATIVE_STOP_WAIT_MS;
-  return Math.min(Number(raw), MAX_WAIT_MS);
+  return Math.min(Number(raw), COOPERATIVE_STOP_MAX_WAIT_MS);
 }
 
 /** Reads the daemon token of `timonHome`, `null` when there is none to send. */

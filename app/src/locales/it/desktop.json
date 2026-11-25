@@ -10,6 +10,12 @@
       "daemon": "Daemon: {state, select, running {attivo} other {irraggiungibile}} ({origin})",
       "quit": "Esci"
     },
+    "contextMenu": {
+      "cut": "Taglia",
+      "copy": "Copia",
+      "paste": "Incolla",
+      "selectAll": "Seleziona tutto"
+    },
     "tray": {
       "iconMissing": "Impossibile caricare l’icona dell’area di notifica.",
       "iconMissingDetail": "Reinstalla Timon per ripristinare l’icona. Puoi continuare a usare questa finestra; chiudendola, Timon si chiuderà."

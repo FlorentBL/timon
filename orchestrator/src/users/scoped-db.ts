@@ -5,18 +5,19 @@
  * once; every read injects the owner filter. Internal jobs keep using
  * `dbApi` unscoped.
  */
-import { dbApi, type MessageStatus, type NotificationType, type TaskStatus, type ProjectTodoStatus } from '../db.js';
+import { dbApi, type MissionListPage, type MessageStatus, type NotificationType, type TaskStatus, type ProjectTodoStatus } from '../db.js';
 import type { DbViewer } from './owned.js';
 import type { MissionOriginFilter } from '../mission-origin.js';
 
 export function scopedDb(viewer: DbViewer | null) {
   return {
-    listMissions: (limit?: number, agents?: string[], status?: string, origin?: MissionOriginFilter) =>
-      dbApi.listMissions(limit, agents, status, viewer, origin),
+    listMissions: (limit?: number, agents?: string[], status?: string, origin?: MissionOriginFilter, page?: MissionListPage) =>
+      dbApi.listMissions(limit, agents, status, viewer, origin, page),
     listActiveMissions: (endedSince: number) => dbApi.listActiveMissions(endedSince, viewer),
     listLatestMissionCandidates: (agent: string, window?: number) =>
       dbApi.listLatestMissionCandidates(agent, viewer, window),
     getMission: (id: string) => dbApi.getMission(id, viewer),
+    readableMissionIds: (ids: readonly string[]) => dbApi.readableMissionIds(ids, viewer),
     searchMissions: (opts: Parameters<typeof dbApi.searchMissions>[0]) =>
       dbApi.searchMissions({ ...opts, viewer }),
     listChildMissions: (parentId: string) => dbApi.listChildMissions(parentId, viewer),

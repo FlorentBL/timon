@@ -41,6 +41,7 @@ import {
   forbidden,
   requireAuth,
   requestHasPermission,
+  sessionHoldsPermission,
   requireSuperadmin,
   toPublicUser,
   viewerFromRequest,
@@ -171,13 +172,20 @@ function notifySuperadmins(title: string, body: string, message: DaemonMessage):
  */
 export const ME_CAN_PERMISSIONS = [
   'projects:manage', 'agents:manage', 'agents:privileged-config', 'providers:manage', 'providers:accounts',
-  'settings:write',
+  'settings:write', 'forge:publish',
 ] as const;
 export type MeCan = Record<(typeof ME_CAN_PERMISSIONS)[number], boolean>;
+/**
+ * Rights its route grants a session of its own only (`forge-proposal-routes.ts`):
+ * a paired device or a token gets `false` here, as it gets 403 there.
+ */
+const SESSION_ONLY: ReadonlySet<string> = new Set(['forge:publish']);
 
 function meCan(req: Request): MeCan {
   const can = {} as MeCan;
-  for (const permission of ME_CAN_PERMISSIONS) can[permission] = requestHasPermission(req, permission);
+  for (const permission of ME_CAN_PERMISSIONS) {
+    can[permission] = SESSION_ONLY.has(permission) ? sessionHoldsPermission(req, permission) : requestHasPermission(req, permission);
+  }
   return can;
 }
 

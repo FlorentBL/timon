@@ -627,7 +627,8 @@ test('provider: a program without the declared identity refuses the click, insta
   const refused = await call('POST', '/confirm', { token: preview.json.token, confirm: true, authorizeExec: [file] });
   assert.equal(refused.status, 409, refused.text);
   assert.equal(refused.json.error, 'binary-identity');
-  assert.match(String(refused.json.message), /grok-cli 0\.9\.1/);
+  assert.match(String(refused.json.message), /^`acme-prov-stranger` is not the program its provider declares/);
+  assert.doesNotMatch(String(refused.json.message), /grok-cli|\//, 'neither what it printed nor its folder');
   assert.equal(npmCalls.length, calls, 'nothing is installed');
   assert.deepEqual(allowInConfig(), before);
 

@@ -39,6 +39,8 @@
     "skillsEmpty": "Aucune skill installée pour l'instant. Créez-en depuis",
     "docNameInvalid": "Un nom de document ne contient que lettres, chiffres, points, tirets bas et tirets, et finit par .md.",
     "docExists": "Ce document existe déjà.",
-    "saved": "{name} enregistré"
+    "saved": "{name} enregistré",
+    "saveWarningsToast": "{name} enregistré, avec {count, plural, one {un avertissement} other {# avertissements}} sur ses permissions",
+    "saveWarningsOpen": "Voir"
   }
 }

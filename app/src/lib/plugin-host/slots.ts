@@ -649,6 +649,32 @@ export const JOB_DIALOG_SLOT = 'kanban.job.dialog';
 export const PUBLISH_DIALOG_SLOT = 'forge.publish.dialog';
 
 /**
+ * Slot of the "Resolve the conflict" dialog of a contributor's pull request
+ * (`docs/FORGE-FLOW-PLAN.md` §6): the files in conflict, their resolution,
+ * the commit's preview, then its publication. The occupant reads
+ * `useConflictDialog()` and paints; the host (`kanban/conflict-dialog.tsx`)
+ * keeps every call to the daemon. Declared at boot with the product's dialog
+ * as its fallback, but not yet in the plugin contract: no API version names
+ * it and `@timon/ui` does not export its hook until API 20 publishes both.
+ */
+export const CONFLICT_DIALOG_SLOT = 'forge.conflict.dialog';
+
+/**
+ * Slot of a pull request's detail window, opened by a click on its row in the
+ * Pull requests widget: GitHub's page read only (conversation, commits,
+ * checks, files), where it stands and its gestures, and Timon's links. The
+ * occupant reads `usePullRequestDialog()` and draws the whole window, closing
+ * it through `close()`; the reads and the gestures stay the host's. A boot
+ * slot like `kanban.job.dialog`: the product's window is the fallback and
+ * comes back when a replacement leaves.
+ *
+ * Not in the plugin contract yet: API 19 shipped, so the hook would open a new
+ * wave (docs/SDK-COMPAT.md §131). Until then only a bundled occupant, which
+ * imports the context, can take the slot.
+ */
+export const PULL_REQUEST_DIALOG_SLOT = 'kanban.pull.dialog';
+
+/**
  * Slot of the rows plugins add to a project's settings (client API 19), in the
  * project's window under "Integrations": one row each, a title and a status on
  * the left, one action on the right, the rest in a "…" menu. The occupant reads
@@ -656,6 +682,17 @@ export const PUBLISH_DIALOG_SLOT = 'forge.publish.dialog';
  * row, and nothing is painted while none does.
  */
 export const PROJECT_SETTINGS_SLOT = 'project.settings';
+
+/**
+ * Reserved name of the slot of a project's window (create, edit, delete),
+ * opened from the agents grid, a project's card and the chat's project menu.
+ * NOT declared yet: a slot declared at boot without its contract version in
+ * `SLOT_API_VERSIONS` would let a plugin written against the released API
+ * claim it. The next client API declares it, with the product's window as its
+ * fallback and `useProjectEditDialog()` in `@timon/ui`; until then
+ * `ProjectEditDialog` paints the product's window directly.
+ */
+export const PROJECT_EDIT_DIALOG_SLOT = 'project.edit.dialog';
 
 /**
  * Slot of the table of contents of a long list page (the Skills and MCP tabs
@@ -780,6 +817,8 @@ function declareBootSlots(): void {
   declareSlot(TODO_LANDING_SLOT, 'single');
   declareSlot(JOB_DIALOG_SLOT, 'single');
   declareSlot(PUBLISH_DIALOG_SLOT, 'single');
+  declareSlot(CONFLICT_DIALOG_SLOT, 'single');
+  declareSlot(PULL_REQUEST_DIALOG_SLOT, 'single');
   declareSlot(PAGE_TOC_SLOT, 'single');
   declareSlot(PROJECT_SETTINGS_SLOT, 'list');
   declareSlot(CHAT_SECRET_REQUEST_SLOT, 'single');

@@ -44,6 +44,8 @@ const NOTIFY_ONLY_DIRS = new Set(['orchestrator']);
  * The restart line of THIS machine's daemon: the unit, label or task it really
  * runs under (a package's own unit on Linux, launchd, the scheduled task), not
  * the source checkout's systemd unit, which does nothing on any other install.
+ * The desktop's embedded daemon has no line: the app runs it, so the app is
+ * quit and reopened.
  */
 function restartLine(): string {
   return restartStatus().command ?? 'quit and reopen Timon';
@@ -138,9 +140,11 @@ async function handleMerge(missionId: string): Promise<void> {
 
   // 1. Docker containers → automatic rebuild (safe). Gated on the presence of a
   //    docker-compose.yml at the root of the repo (projects without compose are
-  //    ignored silently).
-  const hasCompose =
-    existsSync(join(repoDir, 'docker-compose.yml')) || existsSync(join(repoDir, 'compose.yml'));
+  //    ignored silently), and on the host's `containers` capability: a witness
+  //    daemon (temporary home, test runner, TIMON_NO_CONTAINERS) has none and
+  //    must not rebuild the real installation's containers (#1169).
+  const hasCompose = Boolean(getHost().containers) && (
+    existsSync(join(repoDir, 'docker-compose.yml')) || existsSync(join(repoDir, 'compose.yml')));
   if (hasCompose) {
     const services = [...new Set([...topDirs].filter((d) => DOCKER_DIRS[d]).map((d) => DOCKER_DIRS[d]!))];
     for (const svc of services) rebuildService(repoDir, svc, task, sha);

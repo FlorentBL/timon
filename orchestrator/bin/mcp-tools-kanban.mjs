@@ -32,7 +32,8 @@ export const tools = [
   {
     name: 'kanban_get',
     title: 'Read a Kanban task',
-    description: 'Reads one task with all its fields, its attached files included (id, name, size, type; CLI `timon task get`).',
+    description: 'Reads one task with all its fields, its attached files included (id, name, size, type; CLI `timon task get`). ' +
+      'A running task whose mission waits on an Allow / Deny card or a question carries `pending_permission` (tool, since, time left).',
     inputSchema: { type: 'object', properties: { id: id('Task') }, required: ['id'] },
   },
   {
@@ -129,7 +130,8 @@ export const tools = [
       'locally, the daemon merges the branch into the local target: a fast-forward, else a merge commit written by git ' +
       'without a working tree; a conflict is refused with its files, never resolved; when the target is checked out, ' +
       'its working directory must be clean. In a project that lands through pull requests, it opens the job\'s pull ' +
-      'request with the checks of `pr_open` (a title is then required). The job\'s ideas close and its doc task is ' +
+      'request with the checks of `pr_open` (a title is then required); when its previous pull request was closed ' +
+      'without a merge, it opens a new one. The job\'s ideas close and its doc task is ' +
       'created once the branch is in the target. Refused while a task of the job still waits or runs. A second call ' +
       'answers that the job already landed. Needs projects:manage.',
     inputSchema: {

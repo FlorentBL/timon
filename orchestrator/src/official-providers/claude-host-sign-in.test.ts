@@ -9,7 +9,7 @@
 import '../test-home.js';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createProviderContext } from '../../../packages/sdk/src/testing/index.js';
@@ -109,6 +109,7 @@ function hostHarness(options: { kept: boolean; token?: string; platform?: NodeJS
     : { id: 'claude', cmd: 'claude', env: {} };
   return {
     root, configDir, ctx, service,
+    usage: () => dialect.accountUsage!(profile as never, { force: true }),
     launch: (resumeSession: string | null = null, missionId = `mission-host-${roots.length}`) => dialect.buildSpawn({
       agentName: 'main', systemPrompt: 'contract', message: 'ping', resumeSession, missionId,
       cfg: { cwd: root, permission_mode: 'auto', mcp_servers: [] },
@@ -170,7 +171,8 @@ test('a session kept in ~/.claude before the switch is brought into Timon\'s fol
   } finally {
     if (before === undefined) delete process.env.CLAUDE_CONFIG_DIR; else process.env.CLAUDE_CONFIG_DIR = before;
   }
-  const adopted = join(harness.configDir, 'projects', claudeProjectSlug(harness.root), `${sessionId}.jsonl`);
+  // The CLI files a session by its folder with links resolved: on macOS the temporary folder is reached through /var -> /private/var.
+  const adopted = join(harness.configDir, 'projects', claudeProjectSlug(realpathSync.native(harness.root)), `${sessionId}.jsonl`);
   assert.ok(existsSync(adopted));
   assert.equal(readFileSync(adopted, 'utf8'), '{"type":"user"}\n');
 });
@@ -181,6 +183,52 @@ test('darwin: the kept sign-in\'s keychain entry moves into Timon\'s folder befo
   await harness.launch();
   const file = JSON.parse(readFileSync(join(harness.configDir, '.credentials.json'), 'utf8')) as typeof pair;
   assert.equal(file.claudeAiOauth.refreshToken, pair.claudeAiOauth.refreshToken);
+});
+
+/** The usage endpoint, answering the token it was asked with; `calls` lists every token, `token` every refresh. */
+async function withUsageEndpoint(run: (calls: string[]) => Promise<void>): Promise<void> {
+  const calls: string[] = [];
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+    const url = String(input instanceof Request ? input.url : input);
+    if (url.includes('/oauth/token')) {
+      calls.push('token');
+      return new Response('{"error":"invalid_grant"}', { status: 400 });
+    }
+    calls.push((new Headers(init?.headers).get('authorization') ?? '').replace(/^Bearer /, ''));
+    return Response.json({ five_hour: { utilization: 42, resets_at: '2026-11-25T20:00:00Z' }, seven_day: null, extra_usage: null });
+  }) as typeof fetch;
+  try {
+    await run(calls);
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+}
+
+test('darwin: the kept sign-in shows its usage from Timon\'s folder, never refreshed, the keychain left alone', async () => {
+  const access = 'sk-ant-oat01-kept-access-for-the-test';
+  const pair = { claudeAiOauth: { accessToken: access, refreshToken: 'sk-ant-ort01-kept-refresh-for-the-test', expiresAt: Date.now() + 3_600_000 } };
+  const harness = hostHarness({ kept: true, platform: 'darwin', keychain: JSON.stringify({ claudeAiOauth: { accessToken: 'sk-ant-oat01-keychain-only' } }) });
+  writeFileSync(join(harness.configDir, '.credentials.json'), JSON.stringify(pair));
+  await withUsageEndpoint(async (calls) => {
+    const usage = await harness.usage();
+    assert.equal(usage?.windows.five_hour?.utilization, 42);
+    assert.deepEqual(calls, [access]);
+  });
+  // Only a launch moves the entry: the gauge read nothing of it and removed nothing.
+  assert.equal(await harness.ctx.provider.account.osCredential(
+    { id: 'claude', cmd: 'claude', env: {}, account: { id: 'hostclaude', name: 'Claude', configDir: harness.configDir } } as never,
+    harness.service, 'mission-check')?.read(), JSON.stringify({ claudeAiOauth: { accessToken: 'sk-ant-oat01-keychain-only' } }));
+});
+
+test('darwin: the kept sign-in with an expired folder and a long-lived token is measured on the token', async () => {
+  const harness = hostHarness({ kept: true, platform: 'darwin', token: LONG_LIVED });
+  writeFileSync(join(harness.configDir, '.credentials.json'), JSON.stringify({ claudeAiOauth: { accessToken: 'sk-ant-oat01-old', refreshToken: 'sk-ant-ort01-old', expiresAt: Date.now() - 60_000 } }));
+  await withUsageEndpoint(async (calls) => {
+    const usage = await harness.usage();
+    assert.equal(usage?.windows.five_hour?.utilization, 42);
+    assert.deepEqual(calls, [LONG_LIVED], 'the long-lived token, with no refresh of the CLI\'s pair');
+  });
 });
 
 /** The provider's own check (C4), as the setup row and the providers list read it before offering anything. */

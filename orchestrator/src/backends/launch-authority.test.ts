@@ -347,10 +347,14 @@ test('REFUSAL: a mission whose program is swapped after the check starts nothing
   const host = getHost();
   const originalBin = host.bin;
   // `host.bin` runs between the check and the spawn (`resolveBackendBin`): the swap lands in that window.
+  // Not on a lookup of `node`, which the launch makes after it: a further swap there can hand the
+  // freed inode of the checked file back to the path, and the check compares inodes.
   host.bin = ((name: string) => {
-    const swap = join(bin, posix ? '.acme-auth.window' : '.acme-auth.window.cmd');
-    copyFileSync(agentFile, swap);
-    renameSync(swap, agentFile);
+    if (name !== 'node') {
+      const swap = join(bin, posix ? '.acme-auth.window' : '.acme-auth.window.cmd');
+      copyFileSync(agentFile, swap);
+      renameSync(swap, agentFile);
+    }
     return originalBin.call(host, name);
   }) as typeof host.bin;
   try {

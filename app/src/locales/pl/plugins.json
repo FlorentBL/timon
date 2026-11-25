@@ -437,7 +437,7 @@
   "binariesSettings": {
     "brokenPin": "Przypiętej ścieżki nie można uruchomić: {path}",
     "pathLabel": "Ścieżka do pliku binarnego {name}",
-    "placeholder": "Pełna ścieżka, np. /usr/local/bin/claude lub C:\\Users\\ty\\AppData\\Roaming\\npm\\claude.cmd",
+    "placeholder": "Pełna ścieżka, np. {example}",
     "browse": "Przeglądaj…",
     "save": "Zapisz ścieżkę",
     "clear": "Usuń przypięcie",
@@ -450,8 +450,13 @@
       "path_missing": "Pod tą ścieżką nic nie ma.",
       "path_not_file": "To folder. Wybierz sam plik programu.",
       "path_not_executable": "Tego pliku nie można uruchomić: nie jest wykonywalny.",
+      "wrong_program": "Ten plik nie jest interfejsem CLI {name}.",
+      "no_answer": "Ten program nie odpowiedział na `--version`: zakończył się błędem, trwał za długo lub wypisał za dużo.",
+      "unsupported_program": "W systemie Windows wybierz plik .exe programu lub plik .cmd zainstalowany dla niego przez npm.",
       "no_config": "Najpierw dokończ konfigurację.",
       "config_unreadable": "Nie można odczytać timon.config.json. Napraw go lub przywróć, a potem sprawdź ponownie.",
+      "pin_write_failed": "Nie udało się zapisać timon.config.json. Sprawdź, czy Timon może zapisywać w jego folderze, i spróbuj ponownie.",
+      "probe_setup_failed": "Nie udało się sprawdzić tego pliku: nie można było przygotować folderu sprawdzania. Spróbuj ponownie.",
       "invalid_body": "Tej ścieżki nie można zapisać.",
       "browse": "Nie udało się otworzyć wyboru pliku.",
       "generic": "Zmiana nie powiodła się (błąd {status})."

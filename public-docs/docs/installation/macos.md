@@ -28,6 +28,8 @@ Claude missions in a launchd daemon need a long-lived Claude token: `claude` kee
 1. Open **Settings → AI models → Providers → Claude**, row **Long-lived token** under **Settings**, then **Create**: open the sign-in page, sign in, and paste the code it shows. Timon stores the token it receives; nothing to copy.
 2. Or, from a terminal, run `claude setup-token`, copy the token it prints, and store it with **Paste a token** in that row's **…** menu, or with `timon auth claude-token set` (paste the token when asked).
 
+In this mode, the **This computer** row of Claude's page and Claude's row in setup say that Timon runs outside your session and offer **Create a token** instead of **Sign in**: a sign-in made in a terminal or kept by Timon cannot be read there.
+
 Every Claude mission then uses this token. An installation made before setup asked the question still follows the token: with a token, `timon service install` installs the daemon; without one, the agent.
 
 Limits of a service running with no session open:

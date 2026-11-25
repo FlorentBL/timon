@@ -10,9 +10,9 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { once } from 'node:events';
 import { createServer } from 'node:http';
-import { mkdtempSync, mkdirSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, sep } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import type { AddressInfo } from 'node:net';
 import express from 'express';
@@ -174,13 +174,82 @@ test.describe('ui documents', { concurrency: false }, () => {
     dbApi.setMissionCwdOverride('m-path', root);
     const ok = await send('POST', '', agentOf('m-path'), { title: 'From a file', path: join(root, 'page.html') });
     assert.equal(ok.status, 201);
-    assert.equal((await send('POST', '', agentOf('m-path'), { title: 't', path: join(outside, 'page.html') })).status, 404);
-    assert.equal((await send('POST', '', agentOf('m-path'), { title: 't', path: join(root, '.hidden', 'page.html') })).status, 404);
-    assert.equal((await send('POST', '', agentOf('m-path'), { title: 't', path: join(root, 'missing.html') })).status, 404);
+    // The mission's own agent reads why (TODO #1160); none of these says the module is off.
+    const refusals: Array<[string, number, string]> = [
+      [join(outside, 'page.html'), 403, 'path_outside_roots'],
+      [join(root, '.hidden', 'page.html'), 403, 'path_hidden_segment'],
+      [join(root, 'missing.html'), 404, 'not_found'],
+    ];
+    for (const [path, status, code] of refusals) {
+      const res = await send('POST', '', agentOf('m-path'), { title: 't', path });
+      assert.equal(res.status, status, path);
+      const body = await res.json() as { error: string; message?: string };
+      assert.equal(body.error, code, path);
+      assert.ok(body.message && body.message.length > 0, path);
+    }
+    // The owner's browser session: one 404 for all three, as before.
+    for (const [path] of refusals) {
+      const res = await send('POST', '', ownerSession, { title: 't', path, mission_id: 'm-path' });
+      assert.equal(res.status, 404, path);
+      assert.deepEqual(await res.json(), { error: 'not_found' }, path);
+    }
     assert.equal((await send('POST', '', agentOf('m-path'), { title: 't', path: join(root, 'bin.html') })).status, 415);
     assert.equal((await send('POST', '', agentOf('m-path'), { title: 't', path: 'page.html' })).status, 400, 'a relative path');
     writeFileSync(join(root, 'big.html'), 'x'.repeat(MAX_HTML_BYTES + 1));
     assert.equal((await send('POST', '', agentOf('m-path'), { title: 't', path: join(root, 'big.html') })).status, 413);
+  });
+
+  test('a symlink is refused the same whether its target exists or not', async (t) => {
+    const root = mkdtempSync(join(tmpdir(), 'ui-doc-link-root-'));
+    const outside = mkdtempSync(join(tmpdir(), 'ui-doc-link-out-'));
+    mkdirSync(join(root, '.hidden'));
+    writeFileSync(join(root, 'page.html'), HTML);
+    writeFileSync(join(root, '.hidden', 'page.html'), HTML);
+    writeFileSync(join(outside, 'page.html'), HTML);
+    try {
+      symlinkSync(join(outside, 'page.html'), join(root, 'out-present.html'));
+    } catch {
+      t.skip('no symlink on this system');
+      return;
+    }
+    symlinkSync(join(outside, 'gone.html'), join(root, 'out-absent.html'));
+    symlinkSync(join(root, 'page.html'), join(root, '.hidden', 'link-present.html'));
+    symlinkSync(join(root, 'gone.html'), join(root, '.hidden', 'link-absent.html'));
+    symlinkSync(join(root, '.hidden', 'page.html'), join(root, 'into-hidden-present.html'));
+    symlinkSync(join(root, '.hidden', 'gone.html'), join(root, 'into-hidden-absent.html'));
+    // `.hop/..` reads as the root, but `.hop` is a link: the kernel lands
+    // outside, where a page of the same name waits. Written with its `..` kept.
+    mkdirSync(join(outside, 'inner'));
+    writeFileSync(join(outside, 'decoy.html'), HTML);
+    writeFileSync(join(root, 'decoy.html'), HTML);
+    symlinkSync(join(outside, 'inner'), join(root, '.hop'));
+    symlinkSync([root, '.hop', '..', 'decoy.html'].join(sep), join(root, 'dotdot-present.html'));
+    symlinkSync([root, '.hop', '..', 'gone.html'].join(sep), join(root, 'dotdot-absent.html'));
+    dbApi.setMissionCwdOverride('m-path', root);
+    const missing = await send('POST', '', agentOf('m-path'), { title: 't', path: join(root, 'missing.html') });
+    assert.equal(missing.status, 404);
+    const missingBody = await missing.json() as { error: string };
+    const pairs: Array<[string, string, number, string]> = [
+      ['out-present.html', 'out-absent.html', 404, 'not_found'],
+      [join('.hidden', 'link-present.html'), join('.hidden', 'link-absent.html'), 403, 'path_hidden_segment'],
+      ['into-hidden-present.html', 'into-hidden-absent.html', 404, 'not_found'],
+      ['dotdot-present.html', 'dotdot-absent.html', 404, 'not_found'],
+    ];
+    for (const [present, absent, status, code] of pairs) {
+      const a = await send('POST', '', agentOf('m-path'), { title: 't', path: join(root, present) });
+      const b = await send('POST', '', agentOf('m-path'), { title: 't', path: join(root, absent) });
+      assert.equal(a.status, status, present);
+      assert.equal(b.status, a.status, absent);
+      const bodyA = await a.json() as { error: string };
+      assert.equal(bodyA.error, code, present);
+      assert.deepEqual(await b.json(), bodyA, absent);
+      // Nothing tells a link that leaves from a page that is not there.
+      if (code === 'not_found') assert.deepEqual(bodyA, missingBody, present);
+    }
+    // A folder link onto the root itself reaches the pages below it.
+    symlinkSync(root, join(root, 'self'));
+    const viaRoot = await send('POST', '', agentOf('m-path'), { title: 't', path: join(root, 'self', 'page.html') });
+    assert.equal(viaRoot.status, 201);
   });
 
   test('a secret in the HTML or the title is masked before it is served', async () => {

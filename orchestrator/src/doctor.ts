@@ -39,10 +39,15 @@ import { TIMON_HOME } from './paths.js';
 import { formatBytes, freeBytes, LOW_DISK_BYTES } from './storage-failure.js';
 import { CATALOG } from './kernel/catalog.js';
 import { degradation } from './kernel/degradation.js';
-import { nodelessBackends, nodelessBackendText } from './host/launch-path.js';
+import { checkDaemonNode, nodelessBackends, nodelessBackendText } from './host/launch-path.js';
+import { missingRequiredBinaries, REQUIRED_BINARIES } from './host/blocking-facts.js';
+import { nodePtyStatus } from './terminal-host/pty.js';
 import { binaryCandidates, findExecutableBinary, npmPrefixCandidates, pinnedBinaryCandidates, resolvePinnedBinary, type BinarySearchOptions } from './host/binary-path.js';
 import { BUILTIN_API_KEY_PROVIDERS, BUILTIN_DECLARATIONS, builtinBinaries, builtinProviderIds } from './backends/builtin-declarations.js';
 import { activeProfiles, authStatusNow, installedProfiles } from './backends/registry.js';
+import { binaryIdentityRefusal, checkBinaryIdentity, knownBinaryIdentity, type BinaryIdentityLimits } from './backends/binary-identity.js';
+import type { ProviderBinaryIdentity } from './backends/provider-declarations.js';
+import { declaredBinary } from './host/declared-binaries.js';
 import { usableProviders } from './backends/usable.js';
 import { isRemoteDialect } from './backends/types.js';
 import type { DoctorReport, BinaryReport, BinaryProvider, ProviderAuthReport } from './plugins/contract/system.js';
@@ -60,7 +65,7 @@ export type DoctorBinary = { readonly name: string; readonly required?: true; re
 const PROVIDER_BINARIES: readonly DoctorBinary[] = builtinBinaries().map((binary) => ({ name: binary.names[0]!, backend: true as const }));
 
 export const BINARIES: readonly DoctorBinary[] = [
-  { name: 'node', required: true },
+  ...REQUIRED_BINARIES.map((name) => ({ name, required: true as const })),
   { name: 'git' },
   ...PROVIDER_BINARIES,
   { name: 'gh' },
@@ -89,6 +94,64 @@ export function whichBin(
     return { path: resolvePinnedBinary(name, pinned, options), pinned: true };
   }
   return { path: findExecutableBinary(name, options), pinned: false };
+}
+
+/** A pin is asked with less time than a launch gets: a report should not wait on a program that hangs. */
+const DOCTOR_IDENTITY_LIMITS: BinaryIdentityLimits = { runTimeoutMs: 3_000, patternTimeoutMs: 250 };
+
+/** The pins being asked right now, by path: one run per file however many reports ask meanwhile. */
+const probing = new Map<string, Promise<void>>();
+
+/** Asks the pinned program, once at a time per path; the answer lands in the identity cache. Never throws. */
+function probePin(path: string, identity: ProviderBinaryIdentity, fresh: boolean): Promise<void> {
+  const running = probing.get(path);
+  if (running && !fresh) return running;
+  const probe = checkBinaryIdentity(path, identity, DOCTOR_IDENTITY_LIMITS, { fresh })
+    .then(() => undefined, (error: Error) => { console.warn(`[doctor] a pinned program could not be checked: ${error.name}`); })
+    .finally(() => { if (probing.get(path) === probe) probing.delete(path); });
+  probing.set(path, probe);
+  return probe;
+}
+
+/** The pins whose provider declared how its program describes itself: what `doctor` asks. */
+function identityPins(): { name: string; path: string; identity: ProviderBinaryIdentity }[] {
+  const pins = config().host.binaries;
+  return BINARIES.flatMap((b) => {
+    const identity = declaredBinary(b.name)?.identity;
+    if (!identity) return [];
+    const { path, pinned } = whichBin(b.name, pins);
+    return pinned && path ? [{ name: b.name, path, identity }] : [];
+  });
+}
+
+/**
+ * Asks every pinned program again and waits for the answers: `timon doctor` runs it before its report.
+ * `fresh: false` only waits for what is not known yet (a report built in the daemon). The daemon's own
+ * `diagnose()` never waits: it reads the cache.
+ */
+export async function refreshPinnedIdentities(options: { fresh?: boolean } = {}): Promise<void> {
+  await Promise.all(identityPins().map(({ path, identity }) =>
+    (options.fresh || knownBinaryIdentity(path, identity) === undefined ? probePin(path, identity, options.fresh === true) : undefined)));
+}
+
+/**
+ * A pinned path that names another program (#1101: `/usr/local/bin/ollama` pinned as `codex`): it exists and
+ * runs, so it used to pass, and every mission died on it. Asked only of a pin — a program found on its own is
+ * checked at each launch — and only when its provider declared how its program describes itself.
+ *
+ * Read from the identity cache, kept per file (path, size, modification time): `diagnose()` answers the
+ * HTTP route and must not hold the daemon on a program that hangs. A pin never asked since it was written
+ * or replaced is asked in the background, and shows in the next report.
+ */
+function pinnedIdentityProblem(name: string, path: string): string | null {
+  const identity = declaredBinary(name)?.identity;
+  if (!identity) return null;
+  const known = knownBinaryIdentity(path, identity);
+  if (known === undefined) {
+    void probePin(path, identity, false);
+    return null;
+  }
+  return known.ok ? null : binaryIdentityRefusal(`the \`${name}\` pin`, path, identity, known.reason);
 }
 
 function dockerUsable(bin: string | null): { present: boolean; usable: boolean; detail: string } {
@@ -166,20 +229,27 @@ export function diagnose(): DoctorReport {
     const { path, pinned } = whichBin(b.name, pins);
     const pin = pins[b.name];
     const provider = providerOf(b.name);
+    const wrongProgram = pinned && path ? pinnedIdentityProblem(b.name, path) : null;
     return {
       name: b.name,
       ...(provider ? { provider } : {}),
       path,
-      ok: path !== null,
+      ok: path !== null && wrongProgram === null,
       pinned,
       attemptedPaths: pin ? pinnedBinaryCandidates(b.name, pin)
         : [...binaryCandidates(b.name), ...(path ? [] : npmPrefixCandidates(b.name))],
-      ...(pinned && !path ? { error: `host.binaries.${b.name} does not point to an executable file: ${pins[b.name]}` } : {}),
+      // The pin itself is not quoted: it names the home folder. `attemptedPaths` lists it for the person who reads.
+      ...(pinned && !path ? { error: `host.binaries.${b.name}: the pinned file is missing or cannot be run` } : {}),
+      ...(wrongProgram ? { error: wrongProgram } : {}),
       installCommand: installCommandFor(b.name, machine),
     };
   });
-  const found = (n: string) => binaries.find((b) => b.name === n)?.path ?? null;
-  for (const nodeless of nodelessBackends(PROVIDER_BINARIES.map((b) => b.name), { platform: process.platform, resolve: found })) {
+  // A pin on another program is no backend: the blockers must not count it.
+  const found = (n: string) => binaries.find((b) => b.name === n && b.ok)?.path ?? null;
+  const runtime = checkDaemonNode();
+  for (const nodeless of nodelessBackends(PROVIDER_BINARIES.map((b) => b.name), {
+    platform: process.platform, resolve: found, runtimeNode: runtime.node, runtimeProblem: runtime.problem,
+  })) {
     const report = binaries.find((b) => b.name === nodeless.name);
     if (report) report.warning = nodelessBackendText(nodeless);
   }
@@ -198,9 +268,8 @@ export function diagnose(): DoctorReport {
 
   const backends = BINARIES.filter((b) => 'backend' in b && b.backend).map((b) => b.name);
   const blockers: string[] = [];
-  for (const b of BINARIES) {
-    if ('required' in b && b.required && !found(b.name)) blockers.push(`${b.name} not found`);
-  }
+  // The diagnostic report reads the same words (`host/blocking-facts.ts`, TIM-0162).
+  blockers.push(...missingRequiredBinaries(found));
   // An agent reached over the network needs no CLI on this machine.
   const remoteBackend = activeProfiles().some(({ dialect }) => isRemoteDialect(dialect));
   // A provider plugin's own CLI counts too: its name is in no fixed list.
@@ -235,6 +304,7 @@ export function diagnose(): DoctorReport {
     linux,
     docker,
     display,
+    terminal: nodePtyStatus(),
     missionIsolation,
     storage,
     mainSeat: doctorMainSeat(),
@@ -444,6 +514,7 @@ export function formatDoctor(r: DoctorReport): string {
     `distribution     ${r.linux ? `${r.linux.prettyName ?? r.linux.id ?? 'unknown'} (${r.linux.packageManager ?? 'no known package manager'})` : 'n/a'}`,
     `docker           ${r.docker.usable ? `usable — ${r.docker.detail}` : `unusable — ${r.docker.detail}`}`,
     `graphical session ${r.display ?? 'none (DISPLAY/WAYLAND_DISPLAY empty)'}`,
+    ...(r.terminal ? [`built-in terminal ${r.terminal.available ? 'available' : `UNAVAILABLE — ${r.terminal.reason ?? 'node-pty did not load'}`}`] : []),
     `mission isolation ${r.missionIsolation.message}`,
     ...r.missionIsolation.gaps.map((gap) => `  ${gap}`),
   );
@@ -462,6 +533,9 @@ export function formatDoctor(r: DoctorReport): string {
   // Not a blocker in `auto` or `off`, but never a line lost in the middle.
   if (!r.missionIsolation.enforced && r.missionIsolation.launch !== 'refused') {
     lines.push('', 'WARNING:', `  - mission isolation ${r.missionIsolation.message}`);
+  }
+  if (r.terminal && !r.terminal.available) {
+    lines.push('', 'WARNING:', `  - the built-in terminal cannot start: ${r.terminal.reason ?? 'node-pty did not load'}`);
   }
   if (r.blockers.length) {
     lines.push('', 'BLOCKING:');

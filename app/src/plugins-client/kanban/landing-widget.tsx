@@ -13,8 +13,9 @@
  * may start, else the preview while there is something to land, the pull
  * request once merged), the rest in "…". A repair starts only on that click,
  * three at most per job (`landing-repair.tsx`). A kept job says how many of
- * its ideas wait and when its branch last took a merge; landing it asks first
- * (`landing-land.tsx`), and is greyed, its reason in the tooltip, without
+ * its ideas wait and when its branch last took a merge (read again every
+ * minute while one is listed); landing it asks first, a pull request under a
+ * title made from the branch (`landing-land.tsx`), and is greyed, its reason in the tooltip, without
  * `projects:manage` or while a task of the job still runs. A widget of `@timon/kanban`, stacked by default in the
  * chat's "Git" stack. In a chat's rail it narrows to the conversation's
  * project; elsewhere the project is picked once for the stack
@@ -44,7 +45,7 @@ import { formatDateTime, formatRelativeTime } from '@/lib/intl';
 import { NativeViewCover } from '@/lib/native-view-cover';
 import { cn } from '@/lib/utils';
 import {
-  canRepair, CHECKS_REFRESH_MS, groupLandings, landingAction, landingsToRefresh, landsInPlace, listLandings, mainRepair,
+  canRepair, CHECKS_REFRESH_MS, followsKept, groupLandings, KEPT_REFRESH_MS, landingAction, landingsToRefresh, listLandings, mainRepair,
   previewLanding, refreshLandingChecks, repairsNeeded, waitingTodos, type Landing, type LandingGroup, type RepairKind,
 } from './landing-api';
 import { askLand, landBlocked, LandIcon, landLabel } from './landing-land';
@@ -58,7 +59,7 @@ import { PublishDialog } from './publish-dialog';
 import { useForgeProposals } from './use-forge-proposals';
 import { StackProjectPicker, useStackProject } from './git-stack-project';
 import { inProject, useLandingChanges, useLandingFallbackPoll } from './landing-events';
-import { landsLocally, LocalLandingEmpty, useProjectIntegration } from './local-landing';
+import { landsLocally, LocalLandingEmpty, useLandingMode } from './local-landing';
 
 const BADGE = 'inline-flex h-5 shrink-0 items-center gap-1 rounded-md px-1.5 text-[10.5px] font-medium tabular-nums';
 
@@ -327,7 +328,7 @@ export function LandingWidget({ handle, className }: WidgetProps) {
   const current = useRef<Landing[]>([]);
   const { openTodo, todoModal } = useTodoOpener();
   const [publishing, setPublishing] = useState<ForgeProposal | null>(null);
-  const integration = useProjectIntegration(project);
+  const landingMode = useLandingMode(project);
 
   const merge = useCallback((fresh: Landing) => {
     setLandings((list) => (list ?? []).map((l) => (l.id === fresh.id ? fresh : l)));
@@ -351,14 +352,14 @@ export function LandingWidget({ handle, className }: WidgetProps) {
     if (fresh) merge(fresh);
   }, [merge]);
 
-  // A local merge asks here, with its commit count; a pull request needs a
-  // title, written in the job's dialog, which holds the same gesture.
+  // One click and a confirmation, with the commit count: a pull request
+  // opens under the title the confirmation shows (`prTitle`); the job's
+  // dialog holds the same gesture with the title to edit.
   const land = useCallback(async (job: Landing) => {
-    if (!landsInPlace(job)) { setPreviewed(job); return; }
     setLandingIds((s) => new Set(s).add(job.id));
     try {
       const preview = await previewLanding(job.id);
-      const fresh = await askLand(job, preview.ok ? preview.value.commit_count : null);
+      const fresh = await askLand(job, preview.ok ? preview.value.commit_count : null, {}, { editHint: true });
       if (fresh) merge(fresh);
     } finally {
       setLandingIds((s) => { const n = new Set(s); n.delete(job.id); return n; });
@@ -395,6 +396,15 @@ export function LandingWidget({ handle, className }: WidgetProps) {
     });
   }, inProject(project), project);
   useLandingFallbackPoll(() => { void load(); });
+
+  // A kept job's chips follow its branch, which the stream does not announce.
+  useEffect(() => {
+    const timer = setInterval(() => {
+      if (typeof document !== 'undefined' && document.hidden) return;
+      if (followsKept(current.current)) void readList();
+    }, KEPT_REFRESH_MS);
+    return () => clearInterval(timer);
+  }, [readList]);
 
   // Only while a check runs, and the page is in front of someone.
   useEffect(() => {
@@ -448,8 +458,8 @@ export function LandingWidget({ handle, className }: WidgetProps) {
     >
       {error && <p className="px-1 text-xs text-red-600 dark:text-red-400">{error}</p>}
       {landings === null && !error && <p className="px-1 text-xs text-muted-foreground">{t('landings.loading')}</p>}
-      {landings !== null && shown === 0 && (project && landsLocally(integration)
-        ? <LocalLandingEmpty project={project} read={integration} />
+      {landings !== null && shown === 0 && (project && landsLocally(landingMode)
+        ? <LocalLandingEmpty project={project} />
         : <p className="px-1 text-xs text-muted-foreground">{t('landings.empty')}</p>)}
       {groups.map(({ group, landings: members }) => (
         <section key={group} className="flex flex-col gap-1" aria-label={t(`landings.groups.${group}`)}>

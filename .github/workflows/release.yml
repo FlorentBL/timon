@@ -9,11 +9,12 @@
 #
 #   check    reads the version and refuses a bad request in a minute, before
 #            three runners spend an hour each on it; pins the commit.
-#   build    one job per system, in the `release-build` environment, which
-#            holds the Ed25519 release pair: the daemon inside each package is
-#            signed with it, and the packaged app checks that signature at
-#            every start. Channel stable, no expiry. One failed system stops
-#            the release: a channel names one version for every system.
+#   build    one job per system (build-packages.yml, shared with the nightly
+#            build), in the `release-build` environment, which holds the
+#            Ed25519 release pair: the daemon inside each package is signed
+#            with it, and the packaged app checks that signature at every
+#            start. Channel stable, no expiry. One failed system stops the
+#            release: a channel names one version for every system.
 #   attest   build provenance of the installers, apart from the build.
 #   draft    gathers the three builds and creates (or completes) the draft
 #            release with the workflow token. No key: a draft writes no
@@ -154,113 +155,32 @@ jobs:
           VERSION: ${{ steps.decide.outputs.version }}
         run: node scripts/release/build-package.mjs --version "$VERSION" --channel stable --no-expiry --output ../release-output --dry-run
 
+  # The build steps live in build-packages.yml, which nightly.yml calls too:
+  # what a release runs is built every night. A job that calls a reusable
+  # workflow takes no environment nor time limit of its own: the called job
+  # declares `release-build` and its 150 minutes. The two secrets are passed
+  # by name and resolved there, in that environment.
   build:
-    name: build · ${{ matrix.os }}
+    name: build
     needs: check
     if: needs.check.outputs.release == 'true' && github.ref == 'refs/heads/main'
-    runs-on: ${{ matrix.runner }}
-    environment: release-build
-    timeout-minutes: 150
     permissions:
       contents: read
-    strategy:
+    uses: ./.github/workflows/build-packages.yml
+    with:
+      purpose: release
+      version: ${{ needs.check.outputs.version }}
+      sha: ${{ needs.check.outputs.sha }}
+      node: ${{ needs.check.outputs.node }}
+      expires: never
+      # One failed system stops the release: a channel names one version for
+      # every system.
       fail-fast: true
-      matrix:
-        # macOS: Apple Silicon only, as the release candidates.
-        include:
-          # Pinned: Ubuntu 26.04 builds its musl for x86-64-v3, and the fence
-          # launcher must run on a baseline x86-64 CPU (24.04 musl is baseline).
-          - { os: linux, runner: ubuntu-24.04 }
-          # macOS builds run on the project's own Mac (org runner group
-          # `release-mac`, open to this workflow on main only): hosted
-          # macOS arm64 runners were not acquired under capacity limits.
-          - { os: mac, runner: [self-hosted, macOS, ARM64, timon-release] }
-          - { os: windows, runner: windows-latest }
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          ref: ${{ needs.check.outputs.sha }}
-          path: src
-          persist-credentials: false
-
-      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
-        with:
-          node-version: ${{ needs.check.outputs.node }}
-          cache: npm
-          cache-dependency-path: |
-            src/orchestrator/package-lock.json
-            src/app/package-lock.json
-            src/desktop/package-lock.json
-
-      # A pair other than the pinned one would give packages whose updates no
-      # installed Timon accepts: stop before an hour of build. Once is enough,
-      # the pair is the same everywhere, and fail-fast stops the other systems.
-      - name: Check the signing key is the one the clients pin
-        if: matrix.os == 'linux'
-        working-directory: src
-        env:
-          TIMON_RELEASE_PUBLIC_KEY: ${{ secrets.TIMON_RELEASE_PUBLIC_KEY }}
-        run: |
-          node --input-type=module -e '
-            import { join } from "node:path";
-            import { pathToFileURL } from "node:url";
-            const load = (file) => import(pathToFileURL(join(process.cwd(), ...file.split("/"))).href);
-            const { keyIdFor } = await load("scripts/release-manifest.mjs");
-            const { readPinnedKeyIds } = await load("scripts/release/publish.mjs");
-            const pinned = readPinnedKeyIds(process.cwd()).ed25519;
-            let id = null;
-            try { id = keyIdFor(process.env.TIMON_RELEASE_PUBLIC_KEY); } catch { id = null; }
-            if (!id || id !== pinned) {
-              console.error(`::error::the release-build public key is ${id ?? "missing or unreadable"}, the clients pin ${pinned}`);
-              process.exit(1);
-            }
-            console.log(`release key ${id}, pinned by the clients`);
-          '
-
-      # The fence launcher is a static binary: built against the runner's glibc it
-      # carries that libc's AVX code paths and dies with SIGILL on CPUs without
-      # AVX2. musl targets the x86-64 baseline; its compiler only needs the
-      # kernel's headers (Landlock, seccomp) made visible.
-      - name: Install a baseline C library for the fence launcher
-        if: matrix.os == 'linux'
-        run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq musl-tools linux-libc-dev binutils
-          musl_include=/usr/include/x86_64-linux-musl
-          sudo ln -sfn /usr/include/linux "$musl_include/linux"
-          sudo ln -sfn /usr/include/asm-generic "$musl_include/asm-generic"
-          sudo ln -sfn /usr/include/x86_64-linux-gnu/asm "$musl_include/asm"
-          x86_64-linux-musl-gcc --version | head -n 1
-
-      # A self-hosted runner (the Mac) keeps its workspace between runs, and the
-      # build never overwrites installers: a run started again for the same
-      # version would stop on the output of the one before. Hosted runners
-      # start empty. Only this version and this system are cleared.
-      - name: Clear what an earlier run left on a self-hosted runner
-        if: runner.environment == 'self-hosted'
-        shell: bash
-        env:
-          VERSION: ${{ needs.check.outputs.version }}
-          OS: ${{ matrix.os }}
-        run: rm -rf "release-output/$VERSION/$OS" "release-output/$VERSION/.work-$OS"
-
-      - name: Build the package
-        working-directory: src
-        env:
-          VERSION: ${{ needs.check.outputs.version }}
-          TIMON_RELEASE_PRIVATE_KEY: ${{ secrets.TIMON_RELEASE_PRIVATE_KEY }}
-          TIMON_RELEASE_PUBLIC_KEY: ${{ secrets.TIMON_RELEASE_PUBLIC_KEY }}
-        run: node scripts/release/build-package.mjs --version "$VERSION" --channel stable --no-expiry --output ../release-output
-
-      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        with:
-          name: timon-${{ needs.check.outputs.version }}-${{ matrix.os }}
-          path: release-output/${{ needs.check.outputs.version }}/${{ matrix.os }}/
-          if-no-files-found: error
-          # An approval waits 30 days at most.
-          retention-days: 30
-          # Installers are already compressed.
-          compression-level: 0
+      # An approval waits 30 days at most.
+      retention-days: 30
+    secrets:
+      TIMON_RELEASE_PRIVATE_KEY: ${{ secrets.TIMON_RELEASE_PRIVATE_KEY }}
+      TIMON_RELEASE_PUBLIC_KEY: ${{ secrets.TIMON_RELEASE_PUBLIC_KEY }}
 
   # Apart from the build: the OIDC token that signs the attestation never
   # shares a job with npm or the built code.

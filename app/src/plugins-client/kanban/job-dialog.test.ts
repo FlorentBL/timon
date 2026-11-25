@@ -10,6 +10,7 @@ import type { ComponentType, ReactElement } from 'react';
 import { waitUntil } from '../../lib/test-wait';
 import type { Landing, LandingPreview } from './landing-api';
 import type { ProjectTodo } from './project-todo-types';
+import { LANDING_COALESCE_MS, LANDING_EVENT, type LandingChange } from './landing-events';
 
 const JOB: Landing = {
   id: 'job-51', project: 'acme', series_id: 's1', branch: 'feat/add-csv-export', remote: 'origin', target: 'main',
@@ -55,11 +56,22 @@ async function mount() {
   install('cancelAnimationFrame', dom.window.cancelAnimationFrame.bind(dom.window));
   install('ResizeObserver', class { observe() {} unobserve() {} disconnect() {} });
   install('IS_REACT_ACT_ENVIRONMENT', true);
+  const sources: Source[] = [];
+  class Source extends EventTarget {
+    static CLOSED = 2;
+    readyState = 1;
+    constructor(readonly url: string) { super(); sources.push(this); }
+    close() { this.readyState = Source.CLOSED; }
+  }
+  install('EventSource', Source);
+  /** What the daemon answers for the job read on its own. */
+  const daemon = { job: JOB };
   const urls: string[] = [];
   install('fetch', async (input: string | URL | Request) => {
     const url = String(input);
     urls.push(url);
     if (url.endsWith('/preview')) return Response.json(PREVIEW);
+    if (url === `/api/ui/kanban/landings/${daemon.job.id}`) return Response.json({ landing: daemon.job });
     if (url.startsWith('/api/ui/project-todo?')) return Response.json({ items: [TODO] });
     return Response.json({});
   });
@@ -92,7 +104,10 @@ async function mount() {
       else delete (globalThis as Record<string, unknown>)[k];
     }
   };
-  return { React, slots, urls, navigations, render, until, click, unmount };
+  const announce = (body: LandingChange) => {
+    for (const source of sources) source.dispatchEvent(new MessageEvent(LANDING_EVENT, { data: JSON.stringify(body) }));
+  };
+  return { React, slots, urls, navigations, daemon, announce, render, until, click, unmount };
 }
 
 /** The dialog as a screen opens it: closing it unmounts it, the idea's form lives beside it. */
@@ -207,6 +222,36 @@ test('a plugin that takes kanban.job.dialog paints the dialog from useJobDialog'
     await m.until(() => !!document.querySelector('[data-acme-job]'), 'the plugin\'s dialog');
     assert.equal(document.querySelector('[data-acme-job]')?.getAttribute('data-acme-job'), 'job-51');
     assert.ok(!document.querySelector('[data-job-links]'), 'the product\'s is not painted under it');
+  } finally {
+    await m.unmount();
+  }
+});
+
+test('an open dialog reads its job again when the daemon says it moved, and only its own', async () => {
+  const m = await mount();
+  try {
+    const { JobDialog } = await import('./job-dialog');
+    const handed: Landing[] = [];
+    await m.render(m.React.createElement(JobDialog, { landing: JOB, onClose: () => {}, onChange: (l: Landing) => { handed.push(l); } }));
+    await m.until(() => /PR #51/.test(document.querySelector('[role="dialog"]')?.textContent ?? ''), 'the dialog');
+    const reads = () => m.urls.filter((u) => u === '/api/ui/kanban/landings/job-51').length;
+    const settle = () => m.React.act(async () => { await new Promise((r) => setTimeout(r, LANDING_COALESCE_MS + 100)); });
+    const change = (integrationId: string): LandingChange => (
+      { integrationId, project: 'acme', seriesId: 's1', state: 'open', changed: ['pull_request'] });
+
+    // Another job moved: nothing to read.
+    m.announce(change('job-other'));
+    await settle();
+    assert.equal(reads(), 0);
+
+    // Its own pull request was renamed on the forge: one read, painted, handed back.
+    m.daemon.job = { ...JOB, pr_title: 'Add CSV and JSON export', updated_at: 3 };
+    m.announce(change('job-51'));
+    m.announce({ ...change('job-51'), changed: ['checks'] });
+    await m.until(() => /Add CSV and JSON export/.test(document.querySelector('[role="dialog"]')?.textContent ?? ''), 'the fresh job');
+    await settle();
+    assert.equal(reads(), 1, 'one read for the burst');
+    assert.deepEqual(handed.map((l) => l.pr_title), ['Add CSV and JSON export'], 'the screen that opened it gets it too');
   } finally {
     await m.unmount();
   }

@@ -156,7 +156,9 @@ export const BACKUP_ROUTINE_ID = 'timon-backup-nightly';
 export const BACKUP_CRON = '30 3 * * *';
 /** Default of `TIMON_BACKUP_KEEP`; the setting decides (`backupRetention`). */
 export const BACKUP_KEEP = 7;
-export const BACKUP_NAME = 'Backup nocturne';
+export const BACKUP_NAME = 'Nightly backup';
+/** The name the backup routine was seeded with before it was English. */
+const LEGACY_BACKUP_NAME = 'Backup nocturne'; // french-ok: the old seeded name, matched to rename it
 /** Schema sentinel — never dispatched, the tick runs the export itself. */
 export const BACKUP_AGENT = 'timon';
 const BACKUP_PROMPT =
@@ -549,7 +551,24 @@ export async function tickRoutines(): Promise<void> {
   }
 }
 
+/**
+ * Installs seeded before the backup routine had an English name still show the
+ * old one. Renamed once, and only while it is the seeded name: a name the user
+ * chose stays.
+ */
+export function renameLegacyBackupRoutine(): boolean {
+  const row = dbApi.getRoutine(BACKUP_ROUTINE_ID);
+  if (row?.name !== LEGACY_BACKUP_NAME) return false;
+  dbApi.updateRoutine(BACKUP_ROUTINE_ID, { name: BACKUP_NAME });
+  return true;
+}
+
 export function startRoutines(): () => void {
+  try {
+    renameLegacyBackupRoutine();
+  } catch (err) {
+    console.warn(`[routines] backup routine not renamed: ${(err as Error).message}`);
+  }
   try {
     if (applyBackupDefault() === 'created') console.log('[routines] nightly backup enabled by default (03:30)');
   } catch (err) {

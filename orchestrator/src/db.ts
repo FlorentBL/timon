@@ -1610,6 +1610,15 @@ CREATE INDEX IF NOT EXISTS idx_audit_log_user ON audit_log(user_id);
   }
 }
 
+// TIM-0161: a restricted reader's `?task_id=` walks this index, which starts
+// with the owner. Through `idx_missions_task` the scan would first visit the
+// task's missions of every account, and its duration would tell whether a
+// task of another account exists. No trailing `id`: it would make the index
+// covering for `SELECT id … ORDER BY started_at`, and the planner would scan it
+// whole instead of `idx_missions_started` for the unfiltered list. Ties on
+// started_at are sorted within one owner's task, a handful of rows.
+db.exec(`CREATE INDEX IF NOT EXISTS idx_missions_owner_task ON missions(owner_user_id, task_id, started_at)`);
+
 // A workflow is piloted by an existing agent (decision of 20/10/2026): the
 // column replaces the `workflow.<uuid>` agent the engine used to create for
 // each workflow. NULL on rows minted before that: publish and run refuse them
@@ -1682,6 +1691,9 @@ if (!projectCols.includes('created_by')) db.exec(`ALTER TABLE projects ADD COLUM
 // `integration` = how the project's Kanban jobs land (`project-integration.ts`):
 // JSON validated by zod on every read and write; NULL = today's local merge.
 if (!projectCols.includes('integration')) db.exec(`ALTER TABLE projects ADD COLUMN integration TEXT`);
+// `extra_dirs` = the folders outside their working directories every mission of
+// the project may read, or read and write (`project-extra-dirs.ts`): JSON, NULL = none.
+if (!projectCols.includes('extra_dirs')) db.exec(`ALTER TABLE projects ADD COLUMN extra_dirs TEXT`);
 
 // the UI shows them as "unknown author"
 // rather than wrongly attributing them. Web Push:
@@ -2529,6 +2541,10 @@ export type TaskRow = {
   landing?: string | null;
 };
 
+/** What a job's pilot is told of its integration: its pull request opened,
+ *  then merged or closed. */
+export type IntegrationNotice = 'open' | 'merged' | 'closed';
+
 /** One integration branch (see the `integrations` migration). */
 export type IntegrationRow = {
   id: string;
@@ -2633,6 +2649,9 @@ export function isSelfMergePipeline(pipeline: string | null | undefined): boolea
   return pipeline === 'code-self';
 }
 
+/** Who ran a task's mission and on what: the board's read (#1109). */
+export type MissionRunnerRow = Pick<MissionRow, 'agent_name' | 'source_meta' | 'backend_override' | 'model_override'>;
+
 export type MissionRow = {
   /** Frozen browser assignment. Null with resolved=1 explicitly disables browsing. */
   browser_profile_id: string | null;
@@ -2700,6 +2719,15 @@ export type ActiveMissionRow = Pick<
   MissionRow,
   'id' | 'agent_name' | 'status' | 'started_at' | 'ended_at' | 'source_channel' | 'task_id'
 >;
+/**
+ * Narrowing of a mission list page. `before` is the position of the last row
+ * of the previous page: the list is ordered by (started_at, id) descending, so
+ * the pair is a stable cursor even when missions share a start time.
+ */
+export type MissionListPage = {
+  taskId?: string;
+  before?: { startedAt: number; id: string };
+};
 export type MissionListRow = MissionRow & {
   /** Who started it — `mission-origin.ts`. */
   origin: MissionOrigin;
@@ -3282,6 +3310,14 @@ const markIntegrationOpenStmt = db.prepare(`
   UPDATE integrations SET state = 'open', pr_number = ?, pr_url = ?, head_sha = ?, updated_at = ?
   WHERE id = ? AND state = 'branch'
 `);
+// Only from 'closed': the landing gesture opened a new pull request for a job
+// whose previous one was closed without a merge. The closing's notice is
+// forgotten, so a second closing is told again.
+const markIntegrationReopenedStmt = db.prepare(`
+  UPDATE integrations SET state = 'open', pr_number = ?, pr_url = ?, head_sha = ?, checks = NULL,
+    notified_state = NULL, updated_at = ?
+  WHERE id = ? AND state = 'closed'
+`);
 // A pushed repair moves the head the poller compares with the target; the
 // checks read before it describe a commit the pull request no longer ends on.
 const setIntegrationHeadStmt = db.prepare(`
@@ -3512,11 +3548,6 @@ const TASK_WATCHED_COLUMNS = [
 ] as const satisfies readonly (keyof TaskRow)[];
 
 /**
- * Publishes `task_updated` (and `task_assigned`) for what a write changed,
- * comparing the row read BEFORE the write with the row now. Synchronous, so the
- * origin store of the writer (`task-origin.ts`) is still the current one.
- */
-/**
  * Publishes `integration_changed` for a write that moved the row `id`. The
  * callers publish only when their statement changed something: a job's
  * screens reload on it, and a write that changes nothing must not wake them.
@@ -3544,6 +3575,11 @@ function checksSignature(checks: string | null): string | null {
   }
 }
 
+/**
+ * Publishes `task_updated` (and `task_assigned`) for what a write changed,
+ * comparing the row read BEFORE the write with the row now. Synchronous, so the
+ * origin store of the writer (`task-origin.ts`) is still the current one.
+ */
 function publishTaskDiff(prev: TaskRow | undefined): void {
   if (!prev) return;
   const next = getTaskStmt.get(prev.id) as TaskRow | undefined;
@@ -3659,9 +3695,12 @@ const markZombieFailedStmt = db.prepare(
    WHERE id = ? AND status = 'running'`,
 );
 const getMissionStmt = db.prepare(`SELECT * FROM missions WHERE id = ?`);
+const missionOwnersStmt = db.prepare(
+  `SELECT id, owner_user_id FROM missions WHERE id IN (SELECT value FROM json_each(?))`,
+);
 // Two columns, not `SELECT *`: the board reads it for every listed task, and a
 // mission row carries its whole prompt.
-const missionRunnerStmt = db.prepare(`SELECT agent_name, source_meta FROM missions WHERE id = ?`);
+const missionRunnerStmt = db.prepare(`SELECT agent_name, source_meta, backend_override, model_override FROM missions WHERE id = ?`);
 const insertEventStmt = db.prepare(
   `INSERT INTO events (mission_id, type, timestamp, payload) VALUES (?, ?, ?, ?)`,
 );
@@ -3826,13 +3865,13 @@ const unindexedMissionsStmt = db.prepare(
  */
 const MISSION_ORIGIN_SQL = missionOriginSql('m', 'ot');
 
-function missionListSql(whereSql: string): string {
+function missionListSql(whereSql: string, indexHint = ''): string {
   // The origin is computed inside the page so `?origin=` filters before the LIMIT.
   return `WITH page AS (
-            SELECT m.*, ${MISSION_ORIGIN_SQL} AS origin FROM missions m
+            SELECT m.*, ${MISSION_ORIGIN_SQL} AS origin FROM missions m ${indexHint}
             LEFT JOIN tasks ot ON ot.id = m.task_id
             ${whereSql}
-            ORDER BY m.started_at DESC
+            ORDER BY m.started_at DESC, m.id DESC
             LIMIT ?
           )
           SELECT p.*,
@@ -3862,9 +3901,69 @@ function missionListSql(whereSql: string): string {
             LEFT JOIN users ou ON ou.id = p.owner_user_id
             LEFT JOIN mission_stats st ON st.mission_id = p.id
             LEFT JOIN mission_span_totals pt ON pt.mission_id = p.id
-           ORDER BY p.started_at DESC`;
+           ORDER BY p.started_at DESC, p.id DESC`;
 }
 const listMissionsStmt = db.prepare(missionListSql(''));
+/**
+ * The SQL of one `listMissions` page, its LIMIT left as the last parameter.
+ * Exported for the test that reads its query plan. `'all'` = no filter at all
+ * (the prepared statement), `'none'` = an empty agent list.
+ */
+export function missionListQuery(
+  agentNames: string[] | undefined,
+  status: string | undefined,
+  viewer: DbViewer | null | undefined,
+  origin: MissionOriginFilter | undefined,
+  page: MissionListPage,
+): { sql: string; params: unknown[] } | 'all' | 'none' {
+  const owner = ownerSql(viewer, 'missions', 'm.owner_user_id');
+  const scoped = owner.sql !== '1=1';
+  const { taskId, before } = page;
+  if (!agentNames && !status && !scoped && !origin && taskId === undefined && !before) return 'all';
+  if (agentNames && agentNames.length === 0) return 'none';
+  // missing: `/api/missions?status=running` returned the N latest missions of ALL
+  // statuses, in silence. An agent diagnosing
+  // cap saturation read 100 "running" missions
+  // where there were 11 (2026-08-22) — an ignored filter lies more efficiently than an
+  // error.
+  const where: string[] = [];
+  const params: unknown[] = [];
+  if (agentNames) {
+    where.push(`m.agent_name IN (${agentNames.map(() => '?').join(', ')})`);
+    params.push(...agentNames);
+  }
+  if (status) {
+    where.push('m.status = ?');
+    params.push(status);
+  }
+  if (origin === 'automated') {
+    where.push(`(${MISSION_ORIGIN_SQL}) <> 'user'`);
+  } else if (origin) {
+    where.push(`(${MISSION_ORIGIN_SQL}) = ?`);
+    params.push(origin);
+  }
+  if (taskId !== undefined) {
+    where.push('m.task_id = ?');
+    params.push(taskId);
+  }
+  if (before) {
+    // The redundant `<=` lets the started_at index bound the range; the
+    // OR then drops the cursor row and the ties already served.
+    where.push('m.started_at <= ? AND (m.started_at < ? OR m.id < ?)');
+    params.push(before.startedAt, before.startedAt, before.id);
+  }
+  if (scoped) {
+    where.push(owner.sql);
+    params.push(...owner.params);
+  }
+  const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
+  // Forced, not left to the planner: without ANALYZE statistics it may still
+  // prefer `idx_missions_task`, which visits the task's missions of every
+  // account before the owner filter drops them; the scan time would then tell
+  // a restricted reader whether another account's task exists (TIM-0161).
+  const hint = scoped && taskId !== undefined ? 'INDEXED BY idx_missions_owner_task' : '';
+  return { sql: missionListSql(whereSql, hint), params };
+}
 const missionOriginStmt = db.prepare(
   `SELECT ${MISSION_ORIGIN_SQL} AS origin FROM missions m LEFT JOIN tasks ot ON ot.id = m.task_id WHERE m.id = ?`,
 );
@@ -4356,6 +4455,11 @@ const missionBySessionStmt = db.prepare(
    WHERE session_id = ?
    ORDER BY started_at DESC LIMIT 1`,
 );
+const openMissionBySessionStmt = db.prepare(
+  `SELECT id FROM missions
+   WHERE session_id = ? AND agent_name = ? AND status = 'running'
+   ORDER BY started_at DESC LIMIT 1`,
+);
 
 export type Source = { channel: string; meta?: unknown };
 
@@ -4388,6 +4492,7 @@ export type ProjectRow = {
   grepai_watch: string | null; // conversation restarts empty without saying so. ── Memory & project types (DB
   created_by: string | null; // `plugin:<id>` for a project a plugin registered
   integration: string | null; // JSON of `project-integration.ts`; NULL = local merge
+  extra_dirs: string | null; // JSON of `project-extra-dirs.ts`; NULL = none
   created_at: number;
   updated_at: number;
 };
@@ -5904,13 +6009,19 @@ export const dbApi = {
   }): IntegrationRow {
     const now = Date.now();
     const id = randomUUID();
+    const before = getIntegrationStmt.get(row.repo, row.branch) as IntegrationRow | undefined;
     upsertIntegrationStmt.run(
       id, row.repo, row.branch, row.remote, row.target, row.mode,
       row.project ?? null, row.seriesId ?? null, row.baseSha ?? null, now, now,
     );
     const recorded = getIntegrationStmt.get(row.repo, row.branch) as IntegrationRow;
-    // Recording an existing branch again moves nothing a screen shows.
     if (recorded.id === id) publishIntegrationChange(id, ['created']);
+    // Recording an existing branch again only fills what it lacked. A filled
+    // project or series puts the job in front of a screen filtered on it,
+    // which would otherwise wait for its slow poll; the base sha shows nowhere.
+    else if (before && (before.project !== recorded.project || before.series_id !== recorded.series_id)) {
+      publishIntegrationChange(recorded.id, ['scope']);
+    }
     return recorded;
   },
   getIntegration(repo: string, branch: string): IntegrationRow | undefined {
@@ -6026,6 +6137,13 @@ export const dbApi = {
     if (opened) publishIntegrationChange(id, ['state', 'pull_request']);
     return opened;
   },
+  /** Records the new pull request of a job whose previous one was closed
+   *  without a merge; false unless the row is still 'closed'. */
+  markIntegrationReopened(id: string, pr: { number: number; url: string; headSha: string }): boolean {
+    const opened = markIntegrationReopenedStmt.run(pr.number, pr.url, pr.headSha, Date.now(), id).changes > 0;
+    if (opened) publishIntegrationChange(id, ['state', 'pull_request']);
+    return opened;
+  },
   /** Records the head a repair pushed to the open pull request, and forgets
    *  the checks read before it; false unless the pull request is open. */
   setIntegrationHead(id: string, headSha: string): boolean {
@@ -6081,13 +6199,13 @@ export const dbApi = {
   touchIntegrationPolled(id: string): void {
     touchIntegrationPolledStmt.run(Date.now(), id);
   },
-  /** Claims the notice of `state` ('merged' | 'closed'): true for one caller
-   *  only, and only while the row is in that state. */
-  claimIntegrationNotice(id: string, state: 'merged' | 'closed'): boolean {
+  /** Claims the notice of `state` ('open' | 'merged' | 'closed'): true for one
+   *  caller only, and only while the row is in that state. */
+  claimIntegrationNotice(id: string, state: IntegrationNotice): boolean {
     return claimIntegrationNoticeStmt.run(state, Date.now(), id, state, state).changes === 1;
   },
   /** Hands back a notice that could not be sent. */
-  releaseIntegrationNotice(id: string, state: 'merged' | 'closed'): void {
+  releaseIntegrationNotice(id: string, state: IntegrationNotice): void {
     releaseIntegrationNoticeStmt.run(Date.now(), id, state);
   },
   /** Concluded integrations whose pilot was not told yet. */
@@ -6707,10 +6825,20 @@ export const dbApi = {
   getMission(id: string, viewer?: DbViewer | null): MissionRow | undefined {
     return rowVisible(getMissionStmt.get(id) as MissionRow | undefined, viewer, 'missions');
   },
-  /** Agent and `source_meta` of a mission, for the board (TIM-0109). The
+  /**
+   * Which of these missions the viewer may read, by the rule of `getMission`,
+   * in one query: a list that shows a mission's state per row checks them in
+   * a batch, not one read per row.
+   */
+  readableMissionIds(ids: readonly string[], viewer?: DbViewer | null): Set<string> {
+    if (ids.length === 0) return new Set();
+    const rows = missionOwnersStmt.all(JSON.stringify([...new Set(ids)])) as Array<{ id: string; owner_user_id: string | null }>;
+    return new Set(rows.filter((row) => rowVisible(row, viewer, 'missions')).map((row) => row.id));
+  },
+  /** Agent, `source_meta` and LLM pair of a mission, for the board (TIM-0109, #1109). The
    *  caller has already checked the task the mission runs. */
-  getMissionRunner(id: string): Pick<MissionRow, 'agent_name' | 'source_meta'> | undefined {
-    return missionRunnerStmt.get(id) as Pick<MissionRow, 'agent_name' | 'source_meta'> | undefined;
+  getMissionRunner(id: string): MissionRunnerRow | undefined {
+    return missionRunnerStmt.get(id) as MissionRunnerRow | undefined;
   },
   /** Who started the mission (`mission-origin.ts`), by the list's own SQL.
    *  A label, not a read: the caller has already checked the mission. */
@@ -6932,39 +7060,12 @@ export const dbApi = {
     status?: string,
     viewer?: DbViewer | null,
     origin?: MissionOriginFilter,
+    page: MissionListPage = {},
   ): MissionListRow[] {
-    const owner = ownerSql(viewer, 'missions', 'm.owner_user_id');
-    const scoped = owner.sql !== '1=1';
-    if (!agentNames && !status && !scoped && !origin) return listMissionsStmt.all(limit) as MissionListRow[];
-    if (agentNames && agentNames.length === 0) return [];
-    // missing: `/api/missions?status=running` returned the N latest missions of ALL
-    // statuses, in silence. An agent diagnosing
-    // cap saturation read 100 "running" missions
-    // where there were 11 (2026-08-22) — an ignored filter lies more efficiently than an
-    // error.
-    const where: string[] = [];
-    const params: unknown[] = [];
-    if (agentNames) {
-      where.push(`m.agent_name IN (${agentNames.map(() => '?').join(', ')})`);
-      params.push(...agentNames);
-    }
-    if (status) {
-      where.push('m.status = ?');
-      params.push(status);
-    }
-    if (origin === 'automated') {
-      where.push(`(${MISSION_ORIGIN_SQL}) <> 'user'`);
-    } else if (origin) {
-      where.push(`(${MISSION_ORIGIN_SQL}) = ?`);
-      params.push(origin);
-    }
-    if (scoped) {
-      where.push(owner.sql);
-      params.push(...owner.params);
-    }
-    const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
-    const stmt = db.prepare(missionListSql(whereSql));
-    return stmt.all(...params, limit) as MissionListRow[];
+    const query = missionListQuery(agentNames, status, viewer, origin, page);
+    if (query === 'all') return listMissionsStmt.all(limit) as MissionListRow[];
+    if (query === 'none') return [];
+    return db.prepare(query.sql).all(...query.params, limit) as MissionListRow[];
   },
   /**
    * The candidates the chat binds when its URL names no mission: the agent's
@@ -7228,6 +7329,12 @@ export const dbApi = {
     if (!row) return null;
     return { id: row.id, agentName: row.agent_name, backendOverride: row.backend_override,
       ownerUserId: row.owner_user_id };
+  },
+  /** The open mission of `agentName` that carries this provider session, if
+   *  any: a new mission resuming it would run a twin of a live one. */
+  openMissionIdForSession(sessionId: string, agentName: string): string | null {
+    const row = openMissionBySessionStmt.get(sessionId, agentName) as { id: string } | undefined;
+    return row?.id ?? null;
   },
   /**
    * The user (or a plugin acting as one) renames a mission: `manual`, which no
@@ -8547,13 +8654,19 @@ export const dbApi = {
     return db.prepare(`UPDATE projects SET integration = ?, updated_at = ? WHERE slug = ?`)
       .run(json, Date.now(), slug).changes > 0;
   },
+  /** The one door for `extra_dirs`: `upsertProject` never writes it, so a meta
+   *  edit cannot open a folder. False = no such project. */
+  setProjectExtraDirs(slug: string, json: string | null): boolean {
+    return db.prepare(`UPDATE projects SET extra_dirs = ?, updated_at = ? WHERE slug = ?`)
+      .run(json, Date.now(), slug).changes > 0;
+  },
   listProjectRows(): ProjectRow[] {
     return db.prepare(`SELECT * FROM projects ORDER BY slug`).all() as ProjectRow[];
   },
   /** Partial upsert: only defined fields are written (merge with the existing). */
   upsertProject(
     slug: string,
-    fields: Partial<Omit<ProjectRow, 'slug' | 'created_at' | 'updated_at' | 'created_by' | 'integration'>> = {},
+    fields: Partial<Omit<ProjectRow, 'slug' | 'created_at' | 'updated_at' | 'created_by' | 'integration' | 'extra_dirs'>> = {},
   ): void {
     const now = Date.now();
     const cur = this.getProjectRow(slug);

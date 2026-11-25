@@ -298,6 +298,9 @@ export const SETTINGS: SettingDef[] = [
   { key: 'TIMON_WORKTREE_GC_GRACE_MIN', type: 'int', default: 30, group: 'Worktrees', unit: 'min',
     label: 'Grace before cleanup', advanced: true,
     description: "Delay after a task closes before its worktree becomes a candidate. Gives the merger and the following doc task time to work in it." },
+  { key: 'TIMON_WORKTREE_ADD_STALL_MS', type: 'int', default: 120_000, group: 'Worktrees', unit: 'ms', min: 10_000,
+    label: 'Worktree creation without progress', advanced: true,
+    description: "2 min by default. Creating a task's worktree may take as long as git keeps reporting its checkout progress, as on a large repository or a disk slowed down by an antivirus. Past this delay without any progress, git and the processes it started are stopped, the half-made worktree is removed (its branch is kept) and the task is blocked with the reason." },
 
   // ── Permissions ───────────────────────────────────────────────────────
   { key: 'TIMON_PERMISSION_AUTONOMOUS_TIMEOUT_MS', type: 'int', default: 300_000, group: 'Permissions', unit: 'ms',
@@ -508,6 +511,9 @@ export const SETTINGS: SettingDef[] = [
   { key: 'TIMON_PREAPPROVED_MCP_TOOLS', type: 'string', default: '', group: 'Misc', advanced: true,
     label: 'MCP tools allowed without asking',
     description: "Comma-separated tool names (mcp__server__tool) any agent may call without an Allow/Deny card. List read-only tools only: a write stays behind a decision." },
+  { key: 'TIMON_MCP_STDIO_BRIDGE', type: 'bool', default: true, group: 'Misc', advanced: true,
+    label: 'Run MCP servers with variables outside the agent',
+    description: "On: a local (stdio) MCP server that has environment variables is started by Timon itself and reached by the agent through Timon, so its variables are never written into the agent's configuration; if it cannot start, the agent runs without it. Agents that cannot reach an MCP server through Timon yet, such as opencode and Hermes, start it themselves, with its variables, as when this is off. Off: the agent's tool starts it as before, its variables written in its configuration." },
   { key: 'TIMON_CHROME_PATH', type: 'string', default: '', group: 'Misc', advanced: true,
     label: 'Chrome used to sign in from the built-in browser',
     description: "Empty = Google Chrome, then Microsoft Edge, then Chromium, found automatically. Full path of the Chrome, Edge or Chromium to open for Sign in with Chrome (the file must be named like one of them); needed only when yours is installed somewhere unusual or as a snap or flatpak." },

@@ -57,7 +57,7 @@
       "arguments": "Arguments",
       "argumentsHint": "(un par ligne)",
       "environment": "Environnement",
-      "environmentHint": "(CLÉ=valeur par ligne)",
+      "environmentHint": "(CLÉ=valeur par ligne. Une valeur enregistrée s'affiche ***, laissez-la pour la garder)",
       "url": "URL",
       "saveBeforeOAuth": "Enregistrez d'abord le serveur, puis revenez ici l'autoriser via OAuth si l'adresse l'exige.",
       "headers": "En-têtes",

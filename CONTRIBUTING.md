@@ -58,6 +58,12 @@ Run the whole suite (`npm test` with no file) once before you open the pull
 request. Tests always use a temporary home: never point `TIMON_HOME` at your
 real one. If your shell sets `NODE_ENV=production`, unset it for the tests.
 
+A pull request that only changes pages or images of `public-docs/docs/`,
+`changes/` fragments or Markdown at the root skips the daemon and app suites in
+CI: the required checks still run the tests that read those paths, and pass in
+a few minutes. One file elsewhere, a workflow, the docs site's config or
+plugins, a link or a submodule, and every suite runs (`scripts/ci-changes.mjs`).
+
 A test killed by a limit (time, memory) is a bug to fix, not a command to
 retry.
 

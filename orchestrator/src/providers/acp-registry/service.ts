@@ -25,7 +25,7 @@
  * have. The previous version folder is kept one generation.
  */
 import { createHash, randomBytes } from 'node:crypto';
-import { chmodSync, existsSync, mkdirSync, readdirSync, renameSync, rmSync, statSync } from 'node:fs';
+import { chmodSync, existsSync, lstatSync, mkdirSync, readdirSync, realpathSync, renameSync, rmSync } from 'node:fs';
 import { isAbsolute, join, resolve, sep } from 'node:path';
 import { readAuthMethods, type AcpAuthMethodInfo } from '../../backends/acp/auth.js';
 import { acpTransportOver } from '../../backends/acp/conversation-transport.js';
@@ -492,9 +492,19 @@ export class AcpRegistryService {
     }
     const root = resolve(dir);
     const absolute = resolve(root, ...parts);
-    if (!absolute.startsWith(root + sep) || !existsSync(absolute) || !statSync(absolute).isFile()) {
-      throw new AcpRegistryError('command-missing', 'the program named by the registry is not in the archive', 502);
+    // The archive may hold links (a macOS framework): what counts is the file the system really reaches, which must
+    // be a regular file inside the folder, since it is made executable and launched.
+    const missing = () => new AcpRegistryError('command-missing', 'the program named by the registry is not in the archive', 502);
+    if (!absolute.startsWith(root + sep)) throw missing();
+    let real: string;
+    let realRoot: string;
+    try {
+      real = realpathSync(absolute);
+      realRoot = realpathSync(root);
+    } catch {
+      throw missing();
     }
+    if (!real.startsWith(realRoot + sep) || !lstatSync(real).isFile()) throw missing();
     return { absolute, relative: parts.join('/') };
   }
 

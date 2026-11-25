@@ -19,6 +19,11 @@
  * - **Nothing is written on GitHub** here. Closing the issue is GitHub's, from
  *   the `Fixes` line the daemon adds to the pull request; the resolution comment
  *   is a proposal a person publishes.
+ * - **Per project**: a project may switch its Issues list off; nothing is read
+ *   on GitHub for it then. The issues it hid can be reviewed and shown again.
+ * - **Live list**: an imported idea that moves elsewhere (done, resolved,
+ *   deleted) tells the browsers of its owner, on the plugin's own `issues`
+ *   topic, so the widget reads its list again.
  */
 export const name = 'github-issues'
 
@@ -31,6 +36,10 @@ export const TITLE_LIMIT = 200
 export const BODY_LIMIT = 4000
 /** Issues a project may hide from its candidates. */
 const DISMISSED_LIMIT = 500
+/** Realtime topic the browser half listens to. */
+export const TOPIC = 'issues'
+/** Characters of an issue title kept beside a hidden issue. */
+const HIDDEN_TITLE_LIMIT = 200
 
 /** Statuses for the codes `ctx.forge` and `ctx.kanban.todos` throw. */
 const STATUS = {
@@ -143,10 +152,26 @@ export function apply(ctx) {
     return typeof general === 'string' && !labelProblem(general) ? general.trim() : DEFAULT_LABEL
   }
 
-  const dismissedOf = async (project) => {
+  /**
+   * The issues a project hid, oldest first: `{ number, title }`, the title as
+   * the list showed it when hidden. An older entry is a bare number.
+   */
+  const hiddenOf = async (project) => {
     const list = await ctx.storage.kv.get(`dismissed:${project}`)
-    return Array.isArray(list) ? list.filter((n) => Number.isSafeInteger(n)) : []
+    if (!Array.isArray(list)) return []
+    const out = []
+    for (const entry of list) {
+      if (Number.isSafeInteger(entry) && entry > 0) out.push({ number: entry, title: null })
+      else if (entry && Number.isSafeInteger(entry.number) && entry.number > 0) {
+        out.push({ number: entry.number, title: typeof entry.title === 'string' ? oneLine(entry.title, HIDDEN_TITLE_LIMIT) || null : null })
+      }
+    }
+    return out
   }
+  const dismissedOf = async (project) => (await hiddenOf(project)).map((h) => h.number)
+
+  /** Whether the project lists its issues: on unless switched off. */
+  const enabledOf = async (project) => (await ctx.storage.kv.get(`off:${project}`)) !== true
 
   /** What the list shows of the idea an issue became, or null. */
   const ideaOf = async (repo, number) => {
@@ -167,6 +192,10 @@ export function apply(ctx) {
     const project = slugOf(request.query.project)
     const { repo, url } = await repositoryOf(project)
     const label = await labelOf(project)
+    // Switched off: nothing is asked of GitHub.
+    if (!(await enabledOf(project))) {
+      return { project, repo, url, label, enabled: false, issues: [], hidden: (await dismissedOf(project)).length }
+    }
     const [issues, dismissed] = await Promise.all([ctx.forge.issues.list(project, { label }), dismissedOf(project)])
     const hidden = new Set(dismissed)
     const out = []
@@ -183,7 +212,7 @@ export function apply(ctx) {
         todo,
       })
     }
-    return { project, repo, url, label, issues: out, hidden: dismissed.length }
+    return { project, repo, url, label, enabled: true, issues: out, hidden: dismissed.length }
   }))
 
   // One issue as the Issue window shows it before an import: its text cut
@@ -222,6 +251,7 @@ export function apply(ctx) {
     const ref = issueRef(repo, number)
     const known = await ctx.kanban.todos.links.findByRef(PROVIDER, ref)
     if (known) return { created: false, todo: { id: known.id, status: known.status } }
+    if (!(await enabledOf(project))) throw new RequestError(409, 'disabled')
     const issue = await ctx.forge.issues.get(project, number)
     if (!issue) throw new RequestError(404, 'issue_not_found')
     if (issue.state !== 'open') throw new RequestError(409, 'issue_closed')
@@ -245,29 +275,56 @@ export function apply(ctx) {
     const own = await ctx.storage.kv.get(`label:${project}`)
     return {
       project, repo, label: await labelOf(project), custom: typeof own === 'string', hidden: (await dismissedOf(project)).length,
+      enabled: await enabledOf(project),
     }
   }))
 
-  // `label: null` falls back on the plugin's setting.
+  // `label: null` falls back on the plugin's setting; `enabled` switches the
+  // project's list on or off. Either, or both.
   router.put('/project', answer(async (request) => {
     const project = slugOf(request.body?.project)
     await repositoryOf(project)
     const label = request.body?.label
+    const enabled = request.body?.enabled
+    if (label === undefined && enabled === undefined) throw new RequestError(400, 'invalid_request')
+    if (enabled !== undefined && typeof enabled !== 'boolean') throw new RequestError(400, 'invalid_request')
+    if (label !== undefined && label !== null && labelProblem(label)) throw new RequestError(400, 'invalid_label')
     if (label === null) await ctx.storage.kv.del(`label:${project}`)
-    else if (labelProblem(label)) throw new RequestError(400, 'invalid_label')
-    else await ctx.storage.kv.set(`label:${project}`, label.trim())
-    return { project, label: await labelOf(project) }
+    else if (label !== undefined) await ctx.storage.kv.set(`label:${project}`, label.trim())
+    if (enabled === true) await ctx.storage.kv.del(`off:${project}`)
+    else if (enabled === false) await ctx.storage.kv.set(`off:${project}`, true)
+    return { project, label: await labelOf(project), enabled: await enabledOf(project) }
+  }))
+
+  // The issues the project hid, newest first, to show one again.
+  router.get('/hidden', answer(async (request) => {
+    const project = slugOf(request.query.project)
+    const { repo, url } = await repositoryOf(project)
+    const issues = (await hiddenOf(project)).reverse().map((h) => ({ ...h, url: `${url}/issues/${h.number}` }))
+    return { project, repo, issues }
   }))
 
   // "Do not suggest again": hides an issue from the candidates, or shows it
-  // again with `hidden: false`.
+  // again with `hidden: false`. `title` is what the list showed, kept to name
+  // the issue among the hidden ones without asking GitHub.
   router.post('/dismiss', answer(async (request) => {
     const project = slugOf(request.body?.project)
     const number = numberOf(request.body?.issue)
     await repositoryOf(project)
-    const list = (await dismissedOf(project)).filter((n) => n !== number)
-    if (request.body?.hidden !== false) list.push(number)
+    const title = typeof request.body?.title === 'string' ? oneLine(request.body.title, HIDDEN_TITLE_LIMIT) || null : null
+    const list = (await hiddenOf(project)).filter((h) => h.number !== number)
+    if (request.body?.hidden !== false) list.push({ number, title })
     await ctx.storage.kv.set(`dismissed:${project}`, list.slice(-DISMISSED_LIMIT))
     return { project, issue: number, hidden: request.body?.hidden !== false }
   }))
+
+  // An imported idea that moved elsewhere: its owner's Issues widgets read
+  // their list again. Ids and the project only; the browser asks the routes.
+  const changed = (ev) => {
+    const todo = ev.todo
+    if (!todo?.project || !todo.owner_user_id) return
+    if (!todo.links?.some((l) => l.provider === PROVIDER)) return
+    ctx.realtime.publish(TOPIC, { project: todo.project, todo: todo.id }, { ownerUserId: todo.owner_user_id })
+  }
+  for (const kind of ['todo_done', 'todo_resolved', 'todo_deleted']) ctx.events.on(kind, changed)
 }

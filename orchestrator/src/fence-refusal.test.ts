@@ -11,7 +11,8 @@ import { join } from 'node:path';
 import { config } from './config/load.js';
 import { resolveFence, systemWritableFolders, type FencePolicy } from './host/isolation.js';
 import {
-  fencePreflight, fenceRefusal, fenceRefusalInOutput, fenceRefusalMessage, launchFenceNeeds,
+  fencePreflight, fenceRefusal, fenceRefusalInOutput, fenceRefusalMessage, fenceSuspicionMessage, launchFenceNeeds,
+  pathlessRefusalIn, toolResultTexts,
 } from './fence-refusal.js';
 
 const ROOT = realpathSync.native(mkdtempSync(join(tmpdir(), 'timon-fence-refusal-')));
@@ -25,6 +26,9 @@ for (const dir of [SCRATCH, join(TH, 'run'), join(TH, 'tmp', 'missions', MISSION
 writeFileSync(join(TH, 'daemon-token'), '');
 writeFileSync(join(SCRATCH, 'config.toml'), '');
 
+// The fence exists on Linux and macOS only: a Windows path escapes its backslashes in a JSON value, and a CLI's refusal names a POSIX path.
+const POSIX_ONLY = { skip: process.platform === 'win32' && 'the fence exists on Linux and macOS only' };
+
 /** The policy without the system folders every program writes to: this suite's homes sit in one of them. */
 function policy(target: Partial<Parameters<typeof resolveFence>[1]> = {}): FencePolicy {
   const cfg = config();
@@ -35,7 +39,7 @@ function policy(target: Partial<Parameters<typeof resolveFence>[1]> = {}): Fence
   return { ...resolved, rw: resolved.rw.filter((path) => !system.includes(path)) };
 }
 
-test('the needs of a launch: Timon home paths of its arguments, environment and folder, state folders written', () => {
+test('the needs of a launch: Timon home paths of its arguments, environment and folder, state folders written', POSIX_ONLY, () => {
   const needs = launchFenceNeeds({
     cmd: '/usr/bin/codex',
     args: ['exec', '-c', `model_instructions_file="${join(SCRATCH, 'system-prompt.md')}"`, '--json', JSON.stringify({ path: join(TH, 'skills', 'x') }), '/elsewhere/file'],
@@ -72,7 +76,7 @@ test('the preflight names a refused path, and why the fence dropped its own gran
   assert.match(dropped?.dropped ?? '', /does not resolve to an existing file or folder/);
 });
 
-test('a refusal in a CLI\'s output is the fence\'s only when the policy refuses it and the OS would not', () => {
+test('a refusal in a CLI\'s output is the fence\'s only when the policy refuses it and the OS would not', POSIX_ONLY, () => {
   const p = policy();
   const yes = () => true;
   const token = join(TH, 'daemon-token');
@@ -101,4 +105,40 @@ test('the structured refusal: Timon home and credentials are never grantable, th
   assert.equal(cache.grantable, true);
   assert.match(fenceRefusalMessage(cache), /writable exceptions in Settings › System › Security/);
   assert.deepEqual(cache.setting, { category: 'system', tab: 'security' });
+});
+
+test('the text of each tool result of a normalised user event, as a string or as text blocks', () => {
+  const payload = {
+    type: 'user',
+    message: {
+      role: 'user',
+      content: [
+        { type: 'tool_result', tool_use_id: 'a', content: 'cat: /x: Permission denied' },
+        { type: 'text', text: 'not a tool output' },
+        { type: 'tool_result', tool_use_id: 'b', content: [{ type: 'text', text: 'one' }, { type: 'image', source: {} }, { type: 'text', text: 'two' }] },
+        { type: 'tool_result', tool_use_id: 'c', content: '' },
+      ],
+    },
+  };
+  assert.deepEqual(toolResultTexts(payload), ['cat: /x: Permission denied', 'one\ntwo']);
+  assert.deepEqual(toolResultTexts(null), []);
+  assert.deepEqual(toolResultTexts({ message: { content: 'plain' } }), []);
+  assert.equal(toolResultTexts({ message: { content: [{ type: 'tool_result', content: 'x'.repeat(300_000) }] } })[0]?.length, 200_000);
+});
+
+test('a refusal naming no path is a suspicion; one naming a path is left to the policy check', () => {
+  assert.equal(pathlessRefusalIn('Error: Operation not permitted (os error 1)\n'), 'Error: Operation not permitted (os error 1)');
+  assert.equal(pathlessRefusalIn('starting\nfailed: EPERM\n'), 'failed: EPERM');
+  assert.equal(pathlessRefusalIn('cat: /home/me/x: Operation not permitted'), null, 'a path: fenceRefusalInOutput decides');
+  assert.equal(pathlessRefusalIn("open '/etc/x': os error 1"), null);
+  assert.equal(pathlessRefusalIn('all good'), null);
+  assert.equal(pathlessRefusalIn(''), null);
+  assert.equal(pathlessRefusalIn(`Operation not permitted ${'x'.repeat(400)}`)?.length, 200);
+  const message = fenceSuspicionMessage({
+    missionId: MISSION, agent: 'a', backend: 'codex', mechanism: 'seatbelt', stage: 'run',
+    said: 'Operation not permitted (os error 1)', setting: { category: 'system', tab: 'security' },
+  });
+  assert.match(message, /the macOS sandbox \(Seatbelt\)/);
+  assert.match(message, /Settings › System › Security/);
+  assert.match(message, /extra folders/);
 });

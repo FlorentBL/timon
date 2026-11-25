@@ -1,9 +1,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, mkdtempSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, readlinkSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { ArchiveError, extractTarGz, extractZip, installRaw } from './archive.js';
+import { ArchiveError, extractTarGz, extractZip, installRaw, type IdentityProbe } from './archive.js';
 import { buildTarGzWithModes, buildZip } from './archive-fixtures.js';
 
 const posix = process.platform !== 'win32';
@@ -41,12 +41,260 @@ test('tar.gz: traversal, absolute paths, links and devices are refused, and noth
     ['drive', [{ path: 'C:evil', data: 'x' }], 'unsafe-path'],
     ['symlink', [{ path: 'link', type: '2', link: '/etc/passwd' }], 'link'],
     ['hardlink', [{ path: 'link', type: '1', link: 'ok' }], 'link'],
+    ['device', [{ path: 'dev', type: '3' }], 'link'],
   ];
   for (const [label, files, code] of cases) {
     const dest = join(base, label.replaceAll(' ', '-'));
     await rejects(() => extractTarGz(archiveFile(buildTarGzWithModes(files), 'x.tar.gz'), dest), code);
   }
   assert.equal(existsSync(join(base, 'evil')), false);
+});
+
+/** The four links of the macOS build of Mistral Vibe (a PyInstaller bundle), as published. */
+const FRAMEWORK: Parameters<typeof buildTarGzWithModes>[0] = [
+  { path: 'vibe-acp', data: 'launcher', mode: 0o755 },
+  { path: '_internal/Python.framework/Versions/3.12/Python', data: 'libpython', mode: 0o755 },
+  { path: '_internal/Python.framework/Versions/3.12/Resources/Info.plist', data: 'plist' },
+  { path: '_internal/Python', type: '2', link: 'Python.framework/Versions/3.12/Python' },
+  { path: '_internal/Python.framework/Python', type: '2', link: 'Versions/Current/Python' },
+  { path: '_internal/Python.framework/Resources', type: '2', link: 'Versions/Current/Resources' },
+  { path: '_internal/Python.framework/Versions/Current', type: '2', link: '3.12' },
+];
+
+test('tar.gz: relative links that stay inside the bundle are kept (macOS framework layout)', { skip: !posix }, async () => {
+  const dest = join(scratch(), 'out');
+  await extractTarGz(archiveFile(buildTarGzWithModes(FRAMEWORK), 'v.tar.gz'), dest);
+  const fw = join(dest, '_internal', 'Python.framework');
+  assert.ok(lstatSync(join(fw, 'Versions', 'Current')).isSymbolicLink());
+  assert.equal(readlinkSync(join(fw, 'Versions', 'Current')), '3.12');
+  assert.equal(readFileSync(join(dest, '_internal', 'Python'), 'utf8'), 'libpython', 'a link through another link resolves');
+  assert.equal(readFileSync(join(fw, 'Resources', 'Info.plist'), 'utf8'), 'plist');
+  // `../` first, then names: the shape a sibling folder takes.
+  const up = join(scratch(), 'up');
+  await extractTarGz(archiveFile(buildTarGzWithModes([
+    { path: 'lib/real.so', data: 'so' },
+    { path: 'bin/lib.so', type: '2', link: '../lib/real.so' },
+  ]), 'u.tar.gz'), up);
+  assert.equal(readFileSync(join(up, 'bin', 'lib.so'), 'utf8'), 'so');
+});
+
+test('tar.gz: a long link target in a PAX record is read', { skip: !posix }, async () => {
+  const target = `${'d'.repeat(60)}/${'e'.repeat(60)}/file`;
+  const record = (body: string) => { let n = body.length + 3; while (`${n} ${body}\n`.length !== n) n += 1; return `${n} ${body}\n`; };
+  const dest = join(scratch(), 'out');
+  await extractTarGz(archiveFile(buildTarGzWithModes([
+    { path: target, data: 'deep' },
+    { path: 'PaxHeader', type: 'x', data: record(`linkpath=${target}`) },
+    { path: 'short', type: '2', link: 'ignored-by-pax' },
+  ]), 'p.tar.gz'), dest);
+  assert.equal(readlinkSync(join(dest, 'short')), target);
+});
+
+test('tar.gz: links that could leave the folder, or be written through, are refused', async () => {
+  const base = scratch();
+  const cases: Array<[string, Parameters<typeof buildTarGzWithModes>[0], string]> = [
+    // An absolute target, on either system.
+    ['absolute', [{ path: 'l', type: '2', link: '/etc/passwd' }], 'link'],
+    ['drive', [{ path: 'l', type: '2', link: 'C:/Windows' }], 'link'],
+    // Out by `..`, from the root and from a sub-folder.
+    ['dotdot', [{ path: 'l', type: '2', link: '../outside' }], 'link'],
+    ['nested dotdot', [{ path: 'a/b/l', type: '2', link: '../../../outside' }], 'link'],
+    // The root itself, and tricks in the target string.
+    ['root itself', [{ path: 'a/l', type: '2', link: '..' }], 'link'],
+    ['dot', [{ path: 'l', type: '2', link: '.' }], 'link'],
+    ['backslash', [{ path: 'l', type: '2', link: '..\\outside' }], 'link'],
+    ['empty', [{ path: 'l', type: '2', link: '' }], 'link'],
+    // A chain: `l1` points to `c` (shallower than its own name), so `l1/../../../evil` resolves inside on paper and
+    // outside for the system.
+    ['chain escape', [
+      { path: 'c/', type: '5' },
+      { path: 'a/b/l1', type: '2', link: '../../c' },
+      { path: 'a/b/l2', type: '2', link: 'l1/../../../evil' },
+    ], 'link'],
+    ['climb after a name', [{ path: 'sub/', type: '5' }, { path: 'l', type: '2', link: 'sub/../sub' }], 'link'],
+    // Written through a link: a file below it, before or after it in the archive, and a link below a link.
+    ['file through link', [{ path: 'sub/', type: '5' }, { path: 'd', type: '2', link: 'sub' }, { path: 'd/evil', data: 'x' }], 'unsafe-path'],
+    ['file then link', [{ path: 'sub/', type: '5' }, { path: 'd/evil', data: 'x' }, { path: 'd', type: '2', link: 'sub' }], 'unsafe-path'],
+    ['link through link', [{ path: 'sub/', type: '5' }, { path: 'd', type: '2', link: 'sub' }, { path: 'd/l', type: '2', link: '../x' }], 'link'],
+    ['same name twice', [{ path: 'f', data: 'x' }, { path: 'f', type: '2', link: 'g' }], 'unsafe-path'],
+  ];
+  for (const [label, files, code] of cases) {
+    const dest = join(base, label.replaceAll(' ', '-'));
+    await assert.rejects(
+      () => extractTarGz(archiveFile(buildTarGzWithModes(files), 'x.tar.gz'), dest, undefined, 'symlink'),
+      (err: unknown) => err instanceof ArchiveError && err.code === code,
+      `${label}: ${code}`,
+    );
+  }
+  assert.equal(existsSync(join(base, 'evil')), false);
+  assert.equal(existsSync(join(base, 'outside')), false);
+  if (posix) {
+    // The file written "through" `d` landed in a real folder, never in `sub`.
+    assert.equal(existsSync(join(base, 'file-through-link', 'sub', 'evil')), false);
+    assert.equal(existsSync(join(base, 'link-through-link', 'sub', 'l')), false);
+  }
+});
+
+test('tar.gz: a loop of links is refused', { skip: !posix }, async () => {
+  const loop = buildTarGzWithModes([{ path: 'a', type: '2', link: 'b' }, { path: 'b', type: '2', link: 'a' }]);
+  await rejects(() => extractTarGz(archiveFile(loop, 'l.tar.gz'), join(scratch(), 'o'), undefined, 'symlink'), 'link');
+});
+
+test('tar.gz: where links cannot be made (Windows), each one becomes a copy of its target', async () => {
+  const dest = join(scratch(), 'out');
+  await extractTarGz(archiveFile(buildTarGzWithModes([
+    ...FRAMEWORK,
+    { path: 'up', type: '2', link: '_internal' },
+    { path: 'dangling', type: '2', link: 'nowhere' },
+  ]), 'c.tar.gz'), dest, undefined, 'copy');
+  const fw = join(dest, '_internal', 'Python.framework');
+  assert.equal(readFileSync(join(dest, '_internal', 'Python'), 'utf8'), 'libpython');
+  assert.equal(readFileSync(join(fw, 'Versions', 'Current', 'Resources', 'Info.plist'), 'utf8'), 'plist');
+  assert.equal(readFileSync(join(fw, 'Resources', 'Info.plist'), 'utf8'), 'plist');
+  assert.equal(lstatSync(join(fw, 'Versions', 'Current')).isDirectory(), true);
+  assert.equal(readFileSync(join(dest, 'up', 'Python'), 'utf8'), 'libpython', 'a folder is copied once its own links are in place');
+  if (posix) assert.equal(statSync(join(fw, 'Python')).mode & 0o777, 0o755);
+  assert.equal(existsSync(join(dest, 'dangling')), false, 'a dangling link is skipped');
+
+  // The copies count against the same budget: a link cannot multiply a big file past the limit.
+  const many = buildTarGzWithModes([
+    { path: 'big', data: Buffer.alloc(30_000, 1) },
+    { path: 'c1', type: '2', link: 'big' },
+    { path: 'c2', type: '2', link: 'big' },
+  ]);
+  await rejects(() => extractTarGz(archiveFile(many, 'm.tar.gz'), join(scratch(), 'o'), { maxExpandedBytes: 70_000, maxEntries: 100 }, 'copy'), 'too-large');
+  // And the refusals hold in this mode too.
+  const out = buildTarGzWithModes([{ path: 'l', type: '2', link: '../outside' }]);
+  await rejects(() => extractTarGz(archiveFile(out, 'o.tar.gz'), join(scratch(), 'o'), undefined, 'copy'), 'link');
+});
+
+test('tar.gz: a link to a folder above it is refused in both modes, even reached through another link', async () => {
+  const modes = ['symlink', 'copy'] as const;
+  for (const mode of modes) {
+    // Spelled as an ancestor: refused before anything is placed.
+    const self = buildTarGzWithModes([{ path: '_internal/sub/', type: '5' }, { path: '_internal/sub/self', type: '2', link: '..' }]);
+    await rejects(() => extractTarGz(archiveFile(self, 's.tar.gz'), join(scratch(), 'o'), undefined, mode), 'link');
+  }
+  if (!posix) return;
+  // `l -> a`, then `a/b/x -> ../../l`: no string says ancestor, the disk does (`x` is the folder `a` above it).
+  const viaLink = buildTarGzWithModes([
+    { path: 'a/b/', type: '5' },
+    { path: 'l', type: '2', link: 'a' },
+    { path: 'a/b/x', type: '2', link: '../../l' },
+  ]);
+  await rejects(() => extractTarGz(archiveFile(viaLink, 'v.tar.gz'), join(scratch(), 'o'), undefined, 'symlink'), 'link');
+  // Copied, the two links wait on each other: both are skipped, nothing copies itself.
+  const dest = join(scratch(), 'o');
+  await extractTarGz(archiveFile(viaLink, 'v.tar.gz'), dest, undefined, 'copy');
+  assert.equal(existsSync(join(dest, 'l')), false);
+  assert.equal(existsSync(join(dest, 'a', 'b', 'x')), false);
+});
+
+test('tar.gz: two spellings of one name are refused on every system, whatever the disk', async () => {
+  const nfc = 'caf\u00e9';
+  const nfd = 'cafe\u0301';
+  const cases: Array<[string, Parameters<typeof buildTarGzWithModes>[0], string]> = [
+    ['case', [{ path: 'a/', type: '5' }, { path: 'A/f', data: 'x' }], 'unsafe-path'],
+    ['case, files', [{ path: 'Readme', data: 'x' }, { path: 'README', data: 'y' }], 'unsafe-path'],
+    ['unicode form', [{ path: `${nfc}/`, type: '5' }, { path: `${nfd}/f`, data: 'x' }], 'unsafe-path'],
+    // The reviewed case: on APFS, NTFS, vfat or ext4 casefold `../A` is `a` itself, which the string checks call
+    // another folder. Refused here on a disk that compares bytes too: the check does not ask which disk it is.
+    ['link to its folder by case', [{ path: 'a/', type: '5' }, { path: 'a/x', type: '2', link: '../A' }], 'link'],
+    ['link by unicode form', [{ path: `${nfc}/f`, data: 'x' }, { path: 'l', type: '2', link: `${nfd}/f` }], 'link'],
+    // The link entry comes first: its target is checked once every entry is known.
+    ['link before its target', [{ path: 'l', type: '2', link: 'LIB' }, { path: 'lib/', type: '5' }], 'link'],
+  ];
+  for (const mode of ['symlink', 'copy'] as const) {
+    if (mode === 'symlink' && !posix) continue;
+    for (const [label, files, code] of cases) {
+      const dest = join(scratch(), 'o');
+      await assert.rejects(
+        () => extractTarGz(archiveFile(buildTarGzWithModes(files), 'x.tar.gz'), dest, undefined, mode),
+        (err: unknown) => err instanceof ArchiveError && err.code === code,
+        `${mode}, ${label}: ${code}`,
+      );
+      assert.equal(existsSync(join(dest, 'a', 'x', 'x')), false, `${mode}, ${label}: nothing copied into itself`);
+    }
+  }
+  // Same spelling twice is no collision, and one name spelled two ways in two folders is two paths.
+  const dest = join(scratch(), 'o');
+  await extractTarGz(archiveFile(buildTarGzWithModes([
+    { path: 'lib/', type: '5' }, { path: 'lib/', type: '5' }, { path: 'lib/f', data: 'x' }, { path: 'l', type: '2', link: 'lib/f' },
+    { path: 'a/Readme', data: 'r' }, { path: 'b/README', data: 'R' },
+  ]), 'same.tar.gz'), dest, undefined, 'copy');
+  assert.equal(readFileSync(join(dest, 'l'), 'utf8'), 'x');
+  assert.equal(readFileSync(join(dest, 'a', 'Readme'), 'utf8'), 'r');
+  assert.equal(readFileSync(join(dest, 'b', 'README'), 'utf8'), 'R');
+});
+
+/**
+ * Stands for a disk that folds names, on any disk: `dest/B` is made beforehand as another way to reach `dest/a`,
+ * exactly what `A` is on a folding volume. The spelling check cannot see it (`B` is no spelling of `a`), so only
+ * the identity check stands between `a/x -> ../B` and an endless tree.
+ */
+function destWithFoldedRoute(): string {
+  const dest = join(scratch(), 'o');
+  mkdirSync(dest);
+  // A junction needs no privilege on Windows; elsewhere the type is ignored.
+  symlinkSync(join(dest, 'a'), join(dest, 'B'), 'junction');
+  return dest;
+}
+const FOLDED_TRAP: Parameters<typeof buildTarGzWithModes>[0] = [{ path: 'a/', type: '5' }, { path: 'a/x', type: '2', link: '../B' }];
+
+test('tar.gz: a link that reaches its own folder by a route the strings miss is refused by identity', async () => {
+  for (const mode of ['symlink', 'copy'] as const) {
+    if (mode === 'symlink' && !posix) continue;
+    const dest = destWithFoldedRoute();
+    await rejects(() => extractTarGz(archiveFile(buildTarGzWithModes(FOLDED_TRAP), 'x.tar.gz'), dest, undefined, mode), 'link');
+    // Linked, the refused link stays in the discarded partial folder; copied, nothing may have been copied into itself.
+    if (mode === 'copy') assert.equal(existsSync(join(dest, 'a', 'x')), false, 'nothing copied into itself');
+  }
+});
+
+test('tar.gz: a link target the disk cannot identify refuses the archive (no usable inode, or stat failing)', async () => {
+  const noInode: IdentityProbe = (path) => ({ ...statSync(path, { bigint: true }), ino: 0n });
+  const failing: IdentityProbe = () => { throw Object.assign(new Error('EIO: i/o error, stat'), { code: 'EIO' }); };
+  for (const mode of ['symlink', 'copy'] as const) {
+    if (mode === 'symlink' && !posix) continue;
+    for (const [label, probe] of [['ino 0', noInode], ['stat error', failing]] as const) {
+      // The reviewed hole: names that fold, a volume without identity. Refused, never waved through.
+      const dest = destWithFoldedRoute();
+      await rejects(() => extractTarGz(archiveFile(buildTarGzWithModes(FOLDED_TRAP), 'x.tar.gz'), dest, undefined, mode, probe), 'link');
+      if (mode === 'copy') assert.equal(existsSync(join(dest, 'a', 'x')), false, `${label}: nothing copied into itself`);
+      // The reviewed archive itself, `a/` + `a/x -> ../A`, on that volume: the spelling check refuses it first.
+      const folded = join(scratch(), 'o');
+      await rejects(() => extractTarGz(archiveFile(buildTarGzWithModes([
+        { path: 'a/', type: '5' }, { path: 'a/x', type: '2', link: '../A' },
+      ]), 'A.tar.gz'), folded, undefined, mode, probe), 'link');
+      assert.equal(existsSync(join(folded, 'a', 'x')), false, `${label}: no link to its own folder`);
+      // Fail-closed for every link that reaches something, a legitimate framework included.
+      await assert.rejects(
+        () => extractTarGz(archiveFile(buildTarGzWithModes(FRAMEWORK), 'f.tar.gz'), join(scratch(), 'o'), undefined, mode, probe),
+        (err: unknown) => err instanceof ArchiveError && err.code === 'link',
+        `${mode}, ${label}: framework`,
+      );
+    }
+    // An archive without links never asks the disk who a file is.
+    const plain = join(scratch(), 'o');
+    await extractTarGz(archiveFile(buildTarGzWithModes([{ path: 'bin/agent', data: 'x', mode: 0o755 }]), 'p.tar.gz'), plain, undefined, mode, failing);
+    assert.equal(readFileSync(join(plain, 'bin', 'agent'), 'utf8'), 'x');
+  }
+});
+
+test('tar.gz: GNU long name and long link records are read', { skip: !posix }, async () => {
+  const deep = `${'d'.repeat(70)}/${'e'.repeat(70)}`;
+  const dest = join(scratch(), 'out');
+  await extractTarGz(archiveFile(buildTarGzWithModes([
+    { path: '././@LongLink', type: 'L', data: `${deep}/file\0` },
+    { path: 'cut-name', data: 'deep' },
+    { path: '././@LongLink', type: 'K', data: `${deep}/file\0` },
+    { path: 'short', type: '2', link: 'cut-link' },
+  ]), 'k.tar.gz'), dest, undefined, 'symlink');
+  assert.equal(readFileSync(join(dest, ...deep.split('/'), 'file'), 'utf8'), 'deep');
+  assert.equal(readlinkSync(join(dest, 'short')), `${deep}/file`);
+  // A long target is held to the same rules as a short one.
+  const out = buildTarGzWithModes([{ path: '././@LongLink', type: 'K', data: `../${deep}\0` }, { path: 'l', type: '2', link: 'ok' }]);
+  await rejects(() => extractTarGz(archiveFile(out, 'o.tar.gz'), join(scratch(), 'o'), undefined, 'symlink'), 'link');
 });
 
 test('tar.gz: limits cut a bomb and a flood; garbage is "corrupt"', async () => {
@@ -86,6 +334,34 @@ test('zip: Windows separators are read as folders, traversal and links are refus
   await rejects(() => extractZip(archiveFile(buildZip([{ path: 'e', data: 'x', encrypted: true }]), 'e.zip'), join(base, 'e')), 'unsupported');
   await rejects(() => extractZip(archiveFile(Buffer.from('not a zip at all, long enough to scan for a directory'), 'f.zip'), join(base, 'f')), 'corrupt');
   assert.equal(existsSync(join(base, 'evil')), false);
+});
+
+test('zip: two spellings of one name are refused on every system, before anything is written', async () => {
+  const nfc = 'caf\u00e9';
+  const nfd = 'cafe\u0301';
+  const cases: Array<[string, Parameters<typeof buildZip>[0]]> = [
+    ['case, files', [{ path: 'Readme', data: 'x' }, { path: 'README', data: 'y' }]],
+    ['unicode form, files', [{ path: `${nfc}.txt`, data: 'x' }, { path: `${nfd}.txt`, data: 'y' }]],
+    ['case, folder then file', [{ path: 'a/', data: '' }, { path: 'A/f', data: 'x' }]],
+    // Folders no entry names: `a/B` and `A/b` would merge on a folding disk.
+    ['case, implicit folders', [{ path: 'a/B/x', data: 'x' }, { path: 'A/b/y', data: 'y' }]],
+    ['unicode form, implicit folders', [{ path: `${nfc}/x`, data: 'x' }, { path: `${nfd}/y`, data: 'y' }]],
+    ['backslash spelling', [{ path: 'dist\\agent', data: 'x' }, { path: 'DIST/other', data: 'y' }]],
+  ];
+  for (const [label, files] of cases) {
+    const dest = join(scratch(), 'o');
+    await rejects(() => extractZip(archiveFile(buildZip(files), 'x.zip'), dest), 'unsafe-path');
+    assert.deepEqual(readdirSync(dest), [], `${label}: nothing written`);
+  }
+  // Same spelling twice is no collision, and one name spelled two ways in two folders is two paths.
+  const dest = join(scratch(), 'o');
+  await extractZip(archiveFile(buildZip([
+    { path: 'lib/', data: '' }, { path: 'lib/', data: '' }, { path: 'lib/f', data: 'x' },
+    { path: 'a/Readme', data: 'r' }, { path: 'b/README', data: 'R' },
+  ]), 'same.zip'), dest);
+  assert.equal(readFileSync(join(dest, 'lib', 'f'), 'utf8'), 'x');
+  assert.equal(readFileSync(join(dest, 'a', 'Readme'), 'utf8'), 'r');
+  assert.equal(readFileSync(join(dest, 'b', 'README'), 'utf8'), 'R');
 });
 
 test('zip: an entry cannot inflate past its declared size, nor the archive past the limit', async () => {

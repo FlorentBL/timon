@@ -15,7 +15,7 @@
 
 import { useCallback, useEffect, useId, useMemo, useRef, useState, type KeyboardEvent, type ReactElement } from 'react';
 import { toast } from 'sonner';
-import { ShieldCheck, Trash2, X } from 'lucide-react';
+import { ShieldCheck, Shuffle, Trash2, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 import { t } from '@/lib/i18n';
@@ -25,6 +25,7 @@ import { BackendLimitsBadge } from '@/components/backend-limits-badge';
 import { BrandMark } from '@/components/brand-mark';
 import { ModelPickerPopover, pickLabel, type ModelPick, type ModelPickerTriggerProps } from '@/components/model-picker';
 import { taskModelPick, taskOverrides } from '@/lib/task-model-pick';
+import { runByTitle } from '@/lib/task-runner';
 import { MarkMergedSection } from '@/components/mark-merged-section';
 import { canMarkMerged } from '@/lib/mark-merged';
 import { DateTimePicker } from '@/components/date-time-picker';
@@ -219,6 +220,17 @@ function TaskForm({ host }: { host: TaskFormValue }): ReactElement {
         <div className="flex flex-col gap-1">
           <AgentPicker agents={agents} value={form.agent_name} onChange={(name) => update('agent_name', name)} invalid={problems.includes('agent')} />
           {problems.includes('agent') && <p className="text-xs text-destructive">{t('taskForm.agentRequired')}</p>}
+          {/* The model below is this agent's: say who it is when the roles chose another one (#1109). */}
+          {task?.run_by && task.agent_name === form.agent_name && (
+            <p title={runByTitle(task.agent_name, task.run_by)} data-task-runner={task.run_by.agent} className="flex min-w-0 items-center gap-1 text-[12px] text-muted-foreground">
+              <Shuffle className="size-3 flex-none" aria-hidden />
+              <span className="truncate">
+                {task.run_by.planned
+                  ? t('kanbanPage.runBy.detailPlanned', { agent: task.run_by.agent })
+                  : t('kanbanPage.runBy.detail', { agent: task.run_by.agent })}
+              </span>
+            </p>
+          )}
         </div>
         <dl className="flex flex-col gap-2.5 text-[13px]">
           <SummaryRow label={t('taskForm.summary.type')} htmlFor={ids.type}>

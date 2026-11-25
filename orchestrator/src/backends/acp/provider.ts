@@ -23,6 +23,7 @@
 
 import type { NativeProviderDefinition } from '../engine/definition.js';
 import { serializeAcpMcpServers } from '../mcp-serialize.js';
+import { markStdioOnlyMcpCodec } from './stdio-only-mcp.js';
 import type { ProviderDeclarations, ProviderBinaryDeclaration } from '../provider-declarations.js';
 import type { ProviderMcpOptions, ProviderMcpPlan } from '../provider-services.js';
 import type { BuildSpawnOpts } from '../types.js';
@@ -186,7 +187,8 @@ export function defineProvider(services: AcpProviderServices, spec: AcpAgentSpec
     id: spec.id,
     // The agent is one process for the whole conversation; its exit ends the chat.
     transport: { kind: 'stdio-persistent' },
-    codec: {
+    // Marked: the registry then knows this provider declares no HTTP MCP server (`stdio-only-mcp.ts`).
+    codec: markStdioOnlyMcpCodec({
       kind: 'driver',
       extractSessionId: extractAcpSessionId,
       openSession: ({ io, spawn, host, profileId }: Parameters<ProcessDriverCodec['openSession']>[0]) => {
@@ -216,7 +218,7 @@ export function defineProvider(services: AcpProviderServices, spec: AcpAgentSpec
         sessions.set(spawn.missionId, driver);
         return driver;
       },
-    },
+    }),
     launch: async (spawn, profile) => ({
       cmd: profile.cmd,
       args: [...spec.args],

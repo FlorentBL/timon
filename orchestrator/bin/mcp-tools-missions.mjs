@@ -41,7 +41,8 @@ export const tools = [
     title: 'Read a mission',
     description:
       'Reads a mission (CLI `timon status`). `view: "status"` (default) is the light state ' +
-      '(status, turn flags); `view: "full"` adds the whole transcript, which can be very large.',
+      '(status, turn flags, `pending_permission` when a card waits on a person: tool, since, time left); ' +
+      '`view: "full"` adds the whole transcript, which can be very large.',
     inputSchema: {
       type: 'object',
       properties: { mission_id, view: { type: 'string', enum: ['status', 'full'] } },

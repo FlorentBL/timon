@@ -168,6 +168,8 @@ const KEY_PLACEMENT: Readonly<Record<string, Placement>> = {
   TIMON_BRAIN_VAULT: { category: 'memory', tab: 'obsidian' },
   TIMON_VAULT_MCP_SERVER: { category: 'memory', tab: 'obsidian' },
   TIMON_PREAPPROVED_MCP_TOOLS: { category: 'missions', tab: 'permissions' },
+  // What an agent's MCP servers receive, next to what they may call without asking.
+  TIMON_MCP_STDIO_BRIDGE: { category: 'missions', tab: 'permissions' },
   // `Misc` and `Infra` strays that have a home: Diagnostics keeps logs and retention.
   TIMON_CHROME_PATH: { category: 'network', tab: 'browser' },
   DISPATCHER_INTERVAL_MS: { category: 'missions', tab: 'execution' },

@@ -4,6 +4,8 @@
  * replaces the form reads the same types from `@timon/ui` (`useTaskForm`).
  */
 
+import type { TaskRunBy } from '@/lib/task-runner';
+
 export type TaskType = 'code' | 'review' | 'merge' | 'research' | 'doc' | 'chore';
 
 export type TaskStatus = 'PENDING' | 'IN_PROGRESS' | 'DONE' | 'BLOCKED';
@@ -36,6 +38,8 @@ export type TaskFormSource = {
   /** Resolved by the daemon: what the task runs on when it carries no override. */
   effective_backend?: string | null;
   effective_model?: string | null;
+  /** The agent that runs the task, or will, when it is not `agent_name` (#1109). */
+  run_by?: TaskRunBy | null;
   attachment_count?: number;
   /** The report the agent closed the task with. */
   done_comment?: string | null;

@@ -84,9 +84,17 @@ export function registerRoutes(app: Router): void {
    * Full diagnostic of THIS machine — binaries, capabilities, blockers. The
    * first-run wizard reads it to prefill the binary paths; `timon doctor`
    * renders the very same report.
+   *
+   * Any signed-in account may read it, but `attemptedPaths` (the pinned file
+   * and the folders searched, the home folder among them) is for the
+   * operator: the superadmin, or the daemon token `timon doctor` uses.
    */
-  app.get('/api/doctor', (_req, res) => {
-    res.json({ ...diagnose(), desktop: process.env.TIMON_DESKTOP_EMBEDDED === '1' || process.env.TIMON_DESKTOP_SERVICE === '1' });
+  app.get('/api/doctor', (req, res) => {
+    const report = diagnose();
+    const binaries = req.auth?.isSuperadmin === true
+      ? report.binaries
+      : report.binaries.map(({ attemptedPaths: _operatorOnly, ...rest }) => rest);
+    res.json({ ...report, binaries, desktop: process.env.TIMON_DESKTOP_EMBEDDED === '1' || process.env.TIMON_DESKTOP_SERVICE === '1' });
   });
 
   /**

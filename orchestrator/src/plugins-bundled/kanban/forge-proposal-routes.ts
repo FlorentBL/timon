@@ -5,16 +5,22 @@
  *   GET  /api/projects/:slug/forge-proposals/:id          one proposal
  *   POST /api/projects/:slug/forge-proposals              a person proposes a comment
  *   PATCH /api/projects/:slug/forge-proposals/:id         a person edits its text
- *   POST /api/projects/:slug/forge-proposals/:id/publish  a person publishes it on GitHub
+ *   POST /api/projects/:slug/forge-proposals/:id/publish  a person publishes it on GitHub (`forge:publish`)
  *   POST /api/projects/:slug/forge-proposals/:id/discard  a person declines it
  *
  * Authentication:
  * - reading needs `projects:manage`, whoever asks (the daemon token passes, as
  *   for every project setting);
- * - every write needs a signed-in person (session or paired device) holding
- *   `projects:manage`. The daemon token, a mission's token and a plugin's are
- *   refused: an agent never proposes nor publishes on GitHub. The daemon
- *   proposes through `proposeForgeWrite`, in process, not through a route.
+ * - proposing, editing and discarding need a signed-in person (session or
+ *   paired device) holding `projects:manage`; publishing needs a session of
+ *   its own holding `forge:publish`, the one right that writes on GitHub, so a
+ *   role may manage projects without speaking for the project's account, and
+ *   a paired device, which holds its account's rights everywhere else, never
+ *   speaks for the project on GitHub (`sessionHoldsPermission`, the rule
+ *   `/api/auth/me` greys the button with). The
+ *   daemon token, a mission's token and a plugin's are refused: an agent never
+ *   proposes nor publishes on GitHub. The daemon proposes through
+ *   `proposeForgeWrite`, in process, not through a route.
  */
 import type { Request, Response, Router } from 'express';
 import { z } from 'zod';
@@ -25,7 +31,7 @@ import {
   type ForgeProposalDeps, type ForgeProposalRefusal,
 } from '../../forge-proposals.js';
 import { auditRequest } from '../../users/audit-actor.js';
-import { isPersonAuth, rejectIfDenied, requireAuth } from '../../users/identity.js';
+import { isPersonAuth, isSessionAuth, rejectIfDenied, requireAuth } from '../../users/identity.js';
 
 const Params = z.object({
   slug: z.string().min(1).max(100).regex(/^[a-z0-9][a-z0-9._-]*$/i, 'a project slug'),
@@ -149,6 +155,23 @@ function person(req: Request, res: Response): (Parsed & { userId: string }) | nu
   return params ? { ...params, userId: who.userId } : null;
 }
 
+/**
+ * Publishing: the person's own session holding `forge:publish`, never a device
+ * or a token. The two guards are `sessionHoldsPermission` split so each refusal
+ * keeps its own code; `/api/auth/me` reads that function itself.
+ */
+function publisher(req: Request, res: Response): (Parsed & { userId: string }) | null {
+  const auth = requireAuth(req, res);
+  if (!auth) return null;
+  if (!isSessionAuth(auth) || !auth.user) {
+    res.status(403).json(apiError('person_required', 'a publication on GitHub is validated from a signed-in session of this app, not from a paired device'));
+    return null;
+  }
+  if (rejectIfDenied(req, res, 'forge:publish')) return null;
+  const params = parseParams(req, res);
+  return params ? { ...params, userId: auth.user.id } : null;
+}
+
 function failed(res: Response, err: unknown): void {
   // Not echoed: an unexpected failure may quote a path of this machine.
   console.error('[kanban] forge proposal request failed:', (err as Error).name);
@@ -206,7 +229,7 @@ export function registerForgeProposalRoutes(app: Router, deps: ForgeProposalDeps
   });
 
   app.post('/api/projects/:slug/forge-proposals/:id/publish', async (req, res) => {
-    const p = person(req, res);
+    const p = publisher(req, res);
     if (!p?.id) return;
     const body = parseBody(req, res, PublishBody);
     if (!body) return;

@@ -137,6 +137,42 @@ test('the dialog shows the exact text, where it goes, as which account; nothing 
   }
 });
 
+test('closing an issue says why it closes, writes no comment, and leaves the issue open on "Leave it open"', async () => {
+  const closing: ForgeProposal = {
+    ...PROPOSAL, kind: 'close_issue', trigger: 'todo_resolved', key: 'todo:12:issue:209:close', editable: false,
+    body: 'Close issue #209 on GitHub as not planned. Nothing else changes on it.', details: { reason: 'not_planned', todo_id: 12 },
+  };
+  const m = await mount(({ method, url }) => {
+    if (url === `/api/ui/projects/acme/forge-proposals/${ID}`) return Response.json({ proposal: closing });
+    if (method === 'POST' && url.endsWith('/discard')) return Response.json({ proposal: { ...closing, state: 'discarded' } });
+    return undefined;
+  });
+  try {
+    const { PublishDialog } = await import('./publish-dialog');
+    const events: string[] = [];
+    await m.render(m.React.createElement(PublishDialog, {
+      project: 'acme', proposalId: ID, onClose: () => events.push('close'), onChange: () => events.push('change'),
+    }));
+    await m.until(() => !!q('[data-publish-close]'), 'what the closing does');
+    const dialog = q('[data-publish-dialog]')!.textContent ?? '';
+    assert.match(dialog, /Close issue #209/);
+    assert.match(dialog, /Closes asnot planned/);
+    assert.match(dialog, /none, the answer is proposed apart/);
+    assert.match(dialog, /A resolved TO DO/);
+    assert.doesNotMatch(dialog, /edit it before it leaves/, 'nothing to edit, so no word of editing');
+    assert.equal(q('[data-publish-body]'), null, 'no comment to write');
+    assert.equal(q('[data-publish-edit]'), null, 'nothing to edit');
+    assert.equal(q('[data-publish-send]')?.textContent, 'Close the issue');
+    assert.equal(q('[data-publish-discard]')?.textContent, 'Leave it open');
+    assert.deepEqual(writes(m.calls), [], 'opening writes nothing');
+    await m.click(q('[data-publish-discard]'));
+    await m.until(() => writes(m.calls).length === 1, 'the closing declined');
+    assert.equal(writes(m.calls)[0]!.url, `/api/ui/projects/acme/forge-proposals/${ID}/discard`);
+  } finally {
+    await m.unmount();
+  }
+});
+
 test('a plugin\'s proposal names the plugin and asks for a full read', async () => {
   const fromPlugin = { ...PROPOSAL, trigger: 'plugin' as const, plugin: 'acme-issues', key: 'plugin:acme-issues:thanks:209' };
   const m = await mount(({ url }) => (url === `/api/ui/projects/acme/forge-proposals/${ID}` ? Response.json({ proposal: fromPlugin }) : undefined));
@@ -200,6 +236,30 @@ test('without an account on the project, Publish stays off; "Do not publish" clo
     await m.until(() => events.includes('close'), 'closed');
     assert.deepEqual(writes(m.calls).map((c) => c.url), [`/api/ui/projects/acme/forge-proposals/${ID}/discard`]);
   } finally {
+    await m.unmount();
+  }
+});
+
+test('an account without forge:publish reads the proposal but Publish stays off and says which right is missing', async () => {
+  let deny = true;
+  const m = await mount(({ url }) => (url === '/api/ui/auth/me'
+    ? Response.json({ user: null, needsSetup: false, can: { 'projects:manage': true, 'forge:publish': !deny } })
+    : undefined));
+  const { refreshMe } = await import('@/hooks/use-me');
+  try {
+    await m.React.act(async () => { await refreshMe(); });
+    await open(m);
+    await m.until(() => (q('[data-publish-body]') as HTMLTextAreaElement | null)?.value === PROPOSAL.body || (q('[data-publish-text]')?.textContent ?? '').includes(PROPOSAL.body), 'the text read');
+    const send = q('[data-publish-send]') as HTMLButtonElement;
+    assert.equal(send.disabled, true);
+    assert.match(send.title, /forge:publish/);
+    // Granted, the same window publishes.
+    deny = false;
+    await m.React.act(async () => { await refreshMe(); });
+    await m.until(() => !(q('[data-publish-send]') as HTMLButtonElement).disabled, 'publish allowed');
+  } finally {
+    deny = false;
+    await m.React.act(async () => { await refreshMe(); });
     await m.unmount();
   }
 });
