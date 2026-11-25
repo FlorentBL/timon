@@ -24,14 +24,15 @@ const { createDaemonAuthMiddleware } = await import('./plugins-bundled/http/auth
 const { dbApi } = await import('./db.js');
 const { hashPassword } = await import('./users/password.js');
 const { OAUTH_CALLBACK_PATH, oauthRedirectUri } = await import('./oauth.js');
+const { registerRoutes } = await import('./plugins-bundled/agents/routes.js');
 
 // One account exists: anonymous is no longer the first-run setup.
 createTestAccount(dbApi, { email: 'robin@example.com', name: 'Robin', passwordHash: await hashPassword('super-secret'), isSuperadmin: true });
 
 const app = express();
 app.use(createDaemonAuthMiddleware({ token: 'witness-daemon-token', required: true }));
-app.get(OAUTH_CALLBACK_PATH, (_req, res) => { res.status(400).send('unknown or expired state'); });
-app.get('/api/mcp', (_req, res) => { res.json({ servers: [] }); });
+// The real MCP routes, behind the real middleware: what an anonymous caller reaches is what ships.
+registerRoutes(app);
 const server = app.listen(0, '127.0.0.1');
 await once(server, 'listening');
 const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
@@ -40,7 +41,10 @@ test.after(() => { server.close(); });
 test('an anonymous browser reaches the callback, and nothing else of the MCP API', async () => {
   const callback = await fetch(`${base}${OAUTH_CALLBACK_PATH}?state=forged&code=x`);
   assert.equal(callback.status, 400, 'the handler answered: the state, not a session, decides');
+  assert.match(await callback.text(), /unknown or expired/, 'the real callback page');
   assert.equal((await fetch(`${base}/api/mcp`)).status, 401);
+  assert.equal((await fetch(`${base}/api/mcp/any/oauth/start`, { method: 'POST' })).status, 401);
+  assert.equal((await fetch(`${base}/api/mcp/any`, { method: 'DELETE' })).status, 401);
   assert.equal((await fetch(`${base}${OAUTH_CALLBACK_PATH}?state=x`, { method: 'POST' })).status, 401);
   assert.equal((await fetch(`${base}${OAUTH_CALLBACK_PATH}/extra`)).status, 401);
 });

@@ -82,16 +82,31 @@ const DropdownMenuContent = React.forwardRef<
 ))
 DropdownMenuContent.displayName = DropdownMenuPrimitive.Content.displayName
 
+/**
+ * The colours of a menu entry that removes something, for the menus that do
+ * not go through `DropdownMenuItem` (a right-click menu made of buttons).
+ */
+export const DESTRUCTIVE_MENU_ITEM =
+  "text-destructive hover:bg-destructive/10 hover:text-destructive focus:bg-destructive/10 focus:text-destructive focus-visible:bg-destructive/10"
+
 const DropdownMenuItem = React.forwardRef<
   React.ElementRef<typeof DropdownMenuPrimitive.Item>,
   React.ComponentPropsWithoutRef<typeof DropdownMenuPrimitive.Item> & {
     inset?: boolean
+    /**
+     * `destructive` for the entry that removes something. Red text on the
+     * accent highlight is unreadable in both themes, so the highlight turns
+     * into a faint red wash instead and the text stays red.
+     */
+    variant?: "default" | "destructive"
   }
->(({ className, inset, ...props }, ref) => (
+>(({ className, inset, variant = "default", ...props }, ref) => (
   <DropdownMenuPrimitive.Item
     ref={ref}
+    data-variant={variant}
     className={cn(
       "relative flex cursor-default select-none items-center gap-2 rounded-sm px-2 py-1.5 text-sm outline-none transition-colors focus:bg-accent focus:text-accent-foreground data-[disabled]:pointer-events-none data-[disabled]:opacity-50 [&>svg]:size-4 [&>svg]:shrink-0",
+      variant === "destructive" && DESTRUCTIVE_MENU_ITEM,
       inset && "pl-8",
       className
     )}

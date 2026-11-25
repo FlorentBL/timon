@@ -1812,8 +1812,11 @@
     "interruptionUnknown": "任务会话已终止：原因不明（无可用信号）",
     "interruptionDefault": "任务会话已中断",
     "runBy": {
-      "label": "由 {agent} 执行",
+      "assigned": "分配给 {named}",
       "title": "分配给 {named}，由 {agent} 执行：{reason}",
+      "titlePlanned": "分配给 {named}，将由 {agent} 执行：{reason}",
+      "detail": "由 {agent} 执行",
+      "detailPlanned": "将由 {agent} 执行",
       "reasonPinned": "项目已将此角色固定分配给 {agent}（roles.json）",
       "reasonMissing": "{named} 不存在",
       "reasonOtherProject": "{named} 不属于此任务所在的项目",
@@ -1870,7 +1873,12 @@
       "openMission": "打开任务会话",
       "stop": "停止任务会话",
       "stopConfirm": "停止此任务的会话吗？",
-      "stopFailed": "无法停止任务会话（HTTP {status}）。"
+      "stopFailed": "无法停止任务会话（HTTP {status}）。",
+      "underMinute": "< 1 分钟",
+      "pendingPermission": "已等待权限 ({tool}) {age}",
+      "pendingQuestion": "已等待回答 {age}",
+      "pendingDeadline": "{left}后自动拒绝",
+      "pendingOthers": "{count, plural, other {另有 # 张卡片在等待}}"
     }
   },
   "agentsPage": {

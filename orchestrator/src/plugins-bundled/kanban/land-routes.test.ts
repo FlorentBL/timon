@@ -390,3 +390,50 @@ test('a job that merges at its end is not kept', async () => {
   assert.equal(view.kept, false);
   assert.equal(view.finish, 'merge');
 });
+
+test('a kept job whose pull request was closed without a merge: the gesture opens a new one', async () => {
+  const j = job({ pr: true, detached: true });
+  dbApi.setSeriesPlanLanding(j.seriesId, {
+    project: j.project, repo: j.repo, branch: j.branch, branch_kind: 'new', mode: 'pr', base_ref: 'origin/main', finish: 'keep',
+  });
+  const first = await land(j.row.id, 'owner', { title: 'Add b to the app' });
+  assert.equal(first.status, 200, JSON.stringify(first.json));
+  // The forge closed it; the poller recorded it and told the pilot.
+  assert.equal(dbApi.markIntegrationClosed(j.row.id), true);
+  assert.equal(dbApi.claimIntegrationNotice(j.row.id, 'closed'), true);
+
+  const headers = { 'x-test-who': 'owner' };
+  type View = { kept: boolean; state: string };
+  const view = async (): Promise<View> => (await (await fetch(`${base}/api/kanban/landings/${j.row.id}`, { headers })).json() as { landing: View }).landing;
+  const closed = await view();
+  assert.deepEqual([closed.state, closed.kept], ['closed', true]);
+
+  const pushes = forgeCalls.push;
+  const untitled = await land(j.row.id, 'owner');
+  assert.equal(untitled.status, 400);
+  assert.equal(forgeCalls.push, pushes);
+
+  const again = await land(j.row.id, 'owner', { title: 'Add b to the app, again' });
+  assert.equal(again.status, 200, JSON.stringify(again.json));
+  assert.equal(again.json.outcome, 'pull_request');
+  assert.equal(again.json.already, false);
+  assert.equal(forgeCalls.push, pushes + 1);
+  const row = dbApi.getIntegrationById(j.row.id)!;
+  assert.equal(row.state, 'open');
+  assert.notEqual(row.notified_state, 'closed', 'a second closing is told again');
+  assert.equal(row.checks, null);
+  assert.equal((await view()).kept, false);
+});
+
+test('a closed pull request is reopened only by the landing gesture, never by pr open', async () => {
+  const j = job({ pr: true, detached: true });
+  assert.equal((await land(j.row.id, 'owner', { title: 'Add b to the app' })).status, 200);
+  assert.equal(dbApi.markIntegrationClosed(j.row.id), true);
+  const { openPullRequest } = await import('../../pr-open.js');
+  const out = await openPullRequest({ target: 'integration', id: j.row.id, title: 'Add b', body: '' }, {
+    forge: () => forge, transport: () => transport, publicTree: async () => ({ ran: true, ok: true, summary: '' }),
+  });
+  assert.equal(out.ok, false);
+  assert.equal(!out.ok && out.code, 'pr_refused');
+  assert.equal(dbApi.getIntegrationById(j.row.id)?.state, 'closed');
+});

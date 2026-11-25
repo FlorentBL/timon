@@ -9,7 +9,9 @@
  *
  * A branch update has no text to read: the left side says which branch
  * GitHub updates and from which head. A conflict push shows the commit it
- * pushes to the contributor's branch above the comment that follows it.
+ * pushes to the contributor's branch above the comment that follows it. An
+ * issue's closing says why it closes; the answer to its author is a proposal
+ * of its own.
  */
 
 import { useState, type ReactElement, type ReactNode } from 'react';
@@ -21,7 +23,7 @@ import { useAccess } from '@/hooks/use-me';
 import { t } from '@/lib/i18n';
 import { cn } from '@/lib/utils';
 import {
-  branchUpdateDetails, conflictPushDetails, isPending, PROPOSAL_BODY_LIMIT, publishRefusal, type ForgeProposal,
+  branchUpdateDetails, conflictPushDetails, isPending, issueCloseDetails, PROPOSAL_BODY_LIMIT, publishRefusal, type ForgeProposal,
 } from './forge-proposals-api';
 import { safeHref } from './project-todo-links';
 import { usePublishDialog } from './publish-dialog-context';
@@ -60,6 +62,16 @@ function WriteDetails({ proposal }: { proposal: ForgeProposal }) {
       </dl>
     );
   }
+  const close = issueCloseDetails(proposal);
+  if (close) {
+    return (
+      <dl data-publish-close={close.reason} className="flex flex-col gap-2 rounded-md bg-background/60 px-3 py-2.5">
+        <Row label={t('forgePublish.closeIssue.as')}>{t(`forgePublish.closeIssue.reason.${close.reason}`)}</Row>
+        <Row label={t('forgePublish.closeIssue.comment')}>{t('forgePublish.closeIssue.commentValue')}</Row>
+        <Row label={t('forgePublish.update.runs')}>{t('forgePublish.update.runsValue')}</Row>
+      </dl>
+    );
+  }
   const push = conflictPushDetails(proposal);
   if (!push) return null;
   const branch = `${push.head_repository}:${push.head_ref}`;
@@ -91,7 +103,8 @@ export function ProductPublishDialog(): ReactElement | null {
   const open = fresh || isPending(proposal);
   const writing = open && editable && (fresh || editing);
   const kind = proposal?.kind ?? 'comment';
-  const hasComment = kind !== 'update_branch';
+  // A branch update and an issue's closing write no comment.
+  const hasComment = kind !== 'update_branch' && kind !== 'close_issue';
   const state: keyof typeof STATE_TONE = open || proposal.state === 'draft' || proposal.state === 'failed' ? 'pending' : proposal.state;
   const where = t(target.type === 'pull' ? 'forgePublish.onPull' : 'forgePublish.onIssue', { number: target.number });
   const href = safeHref(target.url);
@@ -141,7 +154,8 @@ export function ProductPublishDialog(): ReactElement | null {
                 {body}
               </div>
             )}
-            {proposal && proposal.trigger !== 'person' && open && (
+            {/* "Edit it before it leaves" only where there is a text to edit. */}
+            {proposal && proposal.trigger !== 'person' && open && editable && (
               <p className="text-[11px] text-muted-foreground">
                 {t(proposal.trigger === 'plugin' ? 'forgePublish.preparedByPlugin' : 'forgePublish.preparedHint')}
               </p>

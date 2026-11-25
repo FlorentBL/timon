@@ -437,7 +437,7 @@
   "binariesSettings": {
     "brokenPin": "固定したパスは実行できません: {path}",
     "pathLabel": "{name} バイナリのパス",
-    "placeholder": "フルパス (例: /usr/local/bin/claude または C:\\Users\\you\\AppData\\Roaming\\npm\\claude.cmd)",
+    "placeholder": "フルパス (例: {example})",
     "browse": "参照…",
     "save": "パスを保存",
     "clear": "固定を解除",
@@ -450,6 +450,7 @@
       "path_missing": "このパスには何もありません。",
       "path_not_file": "これはフォルダーです。プログラムのファイル自体を選んでください。",
       "path_not_executable": "このファイルは実行可能ではないため、実行できません。",
+      "wrong_program": "このファイルは {name} CLI ではありません。",
       "no_config": "先にセットアップを完了してください。",
       "config_unreadable": "timon.config.json を読み取れません。修正または復元してから、再確認してください。",
       "invalid_body": "このパスは保存できません。",

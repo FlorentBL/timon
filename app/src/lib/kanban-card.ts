@@ -40,6 +40,43 @@ export function parseDeps(raw: string | null | undefined): string[] {
   }
 }
 
+/** What a task's mission waits on (TODO #1094): the daemon sends the tool and
+ *  the clock only, never the command, which stays on the card in the chat. */
+export type PendingPermission = {
+  kind: 'permission' | 'question';
+  tool_name: string;
+  since: number;
+  expires_at: number | null;
+  remaining_ms: number | null;
+  count: number;
+};
+
+/** A duration on a card: "< 1 min", "26 min", "1 h 05". */
+export function formatWait(ms: number): string {
+  const minutes = Math.max(0, Math.floor(ms / 60_000));
+  if (minutes < 1) return t('kanbanPage.card.underMinute');
+  if (minutes < 60) return t('kanbanPage.card.runningMinutes', { minutes });
+  const hours = Math.floor(minutes / 60);
+  return t('kanbanPage.card.runningHours', { hours, minutes: String(minutes % 60).padStart(2, '0') });
+}
+
+/**
+ * The card's "waiting on you" line: what it waits for and since when, then
+ * the time before the automatic refusal (absent on a mission nobody times out),
+ * and a tooltip that also counts the other cards.
+ */
+export function pendingPermissionLine(p: PendingPermission, now: number): { label: string; deadline: string | null; title: string } {
+  // A duration never breaks across lines ("3 / min") in a narrow column.
+  const keep = (text: string) => text.replace(/ /g, '\u00a0');
+  const age = keep(formatWait(now - p.since));
+  const label = p.kind === 'question'
+    ? t('kanbanPage.card.pendingQuestion', { age })
+    : t('kanbanPage.card.pendingPermission', { tool: p.tool_name, age });
+  const deadline = p.expires_at === null ? null : t('kanbanPage.card.pendingDeadline', { left: keep(formatWait(p.expires_at - now)) });
+  const others = p.count > 1 ? t('kanbanPage.card.pendingOthers', { count: p.count - 1 }) : null;
+  return { label, deadline, title: [label, deadline, others].filter(Boolean).join(' · ') };
+}
+
 /** How long a running task has been at it: "26 min", "1 h 05". */
 export function formatRunningFor(startedAt: number, now: number): string {
   const minutes = Math.max(0, Math.floor((now - startedAt) / 60_000));

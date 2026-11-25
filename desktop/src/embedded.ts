@@ -30,6 +30,8 @@ export const RESTART_WINDOW_MS = 60_000;
 export const STOP_WAIT_MS = 10_000;
 /** Overrides that wait, in milliseconds; `0` skips the request (the orchestrator's `cooperative-stop.ts` reads it too). */
 export const STOP_WAIT_ENV = 'TIMON_COOPERATIVE_STOP_MS';
+/** The longest wait that variable may ask for. Copies of the orchestrator's `cooperative-stop.ts`, held by `embedded.test.ts`. */
+export const STOP_WAIT_MAX_MS = 120_000;
 
 /** Injected in tests; production passes `child_process.spawn`. */
 export type Spawner = (
@@ -290,7 +292,7 @@ async function exitOnRequest(
 export function stopWaitMs(env: NodeJS.ProcessEnv = process.env): number {
   const raw = env[STOP_WAIT_ENV]?.trim();
   if (!raw || !/^\d+$/.test(raw)) return STOP_WAIT_MS;
-  return Math.min(Number(raw), 120_000);
+  return Math.min(Number(raw), STOP_WAIT_MAX_MS);
 }
 
 /**

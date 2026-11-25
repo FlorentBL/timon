@@ -2,8 +2,8 @@
  * Schema of the configuration file `~/.timon/timon.config.json`.
  *
  * Every key is optional: a missing or empty file must reproduce
- * EXACTLY the current installation (`linux-desktop` profile, `expert` edition,
- * every module on `auto`). That is the condition for the migration to a
+ * EXACTLY the current installation (the profile of the running OS, `expert`
+ * edition, every module on `auto`). That is the condition for the migration to a
  * config-driven system to change no behaviour on the day it lands.
  *
  * The file is our own format (machine profile, host, daemon, licence, UI).
@@ -39,6 +39,20 @@ export function defaultInstallDir(): string {
 export const CONFIG_VERSION = 1;
 
 export const ProfileSchema = z.enum(['linux-desktop', 'linux-server', 'macos', 'windows']);
+
+/**
+ * The profile of an operating system, used when the file names none.
+ *
+ * A fixed `linux-desktop` default made every config-less home (a test home, a
+ * first launch before the wizard writes the file) report a Linux profile on
+ * macOS and Windows, in `doctor` and in the boot line. `linux-server` is never
+ * guessed: nothing tells a headless Linux from a desktop one reliably.
+ */
+export function profileForPlatform(platform: NodeJS.Platform): z.infer<typeof ProfileSchema> {
+  if (platform === 'darwin') return 'macos';
+  if (platform === 'win32') return 'windows';
+  return 'linux-desktop';
+}
 export const EditionSchema = z.enum(['expert', 'lite']);
 
 const ListenSchema = z.object({
@@ -184,7 +198,10 @@ export const IsolationSchema = z.object({
 
 export const HostSchema = z.object({
   docker: z.enum(['auto', 'required', 'disabled']).default('auto').describe("Container capability policy."),
-  traefik: z.boolean().default(true).describe("Whether a Traefik deployment is available."),
+  // Only the Linux server deployment ships a Traefik; elsewhere a `true` default
+  // claimed one that does not exist, and a Docker Desktop host then reconciled
+  // browser containers against it.
+  traefik: z.boolean().default(() => process.platform === 'linux').describe("Whether a Traefik deployment is available; defaults to true on Linux only."),
   gui: z.enum(['auto', 'disabled']).default('auto').describe("Native graphical integration policy."),
   /** Absolute path (or `~/…`) of a binary; `null`/absent = looked up in the PATH. */
   binaries: z.record(z.string(), z.string().nullable()).default({}).describe("Binary names mapped to absolute paths; null uses PATH discovery."),
@@ -364,7 +381,7 @@ export const TelemetrySchema = z.object({
 
 export const TimonConfigSchema = z.object({
   version: z.literal(CONFIG_VERSION).default(CONFIG_VERSION).describe("Configuration schema version."),
-  profile: ProfileSchema.default('linux-desktop').describe("Host platform profile."),
+  profile: ProfileSchema.default(() => profileForPlatform(process.platform)).describe("Host platform profile; defaults to the profile of the running operating system."),
   edition: EditionSchema.default('expert').describe("Requested edition; the effective edition remains constrained by the licence."),
   // No default: an absent key means agents seeded by onboarding work in
   // `<TIMON_HOME>/workspace`, never in a folder guessed from one machine.

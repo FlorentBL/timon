@@ -197,10 +197,11 @@ function foldName(name: string): string {
  *
  * The rule is the strictest one: two spellings of the same path are refused,
  * between entries as well as between an entry and a link target, whatever the
- * folder. It costs nothing to the real bundles: none of the tar.gz of the ACP
- * catalog (all 77, every platform, link targets included, 25/11/2026) holds
- * such a pair. The same name spelled two ways in two different folders
- * (`a/Readme`, `b/README`) is two paths, and stays accepted.
+ * folder, in a tar.gz as in a zip. It costs nothing to the real bundles: none
+ * of the archives of the ACP catalog (the 77 tar.gz, link targets included, and
+ * the 39 zip, every platform, 25/11/2026) holds such a pair. The same name
+ * spelled two ways in two different folders (`a/Readme`, `b/README`) is two
+ * paths, and stays accepted.
  */
 class Spellings {
   private readonly seen = new Map<string, string>();
@@ -562,9 +563,16 @@ export async function extractZip(file: string, dest: string, limits: ExtractLimi
   const budget = new Budget(limits);
   const fd = openSync(file, 'r');
   try {
-    for (const entry of zipEntries(fd, limits)) {
+    // The central directory names every entry up front, so the whole archive is checked before anything is written:
+    // a refused zip leaves its folder untouched, and no folder is made under a spelling a later entry contradicts.
+    const spellings = new Spellings(root);
+    const planned = zipEntries(fd, limits).map((entry) => {
       budget.entry();
       const target = targetOf(root, entry.name);
+      if (target) spellings.claim(target);
+      return { entry, target };
+    });
+    for (const { entry, target } of planned) {
       if (entry.dir) {
         if (target) mkdirSync(target, { recursive: true });
         continue;

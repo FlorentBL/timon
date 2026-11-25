@@ -15,6 +15,8 @@
  * signs this computer in in the app: "Sign in" opens the page-and-code
  * dialog, and the "…" menu goes back to the terminal's session or signs in
  * again. The command stays one click away ("Show the sign-in command").
+ * When Timon runs as a macOS service outside the user's session, no sign-in
+ * can be read there: the row says so and offers the long-lived token alone.
  *
  * Painted only when there is something to say: a sign-in command, a known
  * sign-in state, or backends that take accounts. Accounts are listed in the
@@ -22,7 +24,7 @@
  * no order to set.
  */
 import { useState, type ReactElement } from 'react';
-import { LogIn } from 'lucide-react';
+import { KeyRound, LogIn } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { DropdownMenuItem } from '@/components/ui/dropdown-menu';
@@ -50,6 +52,11 @@ export function hasConnection(provider: Pick<ProviderOverview, 'connection'>): b
  * in here but an account is: missions run on it, nothing to fix.
  */
 export function computerState(connection: ProviderOverview['connection']): { tone: StatusTone; key: string } | null {
+  if (connection.host?.tokenOnly) {
+    return connection.host.token?.stored
+      ? { tone: 'ready', key: 'hostSignIn.status.tokenOnlySet' }
+      : { tone: 'action', key: 'hostSignIn.status.tokenOnly' };
+  }
   if (connection.host?.kept) return { tone: 'ready', key: 'hostSignIn.status.kept' };
   if (connection.signedIn === true) return { tone: 'ready', key: 'providerPage.connection.signedIn' };
   if (connection.signedIn === null) return null;
@@ -82,9 +89,11 @@ function ComputerRow({ connection, name, refresh }: { connection: ProviderOvervi
   const host = connection.host ?? null;
   // Signed in in the app, into Timon's folder, rather than with the terminal's command.
   const inApp = host?.browser === true;
+  // A service outside the session reads no sign-in, kept or the terminal's: the token alone runs it.
+  const tokenOnly = host?.tokenOnly === true;
+  const command = tokenOnly ? null : connection.signInCommand;
   /** Unfolded after "Connect": what happened to the command, and the command itself. */
   const [steps, setSteps] = useState<ProviderCliSignInOutcome | 'shown' | null>(null);
-  const command = connection.signInCommand;
   const state = computerState(connection);
   const usesAccounts = state?.key === 'providerPage.connection.usesAccounts';
 
@@ -117,14 +126,20 @@ function ComputerRow({ connection, name, refresh }: { connection: ProviderOvervi
     }
   };
 
-  const offerConnect = (command !== null || inApp) && connection.signedIn !== true && !host?.kept;
+  const offerConnect = !tokenOnly && (command !== null || inApp) && connection.signedIn !== true && !host?.kept;
+  const offerToken = tokenOnly && host?.token?.stored !== true;
   return (
     <ProviderSettingRow
       data-connection="computer"
       data-signed-in={connection.signedIn === null ? undefined : String(connection.signedIn)}
       title={t('providerPage.connection.computer')}
       status={state ? <TonePill tone={state.tone} className="flex">{t(state.key, { identity: host?.identity ?? '' })}</TonePill> : null}
-      action={offerConnect ? (
+      action={offerToken ? (
+        <Button type="button" size="sm" className="h-8 gap-1.5" onClick={() => setDialog('token')} data-host-sign-in-offer="token">
+          <KeyRound aria-hidden className="size-3.5" />
+          {t('hostSignIn.token.createAction')}
+        </Button>
+      ) : offerConnect ? (
         <Button type="button" size="sm" variant={usesAccounts ? 'outline' : 'default'} className="h-8 gap-1.5"
           onClick={inApp ? () => setDialog('login') : () => void connect()} data-host-sign-in-offer={inApp ? 'login' : undefined}>
           <LogIn aria-hidden className="size-3.5" />
@@ -134,7 +149,7 @@ function ComputerRow({ connection, name, refresh }: { connection: ProviderOvervi
       menu={<>
         <DropdownMenuItem disabled={checking} onSelect={() => void checkAgain()}>{t('providerPage.connection.checkAgain')}</DropdownMenuItem>
         {host?.kept ? <>
-          <DropdownMenuItem onSelect={() => setDialog('login')}>{t('providerPage.connection.reconnect')}</DropdownMenuItem>
+          {inApp ? <DropdownMenuItem onSelect={() => setDialog('login')}>{t('providerPage.connection.reconnect')}</DropdownMenuItem> : null}
           <DropdownMenuItem onSelect={() => void backToTerminal()}>{t('hostSignIn.useTerminal')}</DropdownMenuItem>
         </> : null}
         {inApp && !host?.kept && connection.signedIn === true

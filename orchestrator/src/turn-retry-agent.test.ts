@@ -8,6 +8,9 @@ import type { ChildProcessWithoutNullStreams } from 'node:child_process';
 import type { AddressInfo } from 'node:net';
 import express from 'express';
 import { waitUntil } from '../tests/helpers/wait-until.js';
+import type { RequestAuth } from './users/identity.js';
+
+const ROOT_AUTH: RequestAuth = { kind: 'api-token', user: null, isSuperadmin: true, permissions: ['*'] };
 
 process.env.TIMON_RESOURCE_GUARD_ENABLED = '0';
 // Replays in milliseconds: the policy is the same, the test does not wait 30 s.
@@ -254,6 +257,8 @@ type TurnView = { turn_active?: boolean; turn_complete?: boolean; liveness?: str
 /** What `mission_wait` / `timon wait` poll, and what the mission list shows. */
 async function turnViews(missionId: string): Promise<{ status: TurnView; listed: TurnView | undefined }> {
   const app = express();
+  // `GET /api/missions` refuses an anonymous caller.
+  app.use((req, _res, next) => { req.auth = ROOT_AUTH; next(); });
   registerRoutes(app);
   const server = app.listen(0, '127.0.0.1');
   await new Promise<void>((resolve) => server.once('listening', () => resolve()));

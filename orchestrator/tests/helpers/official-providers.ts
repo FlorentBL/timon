@@ -65,6 +65,7 @@ export async function mountOfficialProviders(): Promise<string[]> {
     mountedContexts.set(res.manifest.id, ctx);
     mounted.push(res.manifest.id);
   }
+  await assumeStandInIdentities();
   return mounted;
 }
 
@@ -81,7 +82,18 @@ export async function stubCliBinaries(...names: string[]): Promise<string> {
   for (const name of names) writeFileSync(join(dir, process.platform === 'win32' ? `${name}.cmd` : name), '', { mode: 0o755 });
   process.env.PATH = `${dir}${delimiter}${process.env.PATH ?? ''}`;
   process.on('exit', () => rmSync(dir, { recursive: true, force: true }));
+  await assumeStandInIdentities();
   return dir;
+}
+
+/**
+ * A provider that declares how its CLI describes itself (`binary.identity`) has it asked `--version` before
+ * a mission starts it. A launch test answers that question through its fake `host.spawn`, which records the
+ * launch and prints nothing: the CLIs on the PATH now are taken for what their providers declared.
+ */
+async function assumeStandInIdentities(): Promise<void> {
+  const { assumeDeclaredIdentities } = await import('../../src/backends/binary-identity.js');
+  assumeDeclaredIdentities();
 }
 
 /**

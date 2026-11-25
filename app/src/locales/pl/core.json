@@ -1782,8 +1782,11 @@
     "interruptionUnknown": "misja zabita: nieustalona przyczyna (brak użytecznego sygnału)",
     "interruptionDefault": "misja przerwana",
     "runBy": {
-      "label": "wykonuje {agent}",
+      "assigned": "przypisane do {named}",
       "title": "Przypisane do {named}, wykonuje {agent}: {reason}",
+      "titlePlanned": "Przypisane do {named}, wykona {agent}: {reason}",
+      "detail": "Wykonuje {agent}",
+      "detailPlanned": "Wykona {agent}",
       "reasonPinned": "projekt przypina tę rolę do {agent} (roles.json)",
       "reasonMissing": "{named} nie istnieje",
       "reasonOtherProject": "{named} nie należy do projektu zadania",
@@ -1840,7 +1843,12 @@
       "openMission": "Otwórz misję",
       "stop": "Zatrzymaj misję",
       "stopConfirm": "Zatrzymać misję tego zadania?",
-      "stopFailed": "Nie udało się zatrzymać misji (HTTP {status})."
+      "stopFailed": "Nie udało się zatrzymać misji (HTTP {status}).",
+      "underMinute": "< 1 min",
+      "pendingPermission": "Czeka na uprawnienie ({tool}) od {age}",
+      "pendingQuestion": "Czeka na odpowiedź od {age}",
+      "pendingDeadline": "automatyczna odmowa za {left}",
+      "pendingOthers": "{count, plural, one {jeszcze # karta czeka} few {jeszcze # karty czekają} many {jeszcze # kart czeka} other {jeszcze # karty czeka}}"
     }
   },
   "agentsPage": {

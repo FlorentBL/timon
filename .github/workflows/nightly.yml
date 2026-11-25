@@ -1,0 +1,175 @@
+# Builds the head of main on Linux, macOS and Windows every night, with the
+# very build steps of a release (build-packages.yml), and publishes nothing.
+# A packaging break (a runner image that moves, a tool that disappears, a
+# native module tied to the runner) shows up the morning after it lands, not
+# on the day of a release, so a release comes down to a version bump and an
+# approval. The state of the project's Mac is not checked: only a release
+# builds there.
+#
+#   prepare  reads the head of main, names the build x.y.(z+1)-nightly.YYYYMMDD
+#            (UTC date), checks the request with a dry run of the package
+#            build, in a minute.
+#   build    build-packages.yml with purpose `nightly`: channel beta, expiry
+#            in 14 days, the daemon signed with a pair made on each runner,
+#            the `nightly-build` environment (no secret, no approval), every
+#            system built even when one fails, installers kept 3 days.
+#   report   opens an issue when the build fails, or comments on the one
+#            already open; closes it once a night passes again.
+#
+# The version is written by build-package.mjs into the runner's checkout, a
+# throwaway one: never committed, never tagged. Nothing here holds a release
+# key, a release environment or a token that can write code: the report job
+# writes issues only, and runs neither a checkout nor npm.
+#
+# The macOS leg runs on a runner hosted by GitHub, a fresh machine every run,
+# never on the project's Mac that signs releases (build-packages.yml decides it
+# from the purpose): a nightly neither shares that machine with the release
+# key nor waits for, or evicts, a release.
+#
+# Every value reaches a script through an environment variable, never pasted
+# into it: `${{ }}` inside `run:` would turn a value into shell code.
+name: Nightly build
+
+on:
+  schedule:
+    # 02:00 UTC: the result is there in the morning.
+    - cron: '0 2 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# One nightly at a time: a run started by hand replaces the one in progress.
+concurrency:
+  group: nightly
+  cancel-in-progress: true
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  prepare:
+    name: pick the nightly version
+    if: github.repository == 'ai-timon/timon' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    outputs:
+      version: ${{ steps.pick.outputs.version }}
+      sha: ${{ steps.pick.outputs.sha }}
+      node: ${{ steps.pick.outputs.node }}
+      expires: ${{ steps.pick.outputs.expires }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: src
+          persist-credentials: false
+
+      # Above the version main carries, as an rc must be: the next patch,
+      # dated. SemVer sorts it before any rc of that version.
+      - name: Pick the version
+        id: pick
+        working-directory: src
+        run: |
+          sha=$(git rev-parse HEAD)
+          [[ "$sha" =~ ^[0-9a-f]{40}$ ]] || { echo "::error::unexpected commit id"; exit 1; }
+          current=$(jq -r .version orchestrator/package.json)
+          if [[ ! "$current" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
+            echo "::error::orchestrator/package.json carries $current, not a final version"
+            exit 1
+          fi
+          version="${BASH_REMATCH[1]}.${BASH_REMATCH[2]}.$((BASH_REMATCH[3] + 1))-nightly.$(date -u +%Y%m%d)"
+          expires=$(date -u -d '+14 days' +%Y-%m-%d)
+          # The Node the packaged daemon runs on: native modules compiled by
+          # npm ci must match its ABI.
+          node=$(jq -r .version desktop/scripts/node-runtime.json)
+          [[ "$node" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "::error::unexpected Node version in desktop/scripts/node-runtime.json"; exit 1; }
+          {
+            echo "version=$version"
+            echo "sha=$sha"
+            echo "node=$node"
+            echo "expires=$expires"
+          } >> "$GITHUB_OUTPUT"
+          echo "Nightly $version of $sha (main carries $current), expires $expires"
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: ${{ steps.pick.outputs.node }}
+          package-manager-cache: false
+
+      # The dry run needs a key pair to exist, not the release one.
+      - name: Throwaway signing keys
+        run: node src/scripts/release/throwaway-keys.mjs "$RUNNER_TEMP"
+
+      # Refuses what the builds would refuse an hour later: package versions
+      # that disagree, a version that is not above the checkout's.
+      - name: Dry run of the package build
+        working-directory: src
+        env:
+          VERSION: ${{ steps.pick.outputs.version }}
+          EXPIRES: ${{ steps.pick.outputs.expires }}
+        run: node scripts/release/build-package.mjs --version "$VERSION" --channel beta --expires "$EXPIRES" --output ../release-output --dry-run
+
+  build:
+    name: build
+    needs: prepare
+    permissions:
+      contents: read
+    uses: ./.github/workflows/build-packages.yml
+    with:
+      purpose: nightly
+      version: ${{ needs.prepare.outputs.version }}
+      sha: ${{ needs.prepare.outputs.sha }}
+      node: ${{ needs.prepare.outputs.node }}
+      expires: ${{ needs.prepare.outputs.expires }}
+      # Every system goes to the end: one night shows every break.
+      fail-fast: false
+      retention-days: 3
+
+  # Writes issues and nothing else: no checkout, no npm, none of the built
+  # code. The text names the run, the commit, the version and the failed jobs,
+  # never a secret (this workflow holds none).
+  report:
+    name: report the result
+    needs: [prepare, build]
+    if: ${{ !cancelled() && github.repository == 'ai-timon/timon' && github.ref == 'refs/heads/main' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      actions: read
+      issues: write
+    steps:
+      - name: Open, update or close the nightly failure issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          RUN_ID: ${{ github.run_id }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          PREPARE: ${{ needs.prepare.result }}
+          BUILD: ${{ needs.build.result }}
+          VERSION: ${{ needs.prepare.outputs.version }}
+          SHA: ${{ needs.prepare.outputs.sha || github.sha }}
+        run: |
+          title="Nightly build failed"
+          number=$(gh issue list -R "$REPO" --state open --limit 200 --json number,title --jq 'map(select(.title == "Nightly build failed")) | first | .number // empty')
+          if [ "$PREPARE" = failure ] || [ "$BUILD" = failure ]; then
+            failed=$(gh run view -R "$REPO" "$RUN_ID" --json jobs --jq '[.jobs[] | select(.conclusion == "failure") | .name] | join(", ")' || true)
+            body=$(printf 'The nightly build of `main` failed. Nothing was published.\n\n- Run: %s\n- Commit: %s\n- Version: %s\n- Failed jobs: %s\n' \
+              "$RUN_URL" "$SHA" "${VERSION:-not picked}" "${failed:-see the run}")
+            if [ -n "$number" ]; then
+              gh issue comment -R "$REPO" "$number" --body "$body"
+              echo "Nightly failure added to #$number"
+            else
+              gh issue create -R "$REPO" --title "$title" --body "$body"
+            fi
+          elif [ "$PREPARE" = success ] && [ "$BUILD" = success ]; then
+            if [ -n "$number" ]; then
+              gh issue close -R "$REPO" "$number" --comment "The nightly build passed again: $RUN_URL"
+            fi
+            echo "Nightly $VERSION built on every system"
+          else
+            # Cancelled (by a newer nightly) or skipped.
+            echo "prepare $PREPARE, build $BUILD: nothing to report"
+          fi

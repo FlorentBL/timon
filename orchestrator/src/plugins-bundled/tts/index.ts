@@ -15,6 +15,8 @@
  *     concluding `container` there made every first launch on a machine with
  *     Docker print `open …/resources/docker-compose.yml: no such file` and
  *     advise a `docker compose build` that means nothing to an end user.
+ *     A witness daemon (temporary home, test runner, TIMON_NO_CONTAINERS)
+ *     has no `containers` capability at all: see `host/containers-policy.ts`.
  *  3. Otherwise → module disabled: no voice, and the app will know because
  *     it won't receive a `TTS_URL`.
  *
@@ -31,10 +33,12 @@ import { existsSync } from 'node:fs';
 import { basename, resolve } from 'node:path';
 import type { Context } from '@deepseek-ai/cordis';
 import type { Host } from '../../host/index.js';
+import { containersSuppression } from '../../host/containers-policy.js';
 import type { ModuleManifest } from '../../kernel/registry.js';
 import type { TimonConfig } from '../../config/schema.js';
 import { config } from '../../config/load.js';
 import { settingStr } from '../../settings.js';
+import { TIMON_HOME } from '../../paths.js';
 
 export const manifest: ModuleManifest = {
   name: '@timon/tts',
@@ -162,9 +166,12 @@ export function apply(ctx: Context): void {
     // Informative, never an error: nothing failed. The packaged case is the
     // common one, and telling a user to build an image they do not have is
     // worse than saying nothing.
+    const suppressed = containersSuppression({ env: process.env, home: TIMON_HOME });
     console.log(host.containers
       ? `[tts] disabled: no ${composeFileOf(repoRootOf(cfg))} in this installation — set TIMON_TTS_URL to enable voice`
-      : '[tts] disabled: neither TIMON_TTS_URL nor `containers` capability');
+      : suppressed
+        ? `[tts] disabled: ${suppressed.message}`
+        : '[tts] disabled: neither TIMON_TTS_URL nor `containers` capability');
     return;
   }
   ctx.effect(() => startContainer(host, cfg));

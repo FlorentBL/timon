@@ -22,7 +22,7 @@ Open the project's window: **Edit** on its card in the agents grid, or, from a c
 
 The row and its fields are for accounts that hold the `projects:manage` permission: the setting names a folder of your machine and the account Timon pushes as. Without it, the row says so and its action is greyed, as is **Project settings…** in the chat.
 
-While a project merges its jobs locally, the **Pull requests** and **Jobs** tabs of the chat's [Git stack](git.md) say so in one line, with a settings icon (**Set up pull requests**) that opens the same fields directly.
+While a project merges its jobs locally, the **Pull requests** and **Jobs** tabs of the chat's [Git stack](git.md) say so in one line, with a settings icon (**Set up pull requests**) that opens the same fields directly. Every account that sees the project gets the line; the icon is offered only to an account allowed to manage projects.
 
 ### From the command line
 
@@ -92,7 +92,7 @@ timon task create --type merge --landing local --agent my-app.merger --base feat
   --deps <ids of the code tasks> --title "Merge into main — Add CSV export"
 ```
 
-A job planned in the planner always names its branch, so in a project that merges locally it runs on a branch of its own, merged into `main` at the end unless you keep it. Tasks you create by hand, without a branch, work as before. A sequential job uses the same choice: `timon pr branch` gives the agent a working folder on the chosen branch, existing or new, in either kind of project. A branch that was chosen as existing and has since been deleted blocks the job's tasks with the reason; it is never recreated.
+A job planned in the planner always names its branch, so in a project that merges locally it runs on a branch of its own, merged into `main` at the end unless you keep it. Tasks you create by hand, without a branch, work as before. A sequential job uses the same choice: `timon job branch` gives the agent a working folder on the chosen branch, existing or new, in either kind of project (`timon pr branch` is the same command under its first name, kept for the scripts that use it). A branch that was chosen as existing and has since been deleted blocks the job's tasks with the reason; it is never recreated.
 
 ### Land a branch you kept
 
@@ -108,7 +108,7 @@ Name the job by its series, or by the conversation that planned it (`current` fr
 - **In a project that merges locally**, Timon merges the branch into the target branch on your machine, never by pushing. When the target has not moved since the branch was cut, it simply moves forward to the branch. Otherwise Timon writes the merge commit itself (`merge: integrate <branch> into <target>`, with your repository's commit identity), without creating a working folder and without running any hook. A conflict is refused with the list of files in conflict: nothing is merged and nothing is ever resolved for you; resolve it on the branch, then land again. When the target branch is checked out in a folder, your checkout follows it (a fast-forward), but only if that folder has no uncommitted change and no untracked file; otherwise the landing is refused and nothing moves.
 - **In a project that lands through pull requests**, landing opens the job's pull request, with the same checks as `timon pr open`; a title is then required. Nothing is merged on your machine: the job lands once the pull request is merged, as below.
 
-Once the branch is in the target, the job's TO DO ideas close and its documentation task is created, once. Running the command again on a job that already landed, or whose pull request is already open, says so and changes nothing. A branch under embargo (`sec/…`) never lands this way.
+Once the branch is in the target, the job's TO DO ideas close and its documentation task is created, once. Running the command again on a job that already landed, or whose pull request is already open, says so and changes nothing. When the job's pull request was closed without being merged, landing it again opens a new pull request, with the same checks and a new title; the closed one stays as it is on GitHub. A branch under embargo (`sec/…`) never lands this way.
 
 ## Open the pull request
 
@@ -148,15 +148,21 @@ Timon checks every few minutes whether the pull request was merged, by looking f
 
 ### What the job leaves behind
 
-Once the job has landed and none of its tasks still waits or runs, Timon removes, a few minutes later, what was only there to build it: the working folders of its tasks, the working folder of the agent that ran a sequential job, and the integration branch on your machine, once the target branch contains it. Nothing that did not land is removed: a branch with commits the target branch does not have (a pull request merged by squash, a commit added after the merge) stays, and so does a working folder holding changes never committed. A branch checked out in one of your folders waits until you leave it.
+Timon can remove, once a job has landed, what was only there to build it: the working folders of its tasks, the working folder of the agent that ran a sequential job, and the integration branch on your machine. This cleanup is **off by default**. Turn it on with **Cleanup after a job lands** in **Settings → Missions → Cleanup**, or with `TIMON_INTEGRATION_CLEANUP_ENABLED` set to `true` under `settings` in `timon.config.json`.
 
-The branch on the remote stays unless you ask:
+Once on, it waits until the job has landed, none of its tasks still waits or runs, and a few minutes have passed. Then it keeps anything it cannot prove is safe to remove:
+
+- Only the job's own tasks are touched: another job built on the same branch keeps its folders.
+- A working folder goes only when it holds no uncommitted change and its last commit is in the target branch. A commit made after the merge keeps it, and so does a task reopened in the meantime.
+- A branch goes only when the target branch contains it. A pull request merged by squash or rebase leaves everything in place. A branch checked out in one of your folders waits until you leave it. `main` and the target branch are never deleted.
+
+The branch on the remote stays unless you also ask:
 
 ```bash
 timon project set-integration my-app --delete-remote-branch on
 ```
 
-Timon then deletes it once the pull request is merged, after the same account and push URL checks as for the push, and only while it still ends on the commit that was merged: a branch someone pushed to since is kept. If GitHub already deleted it, nothing more happens.
+Timon then deletes it once the pull request is merged, on the repository the pull request was opened on and nowhere else: if the project or `origin` now point to another repository, the branch is kept. It checks the account and push URL as for the push, never deletes the repository's default branch or a protected branch, and deletes it only while it still ends on the commit that was merged: a branch someone pushed to since is kept. If GitHub already deleted it, nothing more happens.
 
 A pull request closed without a merge keeps its branch: only the sequential agent's working folder goes, once its commits are in the branch.
 

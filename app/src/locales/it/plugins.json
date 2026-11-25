@@ -437,7 +437,7 @@
   "binariesSettings": {
     "brokenPin": "Il percorso fissato non può essere eseguito: {path}",
     "pathLabel": "Percorso del binario {name}",
-    "placeholder": "Percorso completo, per esempio /usr/local/bin/claude o C:\\Users\\you\\AppData\\Roaming\\npm\\claude.cmd",
+    "placeholder": "Percorso completo, per esempio {example}",
     "browse": "Sfoglia…",
     "save": "Salva il percorso",
     "clear": "Rimuovi il percorso fissato",
@@ -450,6 +450,7 @@
       "path_missing": "Non esiste nulla in questo percorso.",
       "path_not_file": "Questa è una cartella. Scegli il file del programma stesso.",
       "path_not_executable": "Questo file non può essere eseguito: non è eseguibile.",
+      "wrong_program": "Questo file non è la CLI di {name}.",
       "no_config": "Completa prima la configurazione.",
       "config_unreadable": "Impossibile leggere timon.config.json. Correggilo o ripristinalo, poi ricontrolla.",
       "invalid_body": "Questo percorso non può essere salvato.",

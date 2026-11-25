@@ -125,7 +125,7 @@ export function exportTimon(opts: {
       exportedAt: Date.now(),
       hostname: hostname(),
       timonVersion: timonVersion(),
-      profile: opts.profile ?? 'linux-desktop',
+      profile: opts.profile ?? config().profile,
       withArchive,
     };
     writeFileSync(join(tmp, 'manifest.json'), JSON.stringify(manifest, null, 2) + '\n');

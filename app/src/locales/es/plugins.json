@@ -437,7 +437,7 @@
   "binariesSettings": {
     "brokenPin": "No se puede ejecutar la ruta fijada: {path}",
     "pathLabel": "Ruta del binario de {name}",
-    "placeholder": "Ruta completa, por ejemplo /usr/local/bin/claude o C:\\Users\\you\\AppData\\Roaming\\npm\\claude.cmd",
+    "placeholder": "Ruta completa, por ejemplo {example}",
     "browse": "Examinar…",
     "save": "Guardar ruta",
     "clear": "Quitar la ruta fijada",
@@ -450,6 +450,7 @@
       "path_missing": "No hay nada en esta ruta.",
       "path_not_file": "Esto es una carpeta. Elige el archivo del programa.",
       "path_not_executable": "Este archivo no se puede ejecutar: no es ejecutable.",
+      "wrong_program": "Este archivo no es la CLI de {name}.",
       "no_config": "Termina primero la configuración.",
       "config_unreadable": "No se puede leer timon.config.json. Corrígelo o restáuralo y vuelve a comprobar.",
       "invalid_body": "No se puede guardar esta ruta.",

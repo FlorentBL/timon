@@ -18,6 +18,7 @@ import { useProjectMeta } from '@/hooks/use-project-meta';
 import { t as i18n } from '@/lib/i18n';
 import { formatNumber } from '@/lib/intl';
 import { resolveRole } from '@/lib/roles';
+import { taskRunAgent } from '@/lib/task-runner';
 import { SeriesGraphDialog } from '@/components/series-graph-dialog';
 import { useSlotEntries } from '@/lib/plugin-host/render';
 import { PluginBoundary } from '@/lib/plugin-host/plugin-boundary';
@@ -453,7 +454,9 @@ export function KanbanClient({ defaultAgent }: { defaultAgent?: string }) {
                   <KanbanColumnEmpty>{i18n(col.emptyKey)}</KanbanColumnEmpty>
                 ) : (
                   cards.map((t) => {
-                    const known = identities.get(t.agent_name);
+                    // The agent that runs the task, or will: not always the one it names (#1109).
+                    const runAgent = taskRunAgent(t);
+                    const known = identities.get(runAgent);
                     return (
                       <KanbanCardHost
                         key={t.id}
@@ -463,13 +466,13 @@ export function KanbanClient({ defaultAgent }: { defaultAgent?: string }) {
                           task: t,
                           board: taskById,
                           now,
-                          agent: known?.identity ?? pseudoIdentity(t.agent_name),
+                          agent: known?.identity ?? pseudoIdentity(runAgent),
                           agentRole: known?.role ?? null,
                           todo: typeof t.todo_id === 'number' ? todos.get(t.todo_id) ?? null : null,
                           needsAction: !!t.mission_id && agentStateByMission.get(t.mission_id) === 'needs_action',
                           dragging: dragId === t.id,
                           // What the vault sees at spawn: the agent's project, not `task.project`.
-                          modelTarget: { agent: t.agent_name, project: projectByAgent.get(t.agent_name) },
+                          modelTarget: { agent: runAgent, project: projectByAgent.get(runAgent) },
                           // A running task stays in its column: the product card makes the same call.
                           drag: { draggable: t.status !== 'IN_PROGRESS', onDragStart: () => onDragStart(t.id), onDragEnd },
                           open: () => openTask(t),

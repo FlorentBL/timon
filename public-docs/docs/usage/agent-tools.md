@@ -38,6 +38,7 @@ Whatever the `timon` command does in a terminal, a tool of the same name does fo
 | Create, change, rename or delete an agent, set its memory scope, list the available backends and models | `agent_create`, `agent_update`, `agent_rename`, `agent_set_scope`, `agent_set_avatar`, `agent_set_look`, `agent_delete`, `backends_list` |
 | Find a deleted agent in the trash and restore it | `agent_trash_list`, `agent_trash_restore` |
 | Read or edit an agent's identity docs (`SOUL.md`…): its own, or those of an agent it orchestrates | `agent_doc_list`, `agent_doc_get`, `agent_doc_put`, `agent_doc_rm` |
+| List an agent's extra folders, or add, change and remove one (changes need `agents:privileged-config`, never on its own agent) | `agent_extra_dirs` |
 | Manage the skills and MCP servers an agent can use | `skill_list`, `skill_get`, `skill_put`, `skill_rm`, `skill_attach`, `skill_detach`, `skill_attachment_list`, `skill_resolve`, `skill_reads`, `mcp_server_list`, `mcp_server_get`, `mcp_server_put`, `mcp_server_rm` |
 | Create or edit a project, list the workspaces and the project's roles | `project_create`, `project_update`, `workspace_list`, `project_list`, `project_roles`, `project_set_role` |
 | Read or change how a project's Kanban jobs land (local merge or pull request) and check which GitHub account gh signs in as | `project_integration_get`, `project_integration_set` |
@@ -274,6 +275,11 @@ An agent that read a message with `agent_recv_messages` can consume it with `age
 See [Kanban](kanban.md) and [Missions](missions.md) for what these create.
 A task created with `kanban_add` and a `todo_id` closes that notebook idea by
 itself once its work is merged ([Ideas close themselves](kanban.md#ideas-close-themselves)).
+
+When the project's roles will hand the task to another agent than the
+`agent_name` given, `kanban_add` still creates it and its answer carries
+`warnings` naming the agent that will run it ([which agent runs a task](kanban.md)).
+`timon task create` prints the same warning on stderr.
 
 ### Pipelines and routines
 

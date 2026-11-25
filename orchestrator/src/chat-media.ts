@@ -119,12 +119,60 @@ export function realOrNull(path: string): string | null {
   }
 }
 
-/** True when `target` sits under `root` and no step below the root is hidden
- *  (`.git`, `.ssh`, `.env.d`…): an agent's picture never lives there. */
-export function underRoot(root: string, target: string): boolean {
+/** `target` relative to `root` when it sits strictly below it, else null. */
+function relativeBelow(root: string, target: string): string | null {
   const rel = relative(root, target);
-  if (!rel || rel.startsWith('..') || isAbsolute(rel)) return false;
-  return !rel.split(sep).some((segment) => segment.startsWith('.'));
+  if (!rel || rel.startsWith('..') || isAbsolute(rel)) return null;
+  return rel;
+}
+
+/** A step below the root is hidden (`.git`, `.ssh`, `.env.d`…): an agent's
+ *  picture or page never lives there. */
+function hasHiddenStep(rel: string): boolean {
+  return rel.split(sep).some((segment) => segment.startsWith('.'));
+}
+
+/**
+ * Why a path an agent named is not read. A browser only ever gets a 404, like
+ * a missing file; the agent that named the path gets the reason, or it
+ * concludes the tool is broken (TODO #1160). The rule itself does not change.
+ */
+export type PathRefusal = 'path_hidden_segment' | 'path_outside_roots' | 'not_found';
+
+function refusalUnder(roots: readonly string[], target: string): Exclude<PathRefusal, 'not_found'> | null {
+  let hidden = false;
+  for (const root of roots) {
+    const rel = relativeBelow(root, target);
+    if (rel === null) continue;
+    if (!hasHiddenStep(rel)) return null;
+    hidden = true;
+  }
+  return hidden ? 'path_hidden_segment' : 'path_outside_roots';
+}
+
+/**
+ * Why `path` may not be read under `roots`, or null when it may. `real` is
+ * `path` with its symlinks resolved, null when nothing is there. A missing
+ * file is judged on its written path, so a path outside the roots gets the
+ * same answer whether something exists there or not.
+ */
+export function pathRefusal(path: string, real: string | null, roots: readonly string[]): PathRefusal | null {
+  const realRoots = roots.map(realOrNull).filter((r): r is string => r !== null);
+  if (real) return refusalUnder(realRoots, real);
+  return refusalUnder([...roots.map((root) => resolve(root)), ...realRoots], path) ?? 'not_found';
+}
+
+const PATH_REFUSAL_TEXT: Record<PathRefusal, string> = {
+  path_hidden_segment: 'the path goes through a hidden folder (a name starting with "."): '
+    + 'the file must be under your working directory, outside any hidden folder',
+  path_outside_roots: 'the path resolves outside your working directory (symlinks are followed): '
+    + 'the file must be under your working directory, outside any hidden folder',
+  not_found: 'no file at this path',
+};
+
+/** The status, code and message an agent reads for a refused path. */
+export function explainPathRefusal(refusal: PathRefusal): { status: 403 | 404; code: PathRefusal; message: string } {
+  return { status: refusal === 'not_found' ? 404 : 403, code: refusal, message: PATH_REFUSAL_TEXT[refusal] };
 }
 
 export type OpenedMedia = {
@@ -158,13 +206,17 @@ function openChecked(real: string, maxBytes: number): OpenedMedia {
 }
 
 /** Opens a file the agent named, provided it resolves — symlinks followed —
- *  under one of `roots`. Missing roots are ignored. */
-export function openMissionMedia(raw: unknown, roots: readonly string[]): OpenedMedia {
+ *  under one of `roots`. Missing roots are ignored. With `explain`, a refused
+ *  path says why (`pathRefusal`); without, it answers like a missing file. */
+export function openMissionMedia(raw: unknown, roots: readonly string[], explain = false): OpenedMedia {
   const path = parseMediaPath(raw);
   const real = realOrNull(path);
-  if (!real) throw new MediaError(404, 'not found');
-  const realRoots = roots.map(realOrNull).filter((r): r is string => r !== null);
-  if (!realRoots.some((root) => underRoot(root, real))) throw new MediaError(404, 'not found');
+  const refusal = pathRefusal(path, real, roots);
+  if (refusal || !real) {
+    if (!explain) throw new MediaError(404, 'not found');
+    const why = explainPathRefusal(refusal ?? 'not_found');
+    throw new MediaError(why.status, why.message, why.code);
+  }
   return openChecked(real, MAX_LOCAL_MEDIA_BYTES);
 }
 

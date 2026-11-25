@@ -44,7 +44,8 @@ export function ProjectAgentFoldersSetting(): ReactElement | null {
   }, [project]);
   useEffect(() => { void reload(); }, [reload]);
 
-  if (!project || !state || state.names.length === 0) return null;
+  // The folders belong to the project: the row stays without an agent, to prepare one before the first.
+  if (!project || !state) return null;
   const onChanged = (lists: readonly AgentFolders[]): void => {
     setState((current) => current && { ...current, folders: lists.reduce((n, l) => n + l.folders.length, 0) });
   };

@@ -57,6 +57,9 @@ export type PrOpenRequest = {
   id: string;
   title: string;
   body: string;
+  /** The landing gesture of a person: a job whose pull request was closed
+   *  without a merge gets a new one. Every other caller is refused then. */
+  reopen?: boolean;
 };
 
 export type PrOpenRefusalCode =
@@ -149,7 +152,8 @@ async function isAncestor(repo: string, ancestor: string, descendant: string): P
 }
 
 /** Same remote whatever the ending: a trailing `/` or `.git` does not count. */
-function sameUrl(a: string, b: string): boolean {
+/** Shared with the deletion of a merged job's remote branch (`integration-cleanup.ts`). */
+export function sameUrl(a: string, b: string): boolean {
   const norm = (u: string): string => u.trim().replace(/\/+$/, '').replace(/\.git$/i, '');
   return norm(a) === norm(b);
 }
@@ -522,7 +526,10 @@ export async function openPullRequest(request: PrOpenRequest, deps: PrOpenDeps =
   if (row.state === 'open') {
     return refuse(409, 'pr_refused', `a pull request is already open for ${row.branch}${row.pr_url ? `: ${row.pr_url}` : ''}`);
   }
-  if (row.state !== 'branch') return refuse(409, 'pr_refused', `the pull request of ${row.branch} is already ${row.state}`);
+  const reopening = row.state === 'closed' && request.reopen === true;
+  if (row.state !== 'branch' && !reopening) {
+    return refuse(409, 'pr_refused', `the pull request of ${row.branch} is already ${row.state}`);
+  }
   const resolvedSetting = pullRequestSetting(row, project);
   if ('refusal' in resolvedSetting) return refuse(409, 'pr_refused', resolvedSetting.refusal);
   const { setting, remoteUrl, account, repository } = resolvedSetting;
@@ -558,7 +565,10 @@ export async function openPullRequest(request: PrOpenRequest, deps: PrOpenDeps =
     if (!created.ok) {
       return refuse(502, 'pr_create_failed', `${branch} was pushed, the pull request was not created: ${created.reason}. Run the command again to retry.`, checks);
     }
-    if (dbApi.markIntegrationOpen(row.id, { number: created.pr.number, url: created.pr.url, headSha: head })) {
+    // Where it was opened: the only place the cleanup ever deletes its branch.
+    const recorded = { number: created.pr.number, url: created.pr.url, headSha: head, repository, pushUrl: remoteUrl };
+    const opened = reopening ? dbApi.markIntegrationReopened(row.id, recorded) : dbApi.markIntegrationOpen(row.id, recorded);
+    if (opened) {
       // A task that opens it reports it to the pilot with its own return: the
       // pilot is woken for a gesture it did not make (the board's, a person's).
       try {

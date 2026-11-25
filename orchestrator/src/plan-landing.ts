@@ -370,7 +370,7 @@ function landingNote(p: {
       : `Once the work is committed, run the last command (add \`--todo <id>\` when the job carries a TO DO idea${project}): ` +
         `it creates ${lastTask}. Then remove the worktree (\`git worktree remove <worktree>\`)` +
         (p.last === 'pr' ? `; a person merges the pull request on the forge.` : '.');
-    return `${head}${named}This job is coded in a mission, not by Kanban tasks. Its first command (\`timon pr branch\`) ` +
+    return `${head}${named}This job is coded in a mission, not by Kanban tasks. Its first command (\`${p.local ? 'timon job branch' : 'timon pr branch'}\`) ` +
       `${first} and answers with \`worktree\`, a folder of your own detached on that branch: code and commit only ` +
       `there (in sequential-new-mission, give that folder to the mission you spawn), never in the shared checkout, ` +
       `never on ${target}, and nothing is merged into ${target} by hand. After each commit, move the branch by ` +

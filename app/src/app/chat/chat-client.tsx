@@ -151,7 +151,7 @@ import {
 } from '@/lib/provider-retry-line';
 import { ProviderRetryNotice } from '@/components/chat/provider-retry-notice';
 import { backendFailureNotice, type BackendFailedPayload } from '@/lib/backend-failure-notice';
-import { fenceRefusalEndsTurn, fenceRefusalNotice, type FenceRefusedPayload } from '@/lib/fence-refusal-notice';
+import { fenceRefusalEndsTurn, fenceRefusalNotice, fenceSuspicionNotice, type FenceRefusedPayload, type FenceSuspectedPayload } from '@/lib/fence-refusal-notice';
 import { applyFenceGrantResolution, FENCE_GRANT_RESOLVED_EVENT, parseFenceGrant, parseFenceGrantResolution, type FenceGrantView } from '@/lib/fence-grant';
 import { ChatFenceGrantSlot } from '@/components/chat/fence-grant-card';
 import { backendSwitchFailureNotice, type BackendSwitchFailedPayload } from '@/lib/backend-switch-failure-notice';
@@ -3657,6 +3657,13 @@ export function ChatClient({
         setThinking(false);
         setThinkingHint(null);
       }
+      return;
+    }
+    // A fenced CLI stopped on a refusal that names no path: the fence is the likely cause, said
+    // with its setting. The turn's own end (`result`, `backend_failed`) closes it, not this.
+    if (meta.type === 'fence_suspected') {
+      const notice = fenceSuspicionNotice(payload as FenceSuspectedPayload);
+      setMessages((m) => [...m, { id: crypto.randomUUID(), role: 'notice', t: fmtTimeAt(meta.timestamp), content: '', notice }]);
       return;
     }
     // The person's answer to a fence card, here or in another window: the card shows it.

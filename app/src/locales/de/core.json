@@ -1782,8 +1782,11 @@
     "interruptionUnknown": "Mission beendet: Ursache unbestimmt (kein verwertbares Signal)",
     "interruptionDefault": "Mission unterbrochen",
     "runBy": {
-      "label": "ausgeführt von {agent}",
+      "assigned": "zugewiesen an {named}",
       "title": "Zugewiesen an {named}, ausgeführt von {agent}: {reason}",
+      "titlePlanned": "Zugewiesen an {named}, wird ausgeführt von {agent}: {reason}",
+      "detail": "Ausgeführt von {agent}",
+      "detailPlanned": "Wird ausgeführt von {agent}",
       "reasonPinned": "das Projekt heftet diese Rolle an {agent} (roles.json)",
       "reasonMissing": "{named} existiert nicht",
       "reasonOtherProject": "{named} gehört nicht zum Projekt der Aufgabe",
@@ -1840,7 +1843,12 @@
       "openMission": "Mission öffnen",
       "stop": "Mission stoppen",
       "stopConfirm": "Die Mission dieser Aufgabe stoppen?",
-      "stopFailed": "Die Mission konnte nicht gestoppt werden (HTTP {status})."
+      "stopFailed": "Die Mission konnte nicht gestoppt werden (HTTP {status}).",
+      "underMinute": "< 1 Min.",
+      "pendingPermission": "Wartet seit {age} auf eine Berechtigung ({tool})",
+      "pendingQuestion": "Wartet seit {age} auf eine Antwort",
+      "pendingDeadline": "automatische Ablehnung in {left}",
+      "pendingOthers": "{count, plural, one {# weitere Karte wartet} other {# weitere Karten warten}}"
     }
   },
   "agentsPage": {

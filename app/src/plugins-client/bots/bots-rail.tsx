@@ -261,7 +261,7 @@ function TeamItems({ team, onEditTeam, onChanged }: {
         <Pencil className={ITEM_ICON} />
         {t('bots.renameTeam')}
       </DropdownMenuItem>
-      <DropdownMenuItem className="text-destructive focus:text-destructive" onSelect={() => { void removeTeam(team, onChanged); }}>
+      <DropdownMenuItem variant="destructive" onSelect={() => { void removeTeam(team, onChanged); }}>
         <Trash2 className="mr-2 size-3.5" />
         {t('bots.deleteTeam')}
       </DropdownMenuItem>

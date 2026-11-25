@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { runByReasonKey, taskRunAgent } from './task-runner';
+import { runByReasonKey, runByTitle, taskRunAgent } from './task-runner';
 import en from '../locales/en/core.json';
 import fr from '../locales/fr/core.json';
 
@@ -18,6 +18,19 @@ test('every routing reason has a sentence in both locales, an unknown one the ge
     assert.equal(typeof lookup(fr, key), 'string', `fr ${key}`);
   }
   assert.equal(runByReasonKey('something_new'), 'kanbanPage.runBy.reasonUnknown');
-  assert.equal(typeof lookup(en, 'kanbanPage.runBy.label'), 'string');
+  for (const key of ['assigned', 'titlePlanned', 'detail', 'detailPlanned']) {
+    assert.equal(typeof lookup(en, `kanbanPage.runBy.${key}`), 'string', `en ${key}`);
+    assert.equal(typeof lookup(fr, `kanbanPage.runBy.${key}`), 'string', `fr ${key}`);
+  }
   assert.equal(typeof lookup(fr, 'kanbanPage.runBy.title'), 'string');
+});
+
+// #1109: a task no mission ran yet says who WILL run it, not who ran it.
+test('the tooltip tells a planned reroute from one that already ran', () => {
+  const ran = runByTitle('acme.reviewer', { agent: 'acme.researcher', source: 'role', reason: 'other_role' });
+  const planned = runByTitle('acme.reviewer', { agent: 'acme.researcher', source: 'role', reason: 'other_role', planned: true });
+  assert.match(ran, /acme\.reviewer/);
+  assert.match(ran, /acme\.researcher/);
+  assert.notEqual(ran, planned);
+  assert.match(planned, /will be run by acme\.researcher/);
 });

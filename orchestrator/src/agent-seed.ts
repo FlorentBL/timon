@@ -17,7 +17,7 @@
  * customisations are respected). Only what is entirely missing is seeded.
  */
 import { existsSync } from 'node:fs';
-import { agentDir } from './paths.js';
+import { agentDir, projectDir } from './paths.js';
 import { upsertAgent, type AgentConfig } from './agent.js';
 import { getAgent, listAgents } from './agent.js';
 import { loadConfig } from './agent-config.js';
@@ -544,16 +544,44 @@ When you have a complete, validated definition, call workflow_propose(workflow_i
  * deliberately copies no model literal: project policy remains authoritative. */
 export function seedWorkflowArchitect(): void {
   const name = 'timon.workflow-architect';
-  if (existsSync(agentDir(name))) return;
-  const source = getAgent('timon.main') ?? getAgent('_main');
+  const main = mainAgentName();
+  const source = (main ? getAgent(main) : null) ?? getAgent('timon.main') ?? getAgent('_main');
+  if (existsSync(agentDir(name))) {
+    releaseGhostTimonProject(name, source?.project ?? null);
+    return;
+  }
   if (!source?.cwd) return;
+  // The architect belongs where the main agent belongs: a project-less main
+  // (every new install) gives a project-less architect. A hard-coded slug made
+  // a `timon` project with no folder appear on installs that never had one.
   const config: AgentConfig = {
     cwd: source.cwd,
-    project: source.project ?? 'timon',
+    ...(source.project ? { project: source.project } : {}),
     backend: source.backend,
     ...(source.model ? { model: source.model } : {}),
     ...(source.permission_mode ? { permission_mode: source.permission_mode } : {}),
     role: 'orchestrator',
   };
   upsertAgent({ name, system_prompt: WORKFLOW_ARCHITECT_PROMPT, config });
+}
+
+/**
+ * Repairs installs seeded before the architect inherited the main agent's
+ * project: it carried `project: 'timon'`, and its first finished mission
+ * recorded activity for that slug, creating a project row with no folder and
+ * no root. Only that ghost is touched: a real `timon` project (registered with
+ * a root or a folder, or holding another agent) keeps the architect and its row.
+ */
+function releaseGhostTimonProject(architect: string, mainProject: string | null): void {
+  const slug = 'timon';
+  const current = getAgent(architect);
+  if (!current || current.project !== slug || mainProject === slug) return;
+  const row = dbApi.getProjectRow(slug);
+  if (row?.cwd || existsSync(projectDir(slug))) return;
+  if (listAgents().some((a) => a.name !== architect && a.project === slug)) return;
+  const config = loadConfig(architect);
+  delete config.project;
+  if (mainProject) config.project = mainProject;
+  upsertAgent({ name: architect, system_prompt: current.system_prompt, config });
+  if (row) dbApi.deleteProjectRow(slug);
 }

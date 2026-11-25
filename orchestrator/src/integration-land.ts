@@ -24,6 +24,9 @@
  *   remote, identity, messages, text, public tree, push never forced). Nothing
  *   merges here: the landing poller concludes when the forge merged it.
  *
+ *   A job whose pull request was closed without a merge gets a new one the
+ *   same way: the closed one stays on the forge as it is.
+ *
  * Idempotent: a job already landed (or whose pull request is already open)
  * answers what it is, and moves nothing. Two gestures at once on the same
  * branch: the second is refused while the first runs. A job that still has a
@@ -144,7 +147,8 @@ export function jobTasksUnderWay(row: JobRef): TaskRow[] {
 export type KeptState = {
   /** The planner's choice for the end of the job; null when it chose nothing. */
   finish: 'merge' | 'keep' | null;
-  /** The job waits on its branch for a person to land it. */
+  /** The job waits on its branch for a person to land it: never landed yet,
+   *  or its pull request was closed without a merge (the gesture opens a new one). */
   kept: boolean;
   /** Tasks of a kept job still waiting or running: landing is refused meanwhile. */
   under_way: number;
@@ -158,10 +162,11 @@ function finishOf(seriesId: string | null): KeptState['finish'] {
 }
 
 /** Adds `KeptState` to each job; the tasks are read only for a kept one. */
-export function withKeptState<T extends JobRef & Pick<IntegrationRow, 'state'>>(views: readonly T[]): Array<T & KeptState> {
+export function withKeptState<T extends JobRef & Pick<IntegrationRow, 'state' | 'remote'>>(views: readonly T[]): Array<T & KeptState> {
   return views.map((view) => {
     const finish = finishOf(view.series_id);
-    const kept = view.state === 'branch' && finish === 'keep';
+    const waiting = view.state === 'branch' || (view.state === 'closed' && view.remote !== '');
+    const kept = waiting && finish === 'keep';
     if (!kept) return { ...view, finish, kept, under_way: 0, last_merge: null };
     const tasks = jobTasks(view);
     let last: TaskRow | null = null;
@@ -206,9 +211,12 @@ export async function landIntegrationBranch(row: IntegrationRow, request: LandRe
   if (row.state === 'open') {
     return { ok: true, outcome: 'pull_request', already: true, pr_url: row.pr_url, pr_number: row.pr_number, opened: null };
   }
-  if (row.state !== 'branch') {
-    return refuse(409, 'landing_refused', `the pull request of ${row.branch} was closed without a merge: open a new one by hand`);
+  // A pull request closed without a merge: the gesture opens a new one, with
+  // the same checks. A local row is never 'closed'; kept fail-closed anyway.
+  if (row.state !== 'branch' && (local || row.state !== 'closed')) {
+    return refuse(409, 'landing_refused', `${row.branch} is ${row.state}: there is nothing to land`);
   }
+  const reopen = row.state === 'closed';
   const running = jobTasksUnderWay(row);
   if (running.length > 0) {
     return refuse(409, 'landing_job_running',
@@ -223,7 +231,9 @@ export async function landIntegrationBranch(row: IntegrationRow, request: LandRe
   busy.add(key);
   try {
     if (!local) {
-      const out = await openPullRequest({ target: 'integration', id: row.id, title: request.title!.trim(), body: request.body ?? '' }, deps);
+      const out = await openPullRequest({
+        target: 'integration', id: row.id, title: request.title!.trim(), body: request.body ?? '', ...(reopen ? { reopen } : {}),
+      }, deps);
       if (!out.ok) return out;
       return { ok: true, outcome: 'pull_request', already: out.existing, pr_url: out.pr.url, pr_number: out.pr.number, opened: out };
     }

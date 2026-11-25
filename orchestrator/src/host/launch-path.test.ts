@@ -1,9 +1,10 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { accessSync, chmodSync, constants, mkdirSync, mkdtempSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join, posix, win32 } from 'node:path';
-import { launchPath, nodeInDir, nodelessBackends, nodelessBackendText, pathKeyOf, runsOnNode, withLaunchPath } from './launch-path.js';
+import { join, posix, sep, win32 } from 'node:path';
+import { checkDaemonNode, daemonNode, launchPath, nodeInDir, nodelessBackends, nodelessBackendText, pathKeyOf, runsOnNode, withLaunchPath } from './launch-path.js';
+import { binaryCandidates } from './binary-path.js';
 
 const nvmBin = posix.join('/Users', 'sam', '.nvm', 'versions', 'node', 'v22.11.0', 'bin');
 const servicePath = [posix.join('/Users', 'sam', '.local', 'bin'), '/usr/bin', '/bin'].join(posix.delimiter); // portability: simulated macOS PATH
@@ -117,4 +118,163 @@ test('nodelessBackends names a Node CLI only when no node is reachable', () => {
   assert.deepEqual(nodelessBackends(['codex'], { platform: 'darwin', resolve: found(posix.join(nvmBin, 'node')), read, hasNode: () => false }), []);
   assert.deepEqual(nodelessBackends(['codex'], { platform: 'darwin', resolve: found(null), read, hasNode: nodeAt([nvmBin]) }), []);
   assert.match(nodelessBackendText({ name: 'codex', path: codex }), /codex .* runs on Node\.js/);
+  // The daemon's own Node is what a launch falls back on: such a CLI starts.
+  assert.deepEqual(nodelessBackends(['codex'], {
+    platform: 'darwin', resolve: found(null), read, hasNode: () => false, runtimeNode: posix.join('/opt', 'Timon', 'resources', 'node', 'node'),
+  }), []);
+  // The text gives the gesture, not only the diagnosis.
+  assert.match(nodelessBackendText({ name: 'codex', path: codex }), /host\.binaries\.node/);
+});
+
+test('#1102: the daemon\'s own Node is the last resort, after the machine\'s', () => {
+  const bundled = posix.join('/opt', 'Timon', 'resources', 'node', 'node');
+  const fnm = posix.join('/home', 'sam', '.local', 'share', 'fnm', 'node-versions', 'v22.1.0', 'installation', 'bin');
+  const linuxPath = ['/usr/bin', '/bin'].join(posix.delimiter); // portability: simulated Linux PATH
+  // The machine's own node wins.
+  assert.deepEqual(launchPath(linuxPath, {
+    platform: 'linux', hasNode: () => false, findNode: () => posix.join(fnm, 'node'), runtimeNode: bundled,
+  }).split(posix.delimiter), [...linuxPath.split(posix.delimiter), fnm]);
+  // None on the machine: the daemon's runtime.
+  assert.deepEqual(launchPath(linuxPath, {
+    platform: 'linux', hasNode: () => false, findNode: () => null, runtimeNode: bundled,
+  }).split(posix.delimiter), [...linuxPath.split(posix.delimiter), posix.dirname(bundled)]);
+  // A node already on PATH: nothing added.
+  assert.equal(launchPath(linuxPath, { platform: 'linux', hasNode: () => true, findNode: () => null, runtimeNode: bundled }), linuxPath);
+  // Electron is never offered, whichever way it arrives.
+  const electron = posix.join('/opt', 'Timon', 'timon');
+  assert.equal(launchPath(linuxPath, {
+    platform: 'linux', hasNode: () => false, findNode: () => electron, runtimeNode: electron, selfExecutable: electron,
+  }), linuxPath);
+  assert.deepEqual(launchPath(linuxPath, {
+    platform: 'linux', hasNode: () => false, findNode: () => electron, runtimeNode: bundled, selfExecutable: electron,
+  }).split(posix.delimiter), [...linuxPath.split(posix.delimiter), posix.dirname(bundled)]);
+});
+
+test('#1102 review: a relative PATH entry never counts as holding a node', () => {
+  const bundled = posix.join('/opt', 'Timon', 'resources', 'node', 'node');
+  const probed: string[] = [];
+  const hasNode = (dir: string) => { probed.push(dir); return true; };
+  // `bin` and `./tools` would be read against the daemon's cwd here, against the project's by the CLI.
+  const path = ['bin', './tools', '/usr/bin'].join(posix.delimiter); // portability: simulated Linux PATH
+  assert.equal(launchPath(path, { platform: 'linux', hasNode, runtimeNode: bundled }), path);
+  assert.deepEqual(probed, ['/usr/bin']); // portability: simulated Linux PATH
+  const relativeOnly = ['bin', './tools'].join(posix.delimiter);
+  assert.deepEqual(launchPath(relativeOnly, { platform: 'linux', hasNode, runtimeNode: bundled }).split(posix.delimiter),
+    ['bin', './tools', posix.dirname(bundled)]);
+  const windows = ['tools', 'C:\\Windows'].join(';');
+  const winProbed: string[] = [];
+  launchPath(windows, { platform: 'win32', hasNode: (dir) => { winProbed.push(dir); return false; }, findNode: () => null });
+  assert.deepEqual(winProbed, ['C:\\Windows']);
+});
+
+test('#1102: daemonNode is the runtime only when it is a node, never Electron', () => {
+  // The name alone rules these out, before any file is looked at.
+  const none = { node: null, problem: null };
+  const bundled = posix.join('/opt', 'Timon', 'resources', 'node', 'node');
+  assert.deepEqual(checkDaemonNode({ execPath: bundled, electron: '33.0.0', platform: 'linux' }), none);
+  assert.deepEqual(checkDaemonNode({ execPath: posix.join('/opt', 'Timon', 'timon'), platform: 'linux' }), none);
+  assert.deepEqual(checkDaemonNode({ execPath: posix.join('/usr', 'bin', 'nodejs'), platform: 'linux' }), none);
+  assert.deepEqual(checkDaemonNode({ execPath: 'node', platform: 'linux' }), none);
+  assert.deepEqual(checkDaemonNode({ execPath: win32.join('C:\\', 'Program Files', 'Timon', 'Timon.exe'), platform: 'win32' }), none);
+  // A Windows package's node.exe, its file as the disk reports it.
+  const windows = win32.join('C:\\', 'Program Files', 'Timon', 'resources', 'node', 'node.exe');
+  const identity = { dev: 1, ino: 2, size: 3, mtimeMs: 4 };
+  const deps = { realpath: (file: string) => file, stat: () => ({ ...identity, isFile: () => true }), executable: () => true, startup: identity };
+  assert.equal(daemonNode({ execPath: windows, platform: 'win32' }, deps), windows);
+  assert.deepEqual(checkDaemonNode({ execPath: windows, platform: 'win32' }, { ...deps, startup: { ...identity, ino: 9 } }),
+    { node: null, problem: 'replaced' });
+});
+
+test('#1102 review: the daemon\'s Node is checked on disk before it stands in', { skip: process.platform === 'win32' && 'POSIX modes and links' }, (t) => {
+  const base = mkdtempSync(join(tmpdir(), 'timon-daemon-node-'));
+  t.after(() => rmSync(base, { recursive: true, force: true }));
+  const real = join(base, 'resources', 'node', 'node');
+  mkdirSync(join(real, '..'), { recursive: true });
+  writeFileSync(real, '#!/bin/sh\n');
+  chmodSync(real, 0o755);
+  const facts = { execPath: real, platform: process.platform };
+  const identity = () => { const s = statSync(real); return { dev: s.dev, ino: s.ino, size: s.size, mtimeMs: s.mtimeMs }; };
+  const startup = identity();
+  assert.deepEqual(checkDaemonNode(facts, { startup }), { node: real, problem: null });
+  // Reached through a link (`/usr/local/bin/node`): the file it leads to is the one a CLI gets.
+  const link = join(base, 'bin', 'node');
+  mkdirSync(join(link, '..'));
+  symlinkSync(real, link);
+  assert.equal(daemonNode({ ...facts, execPath: link }, { startup }), real);
+  assert.deepEqual(launchPath('/usr/bin', { platform: 'linux', hasNode: () => false, runtimeNode: daemonNode({ ...facts, execPath: link }, { startup }) }) // portability: simulated Linux PATH
+    .split(posix.delimiter), ['/usr/bin', join(base, 'resources', 'node')]); // portability: simulated Linux PATH
+  // No longer executable.
+  chmodSync(real, 0o644);
+  assert.deepEqual(checkDaemonNode(facts, { startup }), { node: null, problem: 'not-executable' });
+  chmodSync(real, 0o755);
+  // Another file at the same path.
+  writeFileSync(real, '#!/bin/sh\necho someone else\n');
+  assert.deepEqual(checkDaemonNode(facts, { startup }), { node: null, problem: 'replaced' });
+  // The link now leads to the Electron binary: refused, with or without a startup identity to compare.
+  const electron = join(base, 'timon');
+  writeFileSync(electron, '\u007fELF');
+  chmodSync(electron, 0o755);
+  rmSync(link);
+  symlinkSync(electron, link);
+  assert.deepEqual(checkDaemonNode({ ...facts, execPath: link }, { startup }), { node: null, problem: 'replaced' });
+  assert.deepEqual(checkDaemonNode({ ...facts, execPath: link }, { startup: null }), { node: null, problem: 'not-node' });
+  // Gone.
+  rmSync(real);
+  assert.deepEqual(checkDaemonNode(facts, { startup }), { node: null, problem: 'missing' });
+  // The diagnostic says so instead of counting on it.
+  const codex = join(base, 'codex');
+  const nodeless = nodelessBackends(['codex'], {
+    platform: 'linux', resolve: (name) => (name === 'codex' ? codex : null), read: () => '#!/usr/bin/env node\n', hasNode: () => false,
+    runtimeNode: null, runtimeProblem: 'missing',
+  });
+  assert.deepEqual(nodeless, [{ name: 'codex', path: codex, runtimeProblem: 'missing' }]);
+  assert.match(nodelessBackendText(nodeless[0]!), /started on was removed, replaced or made non-executable/);
+  assert.doesNotMatch(nodelessBackendText({ name: 'codex', path: codex }), /started on/);
+});
+
+/**
+ * What `npm install -g @openai/codex` leaves under a prefix: `bin/codex`, a link to the JS
+ * launcher, and the native build in the package's `vendor` folder. No node beside it.
+ */
+function fakeCodexPackage(prefix: string): { launcher: string; native: string } {
+  const pkg = join(prefix, 'lib', 'node_modules', '@openai', 'codex');
+  const script = join(pkg, 'bin', 'codex.js');
+  mkdirSync(join(pkg, 'bin'), { recursive: true });
+  writeFileSync(script, '#!/usr/bin/env node\nrequire("./launch");\n');
+  chmodSync(script, 0o755);
+  const native = join(pkg, 'vendor', 'x86_64-unknown-linux-musl', 'codex', 'codex');
+  mkdirSync(join(native, '..'), { recursive: true });
+  writeFileSync(native, '\u007fELF');
+  chmodSync(native, 0o755);
+  mkdirSync(join(prefix, 'bin'), { recursive: true });
+  const launcher = join(prefix, 'bin', 'codex');
+  symlinkSync(script, launcher);
+  return { launcher, native };
+}
+
+test('#1102: an npm codex with its node under fnm starts, and doctor stays quiet', { skip: process.platform === 'win32' && 'POSIX layout and links' }, (t) => {
+  const home = mkdtempSync(join(tmpdir(), 'timon-fnm-codex-'));
+  t.after(() => rmSync(home, { recursive: true, force: true }));
+  const { launcher } = fakeCodexPackage(join(home, '.npm-global'));
+  const options = { platform: 'linux' as const, path: '', homeDir: home, env: {} };
+  // Only the fake home counts: a CI runner has its own node in /usr/local/bin.
+  const resolve = (name: string) => binaryCandidates(name, options)
+    .filter((file) => file.startsWith(home + sep))
+    .find((file) => { try { accessSync(file, constants.X_OK); return statSync(file).isFile(); } catch { return false; } }) ?? null;
+  assert.equal(resolve('codex'), launcher);
+  assert.equal(runsOnNode(launcher, 'linux'), true);
+  // No node on the machine yet: doctor names codex, and only the daemon's own Node would rescue it.
+  assert.equal(resolve('node'), null);
+  assert.deepEqual(nodelessBackends(['codex'], { platform: 'linux', resolve }), [{ name: 'codex', path: launcher }]);
+  // fnm installs a node only its shell hook lists: the daemon finds it on its own.
+  const fnmBin = join(home, '.local', 'share', 'fnm', 'node-versions', 'v22.1.0', 'installation', 'bin');
+  mkdirSync(fnmBin, { recursive: true });
+  writeFileSync(join(fnmBin, 'node'), '#!/bin/sh\n');
+  chmodSync(join(fnmBin, 'node'), 0o755);
+  assert.equal(resolve('node'), join(fnmBin, 'node'));
+  assert.deepEqual(nodelessBackends(['codex'], { platform: 'linux', resolve }), []);
+  // `/usr/bin` stands for a service PATH with no node: the host's own is not consulted.
+  const hasNode = (dir: string) => dir.startsWith(home + sep) && nodeInDir(dir, 'linux');
+  const path = launchPath('/usr/bin', { platform: 'linux', binary: launcher, hasNode, findNode: () => resolve('node') }); // portability: simulated Linux PATH
+  assert.deepEqual(path.split(':'), [join(home, '.npm-global', 'bin'), '/usr/bin', fnmBin]); // portability: simulated Linux PATH
 });

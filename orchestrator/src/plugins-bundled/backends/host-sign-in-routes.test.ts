@@ -133,7 +133,7 @@ const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
 test.after(() => { resetAccountLogins(); resetHostTokens(); server.close(); });
 
 type Login = { state: string; failure: string | null; identity: string | null; codeSent: boolean; prompt: { kind: string; url: string } | null };
-type View = { kept: boolean; identity: string | null; browser: boolean; token: { stored: boolean } | null; signedIn: boolean | null };
+type View = { kept: boolean; identity: string | null; browser: boolean; token: { stored: boolean } | null; tokenOnly: boolean; signedIn: boolean | null };
 type Reply = { status: number; text: string; json: { login?: Login; hostSignIn?: View } & Record<string, unknown> };
 const replies: string[] = [];
 
@@ -211,7 +211,7 @@ test('a backend that cannot keep the host sign-in answers 404, and a body is che
 
 test('signed in from the browser: the sign-in lands in Timon\'s folder and the base profile launches on it', async () => {
   const view = await call('GET', HOST, { cookie: admin });
-  assert.deepEqual({ ...view.json.hostSignIn, signedIn: undefined }, { backend: 'claude', kept: false, identity: null, browser: true, token: { stored: false }, signedIn: undefined });
+  assert.deepEqual({ ...view.json.hostSignIn, signedIn: undefined }, { backend: 'claude', kept: false, identity: null, browser: true, token: { stored: false }, tokenOnly: false, signedIn: undefined });
 
   assert.equal((await call('POST', `${HOST}/login`, { cookie: admin, body: {} })).status, 202);
   const waiting = await until(`${HOST}/login`, admin, (l) => l.state !== 'starting');
@@ -327,5 +327,29 @@ test('back to the terminal\'s session: Timon\'s folder goes, the base profile ru
     assert.equal(providerSignedIn('claude'), true);
   } finally {
     resetProviderSignInForTest();
+  }
+});
+
+test('a macOS service outside the user\'s session offers the token alone, and refuses the sign-in it could not read', async () => {
+  setLoginOptions({ platform: 'darwin', outsideSession: () => true });
+  try {
+    const view = (await call('GET', HOST, { cookie: admin })).json.hostSignIn!;
+    assert.equal(view.tokenOnly, true);
+    assert.equal(view.browser, false, 'no sign-in from the browser: its keychain entry is out of the service\'s reach');
+    assert.ok(view.token, 'the long-lived token stays on offer');
+    const refused = await call('POST', `${HOST}/login`, { cookie: admin, body: {} });
+    assert.equal(refused.status, 400, refused.text);
+    assert.match(refused.text, /long-lived token/);
+  } finally {
+    setLoginOptions({ platform: 'linux', outsideSession: () => false });
+  }
+  // The same service on Linux, or a LaunchAgent in the session: the sign-in is offered again.
+  setLoginOptions({ platform: 'linux', outsideSession: () => true });
+  try {
+    const view = (await call('GET', HOST, { cookie: admin })).json.hostSignIn!;
+    assert.equal(view.tokenOnly, false);
+    assert.equal(view.browser, true);
+  } finally {
+    setLoginOptions({ outsideSession: () => false });
   }
 });

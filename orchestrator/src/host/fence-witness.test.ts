@@ -6,7 +6,7 @@ import '../test-home.js';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
@@ -15,6 +15,8 @@ import { findFenceBinary, probeFence } from './fence.js';
 import { witnessFenceAccess } from './fence-witness.js';
 import { resolveFence, type FencePolicy } from './isolation.js';
 import { createLandlockFence } from './landlock.js';
+import { createSeatbeltFence } from './darwin.js';
+import { SANDBOX_EXEC } from './seatbelt.js';
 import type { HostFence } from './types.js';
 
 const OFF: FencePolicy = { mode: 'off', enabled: false, ro: [], rw: [], exec: [], deny: [], denyUnderTimonHome: [], unixSockets: 'allow', ignored: [] };
@@ -100,6 +102,42 @@ test('under the real Landlock fence, a granted folder opens and a private file o
       { path: tmp, access: 'read' }, { path: probe, access: 'write' }, { path: token, access: 'read' }, { path: token, access: 'write' },
     ], join(th, 'run', 'fence', 'witness.policy'));
     assert.deepEqual(answers.map((a) => a.state), ['allowed', 'allowed', 'refused', 'refused']);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+const seatbeltSkip = process.platform !== 'darwin' ? 'Seatbelt is macOS only' : !existsSync(SANDBOX_EXEC) ? `no ${SANDBOX_EXEC}` : false;
+
+test('under the real Seatbelt fence, a granted folder opens and a private file of the Timon home does not', { skip: seatbeltSkip }, async () => {
+  // Outside the system's temporary folder, which the fence leaves writable to every mission.
+  const root = realpathSync(mkdtempSync(join(homedir(), '.fence-witness-')));
+  try {
+    const home = join(root, 'home');
+    const th = join(home, '.timon');
+    const mission = 'dddddddd-0000-4000-8000-000000000005';
+    const tmp = join(th, 'tmp', 'missions', mission);
+    mkdirSync(tmp, { recursive: true });
+    const probe = join(tmp, 'probe');
+    writeFileSync(probe, '');
+    const token = join(th, 'daemon-token');
+    writeFileSync(token, 'secret');
+    const cfg = config();
+    const policy = resolveFence({ ...cfg, host: { ...cfg.host, isolation: { ...cfg.host.isolation, filesystem: 'auto' } } }, {
+      timonHome: th, home, missionId: mission, platform: 'darwin',
+    });
+    const fence = createSeatbeltFence({ warn: () => {} });
+    const probed = fence.probe();
+    assert.equal(probed.available, true, probed.reason);
+    const policyFile = join(th, 'run', 'fence', 'witness.sb');
+    mkdirSync(join(th, 'run', 'fence'), { recursive: true });
+    const answers = await witnessFenceAccess(fence, policy, [
+      { path: tmp, access: 'read' }, { path: probe, access: 'write' }, { path: token, access: 'read' }, { path: token, access: 'write' },
+    ], policyFile);
+    assert.deepEqual(answers, [{ state: 'allowed' }, { state: 'allowed' }, { state: 'refused' }, { state: 'refused' }]);
+    // The launch's own profile compiles on this macOS: the witness that cuts the fence finds nothing to say.
+    const witnessed = await fence.witness(policyFile);
+    assert.deepEqual([witnessed.ran, witnessed.ran ? witnessed.status : null], [true, 0]);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

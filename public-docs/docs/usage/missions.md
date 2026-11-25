@@ -61,6 +61,12 @@ These choices are remembered for your account, except the role, which applies to
 
 `GET /api/missions?origin=user` (or `automated`, `task`, `routine`, `agent`, `system`) applies the same filter, and each mission carries its `origin`.
 
+### Reading the whole list through the API
+
+`GET /api/missions` returns the newest missions first, 100 by default. `limit` takes 1 to 1000; a value outside that range, or not a whole number, is refused with a 400 instead of being cut down. Next to `missions`, the response carries `has_more` and `next_cursor`: while `has_more` is `true`, pass `next_cursor` back as `before` to read the next page, until `next_cursor` is `null`. The pages follow each other without a mission twice or a mission skipped.
+
+`task_id` keeps the missions of one Kanban task, for example `GET /api/missions?task_id=<task id>`, and combines with `agent`, `project`, `status`, `origin` and `before`. Like every filter, it only returns the missions your account can see.
+
 ## The name of a mission
 
 The lists name a mission by its title: the one you typed (**Rename** in the chat list's right-click menu), the one its launcher gave it (a Kanban task's title, a workflow node, `timon spawn --title "Short name"` or the `title` of `mission_spawn`), or the one Timon generates at the end of the first reply of a conversation you opened. Without any, the first line of the message is shown. Which model writes the generated titles, and whether they are generated at all, is chosen in [Settings → Missions](settings.md#conversation-titles).
@@ -83,6 +89,8 @@ A finished mission shows no badge. Next to the badge, a letter icon counts the m
 On the Agents graph, the ring still pulses for an agent at work; a small dot on the node marks the other cases: green for a finished turn, grey for an open mission, red for an interrupted one. Hover the dot for the detail.
 
 The same fields (`liveness`, `interrupted_reason`, `pending_messages`, `open_deliveries`) come back from `GET /api/missions` and `GET /api/missions/:id`, and `timon status` reads them from the mission.
+
+When the mission waits on a permission or a question, `GET /api/missions/:id` and `timon status` also carry `pending_permission`: the tool, when the request was raised, when it is refused automatically (`null` for a conversation, which waits for you), and how many requests wait. The command stays in the chat, on the request itself.
 
 A conversation left idle for a long time (an hour by default) has its process closed to free a slot; it stays in the list and keeps its session. Your next message, even one sent while that process is still shutting down, reopens the same mission with its context: the conversation never splits into a second mission on the same session.
 
@@ -190,7 +198,7 @@ An agent shows a picture or a video with its `chat_show_media` tool. It appears 
 
 The agent can show:
 
-- **a file of the mission**, by its absolute path inside the mission's working folder. Images: PNG, JPEG, GIF, WebP, AVIF. Videos: MP4, WebM, MOV, Ogg;
+- **a file of the mission**, by its absolute path inside the mission's working folder, outside any hidden folder (a name starting with `.`, such as `.git`). Images: PNG, JPEG, GIF, WebP, AVIF. Videos: MP4, WebM, MOV, Ogg. A refused path tells the agent why (`path_outside_roots`, `path_hidden_segment` or `not_found`), so it can move the file;
 - **an `https://` address on a public site**, for instance the result of an image or video API. Timon downloads it itself and checks it is really an image or a video; your browser never contacts that site. The card says where it came from;
 - **an inline image** (`data:image/…;base64`), up to 10 MB.
 

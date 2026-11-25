@@ -380,7 +380,10 @@ test('no agent surface creates or publishes a proposal: no MCP tool, no CLI verb
   // A person's conflict resolution: proposed by the daemon on a person's
   // click; dropping it drops its waiting publication too, never publishes it.
   const conflicts = join(root, 'src', 'forge-conflicts.ts');
-  const proposers = [facade, landing, ...branch, conflicts];
+  // An imported idea declined, duplicated or short of details: the daemon
+  // proposes the issue's answer and its closing; a person publishes them.
+  const outcome = [join(root, 'src', 'issue-outcome.ts'), join(root, 'src', 'issue-close.ts')];
+  const proposers = [facade, landing, ...branch, conflicts, ...outcome];
   const offenders = files.filter((file) => !allowed.has(file) && !proposers.includes(file)
     && /\/forge-proposals\b|forge-proposals\.js|proposeForgeWrite|publishForgeProposal/.test(readFileSync(file, 'utf8')));
   assert.deepEqual(offenders.map((f) => f.slice(root.length)), []);

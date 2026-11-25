@@ -37,7 +37,8 @@ import { join } from 'node:path';
 import { dbApi } from '../db.js';
 import { getHost } from '../host/index.js';
 import { killProcessTree } from '../host/kill-tree.js';
-import { withLaunchPath } from '../host/launch-path.js';
+import { daemonNode, withLaunchPath } from '../host/launch-path.js';
+import { LAUNCHD_SYSTEM_KIND } from '../host/service-install.js';
 import { ensurePrivateDir } from '../host/private-dir.js';
 import { systemEnv } from '../secrets/env.js';
 import { clearBackendCooldown } from '../backend-fallback.js';
@@ -179,6 +180,11 @@ export type LoginOptions = {
   run: (cmd: string, args: string[], env: NodeJS.ProcessEnv, timeoutMs: number) => Promise<{ code: number; stdout: string }>;
   /** Where the host adapter finds a binary (pin, then search); `null` when absent. */
   resolveBin: (name: string) => string | null;
+  /**
+   * The daemon runs as a macOS LaunchDaemon (`launchd-system`), outside every
+   * user session: a login keychain is out of its reach.
+   */
+  outsideSession: () => boolean;
 };
 
 const OUTPUT_CAP = 64 * 1024;
@@ -214,6 +220,7 @@ let options: LoginOptions = {
   removeDir: (dir) => rmSync(dir, { recursive: true, force: true }),
   run: defaultRun,
   resolveBin: (name) => { try { return getHost().bin(name); } catch { return null; } },
+  outsideSession: () => process.env.TIMON_SERVICE_KIND === LAUNCHD_SYSTEM_KIND,
 };
 
 /** Tests only: swap the process runner and the clocks. */
@@ -247,6 +254,7 @@ function launchEnv(cmd: string, env: Record<string, string>): Record<string, str
     platform: options.platform,
     binary: options.resolveBin(cmd),
     findNode: () => options.resolveBin('node'),
+    runtimeNode: daemonNode(),
     // Only Electron's binary is no `node`: a daemon run from sources IS on the right one.
     selfExecutable: process.versions.electron ? process.execPath : undefined,
   });
@@ -428,11 +436,24 @@ function hostDeclaration(backend: string): ProviderHostSignInDeclaration | null 
   return (entry && profileAccountsDeclaration(entry)?.host) ?? null;
 }
 
+/**
+ * Whether only a long-lived token can run `backend`'s host launches: its CLI
+ * keeps a sign-in in place (the macOS keychain) and the daemon runs outside
+ * every user session, so neither the terminal's session nor a sign-in kept
+ * in Timon's folder can be read (TODO #1140).
+ */
+function hostTokenOnly(backend: string, host: ProviderHostSignInDeclaration): boolean {
+  if (!host.token) return false;
+  const resolved = driverFor(backend);
+  return resolved?.driver.inPlace?.(options.platform) === true && options.outsideSession();
+}
+
 /** What the screen may offer for the host's sign-in of `backend`; null when nothing. */
-export function hostSignInSupport(backend: string): { browser: boolean; token: boolean } | null {
+export function hostSignInSupport(backend: string): { browser: boolean; token: boolean; tokenOnly: boolean } | null {
   const host = hostDeclaration(backend);
   if (!host) return null;
-  return { browser: driverFor(backend) !== null, token: host.token !== undefined };
+  const tokenOnly = hostTokenOnly(backend, host);
+  return { browser: driverFor(backend) !== null && !tokenOnly, token: host.token !== undefined, tokenOnly };
 }
 
 /** Whether the provider keeps a long-lived token for `backend` now; null when it has none to keep. */
@@ -659,7 +680,11 @@ function hostKey(backend: string): string {
 
 /** Starts signing the host's `backend` in from the browser, into Timon's folder. */
 export function startHostLogin(backend: string, initiator: LoginInitiator): LoginView {
-  if (!hostDeclaration(backend)) throw new LoginFlowError('unsupported', `backend ${backend} cannot keep the host's sign-in`);
+  const host = hostDeclaration(backend);
+  if (!host) throw new LoginFlowError('unsupported', `backend ${backend} cannot keep the host's sign-in`);
+  if (hostTokenOnly(backend, host)) {
+    throw new LoginFlowError('unsupported', 'Timon runs as a service outside your session, where this sign-in cannot be read: create a long-lived token instead');
+  }
   return startLogin(hostTarget(backend), initiator);
 }
 

@@ -129,3 +129,57 @@ test('a renamed pole keeps the projects tagged with its old or its new name', ()
   assert.deepEqual(records.find((w) => w.slug === 'studio')?.projects, ['new', 'old']);
   assert.equal(records.some((w) => w.slug === 'atelier-pro'), false, 'no second pole');
 });
+
+test('a pole created after a rename cannot take the projects tagged with the renamed pole', async () => {
+  dbApi.upsertProject('site', { workspace: 'North Team' });
+  listWorkspaceRecords();
+  await withServer(async (call) => {
+    assert.equal((await call('PATCH', '/api/workspaces/north-team', 'manager', { name: 'Lumen' })).status, 200);
+    // The Canvas tags a project with the pole's current name.
+    dbApi.upsertProject('site', { workspace: 'Lumen' });
+    const same = await call('POST', '/api/workspaces', 'manager', { name: 'Lumen' });
+    assert.equal(same.status, 400, 'the name is taken');
+    const spelled = await call('POST', '/api/workspaces', 'manager', { name: 'Lumen!' });
+    assert.equal(spelled.status, 400, 'its slug is the name of another pole');
+    assert.match((await spelled.json() as { error: string }).error, /north-team/);
+  });
+  assert.equal(dbApi.getWorkspaceRow('lumen'), undefined);
+  assert.deepEqual(listWorkspaceRecords().find((w) => w.slug === 'north-team')?.projects, ['site']);
+});
+
+test('a pole cannot be renamed to a name that designates another pole', async () => {
+  dbApi.insertWorkspace({ slug: 'orbit', name: 'Growth', color: null, lead_agent: null });
+  dbApi.insertWorkspace({ slug: 'harbor', name: 'Harbor', color: null, lead_agent: null });
+  await withServer(async (call) => {
+    assert.equal((await call('PATCH', '/api/workspaces/harbor', 'manager', { name: 'Orbit' })).status, 400, 'the slug of another pole');
+    assert.equal((await call('PATCH', '/api/workspaces/harbor', 'manager', { name: 'growth' })).status, 400, 'the name of another pole');
+    assert.equal((await call('PATCH', '/api/workspaces/harbor', 'manager', { name: 'HARBOR' })).status, 200, 'its own name, recased');
+  });
+  assert.equal(dbApi.getWorkspaceRow('harbor')?.name, 'HARBOR');
+});
+
+test('a tag spelling a pole name differently joins that pole instead of minting a captor', () => {
+  dbApi.insertWorkspace({ slug: 'meadow', name: 'Prairie', color: null, lead_agent: null });
+  dbApi.upsertProject('farm', { workspace: 'Prairie' });
+  dbApi.upsertProject('barn', { workspace: 'Prairie!' });
+  const records = listWorkspaceRecords();
+  assert.equal(records.some((w) => w.slug === 'prairie'), false, 'no pole minted on the slug of a name');
+  assert.deepEqual(records.find((w) => w.slug === 'meadow')?.projects, ['barn', 'farm']);
+});
+
+test('an install already holding a colliding pair keeps its projects where they were', async () => {
+  // Written before the guard: `delta` is named "Summit" and `summit` holds the
+  // slug of that name, so projects tagged "Summit" resolve to `summit`.
+  dbApi.insertWorkspace({ slug: 'delta', name: 'Summit', color: null, lead_agent: null });
+  dbApi.insertWorkspace({ slug: 'summit', name: 'Summit Bis', color: null, lead_agent: null });
+  dbApi.upsertProject('peak', { workspace: 'Summit' });
+  const before = listWorkspaceRecords();
+  assert.deepEqual(before.find((w) => w.slug === 'summit')?.projects, ['peak'], 'resolution unchanged by the upgrade');
+  assert.equal(dbApi.getProjectRow('peak')?.workspace, 'Summit', 'no tag is rewritten');
+  await withServer(async (call) => {
+    // Both stay editable: renaming leaves the slug, so it cannot make the pair worse.
+    assert.equal((await call('PATCH', '/api/workspaces/summit', 'manager', { name: 'Summit Two' })).status, 200);
+    assert.equal((await call('PATCH', '/api/workspaces/delta', 'manager', { name: 'Delta' })).status, 200);
+  });
+  assert.deepEqual(listWorkspaceRecords().find((w) => w.slug === 'summit')?.projects, ['peak']);
+});

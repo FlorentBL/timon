@@ -3,7 +3,7 @@
  * folders outside its working directory a person lets its missions read, or
  * read and write. The fence grants them (`host/isolation.ts`, `extraDirs` of
  * the target) and the backends are told (`BuildSpawnOpts.extraDirs`: Claude's
- * `--add-dir`, Codex's `writable_roots`).
+ * and Copilot's `--add-dir`, Codex's `writable_roots`).
  *
  * A protected key of the config (`agent-config.ts`): no agent write, no
  * import and no prompt rewrite sets it. `setAgentExtraDirs` is its one door,

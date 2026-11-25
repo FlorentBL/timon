@@ -669,6 +669,17 @@ export const CONFLICT_DIALOG_SLOT = 'forge.conflict.dialog';
 export const PROJECT_SETTINGS_SLOT = 'project.settings';
 
 /**
+ * Reserved name of the slot of a project's window (create, edit, delete),
+ * opened from the agents grid, a project's card and the chat's project menu.
+ * NOT declared yet: a slot declared at boot without its contract version in
+ * `SLOT_API_VERSIONS` would let a plugin written against the released API
+ * claim it. The next client API declares it, with the product's window as its
+ * fallback and `useProjectEditDialog()` in `@timon/ui`; until then
+ * `ProjectEditDialog` paints the product's window directly.
+ */
+export const PROJECT_EDIT_DIALOG_SLOT = 'project.edit.dialog';
+
+/**
  * Slot of the table of contents of a long list page (the Skills and MCP tabs
  * of Capabilities): the sticky column on the left that jumps to a section.
  * Every page that has one paints its occupant, which reads `usePageToc()`. A

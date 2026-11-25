@@ -249,9 +249,24 @@ does not contact the provider or verify whether a session has expired.
 ## Codex fails with "env: node: No such file or directory"
 
 Codex installed with npm runs on Node.js. Timon launches it with the folder it
-was found in and with the Node.js it finds on the machine (nvm, Volta,
-nvm-windows, Homebrew, `~/.local/bin`, the PATH). When none is found,
-`timon doctor` and the diagnostic report name the CLI: install Node.js.
+was found in and with the Node.js it finds on the machine: the PATH, then the
+places version managers keep it without telling a background service (nvm,
+fnm, mise, asdf, Volta, nvm-windows, Homebrew, `~/.local/bin`). When the
+machine has none, Timon lends the CLI the Node.js it runs on itself.
+
+A Node.js found under a version manager is skipped when another account could
+have replaced it: on Linux and macOS, the file or one of the folders above it,
+up to the version manager's own folder, belongs to another user or is writable
+by its group or by everyone (`chmod go-w` on that folder fixes it); on Windows,
+a version manager folder outside your user profile (`FNM_DIR` or `VOLTA_HOME`
+set to `D:\fnm`, say). The Node.js Timon runs on is lent only while it is the
+very file Timon started from: after Node.js is upgraded or removed under a
+running Timon, restart Timon.
+
+If `timon doctor` or the diagnostic report still names the CLI, install Node.js
+system-wide (your package manager, or nodejs.org), or point Timon at yours: run
+`node -p process.execPath` in a terminal, put the path it prints under
+`host.binaries.node` in `timon.config.json`, then restart Timon.
 
 The same Node.js runs Timon's own tools inside a Claude session: without it,
 Claude reports that `mcp__timon_ask__request` was not found.
@@ -376,14 +391,14 @@ Do not change the task in Task Scheduler afterwards: switch with `timon service 
 
 ## Windows: updating while the background service runs
 
-The installer pauses the `TimonOrchestrator` task and ends its daemon before replacing the files, with the Windows permission prompt when it is granted and without it otherwise. If an older installer left Timon failing at launch (for example "ffmpeg.dll was not found"), close every `Timon.exe` from Task Manager, run the installer again, then start the task from Task Scheduler or reopen Timon.
+The installer pauses the `TimonOrchestrator` task and asks its daemon to stop before replacing the files, with the Windows permission prompt when it is granted and without it otherwise. The daemon then stops as it does when you quit, and Timon records the previous run as ended normally; a daemon still running after 10 seconds is ended by force (`TIMON_COOPERATIVE_STOP_MS` sets that wait in milliseconds, up to 120000, `0` to end it at once). If an older installer left Timon failing at launch (for example "ffmpeg.dll was not found"), close every `Timon.exe` from Task Manager, run the installer again, then start the task from Task Scheduler or reopen Timon.
 
 Before it replaces anything, the installer checks that nothing of Timon still runs: no program of the installation, and nothing listening on the daemon's port. When something does, it stops there:
 
 - **With its window**, it says "Timon is still running in the background and could not be stopped". Choose **Retry** and allow the Windows permission prompt; without that permission, a background service that keeps running when you are logged out cannot be ended. **Cancel** leaves the installed version as it is. Restarting the computer and running the installer again also works.
 - **From Timon's update window** (no installer window), Timon opens again on the current version and tells you the update was not installed. Install it again and allow the permission prompt.
 
-The installer stops the same way when it could not make that check at all: "The check that Timon is stopped in the background did not run: Windows PowerShell failed". It uses Windows PowerShell for it, and installs nothing over a Timon it could not look at. Choose **Retry**, or restart the computer and run the installer again. If the message comes back every time, Windows PowerShell (`powershell.exe`) or its scripts are blocked on this computer, usually by your organisation's policy: ask its administrator to allow the Timon installer, and send the diagnostic report.
+The installer stops the same way when it could not make that check at all: "The check that Timon is stopped in the background did not run: Windows PowerShell failed". It uses Windows PowerShell for it, and installs nothing over a Timon it could not look at. Choose **Retry**, or restart the computer and run the installer again. If the message comes back every time, Windows PowerShell (`powershell.exe`) or its scripts are blocked on this computer, usually by your organisation's policy: ask its administrator to allow the Timon installer, and send the diagnostic report. This also stops a new installation when an earlier Timon left its `timon-service.*` files in `%USERPROFILE%\.timon\run` on the computer: removing the `TimonOrchestrator` task with administrator rights, then those files, lets it through.
 
 What the installer found and ended is written to `%USERPROFILE%\.timon\tmp\timon-service-pause.log`, and the diagnostic report includes it.
 

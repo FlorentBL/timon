@@ -25,6 +25,12 @@
  * the repository has (`kind`), in any project. It needs `kanban:write` (the
  * plan creates Kanban tasks) and answers nothing of the setting beyond the
  * name the job would get.
+ *
+ * Another, `GET …/integration/mode`: whether the project's jobs merge locally
+ * or land through pull requests, for any signed-in caller, like the project
+ * list. The widgets of the Git stack read it to say "this project merges
+ * locally" to whoever sees the project, `projects:manage` or not. It answers
+ * the mode and nothing else: never the account, the folder or the remote.
  */
 import type { Request, Response, Router } from 'express';
 import { z } from 'zod';
@@ -60,6 +66,21 @@ function projectForRoute(req: Request, res: Response): string | null {
   }
   // `readMeta` validates the slug and brings a project still described by its
   // legacy file into the table, where the setting lives.
+  try { readMeta(slug); } catch {
+    res.status(400).json(apiError('project_refused', 'invalid project slug', { detail: 'invalid project slug' }));
+    return null;
+  }
+  return slug;
+}
+
+/** Auth and an existing project, with no permission beyond being signed in. */
+function visibleProject(req: Request, res: Response): string | null {
+  if (!requireAuth(req, res)) return null;
+  const slug = req.params.slug;
+  if (typeof slug !== 'string') {
+    res.status(400).json(apiError('project_refused', 'invalid project slug', { detail: 'invalid project slug' }));
+    return null;
+  }
   try { readMeta(slug); } catch {
     res.status(400).json(apiError('project_refused', 'invalid project slug', { detail: 'invalid project slug' }));
     return null;
@@ -115,6 +136,17 @@ function plannerProject(req: Request, res: Response): string | null {
 
 export function registerIntegrationRoutes(app: Router, deps: IntegrationRouteDeps = {}): void {
   const login = deps.ghLogin ?? ((dir: string | null) => ghLogin(dir));
+
+  // `valid: false` when the stored setting no longer validates: the jobs then
+  // land with the default, and the screen says so rather than "local".
+  app.get('/api/projects/:slug/integration/mode', (req, res) => {
+    const slug = visibleProject(req, res);
+    if (!slug) return;
+    try {
+      const read = readProjectIntegration(slug);
+      res.json({ mode: read.integration.mode, configured: read.configured, valid: !read.invalid });
+    } catch (err) { answerError(res, err); }
+  });
 
   app.get('/api/projects/:slug/integration', (req, res) => {
     const slug = projectForRoute(req, res);

@@ -68,7 +68,9 @@ upsertAgent({
 
 const LAUNCHER = '/opt/timon/timon-fence';
 
-async function launch(agent = 'fence.witness'): Promise<{ cmd: string; args: string[]; env: NodeJS.ProcessEnv; policy: FencePolicy; missionId: string }> {
+type FakeChild = EventEmitter & { stdin: PassThrough; stdout: PassThrough; stderr: PassThrough };
+
+async function launch(agent = 'fence.witness'): Promise<{ cmd: string; args: string[]; env: NodeJS.ProcessEnv; policy: FencePolicy; missionId: string; child: FakeChild }> {
   const host = getHost();
   const original = { spawn: host.spawn, fence: host.fence };
   const policies: FencePolicy[] = [];
@@ -100,7 +102,7 @@ async function launch(agent = 'fence.witness'): Promise<{ cmd: string; args: str
   }
   const policy = policies[0];
   assert.ok(policy, 'the fence was asked to wrap the launch');
-  return { ...seen, policy, missionId };
+  return { ...seen, policy, missionId, child };
 }
 
 test('the CLI is spawned through the fence launcher, its own temporary folder as TMPDIR', async () => {
@@ -271,4 +273,84 @@ test('a path of the Timon home the CLI is told to use and the fence refuses stop
   assert.equal(payload.access, 'write');
   assert.equal(payload.missionId, refusal.missionId);
   assert.equal(dbApi.getMission(refusal.missionId)?.status, 'failed');
+});
+
+/** The mission's events of `type`, once one has been recorded (the stream is read asynchronously). */
+async function eventsOf(missionId: string, type: string, settle = 20): Promise<Array<Record<string, unknown>>> {
+  const { dbApi } = await import('./db.js');
+  for (let i = 0; i < 100; i++) {
+    const found = dbApi.listEvents(missionId).filter((e) => e.type === type);
+    if (found.length > 0) {
+      await new Promise((done) => setTimeout(done, settle));
+      return dbApi.listEvents(missionId).filter((e) => e.type === type).map((e) => JSON.parse(e.payload) as Record<string, unknown>);
+    }
+    await new Promise((done) => setTimeout(done, 10));
+  }
+  return [];
+}
+
+const codexLine = (value: unknown): string => `${JSON.stringify(value)}\n`;
+const commandRun = (id: string, command: string, output: string, exit = 1): string => codexLine({
+  type: 'item.completed', item: { id, type: 'command_execution', command, aggregated_output: output, exit_code: exit, status: 'completed' },
+});
+
+// The fence exists on Linux and macOS only, and a refusal is read from a POSIX path in what a tool printed.
+const POSIX_ONLY = { skip: process.platform === 'win32' && 'the fence exists on Linux and macOS only' };
+
+test('a path the fence refuses, met by a tool in a turn that goes on, is named in the thread once', POSIX_ONLY, async () => {
+  // A file of the daemon's private state: the fence refuses it, the daemon outside the fence may read it.
+  const refused = join(TIMON_HOME, 'run', 'productive-refusal.txt');
+  mkdirSync(join(TIMON_HOME, 'run'), { recursive: true });
+  writeFileSync(refused, 'not for missions');
+  const { missionId, child } = await launch();
+  child.stdout.write(codexLine({ type: 'thread.started', thread_id: 'thread-productive' }));
+  child.stdout.write(codexLine({ type: 'turn.started' }));
+  child.stdout.write(commandRun('item_1', `cat ${refused}`, `cat: ${refused}: Permission denied\n`));
+  // The same path again, and a refusal the OS gives anyway: neither adds a notice.
+  child.stdout.write(commandRun('item_2', `cat ${refused}`, `cat: ${refused}: Permission denied\n`));
+  child.stdout.write(commandRun('item_3', 'cat /proc/1/mem', 'cat: /proc/1/mem: Permission denied\n'));
+  child.stdout.write(codexLine({ type: 'item.completed', item: { id: 'item_4', type: 'agent_message', text: 'Read what I could.' } }));
+  child.stdout.write(codexLine({ type: 'turn.completed', usage: { input_tokens: 900, output_tokens: 40 } }));
+  const refusals = await eventsOf(missionId, 'fence_refused', 100);
+  assert.equal(refusals.length, 1, JSON.stringify(refusals));
+  const [refusal] = refusals;
+  assert.equal(refusal?.path, refused);
+  assert.equal(refusal?.stage, 'run');
+  assert.equal(refusal?.access, 'read');
+  assert.equal(refusal?.timonHome, true);
+  assert.equal(refusal?.grantable, false);
+  child.emit('exit', 0, null);
+  child.emit('close', 0, null);
+});
+
+test('a refusal naming no path, in a turn that fails, names the fence and its setting once', async () => {
+  const { missionId, child } = await launch();
+  child.stdout.write(codexLine({ type: 'thread.started', thread_id: 'thread-pathless' }));
+  child.stdout.write(codexLine({ type: 'turn.started' }));
+  child.stdout.write(codexLine({ type: 'turn.failed', error: { message: 'Operation not permitted (os error 1)' } }));
+  const suspicions = await eventsOf(missionId, 'fence_suspected', 50);
+  assert.equal(suspicions.length, 1, JSON.stringify(suspicions));
+  const [suspicion] = suspicions;
+  assert.equal(suspicion?.said, 'Operation not permitted (os error 1)');
+  assert.equal(suspicion?.mechanism, 'landlock');
+  assert.equal(suspicion?.backend, 'codex');
+  assert.deepEqual(suspicion?.setting, { category: 'system', tab: 'security' });
+  const { dbApi } = await import('./db.js');
+  assert.equal(dbApi.listEvents(missionId).filter((e) => e.type === 'fence_refused').length, 0, 'no path, so no refusal to offer');
+  child.emit('exit', 1, null);
+  child.emit('close', 1, null);
+});
+
+test('a mission that meets refused folder after refused folder gets a few notices, not one per folder', POSIX_ONLY, async () => {
+  const folders = Array.from({ length: 8 }, (_, i) => join(TIMON_HOME, 'run', `walk-${i}`));
+  for (const folder of folders) mkdirSync(folder, { recursive: true });
+  const { missionId, child } = await launch();
+  child.stdout.write(codexLine({ type: 'thread.started', thread_id: 'thread-walk' }));
+  child.stdout.write(codexLine({ type: 'turn.started' }));
+  folders.forEach((folder, i) => child.stdout.write(commandRun(`walk_${i}`, `ls ${folder}`, `ls: cannot open directory '${folder}': Permission denied\n`)));
+  child.stdout.write(codexLine({ type: 'turn.completed', usage: { input_tokens: 900, output_tokens: 40 } }));
+  const refusals = await eventsOf(missionId, 'fence_refused', 150);
+  assert.equal(refusals.length, 5, refusals.map((r) => String(r.path)).join(', '));
+  child.emit('exit', 0, null);
+  child.emit('close', 0, null);
 });

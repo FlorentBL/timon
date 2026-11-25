@@ -208,9 +208,8 @@ function visibleAccounts(viewer: DbViewer | null | undefined): Set<string> {
  * Subscription accounts (TODO #330) are measured on their own sign-in, and
  * only those `viewer` may use are listed. An account is listed only when it
  * has a figure or a failing probe (an expired token shows as stale): one that
- * is not signed in, or that cannot be measured here (a Claude account on
- * macOS), is left out — the settings already tell its state, and a gauge
- * would have nothing to say.
+ * is not signed in is left out — the settings already tell its state, and a
+ * gauge would have nothing to say.
  */
 export async function collectUsage(viewer: DbViewer | null = null, options?: UsageProbeOptions): Promise<UsageEntry[]> {
   const visible = visibleAccounts(viewer);

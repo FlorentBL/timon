@@ -18,6 +18,9 @@ import { randomUUID } from 'node:crypto';
 import { once } from 'node:events';
 import type { AddressInfo } from 'node:net';
 import express from 'express';
+import type { RequestAuth } from './users/identity.js';
+
+const ROOT_AUTH: RequestAuth = { kind: 'api-token', user: null, isSuperadmin: true, permissions: ['*'] };
 
 process.env.TIMON_HOME = mkdtempSync(join(tmpdir(), 'timon-mission-list-page-test-'));
 
@@ -56,7 +59,7 @@ const ORACLE_SQL = `SELECT m.*,
         GROUP BY mission_id
      ) span_agg ON span_agg.mission_id = m.id
     WHERE WHERE_CLAUSE
-    ORDER BY m.started_at DESC
+    ORDER BY m.started_at DESC, m.id DESC
     LIMIT ?`;
 
 function oracle(where: string, params: unknown[], limit: number): unknown[] {
@@ -156,16 +159,19 @@ test('a scoped viewer only sees its own missions, limit counted on its rows', ()
 });
 
 test('the page is served by the started_at index, not a sort of the whole table', () => {
-  const plan = db.prepare(`EXPLAIN QUERY PLAN SELECT id FROM missions m ORDER BY m.started_at DESC LIMIT 5`)
+  const plan = db.prepare(`EXPLAIN QUERY PLAN SELECT id FROM missions m ORDER BY m.started_at DESC, m.id DESC LIMIT 5`)
     .all() as { detail: string }[];
   assert.ok(plan.some((p) => p.detail.includes('idx_missions_started')), JSON.stringify(plan));
-  assert.ok(!plan.some((p) => p.detail.includes('TEMP B-TREE')), JSON.stringify(plan));
+  // The id only breaks ties between equal start times: never a sort of the whole table.
+  assert.ok(!plan.some((p) => /TEMP B-TREE FOR ORDER BY/.test(p.detail)), JSON.stringify(plan));
 });
 
 type ListBody = { missions: { id: string; mission: string }[] };
 
 async function get<T>(path: string): Promise<T> {
   const app = express();
+  // `GET /api/missions` refuses an anonymous caller.
+  app.use((req, _res, next) => { req.auth = ROOT_AUTH; next(); });
   app.use(express.json());
   registerRoutes(app);
   const server = app.listen(0);

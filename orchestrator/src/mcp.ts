@@ -24,7 +24,7 @@ import { isInjectedMcpServer, isInjectedMcpStubId } from './injected-mcp.js';
 import {
   serializeCodexMcpToml, serializeGrokMcpToml, serializeMcpJson, type McpLaunchServer,
 } from './backends/mcp-serialize.js';
-import { OAuthRefreshError, refreshTokens } from './oauth.js';
+import { forgetOAuthFlows, OAuthRefreshError, refreshTokens } from './oauth.js';
 import { mcpHostAddressRefusal } from './mcp-url-guard.js';
 import { pinnedLaunchTarget } from './mcp-launch-proxy.js';
 import { vaultEnabled } from './secrets/availability.js';
@@ -927,6 +927,7 @@ export function deleteMcp(id: string): boolean {
   rmSync(p);
   forgetUnreferencedKeys(id, s, null);
   forgetMcpOAuthTokens(id);
+  forgetOAuthFlows(id);
   return true;
 }
 

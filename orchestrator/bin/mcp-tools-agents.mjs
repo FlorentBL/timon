@@ -252,6 +252,29 @@ export const tools = [
     },
   },
   {
+    name: 'agent_extra_dirs',
+    title: 'List or change an agent\'s extra folders',
+    description:
+      'The folders outside its working directory an agent\'s missions may read, or read and write ' +
+      '(CLI `timon agent extra-dirs`). `action`: `list` (default) returns `{ agent, extra_dirs, dropped, running }`; ' +
+      '`add` adds `path` with `mode` (read by default) or changes the mode of a folder already listed; `remove` removes `path`. ' +
+      'Changing them needs the account to hold `agents:privileged-config`, and is refused for your own agent: ' +
+      'a person sets them from the agent\'s Workspace tab. The Timon home, a folder that contains it, a whole home or disk ' +
+      'and folders of credentials are refused, with the reason. A change applies from the agent\'s next mission ' +
+      '(`running` counts the processes that keep the old list); `restart: true` stops them.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        name: name(),
+        action: { type: 'string', enum: ['list', 'add', 'remove'], description: 'list (default), add or remove.' },
+        path: { type: 'string', description: 'Absolute path of an existing folder, on the machine running Timon (add, remove).' },
+        mode: { type: 'string', enum: ['read', 'write'], description: 'Access given by add: read (default) or write.' },
+        restart: { type: 'boolean', description: 'Stop the agent\'s running processes so their next turn gets the new list (add, remove).' },
+      },
+      required: ['name'],
+    },
+  },
+  {
     name: 'backends_list',
     title: 'List backends and models',
     description:
@@ -479,6 +502,17 @@ export const handlers = {
   },
   async agent_doc_rm(args, { call }) {
     return await call('DELETE', `/api/agents/${enc(args.name)}/docs/${enc(args.file)}`);
+  },
+  async agent_extra_dirs(args, { call }) {
+    const route = `/api/agents/${enc(args.name)}/extra-dirs`;
+    const action = args.action ?? 'list';
+    if (action === 'list') return await call('GET', route);
+    if (action !== 'add' && action !== 'remove') throw new Error(`unknown action "${action}": list, add or remove`);
+    if (!String(args.path ?? '').trim()) throw new Error(`${action} needs path, the absolute path of the folder`);
+    const body = { path: args.path };
+    if (action === 'add') body.mode = args.mode ?? 'read';
+    if (args.restart !== undefined) body.restart = args.restart === true;
+    return await call(action === 'add' ? 'POST' : 'DELETE', route, body);
   },
   async backends_list(_args, { call }) {
     return await call('GET', '/api/backends/catalog');

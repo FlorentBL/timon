@@ -266,3 +266,20 @@ test('a refusal of the mission fence is the last error, named, rather than the C
     'the mission fence (Landlock) did not let it read ~/.timon/provider-runs/p/m/config.toml; see Settings › System › Security.',
   );
 });
+
+test('a refusal naming no path, inside the fence, is the last error with the fence as its likely cause', () => {
+  const missionId = randomUUID();
+  dbApi.createMission(missionId, 'worker', 'attempt', undefined, owner.id);
+  dbApi.insertEvent(missionId, 'backend_failed', {
+    type: 'backend_failed', backend: 'codex', exitCode: 1, missionId, sessionId: null, stderr: 'Error: Operation not permitted (os error 1)',
+  });
+  dbApi.insertEvent(missionId, 'fence_suspected', {
+    type: 'fence_suspected', missionId, agent: 'worker', backend: 'codex', mechanism: 'seatbelt', stage: 'run',
+    said: 'Error: Operation not permitted (os error 1)', setting: { category: 'system', tab: 'security' },
+  });
+  assert.equal(
+    lastMissionError(missionId),
+    'the backend stopped on "Error: Operation not permitted (os error 1)" without naming a path; '
+      + 'the mission fence (the macOS sandbox (Seatbelt)) may have refused it, see Settings › System › Security.',
+  );
+});

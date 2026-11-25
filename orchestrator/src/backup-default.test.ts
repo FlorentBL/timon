@@ -63,3 +63,28 @@ test('the routines module applies the default when it starts', () => {
     stop();
   }
 });
+
+test('the backup routine is seeded under an English name', () => {
+  predateDefault();
+  applyBackupDefault();
+  assert.equal(backupStatus().routine?.name, 'Nightly backup');
+});
+
+test('a routine still named as seeded in French is renamed, once', async () => {
+  const { renameLegacyBackupRoutine } = await import('./routines.js');
+  predateDefault();
+  enableBackupRoutine();
+  dbApi.updateRoutine(BACKUP_ROUTINE_ID, { name: 'Backup nocturne' }); // french-ok: the legacy seeded name
+  assert.equal(renameLegacyBackupRoutine(), true);
+  assert.equal(backupStatus().routine?.name, 'Nightly backup');
+  assert.equal(renameLegacyBackupRoutine(), false);
+});
+
+test('a backup routine the user renamed keeps its name', async () => {
+  const { renameLegacyBackupRoutine } = await import('./routines.js');
+  predateDefault();
+  enableBackupRoutine();
+  dbApi.updateRoutine(BACKUP_ROUTINE_ID, { name: 'My archive' });
+  assert.equal(renameLegacyBackupRoutine(), false);
+  assert.equal(backupStatus().routine?.name, 'My archive');
+});

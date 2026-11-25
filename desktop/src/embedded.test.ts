@@ -20,6 +20,8 @@ import {
   stopRequestFor,
   stopWaitMs,
   MAX_RESTARTS,
+  STOP_WAIT_ENV,
+  STOP_WAIT_MAX_MS,
   STOP_WAIT_MS,
 } from './embedded.js';
 import { mkdtempSync, writeFileSync } from 'node:fs';
@@ -373,6 +375,23 @@ test('the stop request goes to Windows only, with the daemon token, to the loopb
   assert.equal(await requestDaemonStop('http://127.0.0.1:3100', home, refusing), false);
   assert.equal(stopWaitMs({ TIMON_COOPERATIVE_STOP_MS: '2500' }), 2_500);
   assert.equal(stopWaitMs({ TIMON_COOPERATIVE_STOP_MS: 'soon' }), STOP_WAIT_MS);
+});
+
+test('the quit waits for the daemon exactly as the CLI stop does (TODO #1078, I8)', async () => {
+  // The two packages are built apart: read the orchestrator's own reading of the variable.
+  const daemon = await import(new URL('../../orchestrator/src/host/cooperative-stop.ts', import.meta.url).href) as {
+    COOPERATIVE_STOP_ENV: string;
+    COOPERATIVE_STOP_WAIT_MS: number;
+    COOPERATIVE_STOP_MAX_WAIT_MS: number;
+    cooperativeStopWaitMs(env: NodeJS.ProcessEnv): number;
+  };
+  assert.equal(STOP_WAIT_ENV, daemon.COOPERATIVE_STOP_ENV);
+  assert.equal(STOP_WAIT_MS, daemon.COOPERATIVE_STOP_WAIT_MS);
+  assert.equal(STOP_WAIT_MAX_MS, daemon.COOPERATIVE_STOP_MAX_WAIT_MS);
+  for (const raw of [undefined, '', ' ', '0', '1', '2500', ' 2500 ', '119999', '120000', '120001', '999999999', '-5', '2.5', '1e4', 'soon']) {
+    const env: NodeJS.ProcessEnv = raw === undefined ? {} : { [STOP_WAIT_ENV]: raw };
+    assert.equal(stopWaitMs(env), daemon.cooperativeStopWaitMs(env), `${STOP_WAIT_ENV}=${JSON.stringify(raw)}`);
+  }
 });
 
 test('embedded runtime drops NODE_OPTIONS even from explicit overrides', () => {

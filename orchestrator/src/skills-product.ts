@@ -17,7 +17,7 @@
 export const PRODUCT_SKILLS: ReadonlyArray<{ id: string; content: string; version?: number }> = [
   {
     id: 'timon-task',
-    version: 2,
+    version: 3,
     content: `---
 allowed_tools: ["Bash(timon:*)"]
 ---
@@ -358,6 +358,29 @@ local target, or taken as it is), and the job ends on a \`merge\` task created
 with \`--landing local\` (or on nothing when the work is kept on the branch).
 That task merges the branch into the target on this machine and closes with the
 target's full sha; the daemon checks it with git, then closes the job's ideas.
+A sequential job of such a project gets its branch and its worktree through
+\`timon job branch <branch>\`, the same command as \`timon pr branch\` under a
+name that fits a project with no pull request.
+
+### Landing a job kept on its branch
+
+A job kept on its branch lands later, when a person decides it, with ONE
+gesture: the Jobs widget, or
+
+\`\`\`bash
+timon pr land <job-id|series-id>                                         # merges locally
+timon pr land <job-id|series-id> --title "…" --body-file <file>          # pull request project
+\`\`\`
+
+(MCP \`pr_land\`, which needs \`projects:manage\`). In a project that merges
+locally, the daemon merges the branch into the target on this machine
+(fast-forward, else a merge commit written without a working tree), refuses a
+conflict with its files, and closes the job's ideas. In a project that lands
+through pull requests, it opens the job's pull request with the checks of
+\`timon pr open\` (a title is required), or a new one when the previous one
+was closed without a merge. It is refused while a task of the job still waits
+or runs. **Run it only when your brief or a person asks for it**: keeping the
+work on its branch was their choice, never land it on your own.
 
 ### Series fallback plan (quota exhausted)
 

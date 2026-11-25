@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import { Settings, Trash2, Ungroup } from 'lucide-react';
 import * as Dropdown from '@radix-ui/react-dropdown-menu';
 import { cn } from '@/lib/utils';
+import { DESTRUCTIVE_MENU_ITEM } from '@/components/ui/dropdown-menu';
 import { t } from '@/lib/i18n';
 import { useWidgetHost } from './widget-host';
 import { effectiveWidgetStyle, useWidgetStyleDefaults } from './use-widget-style';
@@ -49,7 +50,7 @@ export function WidgetMenuContent({ entry, grouped, bare, extra, onClose }: { en
       {grouped && <Dropdown.Item onSelect={() => host.onDetach(entry.id)} className={ITEM}><Ungroup className="size-3" />{t('widgets.detach')}</Dropdown.Item>}
     </>}
     <Dropdown.Item onSelect={() => host.onRemove(entry.id)} aria-label={t('widgets.remove', { title: widget?.title ?? '' })}
-      className={cn(ITEM, 'text-destructive focus:bg-destructive/10 focus:text-destructive', !bare && 'mt-2')}>
+      className={cn(ITEM, DESTRUCTIVE_MENU_ITEM, !bare && 'mt-2')}>
       <Trash2 className="size-3.5" />{t('widgets.delete')}
     </Dropdown.Item>
   </Dropdown.Content></Dropdown.Portal>;

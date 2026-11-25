@@ -27,6 +27,9 @@ import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import type { AddressInfo } from 'node:net';
 import express from 'express';
+import type { RequestAuth } from './users/identity.js';
+
+const ROOT_AUTH: RequestAuth = { kind: 'api-token', user: null, isSuperadmin: true, permissions: ['*'] };
 
 process.env.TIMON_HOME = mkdtempSync(join(tmpdir(), 'timon-turn-end-test-'));
 
@@ -53,6 +56,8 @@ type MissionView = {
 
 async function get(path: string): Promise<{ status: number; body: MissionView }> {
   const app = express();
+  // `GET /api/missions` refuses an anonymous caller.
+  app.use((req, _res, next) => { req.auth = ROOT_AUTH; next(); });
   app.use(express.json());
   registerRoutes(app);
   const server = app.listen(0);
@@ -144,6 +149,8 @@ function finishTurn(id: string, instruction: string, answer: string): void {
  *  run BEFORE the route answers: the state a poll reads is exact, no timer. */
 async function withApi<T>(onPoll: (rank: number) => void, run: (url: string) => Promise<T>): Promise<T> {
   const app = express();
+  // `GET /api/missions` refuses an anonymous caller.
+  app.use((req, _res, next) => { req.auth = ROOT_AUTH; next(); });
   let polls = 0;
   app.use((req, _res, next) => {
     if (req.query.view === 'status') onPoll(++polls);

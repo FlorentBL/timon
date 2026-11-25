@@ -39,12 +39,14 @@ import { TIMON_HOME } from './paths.js';
 import { formatBytes, freeBytes, LOW_DISK_BYTES } from './storage-failure.js';
 import { CATALOG } from './kernel/catalog.js';
 import { degradation } from './kernel/degradation.js';
-import { nodelessBackends, nodelessBackendText } from './host/launch-path.js';
+import { checkDaemonNode, nodelessBackends, nodelessBackendText } from './host/launch-path.js';
 import { missingRequiredBinaries, REQUIRED_BINARIES } from './host/blocking-facts.js';
 import { nodePtyStatus } from './terminal-host/pty.js';
 import { binaryCandidates, findExecutableBinary, npmPrefixCandidates, pinnedBinaryCandidates, resolvePinnedBinary, type BinarySearchOptions } from './host/binary-path.js';
 import { BUILTIN_API_KEY_PROVIDERS, BUILTIN_DECLARATIONS, builtinBinaries, builtinProviderIds } from './backends/builtin-declarations.js';
 import { activeProfiles, authStatusNow, installedProfiles } from './backends/registry.js';
+import { binaryIdentityRefusal, checkBinaryIdentitySync, type BinaryIdentityLimits } from './backends/binary-identity.js';
+import { declaredBinary } from './host/declared-binaries.js';
 import { usableProviders } from './backends/usable.js';
 import { isRemoteDialect } from './backends/types.js';
 import type { DoctorReport, BinaryReport, BinaryProvider, ProviderAuthReport } from './plugins/contract/system.js';
@@ -91,6 +93,21 @@ export function whichBin(
     return { path: resolvePinnedBinary(name, pinned, options), pinned: true };
   }
   return { path: findExecutableBinary(name, options), pinned: false };
+}
+
+/** The report is synchronous and blocks whoever asked: a program that hangs on `--version` is given less than a launch. */
+const DOCTOR_IDENTITY_LIMITS: BinaryIdentityLimits = { runTimeoutMs: 3_000, patternTimeoutMs: 250 };
+
+/**
+ * A pinned path that names another program (#1101: `/usr/local/bin/ollama` pinned as `codex`): it exists and
+ * runs, so it used to pass, and every mission died on it. Asked only of a pin — a program found on its own is
+ * checked at each launch — and only when its provider declared how its program describes itself.
+ */
+function pinnedIdentityProblem(name: string, path: string): string | null {
+  const identity = declaredBinary(name)?.identity;
+  if (!identity) return null;
+  const result = checkBinaryIdentitySync(path, identity, DOCTOR_IDENTITY_LIMITS);
+  return result.ok ? null : binaryIdentityRefusal(`the \`${name}\` pin`, path, identity, result.printed, result.slow);
 }
 
 function dockerUsable(bin: string | null): { present: boolean; usable: boolean; detail: string } {
@@ -168,20 +185,26 @@ export function diagnose(): DoctorReport {
     const { path, pinned } = whichBin(b.name, pins);
     const pin = pins[b.name];
     const provider = providerOf(b.name);
+    const wrongProgram = pinned && path ? pinnedIdentityProblem(b.name, path) : null;
     return {
       name: b.name,
       ...(provider ? { provider } : {}),
       path,
-      ok: path !== null,
+      ok: path !== null && wrongProgram === null,
       pinned,
       attemptedPaths: pin ? pinnedBinaryCandidates(b.name, pin)
         : [...binaryCandidates(b.name), ...(path ? [] : npmPrefixCandidates(b.name))],
       ...(pinned && !path ? { error: `host.binaries.${b.name} does not point to an executable file: ${pins[b.name]}` } : {}),
+      ...(wrongProgram ? { error: wrongProgram } : {}),
       installCommand: installCommandFor(b.name, machine),
     };
   });
-  const found = (n: string) => binaries.find((b) => b.name === n)?.path ?? null;
-  for (const nodeless of nodelessBackends(PROVIDER_BINARIES.map((b) => b.name), { platform: process.platform, resolve: found })) {
+  // A pin on another program is no backend: the blockers must not count it.
+  const found = (n: string) => binaries.find((b) => b.name === n && b.ok)?.path ?? null;
+  const runtime = checkDaemonNode();
+  for (const nodeless of nodelessBackends(PROVIDER_BINARIES.map((b) => b.name), {
+    platform: process.platform, resolve: found, runtimeNode: runtime.node, runtimeProblem: runtime.problem,
+  })) {
     const report = binaries.find((b) => b.name === nodeless.name);
     if (report) report.warning = nodelessBackendText(nodeless);
   }

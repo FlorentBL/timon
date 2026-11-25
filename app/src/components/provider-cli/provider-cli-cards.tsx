@@ -4,8 +4,11 @@
  * The provider cards: each AI CLI of the product's providers as the DAEMON
  * sees it — not installed, installed but not signed in, ready — with its
  * vendor's official installer run on a click, the console of that installer
- * while it runs, the sign-in line built on the path the daemon resolved, and
- * "Update available" when the vendor has published a newer version.
+ * while it runs, its sign-in, and "Update available" when the vendor has
+ * published a newer version. Each card has ONE main action; the others, and
+ * the terminal's sign-in command, wait in its "…" menu. A provider whose host
+ * sign-in Timon can keep (Claude) signs in in the app, with the same dialog as
+ * the setup and the provider page.
  *
  * One component for the onboarding's screens (its "Choose your LLM" step,
  * drawn as rows, and its "cannot start" screen), and a slot
@@ -16,6 +19,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactElement } from 'react';
 import { ArrowUpCircle, ExternalLink, Loader2, LogIn, RefreshCw } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { DropdownMenuItem } from '@/components/ui/dropdown-menu';
 import { BrandMark } from '@/components/brand-mark';
 import { CommandToRun } from '@/components/command-to-run';
 import { SlotSingle, useSlotEntries } from '@/lib/plugin-host/render';
@@ -28,6 +32,8 @@ import { copyToClipboard } from '@/lib/clipboard';
 import { t } from '@/lib/i18n';
 import { openTerminalWindow } from '@/lib/terminal-web';
 import { cn } from '@/lib/utils';
+import { ProviderSettingMenu } from '@/components/provider-page/provider-section';
+import { HostSignInDialog } from './host-sign-in-dialog';
 import {
   ProviderCliCardsProvider, useProviderCliCards, type ProviderCliCardsMode, type ProviderCliCardsValue, type ProviderCliSignInOutcome,
 } from './provider-cli-context';
@@ -179,6 +185,9 @@ export function ProductProviderCliCards(): ReactElement | null {
 
 function ProviderCliCard({ cli, job }: { cli: ProviderCli; job: InstallJob | null }): ReactElement {
   const host = useProviderCliCards();
+  const [dialog, setDialog] = useState(false);
+  const [outcome, setOutcome] = useState<ProviderCliSignInOutcome | null>(null);
+  const [commandShown, setCommandShown] = useState(false);
   const state = providerCliState(cli);
   const running = job?.state === 'running';
   const failed = job?.state === 'failed' ? job : null;
@@ -187,8 +196,25 @@ function ProviderCliCard({ cli, job }: { cli: ProviderCli; job: InstallJob | nul
   const canInstall = cli.installable && !cli.unsupportedVersion && (state === 'missing' || state === 'bundled');
   const canUpdate = cli.installable && !cli.unsupportedVersion && cli.updateAvailable && !canInstall;
   const blocked = !host || host.disabled || running;
+  const signingIn = state === 'bundled' || state === 'signIn';
+  // Signed in in the app when Timon can keep the sign-in, as on the setup and the provider page.
+  const inApp = signingIn && cli.host?.browser === true;
+  // ONE main action: signing in comes first, an install or an update it hides goes in the "…" menu.
+  const primary: 'install' | 'update' | 'signIn' | null = running
+    ? (canUpdate ? 'update' : 'install')
+    : signingIn ? 'signIn' : canInstall ? 'install' : canUpdate ? 'update' : null;
+  const menuInstall = !running && primary !== 'install' && canInstall;
+  const menuUpdate = !running && primary !== 'update' && canUpdate;
+  const menuCommand = signingIn && !commandShown && outcome !== 'failed';
+  const steps = signingIn && (commandShown || outcome === 'failed');
+
+  const terminalSignIn = (): void => {
+    if (!host) return;
+    void host.signIn(cli.name).then(setOutcome);
+  };
+
   return (
-    <section aria-label={cli.label} className="min-w-0 space-y-2 rounded-xl bg-card p-4 text-sm shadow-elev-1">
+    <section aria-label={cli.label} data-state={running ? 'installing' : state} className="min-w-0 space-y-2 rounded-xl bg-card p-4 text-sm shadow-elev-1">
       <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
         <BrandMark brand={cli.brand ?? ''} className="size-6" />
         <span className="font-medium">{cli.label}</span>
@@ -198,18 +224,38 @@ function ProviderCliCard({ cli, job }: { cli: ProviderCli; job: InstallJob | nul
           {t(`providerClis.state.${state}`)}
         </span>
         {cli.version && <span className="text-xs tabular-nums text-muted-foreground">{t('providerClis.version', { version: cli.version })}</span>}
-        {canInstall && (
-          <Button type="button" size="sm" className="ml-auto" disabled={blocked} onClick={() => void host?.install(cli.name)}>
-            {running && <Loader2 className="mr-2 size-4 animate-spin" aria-hidden />}
-            {running ? t('providerClis.installing') : t('providerClis.install')}
-          </Button>
-        )}
-        {canUpdate && (
-          <Button type="button" size="sm" variant="outline" className="ml-auto gap-1.5" disabled={blocked} onClick={() => void host?.install(cli.name)}>
-            {running ? <Loader2 className="size-4 animate-spin" aria-hidden /> : <ArrowUpCircle className="size-4" aria-hidden />}
-            {running ? t('providerClis.updating') : t('providerClis.update')}
-          </Button>
-        )}
+        {primary || menuInstall || menuUpdate || menuCommand ? (
+          <div className="ml-auto flex items-center gap-1">
+            {primary === 'install' && (
+              <Button type="button" size="sm" disabled={blocked} onClick={() => void host?.install(cli.name)}>
+                {running && <Loader2 className="mr-2 size-4 animate-spin" aria-hidden />}
+                {running ? t('providerClis.installing') : t('providerClis.install')}
+              </Button>
+            )}
+            {primary === 'update' && (
+              <Button type="button" size="sm" variant="outline" className="gap-1.5" disabled={blocked} onClick={() => void host?.install(cli.name)}>
+                {running ? <Loader2 className="size-4 animate-spin" aria-hidden /> : <ArrowUpCircle className="size-4" aria-hidden />}
+                {running ? t('providerClis.updating') : t('providerClis.update')}
+              </Button>
+            )}
+            {primary === 'signIn' && (
+              <Button
+                type="button" size="sm" className="gap-1.5" disabled={blocked}
+                onClick={inApp ? () => setDialog(true) : terminalSignIn}
+                data-host-sign-in-offer={inApp ? 'login' : undefined}
+              >
+                <LogIn className="size-4" aria-hidden />{t('providerClis.signIn')}
+              </Button>
+            )}
+            {menuInstall || menuUpdate || menuCommand ? (
+              <ProviderSettingMenu>
+                {menuInstall && <DropdownMenuItem disabled={blocked} onSelect={() => void host?.install(cli.name)}>{t('providerClis.install')}</DropdownMenuItem>}
+                {menuUpdate && <DropdownMenuItem disabled={blocked} onSelect={() => void host?.install(cli.name)}>{t('providerClis.update')}</DropdownMenuItem>}
+                {menuCommand && <DropdownMenuItem onSelect={() => setCommandShown(true)}>{t('providerPage.connection.showCommand')}</DropdownMenuItem>}
+              </ProviderSettingMenu>
+            ) : null}
+          </div>
+        ) : null}
       </div>
       {cli.unsupportedVersion && (
         <p className="text-xs text-amber-700 dark:text-amber-300">{t('providerClis.unsupportedVersion', { name: cli.label, version: cli.version ?? '' })}</p>
@@ -224,16 +270,24 @@ function ProviderCliCard({ cli, job }: { cli: ProviderCli; job: InstallJob | nul
           {failed.result?.reason ?? t('providerClis.failed')}
         </p>
       )}
-      {(state === 'bundled' || state === 'signIn') && (
-        <ProviderSignIn
-          command={cli.signInCommand}
-          then={cli.signInThen}
-          bundled={state === 'bundled'}
-          disabled={blocked || !host}
-          onSignIn={() => host?.signIn(cli.name) ?? Promise.resolve('failed')}
-        />
+      {signingIn && outcome && outcome !== 'failed' && (
+        <p role="status" className="text-xs text-muted-foreground">{signInLabel(`providerClis.signInOutcome.${outcome}`, cli.signInThen)}</p>
       )}
-      {!running && (canInstall || canUpdate) && (failed?.result?.command ?? cli.installCommand) && (
+      {/* The terminal's command, only on demand or when Timon could not hand it over. */}
+      {steps && (
+        <div className="space-y-2 rounded-md bg-muted/60 p-3" data-sign-in-steps>
+          {outcome === 'failed' && <p role="alert" className="text-xs text-muted-foreground">{t('providerClis.signInOutcome.failed')}</p>}
+          <CommandToRun
+            command={cli.signInCommand}
+            label={signInLabel(state === 'bundled' ? 'providerClis.bundledSignInHint' : 'providerClis.signInHint', cli.signInThen)}
+          />
+          <Button type="button" size="sm" variant="ghost" className="h-7 text-xs" onClick={() => { setCommandShown(false); setOutcome(null); }}>
+            {t('providerPage.connection.hideSteps')}
+          </Button>
+        </div>
+      )}
+      {/* The installer's line by hand, under the card whose main action it is, or after it failed. */}
+      {!running && (primary === 'install' || primary === 'update' || (failed && (canInstall || canUpdate))) && (failed?.result?.command ?? cli.installCommand) && (
         <details className="text-xs">
           <summary className="cursor-pointer text-muted-foreground">{t('providerClis.manualSummary')}</summary>
           <CommandToRun command={(failed?.result?.command ?? cli.installCommand)!} label={t('providerClis.manual')} />
@@ -244,6 +298,10 @@ function ProviderCliCard({ cli, job }: { cli: ProviderCli; job: InstallJob | nul
           {t('providerClis.docs', { name: cli.label })}<ExternalLink className="size-3" aria-hidden />
         </a>
       )}
+      {cli.host ? (
+        <HostSignInDialog backend={cli.host.backend} name={cli.label} kind="login" open={dialog}
+          onOpenChange={setDialog} onDone={() => void host?.refresh()} />
+      ) : null}
     </section>
   );
 }
@@ -256,39 +314,6 @@ function ProviderCliCard({ cli, job }: { cli: ProviderCli; job: InstallJob | nul
 export async function runSignInCommand(command: string): Promise<ProviderCliSignInOutcome> {
   if (openTerminalWindow({ insert: command })) return 'terminal';
   return (await copyToClipboard(command)) ? 'copied' : 'failed';
-}
-
-/**
- * "Sign in": `onSignIn` types the command in Timon's terminal or copies it, and the button says
- * which, with what comes next. The command stays shown below, for a terminal of one's own. The
- * provider cards and the Connection section of a provider page both draw it.
- */
-export function ProviderSignIn({ command, then, bundled = false, disabled = false, label, onSignIn }: {
-  command: string;
-  /** What to type once the CLI runs, when it needs it. */
-  then: string | null;
-  /** The copy Timon ships: its hint says so. */
-  bundled?: boolean;
-  disabled?: boolean;
-  /** The button's words; "Sign in" by default. */
-  label?: string;
-  onSignIn: () => Promise<ProviderCliSignInOutcome>;
-}): ReactElement {
-  const [outcome, setOutcome] = useState<ProviderCliSignInOutcome | null>(null);
-  return (
-    <div className="space-y-1">
-      <Button
-        type="button" size="sm" variant="outline" className="gap-1.5" disabled={disabled}
-        onClick={() => { void onSignIn().then(setOutcome); }}
-      >
-        <LogIn className="size-4" aria-hidden />{label ?? t('providerClis.signIn')}
-      </Button>
-      {outcome && (
-        <p role="status" className="text-xs text-muted-foreground">{signInLabel(`providerClis.signInOutcome.${outcome}`, then)}</p>
-      )}
-      <CommandToRun command={command} label={signInLabel(bundled ? 'providerClis.bundledSignInHint' : 'providerClis.signInHint', then)} />
-    </div>
-  );
 }
 
 /** The installer's own lines while it runs, newest at the bottom and kept in view. */

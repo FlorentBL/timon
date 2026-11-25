@@ -43,7 +43,7 @@ import { useWidgetAttention, useWidgetCount, useWidgetInFront } from '@/componen
 import { sharedGet } from '@/lib/shared-read';
 import {
   anyReviewRunning, branchChip, branchLock, filterByAuthor, keepPullList, lastPullList, pullAuthors, pullMenuActions, pullRequestActions,
-  reviewBadge, shouldReadPulls, type PullActionId, type PullBranchWork, type PullRequestItem, type PullRequestList, type PullWork,
+  reviewBadge, shouldReadPulls, HIDDEN_PULLS_CHECK_MS, type PullActionId, type PullBranchWork, type PullRequestItem, type PullRequestList, type PullWork,
   type ReviewBadge,
 } from './pull-requests-model';
 import { diffLineKind, getLanding, type Landing } from './landing-api';
@@ -59,7 +59,7 @@ import { StackProjectPicker, useStackProject } from './git-stack-project';
 import { proposeAskContributor, proposeBranchUpdate } from './forge-branch-api';
 import { ConflictDialog } from './conflict-dialog';
 import { useLandingChanges, useLandingFallbackPoll, type LandingChange } from './landing-events';
-import { landsLocally, LocalLandingEmpty, useProjectIntegration } from './local-landing';
+import { landsLocally, LocalLandingEmpty, useLandingMode } from './local-landing';
 import { onIntegrationChanged } from './project-integration-api';
 import { PullRequestDialog } from './pull-request-dialog';
 import { PULL_MENU_ITEM, PullActionMenuItems } from './pull-request-actions';
@@ -161,6 +161,15 @@ export function PullRequestsWidget({ handle, className }: WidgetProps) {
     if (front && !wasFront.current) void reload(true);
     wasFront.current = front;
   }, [front, reload]);
+  // Left behind, its count is kept no older than the freshness above: the
+  // list is read again once the last one, this tab's or another's, has aged.
+  useEffect(() => {
+    if (front || !slug) return;
+    const timer = setInterval(() => {
+      if (shouldReadPulls(false, lastPullList(slug)?.at ?? null, Date.now())) void reload(true);
+    }, HIDDEN_PULLS_CHECK_MS);
+    return () => clearInterval(timer);
+  }, [front, slug, reload]);
 
   // Its checks and its landing do not change the list of open pull requests.
   useLandingChanges(() => { void reload(true); }, useCallback(
@@ -170,7 +179,7 @@ export function PullRequestsWidget({ handle, className }: WidgetProps) {
   useLandingFallbackPoll(() => { if (frontNow.current) void reload(true); });
   // Turned to pull requests from the shortcut below: the list exists from now on.
   useEffect(() => (slug ? onIntegrationChanged(slug, () => { void reload(); }) : undefined), [slug, reload]);
-  const integration = useProjectIntegration(slug);
+  const landingMode = useLandingMode(slug);
 
   const pulls = load.kind === 'ready' ? load.list.pulls : [];
   const running = anyReviewRunning(pulls);
@@ -286,8 +295,8 @@ export function PullRequestsWidget({ handle, className }: WidgetProps) {
     >
       {!slug ? (
         <Empty text={t('pullRequests.chooseProject')} />
-      ) : landsLocally(integration) ? (
-        <LocalLandingEmpty project={slug} read={integration} />
+      ) : landsLocally(landingMode) ? (
+        <LocalLandingEmpty project={slug} />
       ) : load.kind === 'loading' || load.kind === 'idle' ? (
         <Empty text={t('pullRequests.loading')} />
       ) : load.kind === 'error' ? (

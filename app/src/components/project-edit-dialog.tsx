@@ -10,9 +10,17 @@
  * The input contract is a slug, not a project object: a caller with only a
  * card at hand (the grid) does not have to carry every field of the record.
  * The dialog therefore reads the record itself when it edits.
+ *
+ * Split in two, the shape of a replaceable dialog (`job-dialog.tsx`): the
+ * host, `ProjectEditDialog`, is what the agents grid, a project's card and
+ * the chat's project menu open; it reads the record and keeps every call to
+ * the daemon (write, delete, the fate of the agents left). The product's
+ * window, `ProductProjectEditDialog`, reads them from `useProjectEditDialog()`
+ * and only paints and holds the draft. It becomes the fallback of the
+ * reserved slot `project.edit.dialog` once the next client API declares it.
  */
 
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactElement } from 'react';
 import { Trash2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -34,6 +42,10 @@ import { confirmAction } from '@/components/confirm-dialog/confirm-dialog-contex
 import { apiErrorMessage } from '@/lib/api-error';
 import { ProjectSettingsSlot } from '@/components/project-settings-slot';
 import { announceProjectsChanged } from '@/hooks/use-project-meta';
+import {
+  ProjectEditDialogContext, useProjectEditDialog,
+  type ProjectAgentsChoice, type ProjectAgentsFate, type ProjectEditDialogValue, type ProjectEditFields,
+} from './project-edit-dialog-context';
 
 type Project = {
   slug: string;
@@ -45,15 +57,7 @@ type Project = {
   speech?: string | null;
 };
 
-type Draft = {
-  slug: string;
-  name: string;
-  color: string;
-  icon: string;
-  workspace: string;
-  cwd: string;
-  speech: string;
-};
+type Draft = ProjectEditFields;
 
 const SLUG_RE = /^[A-Za-z0-9._-]{1,64}$/;
 
@@ -100,41 +104,18 @@ export type ProjectEditDialogProps = {
 /** What a save answers when the daemon cannot use the cwd it just accepted. */
 type CwdWarning = { field: string; error: 'missing' | 'denied' | 'not-a-directory'; code: string; path: string };
 
-export function ProjectEditDialog({ slug: editingSlug, onSaved, onClose }: ProjectEditDialogProps) {
-  const [draft, setDraft] = useState<Draft>(EMPTY_DRAFT);
-  const [saving, setSaving] = useState(false);
-  const [deleting, setDeleting] = useState(false);
+export function ProjectEditDialog({ slug: editingSlug, onSaved, onClose }: ProjectEditDialogProps): ReactElement {
+  const [project, setProject] = useState<{ slug: string; fields: ProjectEditFields } | null>(null);
+  const [busy, setBusy] = useState<ProjectEditDialogValue['busy']>(null);
   // Set when the daemon refuses to delete a project that still has agents: the user picks their fate.
-  const [fate, setFate] = useState<{ agents: string[]; others: string[] } | null>(null);
-  const [fateMode, setFateMode] = useState<'delete' | 'detach' | 'move'>('move');
-  const [fateTarget, setFateTarget] = useState('');
-  const [browsing, setBrowsing] = useState(false);
-  // The working directory lives on the active machine: its daemon lists the
-  // folders when the OS dialog of this computer would be the wrong disk (TIM-0136).
-  const directoryPicker = useDirectoryPicker();
-  const slugInputRef = useRef<HTMLInputElement>(null);
-  // Tracks whether the user edited the slug by hand; if so, stop rewriting it
-  // from the name (the usual auto-slug form UX).
-  const slugTouched = useRef(editingSlug !== null);
-
-  // On creation, the slug is the first field to fill; on edit it is locked,
-  // so there is nothing to focus.
-  useEffect(() => {
-    if (editingSlug !== null) return;
-    const id = setTimeout(() => slugInputRef.current?.focus(), 60);
-    return () => clearTimeout(id);
-  }, [editingSlug]);
+  const [fate, setFate] = useState<ProjectAgentsFate | null>(null);
 
   // The full record is not in the props: read it again on open.
   useEffect(() => {
-    if (editingSlug === null) {
-      setDraft(EMPTY_DRAFT);
-      return;
-    }
+    setProject(null);
+    setFate(null);
+    if (editingSlug === null) return;
     let cancelled = false;
-    // Immediate seed so the title and the slug field are right from the first
-    // frame; the full record arrives right after.
-    setDraft({ ...EMPTY_DRAFT, slug: editingSlug });
     void (async () => {
       try {
         const r = await fetch('/api/ui/projects', { cache: 'no-store' });
@@ -142,22 +123,18 @@ export function ProjectEditDialog({ slug: editingSlug, onSaved, onClose }: Proje
         const j = (await r.json()) as { projects?: Project[] };
         const p = (j.projects ?? []).find((x) => x.slug === editingSlug);
         if (!p || cancelled) return;
-        // The record arrives after the first render: if the user already typed,
-        // overwriting it would steal their input. Only seed a draft that is
-        // still untouched.
-        setDraft((d) =>
-          d.name || d.color || d.icon || d.workspace || d.cwd || d.speech
-            ? d
-            : {
-                slug: p.slug,
-                name: p.name ?? '',
-                color: p.color ?? '',
-                icon: p.icon ?? '',
-                workspace: p.workspace ?? '',
-                cwd: p.cwd ?? '',
-                speech: p.speech ?? '',
-              },
-        );
+        setProject({
+          slug: editingSlug,
+          fields: {
+            slug: p.slug,
+            name: p.name ?? '',
+            color: p.color ?? '',
+            icon: p.icon ?? '',
+            workspace: p.workspace ?? '',
+            cwd: p.cwd ?? '',
+            speech: p.speech ?? '',
+          },
+        });
       } catch {
         /* unreadable record: the form keeps the slug alone rather than going blank */
       }
@@ -167,24 +144,13 @@ export function ProjectEditDialog({ slug: editingSlug, onSaved, onClose }: Proje
     };
   }, [editingSlug]);
 
-  async function browseCwd() {
-    setBrowsing(true);
-    try {
-      const picked = await directoryPicker.pick(draft.cwd);
-      if (picked.status === 'chosen') setDraft((d) => ({ ...d, cwd: picked.path }));
-      else reportDirectoryPick(picked);
-    } finally {
-      setBrowsing(false);
-    }
-  }
-
-  async function save() {
+  const save = useCallback(async (draft: ProjectEditFields): Promise<boolean> => {
     const slug = draft.slug.trim();
     if (!SLUG_RE.test(slug)) {
       toast.error(t('projectsPage.invalidSlug'));
-      return;
+      return false;
     }
-    setSaving(true);
+    setBusy('save');
     const body: Record<string, string> = { slug };
     if (draft.name.trim()) body.name = draft.name.trim();
     if (draft.color.trim()) body.color = draft.color.trim();
@@ -220,23 +186,19 @@ export function ProjectEditDialog({ slug: editingSlug, onSaved, onClose }: Proje
       announceProjectsChanged();
       onSaved();
       onClose();
+      return true;
     } catch (e) {
       toast.error(String((e as Error).message || e).slice(0, 120));
+      return false;
     } finally {
-      setSaving(false);
+      setBusy(null);
     }
-  }
-
-  async function remove() {
-    if (!editingSlug) return;
-    if (!(await confirmAction({ title: t('projectsPage.deleteConfirm', { slug: editingSlug }), confirmLabel: t('confirmDialog.delete'), destructive: true }))) return;
-    await removeWith('');
-  }
+  }, [editingSlug, onSaved, onClose]);
 
   /** `query` is empty on the first attempt; the daemon answers 409 with the agent list when some are left. */
-  async function removeWith(query: string) {
-    if (!editingSlug) return;
-    setDeleting(true);
+  const removeWith = useCallback(async (query: string): Promise<boolean> => {
+    if (!editingSlug) return false;
+    setBusy('delete');
     try {
       const r = await fetch(`/api/ui/projects/${encodeURIComponent(editingSlug)}${query}`, {
         method: 'DELETE',
@@ -244,10 +206,8 @@ export function ProjectEditDialog({ slug: editingSlug, onSaved, onClose }: Proje
       if (r.status === 409) {
         const j = (await r.json().catch(() => ({}))) as { agents?: string[] };
         const others = await otherProjects(editingSlug);
-        setFateTarget(others[0] ?? '');
-        setFateMode(others.length ? 'move' : 'detach');
         setFate({ agents: j.agents ?? [], others });
-        return;
+        return false;
       }
       if (!r.ok) {
         const j = await r.json().catch(() => ({}));
@@ -257,17 +217,115 @@ export function ProjectEditDialog({ slug: editingSlug, onSaved, onClose }: Proje
       announceProjectsChanged();
       onSaved();
       onClose();
+      return true;
     } catch (e) {
       toast.error(String((e as Error).message || e).slice(0, 120));
+      return false;
     } finally {
-      setDeleting(false);
+      setBusy(null);
+    }
+  }, [editingSlug, onSaved, onClose]);
+
+  const remove = useCallback(async (): Promise<boolean> => {
+    if (!editingSlug) return false;
+    if (!(await confirmAction({ title: t('projectsPage.deleteConfirm', { slug: editingSlug }), confirmLabel: t('confirmDialog.delete'), destructive: true }))) return false;
+    return removeWith('');
+  }, [editingSlug, removeWith]);
+
+  const settleFate = useCallback(async (choice: ProjectAgentsChoice | null): Promise<boolean> => {
+    setFate(null);
+    if (!choice) return false;
+    const query = choice.mode === 'move' ? `?agents=move&to=${encodeURIComponent(choice.to)}` : `?agents=${choice.mode}`;
+    return removeWith(query);
+  }, [removeWith]);
+
+  const value = useMemo<ProjectEditDialogValue>(() => ({
+    slug: editingSlug,
+    // A record read for the project open before is not this one's.
+    project: project && project.slug === editingSlug ? project.fields : null,
+    busy,
+    save,
+    remove: editingSlug ? remove : null,
+    fate: editingSlug ? fate : null,
+    settleFate,
+    close: onClose,
+  }), [editingSlug, project, busy, save, remove, fate, settleFate, onClose]);
+
+  return (
+    <ProjectEditDialogContext.Provider value={value}>
+      <ProductProjectEditDialog />
+    </ProjectEditDialogContext.Provider>
+  );
+}
+
+/** The product's window: the fields, the project's settings rows, the danger zone and the agents' fate. */
+export function ProductProjectEditDialog(): ReactElement | null {
+  const host = useProjectEditDialog();
+  const editingSlug = host?.slug ?? null;
+  const record = host?.project ?? null;
+  const fate = host?.fate ?? null;
+  const [draft, setDraft] = useState<Draft>(EMPTY_DRAFT);
+  const [fateMode, setFateMode] = useState<'delete' | 'detach' | 'move'>('move');
+  const [fateTarget, setFateTarget] = useState('');
+  const [browsing, setBrowsing] = useState(false);
+  // The working directory lives on the active machine: its daemon lists the
+  // folders when the OS dialog of this computer would be the wrong disk (TIM-0136).
+  const directoryPicker = useDirectoryPicker();
+  const slugInputRef = useRef<HTMLInputElement>(null);
+  // Tracks whether the user edited the slug by hand; if so, stop rewriting it
+  // from the name (the usual auto-slug form UX).
+  const slugTouched = useRef(editingSlug !== null);
+
+  // On creation, the slug is the first field to fill; on edit it is locked,
+  // so there is nothing to focus.
+  useEffect(() => {
+    if (editingSlug !== null) return;
+    const id = setTimeout(() => slugInputRef.current?.focus(), 60);
+    return () => clearTimeout(id);
+  }, [editingSlug]);
+
+  // Immediate seed so the title and the slug field are right from the first
+  // frame; the full record arrives right after.
+  useEffect(() => {
+    setDraft(editingSlug === null ? EMPTY_DRAFT : { ...EMPTY_DRAFT, slug: editingSlug });
+  }, [editingSlug]);
+
+  // The record arrives after the first render: if the user already typed,
+  // overwriting it would steal their input. Only seed a draft that is still
+  // untouched.
+  useEffect(() => {
+    if (!record) return;
+    setDraft((d) => (d.name || d.color || d.icon || d.workspace || d.cwd || d.speech ? d : record));
+  }, [record]);
+
+  // A refused deletion: preselect the first other project, or detaching when there is none.
+  useEffect(() => {
+    if (!fate) return;
+    setFateTarget(fate.others[0] ?? '');
+    setFateMode(fate.others.length ? 'move' : 'detach');
+  }, [fate]);
+
+  if (!host) return null;
+  const saving = host.busy === 'save';
+  const deleting = host.busy === 'delete';
+  const onClose = host.close;
+  const save = () => { void host.save(draft); };
+  const remove = () => { void host.remove?.(); };
+  const dropFate = () => { void host.settleFate(null); };
+
+  async function browseCwd() {
+    setBrowsing(true);
+    try {
+      const picked = await directoryPicker.pick(draft.cwd);
+      if (picked.status === 'chosen') setDraft((d) => ({ ...d, cwd: picked.path }));
+      else reportDirectoryPick(picked);
+    } finally {
+      setBrowsing(false);
     }
   }
 
   async function confirmFate() {
-    const query = fateMode === 'move' ? `?agents=move&to=${encodeURIComponent(fateTarget)}` : `?agents=${fateMode}`;
-    setFate(null);
-    await removeWith(query);
+    await host?.settleFate(fateMode === 'move' ? { mode: 'move', to: fateTarget } : { mode: fateMode });
   }
 
   const previewColor = draft.color.trim() || autoColor(draft.name || draft.slug || 'project');
@@ -430,7 +488,7 @@ export function ProjectEditDialog({ slug: editingSlug, onSaved, onClose }: Proje
         </DialogContent>
       </Dialog>
       {fate && editingSlug && (
-        <Dialog open onOpenChange={(v) => { if (!v) setFate(null); }}>
+        <Dialog open onOpenChange={(v) => { if (!v) dropFate(); }}>
           <DialogContent className="sm:max-w-[460px]">
             <DialogHeader>
               <DialogTitle>{t('projectsPage.fateTitle', { slug: editingSlug, count: fate.agents.length })}</DialogTitle>
@@ -470,7 +528,7 @@ export function ProjectEditDialog({ slug: editingSlug, onSaved, onClose }: Proje
               ))}
             </div>
             <DialogFooter>
-              <Button variant="outline" onClick={() => setFate(null)}>{t('common.cancel')}</Button>
+              <Button variant="outline" onClick={dropFate}>{t('common.cancel')}</Button>
               <Button
                 variant={fateMode === 'delete' ? 'destructive' : 'default'}
                 disabled={fateMode === 'move' && !fateTarget}

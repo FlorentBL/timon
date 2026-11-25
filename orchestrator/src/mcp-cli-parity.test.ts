@@ -22,6 +22,10 @@ const CASES: Array<[string, Record<string, unknown>, string, Record<string, unkn
   ['agent_doc_get', { name: 'a.b', file: 'SOUL.md' }, 'GET /api/agents/a.b/docs/SOUL.md?format=json'],
   ['agent_doc_put', { name: 'a.b', file: 'SOUL.md', content: '# me' }, 'PUT /api/agents/a.b/docs/SOUL.md', { content: '# me' }],
   ['agent_doc_rm', { name: 'a.b', file: 'SOUL.md' }, 'DELETE /api/agents/a.b/docs/SOUL.md'],
+  ['agent_extra_dirs', { name: 'a.b' }, 'GET /api/agents/a.b/extra-dirs'],
+  ['agent_extra_dirs', { name: 'a.b', action: 'add', path: '/srv/notes' }, 'POST /api/agents/a.b/extra-dirs', { path: '/srv/notes', mode: 'read' }],
+  ['agent_extra_dirs', { name: 'a.b', action: 'add', path: '/srv/notes', mode: 'write', restart: true }, 'POST /api/agents/a.b/extra-dirs', { path: '/srv/notes', mode: 'write', restart: true }],
+  ['agent_extra_dirs', { name: 'a.b', action: 'remove', path: '/srv/notes' }, 'DELETE /api/agents/a.b/extra-dirs', { path: '/srv/notes' }],
   ['backends_list', {}, 'GET /api/backends/catalog'],
   ['skill_list', {}, 'GET /api/skills'],
   ['skill_get', { id: 'x' }, 'GET /api/skills/x'],
@@ -362,6 +366,14 @@ test('pr branch: the CLI takes the route of the MCP tool, THIS series by default
     assert.equal((await cli(base, ['pr', 'branch'])).code, 64);
     assert.equal((await cli(base, ['pr', 'branch', 'a', 'b'])).code, 64);
     assert.equal(seen.length, 0);
+    // `job branch`, the neutral name for a project that merges locally: the same request.
+    await cli(base, ['job', 'branch', 'feat/x', '--series', 's1']);
+    assert.deepEqual(posted().map((x) => [x.url, x.body]), [['/api/series/s1/integration-branch', { branch: 'feat/x' }]]);
+    seen.length = 0;
+    const usage = await cli(base, ['job', 'branch']);
+    assert.equal(usage.code, 64);
+    assert.match(usage.out, /usage: timon job branch/);
+    assert.equal(seen.length, 0);
   });
 });
 
@@ -539,6 +551,32 @@ test('every parity tool relays to the CLI\'s daemon route', async () => {
         assert.deepEqual(match ? subset(match, body) : subset(hits[0]!, body), body, tool);
       }
     });
+  });
+});
+
+test('agent_extra_dirs and `timon agent extra-dirs` take the same routes and bodies', async () => {
+  await withDaemon(async (base, seen) => {
+    const runs: Array<[string[], string, Record<string, unknown>?]> = [
+      [['agent', 'extra-dirs', 'list', 'a.b'], 'GET /api/agents/a.b/extra-dirs'],
+      [['agent', 'extra-dirs', 'add', 'a.b', '/srv/notes'], 'POST /api/agents/a.b/extra-dirs', { path: '/srv/notes', mode: 'read' }],
+      [['agent', 'extra-dirs', 'add', 'a.b', '/srv/notes', '--write', '--restart'], 'POST /api/agents/a.b/extra-dirs', { path: '/srv/notes', mode: 'write', restart: true }],
+      [['agent', 'extra-dirs', 'rm', 'a.b', '/srv/notes'], 'DELETE /api/agents/a.b/extra-dirs', { path: '/srv/notes' }],
+    ];
+    for (const [argv, route, body] of runs) {
+      seen.length = 0;
+      const run = await cli(base, argv);
+      assert.equal(run.code, 0, run.out);
+      assert.equal(`${seen[0]?.method} ${seen[0]?.url}`, route, argv.join(' '));
+      if (body) assert.deepEqual(seen[0]?.body, body, argv.join(' '));
+    }
+    seen.length = 0;
+    // A gesture without its folder is a usage error, never a request.
+    assert.equal((await cli(base, ['agent', 'extra-dirs', 'add', 'a.b'])).code, 64);
+    assert.equal((await cli(base, ['agent', 'extra-dirs', 'rm', 'a.b', '/srv/notes', '--write'])).code, 64);
+    assert.equal((await cli(base, ['agent', 'extra-dirs', 'grant', 'a.b'])).code, 64);
+    const [missing] = await session(base, [{ method: 'tools/call', params: { name: 'agent_extra_dirs', arguments: { name: 'a.b', action: 'remove' } } }]);
+    assert.equal(missing!.result?.isError, true);
+    assert.deepEqual(seen, []);
   });
 });
 

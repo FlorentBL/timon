@@ -18,7 +18,8 @@
  */
 import { statSync } from 'node:fs';
 import { Script } from 'node:vm';
-import { declaredBinary } from '../host/declared-binaries.js';
+import { declaredBinaries, declaredBinary } from '../host/declared-binaries.js';
+import { getHost } from '../host/index.js';
 import { execTree } from '../host/kill-tree.js';
 import { resolveExecutable } from '../plugins/policy.js';
 import { systemEnv } from '../secrets/env.js';
@@ -69,17 +70,38 @@ function firstLine(output: string): string {
   return redactText(clipped);
 }
 
-/** Runs `program` (an absolute path) with the identity's arguments and tests what it printed. */
-export async function checkBinaryIdentity(
-  program: string, identity: ProviderBinaryIdentity, limits: BinaryIdentityLimits = LIMITS,
-): Promise<BinaryIdentityResult> {
-  const args = [...(identity.args ?? DEFAULT_IDENTITY_ARGS)];
+/** The cache key of one check: the file as it is on disk, the question, the expected answer. `''` = never cached. */
+function cacheKey(program: string, args: readonly string[], identity: ProviderBinaryIdentity): string {
   let stamp = '';
   try {
     const st = statSync(program);
     stamp = `${st.size}:${st.mtimeMs}`;
   } catch { /* not a file we can stat: never cached */ }
-  const key = stamp ? `${program}\0${stamp}\0${args.join('\0')}\0${identity.pattern}` : '';
+  return stamp ? `${program}\0${stamp}\0${args.join('\0')}\0${identity.pattern}` : '';
+}
+
+/** The verdict on what the program printed, kept unless the run or the match was cut short. */
+function verdict(
+  key: string, identity: ProviderBinaryIdentity, output: string, timedOut: boolean, limits: BinaryIdentityLimits,
+): BinaryIdentityResult {
+  const matched = testIdentityPattern(identity.pattern, output, limits.patternTimeoutMs);
+  // Not cached: under a heavy load a sane pattern could run past the limit once.
+  if (matched === null) return { ok: false, printed: firstLine(output), slow: true };
+  const result: BinaryIdentityResult = matched ? { ok: true } : { ok: false, printed: firstLine(output) };
+  // A program stopped by the timeout said nothing about itself: on a loaded machine, the next try must really ask.
+  if (key && !timedOut) {
+    if (cache.size >= CACHE_MAX) cache.delete(cache.keys().next().value!);
+    cache.set(key, result);
+  }
+  return result;
+}
+
+/** Runs `program` (an absolute path) with the identity's arguments and tests what it printed. */
+export async function checkBinaryIdentity(
+  program: string, identity: ProviderBinaryIdentity, limits: BinaryIdentityLimits = LIMITS,
+): Promise<BinaryIdentityResult> {
+  const args = [...(identity.args ?? DEFAULT_IDENTITY_ARGS)];
+  const key = cacheKey(program, args, identity);
   const known = key ? cache.get(key) : undefined;
   if (known) return known;
   // `execTree`: a program that leaves a child on its stdout would otherwise cost the whole limit at
@@ -87,17 +109,26 @@ export async function checkBinaryIdentity(
   const run = await execTree(program, args, {
     timeout: limits.runTimeoutMs, maxBuffer: IDENTITY_MAX_OUTPUT, env: systemEnv(),
   });
+  return verdict(key, identity, `${run.stdout}\n${run.stderr}`, run.timedOut === true, limits);
+}
+
+/**
+ * The same check and the same cache for a caller that cannot wait: `doctor`'s report is synchronous. The
+ * host adapter's synchronous run does not say whether its timeout stopped the program, so a program that
+ * printed nothing is not remembered — the next report asks it again.
+ */
+export function checkBinaryIdentitySync(
+  program: string, identity: ProviderBinaryIdentity, limits: BinaryIdentityLimits = LIMITS,
+): BinaryIdentityResult {
+  const args = [...(identity.args ?? DEFAULT_IDENTITY_ARGS)];
+  const key = cacheKey(program, args, identity);
+  const known = key ? cache.get(key) : undefined;
+  if (known) return known;
+  const run = getHost().exec(program, args, {
+    timeout: limits.runTimeoutMs, maxBuffer: IDENTITY_MAX_OUTPUT, env: systemEnv(), windowsHide: true,
+  });
   const output = `${run.stdout}\n${run.stderr}`;
-  const matched = testIdentityPattern(identity.pattern, output, limits.patternTimeoutMs);
-  // Not cached: under a heavy load a sane pattern could run past the limit once.
-  if (matched === null) return { ok: false, printed: firstLine(output), slow: true };
-  const result: BinaryIdentityResult = matched ? { ok: true } : { ok: false, printed: firstLine(output) };
-  // A program stopped by the timeout said nothing about itself: on a loaded machine, the next try must really ask.
-  if (key && !run.timedOut) {
-    if (cache.size >= CACHE_MAX) cache.delete(cache.keys().next().value!);
-    cache.set(key, result);
-  }
-  return result;
+  return verdict(key, identity, output, output.trim() === '', limits);
 }
 
 /**
@@ -140,6 +171,24 @@ export async function assertDeclaredIdentity(name: string, program: string, who:
   if (!identity) return;
   const result = await checkBinaryIdentity(program, identity);
   if (!result.ok) throw new BinaryIdentityError(binaryIdentityRefusal(who, program, identity, result.printed, result.slow));
+}
+
+/**
+ * Tests only: the stand-in CLIs a launch test puts on the PATH sit behind a fake `host.spawn` that records
+ * the launch and answers nothing, `--version` included. Each declared program the host resolves now is taken
+ * as the one its provider means, until the file changes — the identity check itself has its own tests.
+ */
+export function assumeDeclaredIdentities(): void {
+  for (const declaration of declaredBinaries()) {
+    const identity = declaration.identity;
+    if (!identity) continue;
+    const args = [...(identity.args ?? DEFAULT_IDENTITY_ARGS)];
+    for (const name of declaration.names) {
+      const program = resolveExecutable(name);
+      const key = program ? cacheKey(program, args, identity) : '';
+      if (key) cache.set(key, { ok: true });
+    }
+  }
 }
 
 /** Tests only: forget what was learned. */
