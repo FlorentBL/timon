@@ -286,7 +286,7 @@ test('a pull request project: the job\'s window still lets the title be written 
       trigger.dispatchEvent(new window.MouseEvent('pointerdown', { bubbles: true, button: 0 }));
     });
     await settle();
-    const preview = [...document.querySelectorAll<HTMLElement>('[role="menuitem"]')].find((el) => el.textContent === 'Preview');
+    const preview = Array.from(document.querySelectorAll<HTMLElement>('[role="menuitem"]')).find((el) => el.textContent === 'Preview');
     await click(preview ?? null);
     const title = document.querySelector<HTMLInputElement>('[data-job-land-title]');
     assert.ok(title);
