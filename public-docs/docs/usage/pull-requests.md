@@ -146,7 +146,7 @@ Timon checks every few minutes whether the pull request was merged, by looking f
 
 ## Follow the job and review contributors
 
-The [Git stack](git.md) of an agent's chat follows what happens next. **Jobs** groups the project's jobs by what they wait for (a failing check or a conflict first) and previews what each pull request carries; **Pull requests** lists the pull requests open on the repository, contributors' ones included, and prepares their review without running their code. On a TO DO idea, the badge of its job opens the same preview. All three follow the job as it moves: a branch recorded, a pull request opened, merged or closed, or new check results show up without a reload. See [Pull requests](git.md#pull-requests), [Jobs](git.md#jobs) and [From the TO DO notebook](git.md#from-the-to-do-notebook).
+The [Git stack](git.md) of an agent's chat follows what happens next. **Jobs** groups the project's jobs by what they wait for (a failing check or a conflict first) and previews what each pull request carries; **Pull requests** lists the pull requests open on the repository, contributors' ones included, and prepares their review without running their code. On a TO DO idea, the badge of its job opens the same preview. All three follow the job as it moves: a branch recorded, a pull request opened, merged or closed, or new check results show up without a reload, in a preview left open too, and the idea tags on the Kanban's task cards change once the job lands. See [Pull requests](git.md#pull-requests), [Jobs](git.md#jobs) and [From the TO DO notebook](git.md#from-the-to-do-notebook).
 
 ### Read a pull request in the app
 
