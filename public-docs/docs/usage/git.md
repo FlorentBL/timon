@@ -228,19 +228,21 @@ The built-in **GitHub issues** plugin brings an issue of the project's repositor
 
 The issue's title and description were written by someone outside the project: the idea's notes keep them in a block marked as outside data, and a task promoted from the idea hands them to its agent as data to read, never as instructions.
 
-Once the idea has a job, its pull request closes the issue for you (below); you never close it by hand.
+Once the idea has a job, its pull request closes the issue for you (below); you never close it by hand. When a contributor's pull request closes the issue instead, the idea is done once GitHub says that pull request is merged and closed the issue as completed.
 
 ### The Issues tab
 
-Each row is an issue: its title, then its number, its author and its label. The issues you have not imported come first. One button imports the issue as an idea; once imported, the row shows **TO DO** (and **PR #51** when the idea's job has a pull request), and the same button opens the idea. The row's menu (**…**) has **Read the text**, **Open on GitHub**, **Copy the link** and **Do not suggest again**, which hides the issue from the list. The number on the tab (**Issues 2**) is how many issues are left to import, and **Refresh** sits in the widget's menu (the gear, or a right click on the tabs); an **Issues** card on its own shows both in its header.
+Each row is an issue: its title, then its number, its author and its label. The issues you have not imported come first. One button imports the issue as an idea; once imported, the row shows **TO DO** (and **PR #51** when the idea's job has a pull request), and the same button opens the idea. The row's menu (**…**) has **Import and plan…**, **Read the text**, **Open on GitHub**, **Copy the link** and **Do not suggest again**, which hides the issue from the list. **Import and plan…** imports the issue, then opens its idea: **Send back to the orchestrator** there hands it to the orchestrator, which plans it with you. The list is read again on its own when an imported idea is done, resolved or deleted elsewhere.
 
-**Read the text** opens the **Issue** window: the issue's description as written on GitHub, shown as plain text and marked as outside data, cut at 4,000 characters as the idea will keep it, with the project and the link the idea will keep. **Import as TO DO** imports it; a closed issue cannot be imported.
+Under the list, **2 hidden issues** counts the issues you asked not to suggest again; **Review** lists them, with the title they had, and the eye button shows one again. The number on the tab (**Issues 2**) is how many issues are left to import, and **Refresh** sits in the widget's menu (the gear, or a right click on the tabs); an **Issues** card on its own shows both in its header.
+
+**Read the text** opens the **Issue** window: the issue's description as written on GitHub, shown as plain text and marked as outside data, cut at 4,000 characters as the idea will keep it, with the project and the link the idea will keep. **Import as TO DO** imports it, **Import and plan…** imports it and opens its idea; a closed issue cannot be imported.
 
 **+** imports an issue that does not carry the label: type its number (`212` or `#212`) or paste its GitHub link. The Issue window reads it first, then you import it. A link to another repository than the project's is refused.
 
 ### The project's label
 
-The project's window (**Edit** on its card) lists **GitHub issues** under **Integrations**: the label the tab lists and how many issues are left to import. **Configure** changes the label for this project; the menu (**…**) goes back to the plugin's label (`accepted`, set in the plugin's settings). Only a project that opens pull requests on GitHub has this row.
+The project's window (**Edit** on its card) lists **GitHub issues** under **Integrations**: the label the tab lists and how many issues are left to import. **Configure** changes the label for this project. The menu (**…**) has **Switch off for this project** (the tab then lists nothing and reads nothing on GitHub, until **Switch on**, there or in the tab), **Review hidden issues** and, for a label of its own, the way back to the plugin's label (`accepted`, set in the plugin's settings). Only a project that opens pull requests on GitHub has this row.
 
 ### The issue, the pull request and the comment
 
@@ -251,7 +253,11 @@ When a job's pull request is opened, Timon adds one line per GitHub issue of the
 
 A `Fixes #n` or `Closes #n` the agent wrote in the description becomes `Refs #n`: only the ideas' links close issues.
 
-Once the pull request is merged, Timon prepares a comment for each issue it fixed: "This is fixed by #51, now merged into `main`.", followed by the idea's public note when it has one (mentions are shown as text, so nobody is notified by surprise). The comment waits for you in [Publish on GitHub](#publish-on-github), with a notification: read it, edit it, publish it or don't. An issue the job only mentions (`Refs`) gets no comment.
+Once the pull request is merged, Timon prepares a comment for each issue it fixed: "This is fixed by #51, now merged into `main`.", followed by the idea's public note when it has one (mentions are shown as text, so nobody is notified by surprise). A public note you write after the merge still reaches the comment, as long as you have not edited it. The comment waits for you in [Publish on GitHub](#publish-on-github), with a notification: read it, edit it, publish it or don't. An issue the job only mentions (`Refs`) gets no comment.
+
+### An issue you decline
+
+When you give an imported idea the outcome **Declined**, **Duplicate** or **Needs info**, Timon prepares an answer for its issue: a short thank-you that says what was decided, followed by the idea's public note (mentions shown as text). For **Declined** and **Duplicate**, it also prepares closing the issue, as not planned or as a duplicate. The two wait apart in [Publish on GitHub](#publish-on-github): you may answer and leave the issue open. Nothing is posted or closed before you publish it.
 
 ## Publish on GitHub
 
@@ -262,7 +268,7 @@ On the left, the exact text that would be posted, and whether it goes on an issu
 - **Publish** posts the text as it stands. Timon first checks that `gh` is signed in as the project's account and refuses otherwise, without posting anything. If GitHub refuses, the window stays open with the reason, and you can try again.
 - **Do not publish** closes the proposal: nothing is posted, and its notification goes away.
 
-A branch update has no text to edit: the window shows the branch GitHub updates, the base it merges in and the head it expects, and its main button reads **Update the branch**. A conflict's push shows the commit and the contributor's branch above the comment that follows it; its main button reads **Push and comment**, and **Do not push** drops it.
+A branch update has no text to edit: the window shows the branch GitHub updates, the base it merges in and the head it expects, and its main button reads **Update the branch**. Closing an issue has no text either: the window says why it closes and that it posts no comment; **Close the issue** closes it (an issue already closed is left as it is), **Leave it open** drops the proposal. A conflict's push shows the commit and the contributor's branch above the comment that follows it; its main button reads **Push and comment**, and **Do not push** drops it.
 
 Without an account set on the project, **Publish** stays off. Proposing, editing and publishing need you to be signed in with the **Create, update and delete projects** permission: an agent or the daemon's token cannot do it. A plugin holding `forge:propose` may propose a comment ([The GitHub repository of a project](../plugins/forge.md)), never edit or publish one: it waits here for you like any other.
 
