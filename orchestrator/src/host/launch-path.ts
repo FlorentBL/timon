@@ -343,22 +343,50 @@ export function nodeInterpreter(
   read: (file: string) => string = readHead,
 ): LaunchInterpreter | null {
   if (platform === 'win32' || !node || !pathModule(platform).isAbsolute(file)) return null;
-  const line = envNodeLine(file, read);
-  if (!line || (!line.split && line.args.length > 0)) return null;
+  const line = envLine(file, read);
+  if (!line || line.kind !== 'read' || line.interpreter !== 'node') return null;
+  if (!line.split && line.args.length > 0) return null;
   return { file: node, args: line.args };
 }
 
-/** What follows `env [-S] node` on the first line of `file`, or `null` when that line does not look `node` up through `env`. */
-function envNodeLine(file: string, read: (file: string) => string): { split: boolean; args: string[] } | null {
+/**
+ * A `#!...env` line: `read` when the interpreter `env` runs is certain (with
+ * the words that follow it), `unknown` when `env` would parse it in a way this
+ * reader does not reproduce. `null` for any other first line.
+ */
+type EnvLine =
+  | { kind: 'read'; interpreter: string; split: boolean; args: string[] }
+  | { kind: 'unknown' };
+
+/**
+ * An interpreter word read the same by every `env`: no option, no assignment,
+ * no quote, escape, variable or comment `-S` would expand, and no relative
+ * folder (resolved from the mission's own working directory).
+ */
+const PLAIN_INTERPRETER = /^(?:[A-Za-z0-9._+@-]+|\/[A-Za-z0-9._+@/-]+)$/;
+
+/** The first line of `file` as `env` runs it (`EnvLine`), or `null` when it does not go through `env`. */
+function envLine(file: string, read: (file: string) => string): EnvLine | null {
   let head: string;
   try { head = read(file); } catch { return null; }
   if (!head.startsWith('#!')) return null;
-  const words = (head.split(/\r?\n/, 1)[0] ?? '').slice(2).trim().split(/[ \t]+/);
+  const line = (head.split(/\r?\n/, 1)[0] ?? '').slice(2);
+  const words = line.trim().split(/[ \t]+/);
   if (posix.basename(words[0] ?? '') !== 'env') return null;
+  // Anything but printable ASCII, spaces and tabs (a lone CR, a form feed, a non-breaking
+  // space) is cut into words differently by the kernel, `env` and this reader.
+  if (/[^\x20-\x7e\t]/.test(line)) return { kind: 'unknown' };
   let rest = words.slice(1);
   const split = rest[0] === '-S';
   if (split) rest = rest.slice(1);
-  return rest[0] === 'node' ? { split, args: rest.slice(1) } : null;
+  const interpreter = rest[0];
+  if (!interpreter || interpreter.startsWith('-') || !PLAIN_INTERPRETER.test(interpreter)) return { kind: 'unknown' };
+  return { kind: 'read', interpreter, split, args: rest.slice(1) };
+}
+
+/** Whether an interpreter word `env` would look up on PATH may be Node.js (`node`, `nodejs`, `node22`…). */
+function looksUpNode(interpreter: string): boolean {
+  return !interpreter.includes('/') && /^node/i.test(interpreter);
 }
 
 /** No `node` the host vouches for, for a CLI whose own line would take the first one on the mission's PATH. */
@@ -377,8 +405,11 @@ export class NoTrustedNodeError extends Error {
  * file's own line when the host chose no `node` (#1102, security review,
  * iteration 4): `#!/usr/bin/env node` (or `env -S node …`) would then run the
  * first `node` of the PATH the mission sets, which is exactly the choice the
- * host declined to make. A native CLI, a line naming an absolute interpreter,
- * and Windows (whose npm shims the host adapter starts itself) are unchanged.
+ * host declined to make. So would any `env` line whose interpreter cannot be
+ * told for certain (options, assignments, quotes: iteration 5), which is
+ * refused too. A native CLI, a line naming an absolute interpreter, a plain
+ * `env` line naming another one (`env python3`), and Windows (whose npm shims
+ * the host adapter starts itself) are unchanged.
  */
 export function launchInterpreter(
   file: string,
@@ -388,7 +419,10 @@ export function launchInterpreter(
   read: (file: string) => string = readHead,
 ): LaunchInterpreter | null {
   if (node || platform === 'win32' || !pathModule(platform).isAbsolute(file)) return nodeInterpreter(file, node, platform, read);
-  if (envNodeLine(file, read)) throw new NoTrustedNodeError(cli);
+  const line = envLine(file, read);
+  // Closed by default: a line whose interpreter this reader cannot be sure of may well be
+  // `node` looked up on the mission's PATH (`env -i node`, `env VAR=x node`, `env -S "node …"`).
+  if (line && (line.kind === 'unknown' || looksUpNode(line.interpreter))) throw new NoTrustedNodeError(cli);
   return null;
 }
 
