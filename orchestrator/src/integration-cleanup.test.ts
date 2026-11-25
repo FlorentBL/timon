@@ -20,6 +20,7 @@ import { deleteRemoteBranch, type GitRunner, type GitTransport } from './host/fo
 import { cleanConcludedIntegrations, cleanIntegration, type CleanupDeps } from './integration-cleanup.js';
 import { agentConfig, agentDir } from './paths.js';
 import { updateProjectIntegration } from './project-integration.js';
+import { invalidateSettingsCache } from './settings.js';
 import { createWorktree } from './worktree.js';
 
 const root = realpathSync(mkdtempSync(join(tmpdir(), 'timon-integration-cleanup-')));
@@ -178,6 +179,26 @@ function deps(job: Job, over: Partial<CleanupDeps> = {}): CleanupDeps {
 
 const remoteHas = (job: Job, branch: string): boolean =>
   execFileSync('git', ['ls-remote', '--heads', job.remote, `refs/heads/${branch}`], { encoding: 'utf8' }).trim() !== '';
+
+test('the cleanup is off until it is turned on', async () => {
+  const job = await prJob();
+  mergeOnForge(job);
+  land(job);
+  dbApi.finishMission(job.series, 'completed', 0);
+  delete process.env.TIMON_INTEGRATION_CLEANUP_ENABLED;
+  invalidateSettingsCache();
+  const out = await cleanConcludedIntegrations(deps(job));
+  assert.equal(out.size, 0, 'no row is even looked at');
+  assert.equal(existsSync(job.task.path), true);
+  assert.equal(existsSync(job.pilot), true);
+  assert.equal(has(job.repo, `refs/heads/${job.branch}`), true);
+  assert.equal(remoteHas(job, job.branch), true);
+  assert.equal(dbApi.getIntegrationById(job.row.id)?.cleaned_at ?? null, null);
+  // Every other test runs with it on.
+  process.env.TIMON_INTEGRATION_CLEANUP_ENABLED = '1';
+  invalidateSettingsCache();
+  assert.equal((await cleanConcludedIntegrations(deps(job))).get(job.row.id), 'cleaned');
+});
 
 test('a merged job loses its task and pilot worktrees, its branch and its remote copy, once', async () => {
   const job = await prJob();

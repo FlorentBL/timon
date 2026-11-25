@@ -305,12 +305,15 @@ export async function cleanIntegration(row: IntegrationRow, deps: CleanupDeps = 
 }
 
 /**
- * One pass over the concluded integrations not cleaned yet. Off with the
- * worktree GC (`TIMON_WORKTREE_GC_ENABLED`), and after the same grace: a job
- * that just landed is left to its last gestures.
+ * One pass over the concluded integrations not cleaned yet. Off unless
+ * `TIMON_INTEGRATION_CLEANUP_ENABLED` is on (it deletes worktrees and
+ * branches by itself: opt-in), off with the worktree GC
+ * (`TIMON_WORKTREE_GC_ENABLED`), and after the same grace: a job that just
+ * landed is left to its last gestures.
  */
 export async function cleanConcludedIntegrations(deps: CleanupDeps = {}): Promise<Map<string, CleanupResult>> {
   const results = new Map<string, CleanupResult>();
+  if (!settingBool('TIMON_INTEGRATION_CLEANUP_ENABLED')) return results;
   if (!settingBool('TIMON_WORKTREE_GC_ENABLED')) return results;
   const graceMs = deps.graceMs ?? Math.max(0, settingInt('TIMON_WORKTREE_GC_GRACE_MIN')) * 60_000;
   const now = deps.now ?? Date.now();
