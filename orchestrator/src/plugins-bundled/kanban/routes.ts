@@ -310,6 +310,24 @@ export function windowDoneTasks(
 const ProjectSlugSchema = z.string().regex(/^[A-Za-z0-9._-]{1,64}$/);
 
 /**
+ * The `limit` cut of the list: every unfinished task first, in the list's
+ * order, then the most recently closed ones. An agent asking for a few tasks
+ * wants the work in flight, not the oldest DONE rows the database order puts
+ * first. `total` is how many tasks matched before the cut.
+ */
+export function limitTaskList(
+  tasks: readonly TaskRow[],
+  limit: number,
+): { tasks: TaskRow[]; total: number } {
+  if (tasks.length <= limit) return { tasks: [...tasks], total: tasks.length };
+  const open = tasks.filter((t) => t.status !== 'DONE');
+  const done = tasks
+    .filter((t) => t.status === 'DONE')
+    .sort((a, b) => b.updated_at - a.updated_at);
+  return { tasks: [...open, ...done].slice(0, limit), total: tasks.length };
+}
+
+/**
  * Which DONE tasks the board's filters keep. A task's project is
  * `taskProjectSlug`'s: its own `project`, else its agent's — the same rule the
  * board applies on the client with the agents list, so `doneTotal` counts
@@ -1149,11 +1167,32 @@ export function registerRoutes(app: Router, deps: KanbanRouteDeps = {}): void {
       }
       todoId = parsed.data;
     }
+    // `project` and `limit` scope the whole list (an agent's `kanban_list`);
+    // without them the list is every task, as the board and the CLI read it.
+    let project: string | null = null;
+    if (req.query.project !== undefined && req.query.project !== '') {
+      const parsed = ProjectSlugSchema.safeParse(req.query.project);
+      if (!parsed.success) {
+        res.status(400).json(apiError('project_invalid', 'project must be a project slug'));
+        return;
+      }
+      project = parsed.data;
+    }
+    let limit: number | null = null;
+    if (req.query.limit !== undefined && req.query.limit !== '') {
+      limit = parseDoneLimit(req.query.limit);
+      if (limit === null) {
+        res.status(400).json(apiError('limit_invalid', 'limit must be a positive integer'));
+        return;
+      }
+    }
     const scope = scopedDb(viewerFromRequest(req));
     const listed = scope
       .listTasks(status as Parameters<typeof dbApi.listTasks>[0])
       .map(boardStatusRow);
-    const all = todoId === null ? listed : listed.filter((t) => t.todo_id === todoId);
+    const inProject = project === null ? null : doneTaskFilter(null, project);
+    const all = listed.filter((t) =>
+      (todoId === null || t.todo_id === todoId) && (!inProject || inProject(t)));
     const doneLimit = parseDoneLimit(req.query.done_limit);
     const doneAgent = typeof req.query.done_agent === 'string' && req.query.done_agent ? req.query.done_agent : null;
     let doneProject: string | null = null;
@@ -1169,7 +1208,8 @@ export function registerRoutes(app: Router, deps: KanbanRouteDeps = {}): void {
     const doneWindow = doneLimit === null
       ? null
       : windowDoneTasks(all, doneLimit, doneTaskFilter(doneAgent, doneProject, undefined, doneQuery || null));
-    const tasks = doneWindow?.tasks ?? all;
+    const cut = limit === null ? null : limitTaskList(doneWindow?.tasks ?? all, limit);
+    const tasks = cut?.tasks ?? doneWindow?.tasks ?? all;
     // Effective backend + model per task (override → role → config → default),
     // resolved on the server side because the client does not have the agent config. Cache shared
     // over the batch: the tasks reuse the same agents/projects.
@@ -1206,6 +1246,7 @@ export function registerRoutes(app: Router, deps: KanbanRouteDeps = {}): void {
       tasks: withLlm,
       ...(full ? {} : { view: 'board' }),
       ...(doneWindow ? { done_total: doneWindow.doneTotal } : {}),
+      ...(cut ? { total: cut.total, truncated: cut.tasks.length < cut.total } : {}),
     });
   });
 

@@ -79,6 +79,15 @@ Whatever the `timon` command does in a terminal, a tool of the same name does fo
 | Ask you for a password, a code or an API key it must never see | `secret_request` |
 | Set up itself during the setup conversation: write its character, recruit its two teammates, create another TIM, finish (and ask for a picture) | `setup_set_soul`, `setup_recruit_team`, `setup_create_tim`, `setup_finish`, `setup_request_avatar` |
 
+`kanban_list` returns short rows (id, title, status, type, agent, project,
+priority, dependencies) of the agent's own project, unfinished tasks first, at
+most 100. It leaves out descriptions and closing comments: the agent reads one
+task in full with `kanban_get`. `project` picks another project (`*` for all of
+them), `status` narrows the list and `limit` raises it, up to 500. `full: true`
+returns the complete texts, 20 tasks by default and 50 at most. When more tasks
+match than were returned, the answer says so with `truncated`, `shown` and
+`total`, so the agent never takes a partial list for the whole board.
+
 `terminal_propose` is for a command the agent may not run itself: one that needs
 `sudo` or a password, or that would stop its own mission (restarting Timon's
 service, for instance). Everything else, the agent runs on its own. The command,

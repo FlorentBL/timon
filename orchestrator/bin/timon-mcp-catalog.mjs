@@ -113,6 +113,12 @@ async function call(method, path, body) {
   return httpCaller(ORCH, headers)(method, path, body);
 }
 
+/** `kanban_list` bounds: short rows, or whole tasks with `full`. */
+const KANBAN_LIST_DEFAULT = 100;
+const KANBAN_LIST_MAX = 500;
+const KANBAN_LIST_FULL_DEFAULT = 20;
+const KANBAN_LIST_FULL_MAX = 50;
+
 const TOOLS = [
   {
     name: 'agent_list',
@@ -410,7 +416,13 @@ const TOOLS = [
   {
     name: 'kanban_list',
     title: 'List Kanban tasks',
-    description: 'Lists TIMON Kanban tasks, optionally filtered by status.',
+    description:
+      'Lists TIMON Kanban tasks as short rows (id, title, status, type, agent, project, ' +
+      'priority, deps…), without their description or closing comment: read one task in ' +
+      'full with `kanban_get`. By default: the tasks of your own project, unfinished ones ' +
+      'first, then the most recently closed, at most 100. Returns the array of rows; when ' +
+      'more tasks match than the limit, returns `{ truncated: true, shown, total, hint, items }` ' +
+      'instead: narrow with `status` or `project`, or raise `limit`.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -418,6 +430,20 @@ const TOOLS = [
           type: 'string',
           enum: ['PENDING', 'IN_PROGRESS', 'DONE', 'BLOCKED', 'TODO'],
           description: 'Task status. TODO is a DEPRECATED alias of PENDING, accepted on input only.',
+        },
+        project: {
+          type: 'string',
+          description: 'Project slug. Defaults to your own project; `*` lists every project.',
+        },
+        limit: {
+          type: 'integer',
+          minimum: 1,
+          maximum: KANBAN_LIST_MAX,
+          description: `Most tasks returned (default ${KANBAN_LIST_DEFAULT}, at most ${KANBAN_LIST_MAX}; with full, default ${KANBAN_LIST_FULL_DEFAULT}, at most ${KANBAN_LIST_FULL_MAX}).`,
+        },
+        full: {
+          type: 'boolean',
+          description: 'Return every column with the complete description and closing comment. Heavy: prefer `kanban_get` on one task.',
         },
       },
     },
@@ -1389,6 +1415,33 @@ const EXTRA_MODULES = [agentTools, missionTools, kanbanTools, projectTools, syst
 const EXTRA_HANDLERS = Object.assign({}, ...EXTRA_MODULES.map((m) => m.handlers));
 for (const m of EXTRA_MODULES) TOOLS.push(...m.tools);
 
+/** Columns of a `kanban_list` row: enough to pick a task, never its long texts. */
+const KANBAN_LIST_COLUMNS = [
+  'id', 'title', 'status', 'type', 'agent_name', 'project', 'priority', 'group_id',
+  'pipeline', 'todo_id', 'mission_id', 'scheduled_at', 'created_at', 'updated_at',
+  'awaiting_merge',
+];
+
+function kanbanListRow(task) {
+  const row = {};
+  for (const key of KANBAN_LIST_COLUMNS) {
+    if (task[key] !== undefined && task[key] !== null) row[key] = task[key];
+  }
+  if (typeof task.deps === 'string') {
+    try {
+      const deps = JSON.parse(task.deps);
+      if (Array.isArray(deps) && deps.length) row.deps = deps;
+    } catch { /* an unreadable deps column lists none */ }
+  }
+  // Why a task stopped, cut short: the full reason is on `kanban_get`.
+  if (task.status === 'BLOCKED' && task.blocked_reason) {
+    row.blocked_reason = task.blocked_reason.length > 200
+      ? `${task.blocked_reason.slice(0, 200).trimEnd()}…`
+      : task.blocked_reason;
+  }
+  return row;
+}
+
 /** Context of the agent running inside this process (the stdio server). */
 function stdioContext() {
   return {
@@ -1490,10 +1543,28 @@ async function runTool(rawName, args, ctx) {
       return r.task;
     }
     case 'kanban_list': {
-      // full=1: an agent has no other MCP read of a task's description.
-      const q = args.status ? `&status=${encodeURIComponent(args.status)}` : '';
-      const r = await call('GET', `/api/tasks?full=1${q}`);
-      return r.tasks;
+      // Short rows by default: the full list of a busy home ran to several MB
+      // and no backend could read it. `kanban_get` serves one task in full.
+      const full = args.full === true;
+      const max = full ? KANBAN_LIST_FULL_MAX : KANBAN_LIST_MAX;
+      const asked = Number.isInteger(args.limit) && args.limit > 0 ? args.limit : null;
+      const limit = Math.min(asked ?? (full ? KANBAN_LIST_FULL_DEFAULT : KANBAN_LIST_DEFAULT), max);
+      const project = args.project === '*' ? null : (args.project || env.project || null);
+      const qs = [`limit=${limit}`];
+      if (full) qs.push('full=1');
+      if (args.status) qs.push(`status=${encodeURIComponent(args.status)}`);
+      if (project) qs.push(`project=${encodeURIComponent(project)}`);
+      const r = await call('GET', `/api/tasks?${qs.join('&')}`);
+      const items = full ? r.tasks : r.tasks.map(kanbanListRow);
+      if (!r.truncated) return items;
+      // Said out loud: an agent handed 100 tasks would take them for the whole board.
+      return {
+        truncated: true,
+        shown: items.length,
+        total: r.total,
+        hint: `More tasks match than were returned. Narrow with status or project, or raise limit (at most ${max}).`,
+        items,
+      };
     }
     case 'project_todo_list': {
       const qs = [];

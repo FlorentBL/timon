@@ -314,6 +314,8 @@
     "pipeline_run_failed": "Le pipeline n'a pas pu démarrer : {detail}",
     "pipeline_run_not_found": "Cette exécution du pipeline n'existe plus.",
     "done_project_invalid": "Le filtre de projet doit être un identifiant de projet.",
+    "project_invalid": "Le projet doit être un identifiant de projet.",
+    "limit_invalid": "La limite doit être un nombre entier positif.",
     "task_body_invalid": "Cette requête de tâche est invalide : {detail}",
     "series_rule_refused": "Cette règle de série a été refusée : {detail}",
     "series_group_invalid": "Le groupe doit être une seule valeur texte.",
