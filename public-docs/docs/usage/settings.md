@@ -240,6 +240,8 @@ Two more govern an autonomous mission (a Kanban task, a routine, a sub-mission) 
 - **Idle time before reap** (10 min by default, `TIMON_REAP_IDLE_MS`): the mission is ended and frees its slot once its turn has ended and nothing has been heard from it for this long.
 - **Idle time before reap, background job running** (1 h by default, `TIMON_REAP_BG_MS`): a mission whose CLI still runs a process it started, such as a test suite launched in the background, is spared past the idle time, up to this ceiling measured from the end of its turn.
 
+The same tab holds **Worktree creation without progress** (2 min by default, `TIMON_WORKTREE_ADD_STALL_MS`): how long a Kanban task's worktree creation may go without git reporting any checkout progress before it is stopped and the task blocked. See [Kanban](kanban.md).
+
 ## Answer deadlines on autonomous missions (Permissions)
 
 A card opened by a mission nobody is watching (a Kanban task, a routine, a sub-mission) does not wait forever: past a delay, the agent is told it got no answer and goes on without it. The card shows the time left (**Expires in 12:34**). A conversation you are having never expires. **Settings → Missions → Permissions** sets the delays:

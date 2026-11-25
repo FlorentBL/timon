@@ -67,7 +67,16 @@ export function stopProcessGroup(child: ChildProcess, signal: NodeJS.Signals, pl
 /** What a program that left the group keeps open is given this long after its exit. */
 const DRAIN_MS = 250;
 
-export type ExecTreeOpts = Pick<SpawnOpts, 'cwd' | 'env'> & { timeout: number; maxBuffer: number };
+export type ExecTreeOpts = Pick<SpawnOpts, 'cwd' | 'env'> & {
+  timeout: number;
+  maxBuffer: number;
+  /**
+   * Also stops the program once it has printed nothing for this long. For a long
+   * job that reports its progress (a checkout on a slow disk): it may run for as
+   * long as it keeps talking, under `timeout`, which stays the ceiling.
+   */
+  stallTimeout?: number;
+};
 
 /**
  * `detached` takes the child out of the daemon's group and session: a Ctrl+C at
@@ -117,6 +126,7 @@ export function execTree(name: string, args: string[], opts: ExecTreeOpts): Prom
     let stdout = '';
     let stderr = '';
     let exitCode: number | null = null;
+    let exited = false;
     let overflowed = false;
     let timedOut = false;
     let stopped = false;
@@ -133,6 +143,7 @@ export function execTree(name: string, args: string[], opts: ExecTreeOpts): Prom
       if (settled) return;
       settled = true;
       clearTimeout(limit);
+      clearTimeout(stall);
       clearTimeout(drain);
       liveGroups.delete(child);
       child.stdout?.destroy();
@@ -143,13 +154,22 @@ export function execTree(name: string, args: string[], opts: ExecTreeOpts): Prom
     // process the kernel cannot end right now: the caller returns regardless.
     const drainThenSettle = () => { drain ??= setTimeout(settle, DRAIN_MS); };
 
-    const limit = setTimeout(() => {
+    const expire = () => {
       timedOut = true;
       stop();
       drainThenSettle();
-    }, opts.timeout);
+    };
+    const limit = setTimeout(expire, opts.timeout);
+    let stall: NodeJS.Timeout | undefined;
+    const rearmStall = () => {
+      if (opts.stallTimeout === undefined || stopped || exited || settled) return;
+      clearTimeout(stall);
+      stall = setTimeout(expire, opts.stallTimeout);
+    };
+    rearmStall();
 
     const keep = (held: string, chunk: string): string => {
+      rearmStall();
       const next = held + chunk;
       if (next.length <= opts.maxBuffer) return next;
       overflowed = true;
@@ -163,7 +183,9 @@ export function execTree(name: string, args: string[], opts: ExecTreeOpts): Prom
     child.on('error', settle);
     child.on('exit', (code) => {
       exitCode = code;
+      exited = true;
       clearTimeout(limit);
+      clearTimeout(stall);
       // At once: the group outlives its leader only as long as it has members,
       // and an empty group's number can come back. Never `taskkill` here: on
       // Windows this pid may already belong to another process.

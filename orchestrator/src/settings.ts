@@ -298,6 +298,9 @@ export const SETTINGS: SettingDef[] = [
   { key: 'TIMON_WORKTREE_GC_GRACE_MIN', type: 'int', default: 30, group: 'Worktrees', unit: 'min',
     label: 'Grace before cleanup', advanced: true,
     description: "Delay after a task closes before its worktree becomes a candidate. Gives the merger and the following doc task time to work in it." },
+  { key: 'TIMON_WORKTREE_ADD_STALL_MS', type: 'int', default: 120_000, group: 'Worktrees', unit: 'ms', min: 10_000,
+    label: 'Worktree creation without progress', advanced: true,
+    description: "2 min by default. Creating a task's worktree may take as long as git keeps reporting its checkout progress, as on a large repository or a disk slowed down by an antivirus. Past this delay without any progress, git and the processes it started are stopped, the half-made worktree is removed (its branch is kept) and the task is blocked with the reason." },
 
   // ── Permissions ───────────────────────────────────────────────────────
   { key: 'TIMON_PERMISSION_AUTONOMOUS_TIMEOUT_MS', type: 'int', default: 300_000, group: 'Permissions', unit: 'ms',
