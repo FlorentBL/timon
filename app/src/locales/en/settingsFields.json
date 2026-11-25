@@ -527,7 +527,7 @@
     },
     "TIMON_MCP_STDIO_BRIDGE": {
       "label": "Run MCP servers with variables outside the agent",
-      "description": "On: a local (stdio) MCP server that has environment variables is started by Timon itself and reached by the agent through Timon, so its variables are never written into the agent's configuration; if it cannot start, the agent runs without it. Off: the agent's tool starts it as before, its variables written in its configuration."
+      "description": "On: a local (stdio) MCP server that has environment variables is started by Timon itself and reached by the agent through Timon, so its variables are never written into the agent's configuration; if it cannot start, the agent runs without it. Agents that cannot reach an MCP server through Timon yet (opencode, Hermes) start it themselves, with its variables, as when this is off. Off: the agent's tool starts it as before, its variables written in its configuration."
     },
     "TIMON_CHROME_PATH": {
       "label": "Chrome used to sign in from the built-in browser",

@@ -45,6 +45,7 @@ import { MODEL_TIERS } from './catalog-model.js';
 import { setDeclaredBinariesSource } from '../host/declared-binaries.js';
 import { setDeclaredCredentialDirsSource } from '../host/isolation.js';
 import { BUILTIN_DECLARATIONS, type BuiltinDeclarations } from './builtin-declarations.js';
+import { isStdioOnlyMcpCodec } from './acp/stdio-only-mcp.js';
 import { ProfileEnvError, probeProfileEnv, probeResolver, resolveProfileEnv } from './credentials.js';
 import { localEnvNames, localEnvReason } from './local-env.js';
 import { accountConfigDir, accountInstance, listBackendAccounts, onBackendAccountsChanged, type BackendAccountRow } from './accounts.js';
@@ -963,7 +964,8 @@ export function replaceDialect(
  * or replaced one is not mistaken for the live one. The core reads these instead
  * of asking a provider's name; a dialect registered the old way has none.
  */
-const declarationEntries = new Map<string, { owner: string; declares: ProviderDeclarations; token: symbol }>();
+/** `stdioOnlyMcp`: the provider's codec declares no HTTP MCP server to its agent (`acp/stdio-only-mcp.ts`). */
+const declarationEntries = new Map<string, { owner: string; declares: ProviderDeclarations; token: symbol; stdioOnlyMcp: boolean }>();
 
 /** A native definition that contradicts itself, or whose declarations the manifest did not authorize. */
 export class ProviderDefinitionError extends Error {
@@ -1012,7 +1014,7 @@ function checkedDialect(def: NativeProviderDefinition, { authorizedBinaries, aut
 
 function holdDeclarations(owner: string, def: NativeProviderDefinition): () => void {
   const token = Symbol(def.id);
-  declarationEntries.set(def.id, { owner, declares: def.declares ?? {}, token });
+  declarationEntries.set(def.id, { owner, declares: def.declares ?? {}, token, stdioOnlyMcp: isStdioOnlyMcpCodec(def.codec) });
   invalidate();
   return () => releaseOrDefer(owner, () => {
     if (declarationEntries.get(def.id)?.token !== token) return;
@@ -1062,6 +1064,18 @@ export function profileDeclarations(id: string): ProviderDeclarations | undefine
   const base = baseBackendId(id);
   const profile = profiles.find((p) => p.id === base);
   return profile ? dialectDeclarations(profile.dialect) ?? builtinDeclarations(base) : undefined;
+}
+
+/**
+ * Whether the agent of backend `id` can be handed an MCP server over HTTP (an account instance
+ * reads its backend's). False for a provider whose codec is the daemon's ACP driver, which
+ * declares the stdio servers only: the daemon then leaves a stdio server with variables to the
+ * agent instead of running it behind the relay, where the agent would never see it.
+ * True for anything else, an unknown id included.
+ */
+export function backendTakesHttpMcp(id: string): boolean {
+  const profile = profiles.find((p) => p.id === baseBackendId(id));
+  return !(profile && declarationEntries.get(profile.dialect)?.stdioOnlyMcp === true);
 }
 
 // The host adapter asks the registry, through these two seams, for what providers declared.
