@@ -19,18 +19,26 @@ const HOME = mkdtempSync(join(tmpdir(), 'timon-oauth-return-'));
 process.env.TIMON_HOME = HOME;
 process.env.TIMON_RESOURCE_GUARD_ENABLED = '0';
 delete process.env.TIMON_PUBLIC_APP_URL;
-writeFileSync(join(HOME, 'timon.config.json'), JSON.stringify({ version: 1 }));
+// The app this daemon serves itself: `http://localhost:3101` is a trusted origin.
+writeFileSync(join(HOME, 'timon.config.json'), JSON.stringify({ version: 1, app: { enabled: true, listen: { port: 3101 } } }));
 
-const { registerRoutes } = await import('./plugins-bundled/agents/routes.js');
+const { registerRoutes, trustedReturnOrigin } = await import('./plugins-bundled/agents/routes.js');
 const { invalidateSettingsCache } = await import('./settings.js');
+const { upsertMcp } = await import('./mcp.js');
 const {
-  OAUTH_CALLBACK_PATH, mcpIdOfState, oauthState, putPending, resetOAuthFlowsForTests,
+  OAUTH_CALLBACK_PATH, oauthRedirectUri, oauthState, putPending, resetOAuthFlowsForTests,
 } = await import('./oauth.js');
+const { apiPort } = await import('./api-url.js');
+
+/** The configured public app URL (default `http://timon.localhost`): trusted, and distinct from the local app. */
+const PUBLIC_APP = 'http://timon.localhost';
+const LOCAL_APP = 'http://localhost:3101';
 
 const SECRET_CODE = 'code-that-must-never-leak';
 let tokenAnswer: { status: number; body: unknown } = { status: 200, body: { access_token: 'at', token_type: 'Bearer' } };
 
 const app = express();
+app.use(express.json());
 app.post('/token', (_req, res) => { res.status(tokenAnswer.status).json(tokenAnswer.body); });
 registerRoutes(app);
 const server = app.listen(0, '127.0.0.1');
@@ -43,14 +51,23 @@ const realWarn = console.warn;
 console.warn = (...args: unknown[]) => { warnings.push(args.map(String).join(' ')); };
 test.after(() => { console.warn = realWarn; });
 
-function startFlow(mcpId: string, back: { return_to?: string; return_path?: '/mcp' | '/apps' } = {}): string {
+function startFlow(
+  mcpId: string,
+  back: { return_to?: string; return_path?: '/mcp' | '/apps' } = {},
+  createdAt = Date.now(),
+): string {
   const state = oauthState(mcpId);
   putPending(state, {
     mcp_id: mcpId, code_verifier: 'verifier', redirect_uri: `${base}${OAUTH_CALLBACK_PATH}`,
     metadata: { authorization_endpoint: `${base}/authorize`, token_endpoint: `${base}/token` },
-    client: { client_id: 'client' }, created_at: Date.now(), ...back,
+    client: { client_id: 'client' }, created_at: createdAt, ...back,
   });
   return state;
+}
+
+function backLink(html: string): string | null {
+  const m = html.match(/<a href="([^"]*)">Back to Timon<\/a>/);
+  return m ? m[1].replace(/&amp;/g, '&') : null;
 }
 
 async function callback(query: Record<string, string>): Promise<{ status: number; html: string }> {
@@ -68,28 +85,104 @@ test('an unknown state never redirects to an unconfigured .localhost host', asyn
   const { status, html } = await callback({ state: 'forged', code: SECRET_CODE });
   assert.equal(status, 400);
   assert.equal(redirectTarget(html), null, 'a failure stays on the page');
-  assert.doesNotMatch(html, /timon\.localhost/);
   assert.match(html, /unknown or expired/);
-  assert.match(html, /Go back to the Timon window/);
+  assert.ok(backLink(html)?.startsWith(`${LOCAL_APP}/mcp?oauth=error&error=`), String(backLink(html)));
   assert.doesNotMatch(html, new RegExp(SECRET_CODE));
 });
 
-test('an expired flow links back to where its server last started from, without redirecting', async () => {
+test('a forged state naming a known server never gets the origin its flow remembered', async () => {
   resetOAuthFlowsForTests();
-  startFlow('cloudflare', { return_to: 'http://localhost:3101', return_path: '/apps' });
-  const { status, html } = await callback({ state: `gone~cloudflare`, code: SECRET_CODE });
+  startFlow('cloudflare', { return_to: PUBLIC_APP, return_path: '/apps' });
+  const { status, html } = await callback({ state: 'forged~cloudflare', code: SECRET_CODE });
   assert.equal(status, 400);
   assert.equal(redirectTarget(html), null);
-  assert.match(html, /href="http:\/\/localhost:3101\/apps\?oauth=error&amp;id=cloudflare&amp;error=/);
+  assert.doesNotMatch(html, /timon\.localhost/);
+  assert.doesNotMatch(html, /\/apps/);
+  assert.doesNotMatch(html, /cloudflare/, 'a state nobody issued names no server');
+  assert.ok(backLink(html)?.startsWith(`${LOCAL_APP}/mcp?`), String(backLink(html)));
+});
+
+test('an expired flow links back to where it started, without redirecting', async () => {
+  resetOAuthFlowsForTests();
+  const state = startFlow('cloudflare', { return_to: PUBLIC_APP, return_path: '/apps' }, Date.now() - 11 * 60 * 1000);
+  const { status, html } = await callback({ state, code: SECRET_CODE });
+  assert.equal(status, 400);
+  assert.match(html, /unknown or expired/);
+  assert.equal(redirectTarget(html), null);
+  assert.ok(backLink(html)?.startsWith(`${PUBLIC_APP}/apps?oauth=error&id=cloudflare&error=`), String(backLink(html)));
+});
+
+test('a flow whose origin is no longer trusted links to the local app instead', async () => {
+  resetOAuthFlowsForTests();
+  const state = startFlow('cloudflare', { return_to: 'https://evil.example' });
+  const { html } = await callback({ state, error: 'access_denied' });
+  assert.doesNotMatch(html, /evil\.example/);
+  assert.ok(backLink(html)?.startsWith(`${LOCAL_APP}/mcp?`), String(backLink(html)));
+});
+
+test('a return origin is one the daemon knows its app under, never a third party', () => {
+  assert.equal(trustedReturnOrigin(`${LOCAL_APP}/mcp?x=1`), LOCAL_APP);
+  assert.equal(trustedReturnOrigin('HTTP://LOCALHOST:3101/'), LOCAL_APP);
+  assert.equal(trustedReturnOrigin('http://127.0.0.1:3101'), 'http://127.0.0.1:3101');
+  assert.equal(trustedReturnOrigin(`${PUBLIC_APP}/apps`), PUBLIC_APP);
+  for (const hostile of [
+    'https://evil.example',
+    '//evil.example',
+    '/\\evil.example',
+    'javascript:alert(1)',
+    'data:text/html,<script>alert(1)</script>',
+    'ftp://localhost:3101',
+    'http://localhost:3102',
+    'https://localhost:3101',
+    'http://evil.localhost',
+    'http://localhost:3101@evil.example',
+    'http://user:pass@localhost:3101',
+    'http://%65vil.example',
+    'http://evil.example%2f@localhost:3101',
+    'http://timon.localhost.evil.example',
+    '',
+  ]) {
+    assert.equal(trustedReturnOrigin(hostile), null, hostile);
+  }
+});
+
+test('the start of a flow ignores an Origin or Referer of another site', async () => {
+  resetOAuthFlowsForTests();
+  const id = 'return-check';
+  upsertMcp({
+    id,
+    transport: {
+      type: 'http', url: `${base}/mcp`,
+      oauth: {
+        metadata: { authorization_endpoint: `${base}/authorize`, token_endpoint: `${base}/token` },
+        client: { client_id: 'client' },
+        redirect_uri: oauthRedirectUri('', apiPort()),
+      },
+    },
+  });
+  for (const [headers, expected] of [
+    [{ origin: 'https://evil.example', referer: 'https://evil.example/page' }, LOCAL_APP],
+    [{ origin: 'null', referer: `${PUBLIC_APP}/mcp` }, PUBLIC_APP],
+  ] as const) {
+    const r = await fetch(`${base}/api/mcp/${id}/oauth/start`, {
+      method: 'POST', headers: { 'content-type': 'application/json', ...headers }, body: '{}',
+    });
+    assert.equal(r.status, 200, await r.clone().text());
+    const { authorize_url } = await r.json() as { authorize_url: string };
+    const state = new URL(authorize_url).searchParams.get('state') ?? '';
+    const { html } = await callback({ state, error: 'access_denied' });
+    assert.doesNotMatch(html, /evil\.example/);
+    assert.ok(backLink(html)?.startsWith(`${expected}/mcp?oauth=error&id=${id}&`), String(backLink(html)));
+  }
 });
 
 test('a callback replayed after a success says so, and does not redirect or notify twice', async () => {
   resetOAuthFlowsForTests();
   tokenAnswer = { status: 200, body: { access_token: 'at', token_type: 'Bearer' } };
-  const state = startFlow('cloudflare', { return_to: 'http://localhost:3101', return_path: '/apps' });
+  const state = startFlow('cloudflare', { return_to: PUBLIC_APP, return_path: '/apps' });
   const first = await callback({ state, code: SECRET_CODE });
   assert.equal(first.status, 200);
-  assert.equal(redirectTarget(first.html), 'http://localhost:3101/apps?oauth=success&id=cloudflare');
+  assert.equal(redirectTarget(first.html), `${PUBLIC_APP}/apps?oauth=success&id=cloudflare`);
   assert.match(first.html, /BroadcastChannel/);
 
   const replay = await callback({ state, code: SECRET_CODE });
@@ -112,7 +205,7 @@ test('a refused exchange names the status and the OAuth error, never the provide
   resetOAuthFlowsForTests();
   warnings.length = 0;
   tokenAnswer = { status: 400, body: { error: 'invalid_grant', error_description: `code ${SECRET_CODE} is invalid` } };
-  const state = startFlow('cloudflare', { return_to: 'http://localhost:3101' });
+  const state = startFlow('cloudflare', { return_to: PUBLIC_APP });
   const { status, html } = await callback({ state, code: SECRET_CODE });
   assert.equal(status, 500);
   assert.match(html, /token exchange failed: HTTP 400 \(invalid_grant\)/);
@@ -145,10 +238,4 @@ test('a failure redirects only to an app URL configured on purpose', async () =>
     delete process.env.TIMON_PUBLIC_APP_URL;
     invalidateSettingsCache();
   }
-});
-
-test('a state carries the id of its server, and only a valid id is read back', () => {
-  assert.equal(mcpIdOfState(oauthState('cloudflare')), 'cloudflare');
-  assert.equal(mcpIdOfState('no-separator'), null);
-  assert.equal(mcpIdOfState('abc~../etc'), null);
 });
