@@ -61,7 +61,13 @@ export type BinaryIdentityResult = { readonly ok: true } | { readonly ok: false;
 export type BinaryIdentityLimits = { readonly runTimeoutMs: number; readonly patternTimeoutMs: number };
 const LIMITS: BinaryIdentityLimits = { runTimeoutMs: IDENTITY_TIMEOUT_MS, patternTimeoutMs: PATTERN_TIMEOUT_MS };
 
-const cache = new Map<string, BinaryIdentityResult>();
+/**
+ * `durable`: an answer about the file, reused by every check until the file changes. A run that was cut
+ * (time limit, failure, a pattern too slow under load) is kept too, but only for `knownBinaryIdentity`: a
+ * report may show it, a launch asks again.
+ */
+type CacheEntry = { readonly result: BinaryIdentityResult; readonly durable: boolean };
+const cache = new Map<string, CacheEntry>();
 const MATCH = new Script('new RegExp(pattern, "m").test(subject)');
 
 /** `true`/`false`, or `null` when the match ran past `timeoutMs` (V8 interrupts it, the daemon goes on). */
@@ -151,13 +157,16 @@ function withProbeFolder<T>(run: (cwd: string) => T): T {
 /** Kept like any answer about the file: it depends on nothing but the file. */
 function unsupported(key: string): BinaryIdentityResult {
   const result: BinaryIdentityResult = { ok: false, reason: 'unsupported' };
-  if (key) remember(key, result);
+  remember(key, result, true);
   return result;
 }
 
-function remember(key: string, result: BinaryIdentityResult): void {
+function remember(key: string, result: BinaryIdentityResult, durable: boolean): void {
+  if (!key) return;
+  // Re-inserted at the end: the oldest entry is the first one dropped.
+  cache.delete(key);
   if (cache.size >= CACHE_MAX) cache.delete(cache.keys().next().value!);
-  cache.set(key, result);
+  cache.set(key, { result, durable });
 }
 
 /**
@@ -167,26 +176,46 @@ function remember(key: string, result: BinaryIdentityResult): void {
  */
 type ProbeRun = { readonly answered: boolean; readonly output: string };
 
-/** The verdict on one run. Kept only for an answer read to its end: a failed or cut run is asked again next time. */
+/** The verdict on one run. Durable only for an answer read to its end: a failed or cut run is asked again by a launch. */
 function verdict(key: string, identity: ProviderBinaryIdentity, run: ProbeRun, limits: BinaryIdentityLimits): BinaryIdentityResult {
-  // On a loaded machine a sane program can miss its limit once: the next try must really ask.
-  if (!run.answered) return { ok: false, reason: 'no_answer' };
+  // On a loaded machine a sane program can miss its limit once: the next launch must really ask.
+  if (!run.answered) {
+    const result: BinaryIdentityResult = { ok: false, reason: 'no_answer' };
+    remember(key, result, false);
+    return result;
+  }
   const matched = testIdentityPattern(identity.pattern, run.output, limits.patternTimeoutMs);
-  // Not cached: under a heavy load a sane pattern could run past the limit once.
-  if (matched === null) return { ok: false, reason: 'slow_pattern' };
+  // Not durable: under a heavy load a sane pattern could run past the limit once.
+  if (matched === null) {
+    const result: BinaryIdentityResult = { ok: false, reason: 'slow_pattern' };
+    remember(key, result, false);
+    return result;
+  }
   const result: BinaryIdentityResult = matched ? { ok: true } : { ok: false, reason: run.output.trim() ? 'mismatch' : 'no_answer' };
-  if (key) remember(key, result);
+  remember(key, result, true);
   return result;
 }
 
-/** Runs `program` (an absolute path) with the identity's arguments and tests what it printed. */
+/**
+ * The last answer about `program` as it is on disk now, cut runs included, without running anything:
+ * `undefined` when it was never asked, or was replaced since. What a report that must not wait shows.
+ */
+export function knownBinaryIdentity(program: string, identity: ProviderBinaryIdentity): BinaryIdentityResult | undefined {
+  const key = cacheKey(program, [...(identity.args ?? DEFAULT_IDENTITY_ARGS)], identity);
+  return key ? cache.get(key)?.result : undefined;
+}
+
+/**
+ * Runs `program` (an absolute path) with the identity's arguments and tests what it printed. A durable answer
+ * about the same file is reused, unless `fresh` asks the program again (`timon doctor`).
+ */
 export async function checkBinaryIdentity(
-  program: string, identity: ProviderBinaryIdentity, limits: BinaryIdentityLimits = LIMITS,
+  program: string, identity: ProviderBinaryIdentity, limits: BinaryIdentityLimits = LIMITS, options: { fresh?: boolean } = {},
 ): Promise<BinaryIdentityResult> {
   const args = [...(identity.args ?? DEFAULT_IDENTITY_ARGS)];
   const key = cacheKey(program, args, identity);
-  const known = key ? cache.get(key) : undefined;
-  if (known) return known;
+  const known = key && !options.fresh ? cache.get(key) : undefined;
+  if (known?.durable) return known.result;
   const launch = probeLaunch(program, args);
   if (!launch) return unsupported(key);
   // `execTree`: a program that leaves a child on its stdout would otherwise cost the whole limit at
@@ -197,25 +226,6 @@ export async function checkBinaryIdentity(
   return verdict(key, identity, {
     answered: run.code === 0 && run.timedOut !== true, output: `${run.stdout}\n${run.stderr}`,
   }, limits);
-}
-
-/**
- * The same check and the same cache for a caller that cannot wait: `doctor`'s report is synchronous. The
- * host adapter's synchronous run answers a non-zero code when its timeout stopped the program.
- */
-export function checkBinaryIdentitySync(
-  program: string, identity: ProviderBinaryIdentity, limits: BinaryIdentityLimits = LIMITS,
-): BinaryIdentityResult {
-  const args = [...(identity.args ?? DEFAULT_IDENTITY_ARGS)];
-  const key = cacheKey(program, args, identity);
-  const known = key ? cache.get(key) : undefined;
-  if (known) return known;
-  const launch = probeLaunch(program, args);
-  if (!launch) return unsupported(key);
-  const run = withProbeFolder((cwd) => getHost().exec(launch.file, launch.args, {
-    timeout: limits.runTimeoutMs, maxBuffer: IDENTITY_MAX_OUTPUT, env: probeEnv(), cwd, windowsHide: true,
-  }));
-  return verdict(key, identity, { answered: run.code === 0, output: `${run.stdout}\n${run.stderr}` }, limits);
 }
 
 /**
@@ -280,7 +290,7 @@ export function assumeDeclaredIdentities(): void {
     for (const name of declaration.names) {
       const program = resolveExecutable(name);
       const key = program ? cacheKey(program, args, identity) : '';
-      if (key) cache.set(key, { ok: true });
+      remember(key, { ok: true }, true);
     }
   }
 }

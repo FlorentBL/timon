@@ -11,7 +11,7 @@ import './test-home.js';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-const { whichBin, diagnose, formatDoctor, BINARIES } = await import('./doctor.js');
+const { whichBin, diagnose, formatDoctor, BINARIES, refreshPinnedIdentities } = await import('./doctor.js');
 const { TimonConfigSchema } = await import('./config/schema.js');
 const { setConfig, resetConfig } = await import('./config/load.js');
 
@@ -228,6 +228,7 @@ test('a pin on another program is not ok, and the report says so without quoting
   const codex = stubOf('codex', 'codex-cli 0.169.0');
   try {
     setConfig(TimonConfigSchema.parse({ host: { binaries: { codex: ollama } } }));
+    await refreshPinnedIdentities();
     const wrong = diagnose().binaries.find((b) => b.name === 'codex')!;
     assert.equal(wrong.ok, false);
     assert.equal(wrong.path, ollama);
@@ -236,10 +237,66 @@ test('a pin on another program is not ok, and the report says so without quoting
     assert.match(formatDoctor(diagnose()), /codex\s+✗/);
 
     setConfig(TimonConfigSchema.parse({ host: { binaries: { codex } } }));
+    await refreshPinnedIdentities();
     const right = diagnose().binaries.find((b) => b.name === 'codex')!;
     assert.deepEqual([right.ok, right.path, right.error], [true, codex, undefined]);
   } finally {
     resetConfig();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+/**
+ * `/api/doctor` answers from `diagnose()`, in the daemon's thread. A pinned program that hangs on `--version`
+ * used to hold every request for seconds, at each report. The report now reads what the daemon last learned
+ * about the file, asks it in the background when it never did, and `timon doctor` asks again on purpose.
+ */
+test('a pin that hangs silently never holds the report, is asked once per file, and again when the CLI asks', { skip: process.platform === 'win32' }, async () => {
+  const { mkdtempSync, writeFileSync, readFileSync, rmSync } = await import('node:fs');
+  const { tmpdir } = await import('node:os');
+  const { join } = await import('node:path');
+  const { resetBinaryIdentityCache } = await import('./backends/binary-identity.js');
+  const dir = mkdtempSync(join(tmpdir(), 'timon-doctor-slow-'));
+  const counter = join(dir, 'runs');
+  writeFileSync(counter, '');
+  const silent = join(dir, 'codex');
+  writeFileSync(silent, `#!/bin/sh\necho x >> "${counter}"\nexec sleep 30\n`, { mode: 0o755 });
+  const runs = (): number => readFileSync(counter, 'utf8').split('\n').filter(Boolean).length;
+  const until = async (done: () => boolean, ms: number): Promise<void> => {
+    for (const end = Date.now() + ms; !done() && Date.now() < end;) await new Promise((r) => { setTimeout(r, 25); });
+  };
+  resetBinaryIdentityCache();
+  try {
+    setConfig(TimonConfigSchema.parse({ host: { binaries: { codex: silent } } }));
+    let ticks = 0;
+    const clock = setInterval(() => { ticks++; }, 20);
+    const started = Date.now();
+    const first = diagnose().binaries.find((b) => b.name === 'codex')!;
+    diagnose();
+    const took = Date.now() - started;
+    assert.ok(took < 1_000, `the report took ${took} ms`);
+    assert.equal(first.error, undefined, 'never asked yet: nothing to say');
+    await until(() => runs() >= 1, 2_000);
+    // The probe runs while the event loop keeps turning.
+    await new Promise((r) => { setTimeout(r, 300); });
+    clearInterval(clock);
+    assert.ok(ticks >= 5, `the event loop was held: ${ticks} ticks`);
+    assert.equal(runs(), 1, 'two reports, one run: the second waits for the first');
+
+    await refreshPinnedIdentities();
+    const answered = diagnose().binaries.find((b) => b.name === 'codex')!;
+    assert.equal(answered.ok, false);
+    assert.match(answered.error ?? '', /^`codex`, the program the `codex` pin runs, did not answer `--version`/);
+    diagnose();
+    diagnose();
+    await new Promise((r) => { setTimeout(r, 200); });
+    assert.equal(runs(), 1, 'the answer is kept for this file: no run per report');
+
+    await refreshPinnedIdentities({ fresh: true });
+    assert.equal(runs(), 2, 'the CLI asks the program again');
+  } finally {
+    resetConfig();
+    resetBinaryIdentityCache();
     rmSync(dir, { recursive: true, force: true });
   }
 });

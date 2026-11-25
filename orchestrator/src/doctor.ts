@@ -45,7 +45,8 @@ import { nodePtyStatus } from './terminal-host/pty.js';
 import { binaryCandidates, findExecutableBinary, npmPrefixCandidates, pinnedBinaryCandidates, resolvePinnedBinary, type BinarySearchOptions } from './host/binary-path.js';
 import { BUILTIN_API_KEY_PROVIDERS, BUILTIN_DECLARATIONS, builtinBinaries, builtinProviderIds } from './backends/builtin-declarations.js';
 import { activeProfiles, authStatusNow, installedProfiles } from './backends/registry.js';
-import { binaryIdentityRefusal, checkBinaryIdentitySync, type BinaryIdentityLimits } from './backends/binary-identity.js';
+import { binaryIdentityRefusal, checkBinaryIdentity, knownBinaryIdentity, type BinaryIdentityLimits } from './backends/binary-identity.js';
+import type { ProviderBinaryIdentity } from './backends/provider-declarations.js';
 import { declaredBinary } from './host/declared-binaries.js';
 import { usableProviders } from './backends/usable.js';
 import { isRemoteDialect } from './backends/types.js';
@@ -95,19 +96,62 @@ export function whichBin(
   return { path: findExecutableBinary(name, options), pinned: false };
 }
 
-/** The report is synchronous and blocks whoever asked: a program that hangs on `--version` is given less than a launch. */
+/** A pin is asked with less time than a launch gets: a report should not wait on a program that hangs. */
 const DOCTOR_IDENTITY_LIMITS: BinaryIdentityLimits = { runTimeoutMs: 3_000, patternTimeoutMs: 250 };
+
+/** The pins being asked right now, by path: one run per file however many reports ask meanwhile. */
+const probing = new Map<string, Promise<void>>();
+
+/** Asks the pinned program, once at a time per path; the answer lands in the identity cache. Never throws. */
+function probePin(path: string, identity: ProviderBinaryIdentity, fresh: boolean): Promise<void> {
+  const running = probing.get(path);
+  if (running && !fresh) return running;
+  const probe = checkBinaryIdentity(path, identity, DOCTOR_IDENTITY_LIMITS, { fresh })
+    .then(() => undefined, (error: Error) => { console.warn(`[doctor] a pinned program could not be checked: ${error.name}`); })
+    .finally(() => { if (probing.get(path) === probe) probing.delete(path); });
+  probing.set(path, probe);
+  return probe;
+}
+
+/** The pins whose provider declared how its program describes itself: what `doctor` asks. */
+function identityPins(): { name: string; path: string; identity: ProviderBinaryIdentity }[] {
+  const pins = config().host.binaries;
+  return BINARIES.flatMap((b) => {
+    const identity = declaredBinary(b.name)?.identity;
+    if (!identity) return [];
+    const { path, pinned } = whichBin(b.name, pins);
+    return pinned && path ? [{ name: b.name, path, identity }] : [];
+  });
+}
+
+/**
+ * Asks every pinned program again and waits for the answers: `timon doctor` runs it before its report.
+ * `fresh: false` only waits for what is not known yet (a report built in the daemon). The daemon's own
+ * `diagnose()` never waits: it reads the cache.
+ */
+export async function refreshPinnedIdentities(options: { fresh?: boolean } = {}): Promise<void> {
+  await Promise.all(identityPins().map(({ path, identity }) =>
+    (options.fresh || knownBinaryIdentity(path, identity) === undefined ? probePin(path, identity, options.fresh === true) : undefined)));
+}
 
 /**
  * A pinned path that names another program (#1101: `/usr/local/bin/ollama` pinned as `codex`): it exists and
  * runs, so it used to pass, and every mission died on it. Asked only of a pin — a program found on its own is
  * checked at each launch — and only when its provider declared how its program describes itself.
+ *
+ * Read from the identity cache, kept per file (path, size, modification time): `diagnose()` answers the
+ * HTTP route and must not hold the daemon on a program that hangs. A pin never asked since it was written
+ * or replaced is asked in the background, and shows in the next report.
  */
 function pinnedIdentityProblem(name: string, path: string): string | null {
   const identity = declaredBinary(name)?.identity;
   if (!identity) return null;
-  const result = checkBinaryIdentitySync(path, identity, DOCTOR_IDENTITY_LIMITS);
-  return result.ok ? null : binaryIdentityRefusal(`the \`${name}\` pin`, path, identity, result.reason);
+  const known = knownBinaryIdentity(path, identity);
+  if (known === undefined) {
+    void probePin(path, identity, false);
+    return null;
+  }
+  return known.ok ? null : binaryIdentityRefusal(`the \`${name}\` pin`, path, identity, known.reason);
 }
 
 function dockerUsable(bin: string | null): { present: boolean; usable: boolean; detail: string } {

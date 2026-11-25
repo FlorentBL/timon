@@ -5730,7 +5730,9 @@ async function cmdDoctor(argv) {
       formatDoctor: (report) => `Update pending: ${report.updatePending}\n`,
     };
   }
-  const { diagnose, formatDoctor } = doctor;
+  const { diagnose, formatDoctor, refreshPinnedIdentities } = doctor;
+  // The CLI asks every pinned program again: the daemon's report only reads what it last learned.
+  if (typeof refreshPinnedIdentities === 'function') await refreshPinnedIdentities({ fresh: true });
   const report = diagnose();
   const local = isLocalDaemonUrl(timonHome(), API, { packaged: packagedCli() });
   const backendProfiles = await backendProfilesReport({
