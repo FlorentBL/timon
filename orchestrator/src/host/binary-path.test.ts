@@ -19,8 +19,8 @@ test('the Codex CLI embedded in the ChatGPT app is a macOS candidate', { skip: P
   assert.ok(codex.includes('/Users/sam/Applications/ChatGPT.app/Contents/Resources/codex'));
 });
 
-import { chmodSync, existsSync, mkdtempSync, mkdirSync, readdirSync, realpathSync, statSync, symlinkSync, writeFileSync, rmSync } from 'node:fs';
-import { untrustedTreeProblem } from './trusted-tree.js';
+import { chmodSync, existsSync, mkdtempSync, mkdirSync, readdirSync, realpathSync, symlinkSync, writeFileSync, rmSync } from 'node:fs';
+import { diskTrustStat, untrustedPathProblem, type TrustStat } from './trusted-tree.js';
 import { tmpdir } from 'node:os';
 import { join, sep } from 'node:path';
 import { findExecutableBinary } from './binary-path.js';
@@ -784,27 +784,45 @@ function tightenTree(dir: string): void {
   }
 }
 
+/**
+ * The trust reads of a tree the test made itself: its own files as the disk
+ * reports them (`owners` may stand in for another account, chown needs root),
+ * the folders above it as a sound system has them. What the runner's own
+ * `/tmp` and its parents look like is no business of these tests.
+ */
+function confinedTrust(base: string, owners: (path: string) => number | undefined = () => undefined) {
+  const uid = process.getuid?.() ?? 1000;
+  const lstat = (path: string): TrustStat => {
+    if (path !== base && !path.startsWith(base + sep)) return { uid: 0, mode: 0o40755, kind: 'directory' };
+    const info = diskTrustStat(path);
+    return { ...info, uid: owners(path) ?? uid };
+  };
+  return { uid, lstat };
+}
+
 test('#1102 review: a node under a manager root another account can write is passed over', { skip: process.platform === 'win32' && 'POSIX owner and mode bits' }, (t) => {
   const base = realpathSync(mkdtempSync(join(tmpdir(), 'timon-fnm-trust-')));
   t.after(() => { chmodSync(base, 0o700); rmSync(base, { recursive: true, force: true }); });
   const home = join(base, 'home');
   const root = join(base, 'shared-fnm');
   const node = stubBinary(join(root, 'node-versions', 'v22.3.0', 'installation', 'bin', 'node'));
-  tightenTree(root);
-  const options = { platform: process.platform, path: '', homeDir: home, env: { FNM_DIR: root } };
+  tightenTree(base);
+  const pathTrust = confinedTrust(base);
+  const options = { platform: process.platform, path: '', homeDir: home, env: { FNM_DIR: root }, pathTrust };
   // A node the machine already offers earlier in the order (a CI runner's /usr/local/bin) wins anyway.
   const candidates = binaryCandidates('node', options);
   const earlier = candidates.slice(0, candidates.indexOf(node)).find((file) => findExecutableBinary(file) !== null) ?? null;
   assert.equal(findExecutableBinary('node', options), earlier ?? node);
-  assert.equal(untrustedTreeProblem(node, root), null);
-  for (const [folder, mode] of [[root, 0o777], [root, 0o775], [join(root, 'node-versions'), 0o757]] as const) {
+  assert.equal(untrustedPathProblem(node, pathTrust), null);
+  // The root, a folder below it, and the folder above it: whoever writes that one can swap the root whole.
+  for (const [folder, mode] of [[root, 0o777], [root, 0o775], [join(root, 'node-versions'), 0o757], [base, 0o777]] as const) {
     chmodSync(folder, mode);
-    assert.match(untrustedTreeProblem(node, root) ?? '', /writable by its group or by others/);
+    assert.match(untrustedPathProblem(node, pathTrust) ?? '', /writable by its group or by others/);
     assert.equal(findExecutableBinary('node', options), earlier);
     chmodSync(folder, 0o755);
   }
   chmodSync(node, 0o775);
-  assert.match(untrustedTreeProblem(node, root) ?? '', /writable/);
+  assert.match(untrustedPathProblem(node, pathTrust) ?? '', /writable/);
   assert.equal(findExecutableBinary('node', options), earlier);
   chmodSync(node, 0o755);
   assert.equal(findExecutableBinary('node', options), earlier ?? node);
@@ -814,30 +832,17 @@ test('#1102 review: a link out of the manager root into another account\'s folde
   const base = realpathSync(mkdtempSync(join(tmpdir(), 'timon-fnm-link-')));
   t.after(() => rmSync(base, { recursive: true, force: true }));
   const root = join(base, 'fnm');
-  const theirs = join(base, 'someone-else', 'v22');
-  stubBinary(join(theirs, 'bin', 'node'));
+  const theirs = join(base, 'someone-else');
+  stubBinary(join(theirs, 'v22', 'bin', 'node'));
   mkdirSync(join(root, 'aliases'), { recursive: true });
-  symlinkSync(theirs, join(root, 'aliases', 'default'));
+  symlinkSync(join(theirs, 'v22'), join(root, 'aliases', 'default'));
   tightenTree(base);
   const node = join(root, 'aliases', 'default', 'bin', 'node');
   const uid = process.getuid?.() ?? 1000;
-  // The other account's folder, as `stat` would report it: chown needs root, so its owner is simulated.
-  const stat = (path: string) => {
-    const info = statSync(path);
-    const other = path === join(base, 'someone-else') || path.startsWith(join(base, 'someone-else') + sep);
-    return { uid: other ? uid + 4242 : info.uid, mode: info.mode, isDirectory: info.isDirectory() };
-  };
-  assert.match(untrustedTreeProblem(node, root, { uid, stat }) ?? '', /belongs to another account/);
-  // The same link, every folder the daemon's own: kept, the folders above the root included.
-  assert.equal(untrustedTreeProblem(node, root, { uid }), null);
-  // A sticky folder owned by root (`/tmp`) is no reason to refuse; a sticky one of another account is.
-  const sticky = (owner: number) => (path: string) => {
-    const info = statSync(path);
-    return path === base ? { uid: owner, mode: 0o41777, isDirectory: true } : { uid: info.uid, mode: info.mode, isDirectory: info.isDirectory() };
-  };
-  assert.equal(untrustedTreeProblem(node, root, { uid, stat: sticky(0) }), null);
-  assert.match(untrustedTreeProblem(node, root, { uid, stat: sticky(uid + 1) }) ?? '', /belongs to another account/);
-  assert.match(untrustedTreeProblem(node, root, { uid, stat: sticky(uid) }) ?? '', /writable/);
+  const other = (path: string) => (path === theirs || path.startsWith(theirs + sep) ? uid + 4242 : undefined);
+  assert.equal(untrustedPathProblem(node, confinedTrust(base, other)), `${theirs} belongs to another account`);
+  // The same link, every folder the daemon's own: kept.
+  assert.equal(untrustedPathProblem(node, confinedTrust(base)), null);
 });
 
 test('#1102 review: on Windows a manager root outside the user\'s profile is not used', (t) => {

@@ -6,7 +6,7 @@ import { TIMON_HOME } from '../paths.js';
 import { installedByNpm } from './machine.js';
 import { windowsShimLaunch } from './windows-shell.js';
 import { fencedSystemFolders, missionWritableProblem, pathWithin } from './mission-writable.js';
-import { untrustedTreeProblem } from './trusted-tree.js';
+import { untrustedPathProblem, type TrustedTreeDeps } from './trusted-tree.js';
 import { declaredBinary } from './declared-binaries.js';
 import type { BuiltinDesktopBuild } from '../backends/builtin-declarations.js';
 import { expandDirectory, INSTALL_PLATFORMS, type InstallPlatform } from '../backends/provider-declarations.js';
@@ -34,6 +34,8 @@ export type BinarySearchOptions = {
   npmPrefix?: () => string | null;
   /** Stands in for `TIMON_HOME` when telling the folders a mission can write. */
   timonHome?: string;
+  /** Owner and mode reads behind the trust of a version manager's `node`, injectable for tests. */
+  pathTrust?: Pick<TrustedTreeDeps, 'uid' | 'lstat' | 'readlink'>;
 };
 
 export type DirectoryReader = {
@@ -516,7 +518,14 @@ function firstExecutable(
  * could have written is refused (#1102, security review). Only checked on the
  * machine itself: a caller simulating another OS has no files to look at.
  */
-function untrustedManagedNode(candidate: string, roots: readonly string[], platform: NodeJS.Platform, home: string, timonHome?: string): boolean {
+function untrustedManagedNode(
+  candidate: string,
+  roots: readonly string[],
+  platform: NodeJS.Platform,
+  home: string,
+  timonHome?: string,
+  trust?: BinarySearchOptions['pathTrust'],
+): boolean {
   const root = roots.find((dir) => pathWithin(platform, dir, candidate));
   if (!root) return false;
   // The system temporary folders a fence leaves writable hold no PATH entry, a version manager root may.
@@ -524,7 +533,7 @@ function untrustedManagedNode(candidate: string, roots: readonly string[], platf
   // portability: Windows has no owner or mode bits to read, so only a root inside the user's profile is used: a folder made at a drive's root is writable by every account by default.
   if (platform === 'win32') return !home || !pathWithin(platform, home, root);
   if (platform !== process.platform) return false;
-  return untrustedTreeProblem(candidate, root, { platform }) !== null;
+  return untrustedPathProblem(candidate, { ...trust, platform }) !== null;
 }
 
 export function findExecutableBinary(name: string, options: BinarySearchOptions = {}): string | null {
@@ -532,7 +541,7 @@ export function findExecutableBinary(name: string, options: BinarySearchOptions 
   const home = options.homeDir ?? homedir();
   const roots = name === 'node' ? nodeManagerRoots(platform, home, options.env ?? process.env) : [];
   const refused = roots.length
-    ? (candidate: string) => untrustedManagedNode(candidate, roots, platform, home, options.timonHome)
+    ? (candidate: string) => untrustedManagedNode(candidate, roots, platform, home, options.timonHome, options.pathTrust)
     : undefined;
   // npm is asked only once every known location has failed: it costs a process.
   return firstExecutable(binaryCandidates(name, options), platform, options.timonHome, refused)
