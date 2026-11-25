@@ -2,8 +2,9 @@
  * The Git stack's shortcut to the "Pull requests" setting: while the project
  * merges its jobs locally, the Pull requests and Jobs tabs show one short line
  * and an icon (never a labelled button in a 300 px widget) that opens the
- * setting's own dialog. Gone in pull request mode, and never offered to an
- * account that cannot read the setting, which is then not even asked.
+ * setting's own dialog. Gone in pull request mode. An account without
+ * `projects:manage` reads the mode alone and gets the line, never the
+ * shortcut: the setting itself is not even asked.
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -47,6 +48,9 @@ async function mount(widget: 'pulls' | 'jobs', who: Who, integration: Record<str
       return Response.json({ user: { id: 'u1', email: 'a@b.c' }, can: { 'projects:manage': who === 'manager' }, prefs: {} });
     }
     if (url === '/api/ui/projects') return Response.json({ projects: [{ slug: 'acme', name: 'Acme' }] });
+    if (url === '/api/ui/projects/acme/integration/mode') {
+      return Response.json({ mode: stored.mode, configured: stored.mode === 'pr', valid: true });
+    }
     if (url === '/api/ui/projects/acme/integration') {
       if (who !== 'manager') return Response.json({ error: 'forbidden', code: 'account_lacks_permission' }, { status: 403 });
       if (method === 'PUT') stored = { ...stored, ...(JSON.parse(String(init.body)) as Record<string, unknown>) };
@@ -133,11 +137,23 @@ for (const widget of ['pulls', 'jobs'] as const) {
     }
   });
 
-  test(`${widget}: without projects:manage the setting is not asked and nothing is offered`, async () => {
+  test(`${widget}: without projects:manage the line shows, the setting is not asked and no shortcut is offered`, async () => {
     const view = await mount(widget, 'reader', LOCAL);
     try {
+      const empty = view.document.querySelector('[data-local-landing="acme"]');
+      assert.ok(empty, 'the local-mode line, read from the mode alone');
+      assert.match(empty.textContent ?? '', /merges its jobs locally/);
       assert.ok(!view.document.querySelector('[data-local-landing-setup]'));
       assert.ok(!view.calls.some((c) => c.url === '/api/ui/projects/acme/integration'), 'the setting is never read');
+    } finally {
+      await view.unmount();
+    }
+  });
+
+  test(`${widget}: without projects:manage, a project on pull requests gets no local line`, async () => {
+    const view = await mount(widget, 'reader', PR);
+    try {
+      assert.ok(!view.document.querySelector('[data-local-landing]'));
     } finally {
       await view.unmount();
     }

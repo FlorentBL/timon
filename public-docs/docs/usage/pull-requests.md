@@ -22,7 +22,7 @@ Open the project's window: **Edit** on its card in the agents grid, or, from a c
 
 The row and its fields are for accounts that hold the `projects:manage` permission: the setting names a folder of your machine and the account Timon pushes as. Without it, the row says so and its action is greyed, as is **Project settings…** in the chat.
 
-While a project merges its jobs locally, the **Pull requests** and **Jobs** tabs of the chat's [Git stack](git.md) say so in one line, with a settings icon (**Set up pull requests**) that opens the same fields directly.
+While a project merges its jobs locally, the **Pull requests** and **Jobs** tabs of the chat's [Git stack](git.md) say so in one line, with a settings icon (**Set up pull requests**) that opens the same fields directly. Every account that sees the project gets the line; the icon is offered only to an account allowed to manage projects.
 
 ### From the command line
 
