@@ -3763,6 +3763,9 @@ const markZombieFailedStmt = db.prepare(
    WHERE id = ? AND status = 'running'`,
 );
 const getMissionStmt = db.prepare(`SELECT * FROM missions WHERE id = ?`);
+const missionOwnersStmt = db.prepare(
+  `SELECT id, owner_user_id FROM missions WHERE id IN (SELECT value FROM json_each(?))`,
+);
 // Two columns, not `SELECT *`: the board reads it for every listed task, and a
 // mission row carries its whole prompt.
 const missionRunnerStmt = db.prepare(`SELECT agent_name, source_meta, backend_override, model_override FROM missions WHERE id = ?`);
@@ -6880,6 +6883,16 @@ export const dbApi = {
   },
   getMission(id: string, viewer?: DbViewer | null): MissionRow | undefined {
     return rowVisible(getMissionStmt.get(id) as MissionRow | undefined, viewer, 'missions');
+  },
+  /**
+   * Which of these missions the viewer may read, by the rule of `getMission`,
+   * in one query: a list that shows a mission's state per row checks them in
+   * a batch, not one read per row.
+   */
+  readableMissionIds(ids: readonly string[], viewer?: DbViewer | null): Set<string> {
+    if (ids.length === 0) return new Set();
+    const rows = missionOwnersStmt.all(JSON.stringify([...new Set(ids)])) as Array<{ id: string; owner_user_id: string | null }>;
+    return new Set(rows.filter((row) => rowVisible(row, viewer, 'missions')).map((row) => row.id));
   },
   /** Agent, `source_meta` and LLM pair of a mission, for the board (TIM-0109, #1109). The
    *  caller has already checked the task the mission runs. */

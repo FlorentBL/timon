@@ -55,7 +55,7 @@ import { isOwnMissionTask, ownMissionTaskId } from './own-task.js';
 import { parseTaskCreateBody, type TaskCreateBody } from './task-create-body.js';
 import { countTaskAttachments, publicTaskAttachment, taskAttachmentsWithInherited } from '../../attachments.js';
 import { apiError, type ApiErrorBody } from '../../api-error.js';
-import { pendingPermissionSummary, type PendingPermissionSummary } from '../../permissions.js';
+import { pendingPermissionSummaries, type PendingPermissionSummary } from '../../permissions.js';
 
 /** `:id` of a series route, resolved by the shared rule (`series-service.ts`). */
 function resolveSeriesParam(req: express.Request): string | null {
@@ -90,11 +90,38 @@ export function boardStatusRow<T extends TaskRow>(task: T): T {
   return BOARD_STATUSES.includes(task.status) ? task : { ...task, status: 'DONE' };
 }
 
-/** The card a running task's mission waits on (TODO #1094), absent otherwise. */
-function withPendingPermission(task: TaskRow): { pending_permission?: PendingPermissionSummary } {
+/**
+ * The cards the running tasks' missions wait on (TODO #1094), keyed by
+ * mission, kept only where the viewer may read the mission itself:
+ * `tasks:read:all` does not grant `missions:read:all`, so seeing a task does
+ * not tell whose mission waits on what. One pass over the cards and one
+ * query for the whole list.
+ */
+function readablePendingPermissions(
+  tasks: readonly TaskRow[],
+  scope: ReturnType<typeof scopedDb>,
+): Map<string, PendingPermissionSummary> {
+  const summaries = pendingPermissionSummaries();
+  if (summaries.size === 0) return summaries;
+  const waiting = tasks
+    .filter((t) => t.status === 'IN_PROGRESS' && t.mission_id && summaries.has(t.mission_id))
+    .map((t) => t.mission_id!);
+  const readable = scope.readableMissionIds(waiting);
+  const out = new Map<string, PendingPermissionSummary>();
+  for (const id of readable) out.set(id, summaries.get(id)!);
+  return out;
+}
+
+/**
+ * A running task's `pending_permission`: the summary, or null when there is
+ * no card or the viewer may not read the mission. Absent on any other status.
+ */
+function withPendingPermission(
+  task: TaskRow,
+  readable: ReadonlyMap<string, PendingPermissionSummary>,
+): { pending_permission?: PendingPermissionSummary | null } {
   if (task.status !== 'IN_PROGRESS') return {};
-  const pending = pendingPermissionSummary(task.mission_id);
-  return pending ? { pending_permission: pending } : {};
+  return { pending_permission: (task.mission_id && readable.get(task.mission_id)) || null };
 }
 
 /** A task as the list sends it by default: every column, long texts cut. */
@@ -1122,7 +1149,8 @@ export function registerRoutes(app: Router, deps: KanbanRouteDeps = {}): void {
       }
       todoId = parsed.data;
     }
-    const listed = scopedDb(viewerFromRequest(req))
+    const scope = scopedDb(viewerFromRequest(req));
+    const listed = scope
       .listTasks(status as Parameters<typeof dbApi.listTasks>[0])
       .map(boardStatusRow);
     const all = todoId === null ? listed : listed.filter((t) => t.todo_id === todoId);
@@ -1156,7 +1184,9 @@ export function registerRoutes(app: Router, deps: KanbanRouteDeps = {}): void {
     // Only the number: the card shows a paperclip, the dialog reads the list.
     const attachmentCounts = countTaskAttachments(tasks);
     // `listed`, not `all`: a todo_id filter must not hide a task's dependents.
-    const withLlm = withDependents(tasks, listed).map((t) => {
+    const rows = withDependents(tasks, listed);
+    const pending = readablePendingPermissions(rows, scope);
+    const withLlm = rows.map((t) => {
       const { backend, model, runner } = taskExecution(t, cache);
       const row = full ? t : boardTaskRow(t);
       return {
@@ -1165,7 +1195,7 @@ export function registerRoutes(app: Router, deps: KanbanRouteDeps = {}): void {
         effective_model: model,
         attachment_count: attachmentCounts.get(t.id) ?? 0,
         ...(runner ? { run_by: runner } : {}),
-        ...withPendingPermission(t),
+        ...withPendingPermission(t, pending),
         ...(codeAwaitsMerge(t, listChain) ? { awaiting_merge: true } : {}),
         // Only on a chain merged into an integration branch: 'integrated'
         // until that branch lands, then 'landed' (or 'closed').
@@ -1506,14 +1536,16 @@ export function registerRoutes(app: Router, deps: KanbanRouteDeps = {}): void {
   });
 
   app.get('/api/tasks/:id', (req, res) => {
-    const task = scopedDb(viewerFromRequest(req)).getTask(req.params.id);
+    const scope = scopedDb(viewerFromRequest(req));
+    const task = scope.getTask(req.params.id);
     if (!task) { res.status(404).json(apiError('not_found', 'not found')); return; }
     const { backend, model, runner } = taskExecution(task);
     // Inherited ones included: an iteration works with its root's files.
     const attachments = taskAttachmentsWithInherited(task).map(publicTaskAttachment);
     res.json({ task: {
       ...task, effective_backend: backend, effective_model: model, attachments,
-      ...(runner ? { run_by: runner } : {}), ...withPendingPermission(task),
+      ...(runner ? { run_by: runner } : {}),
+      ...withPendingPermission(task, readablePendingPermissions([task], scope)),
     } });
   });
 
