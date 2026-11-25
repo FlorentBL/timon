@@ -1,0 +1,74 @@
+{
+  "name": "@timon-ai/provider-qwen",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "lib/index.js",
+  "timon": {
+    "id": "provider-qwen",
+    "apiVersion": 18,
+    "kind": "provider",
+    "label": "Qwen Code",
+    "description": "Runs missions on Qwen Code over the Agent Client Protocol, with the sign-in and plan Qwen Code itself holds.",
+    "author": "Timon",
+    "permissions": [
+      "backends:register"
+    ],
+    "provider": {
+      "binaries": [
+        {
+          "name": "qwen"
+        }
+      ],
+      "credentialDirs": [
+        ".qwen"
+      ],
+      "backends": [
+        {
+          "id": "qwen",
+          "rank": 65,
+          "binary": {
+            "names": [
+              "qwen"
+            ],
+            "install": {
+              "any": {
+                "kind": "npm",
+                "package": "@qwen-code/qwen-code"
+              }
+            },
+            "searchDirs": {
+              "win32": [
+                "${LOCALAPPDATA}/qwen-code/bin"
+              ]
+            },
+            "standaloneInstaller": {
+              "label": "Qwen Code",
+              "posix": "curl -fsSL https://qwen-code-assets.oss-cn-hangzhou.aliyuncs.com/installation/install-qwen-standalone.sh | bash",
+              "windows": "irm https://qwen-code-assets.oss-cn-hangzhou.aliyuncs.com/installation/install-qwen-standalone.ps1 | iex"
+            }
+          },
+          "credentialDirs": [
+            ".qwen"
+          ],
+          "signInCommand": "qwen",
+          "signInThen": "/auth",
+          "setupCard": {
+            "label": "Qwen Code",
+            "order": 9
+          },
+          "installDocs": "https://qwenlm.github.io/qwen-code-docs/en/users/overview/",
+          "updateCheck": {
+            "latest": {
+              "npm": "@qwen-code/qwen-code"
+            },
+            "supportedMajor": 0
+          }
+        }
+      ]
+    },
+    "license": {
+      "required": false
+    }
+  }
+}
