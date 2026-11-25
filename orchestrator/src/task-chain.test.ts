@@ -402,6 +402,33 @@ test('reconcile code-without-review: silent on a code-only pipeline and without 
   assert.equal(childrenOf(sansDiff, 'review').length, 0);
 });
 
+test('reconcile code-without-review: a code task merged by its coder leaves the selection', async () => {
+  // TODO #1215: a `full` code task closed with a `merged_commit_sha` (merge by
+  // reference into a series branch) was picked up every 120 s — "DONE with no
+  // review → catch-up", then "marked merged — skip review" — 60 times in 2 h.
+  const merged = mkTask('code', { project: 'demo' });
+  dbApi.setTaskWorktree(merged, mkGitRepo(), 'feat', 'main');
+  dbApi.updateTaskStatus(merged, 'DONE', { doneComment: 'merged into the series branch' });
+  dbApi.setTaskMergedSha(merged, 'a'.repeat(40));
+  dbApi.setTaskChainState(merged, CHAIN_DONE);
+
+  const picked: string[] = [];
+  const warn = console.warn;
+  console.warn = (...args: unknown[]): void => {
+    const line = args.map(String).join(' ');
+    if (line.includes(`reconcile: code ${merged}`)) picked.push(line);
+    warn(...args);
+  };
+  try {
+    await reconcileMissingReviews();
+    await reconcileMissingReviews();
+  } finally {
+    console.warn = warn;
+  }
+  assert.deepEqual(picked, [], 'a merged code task is never selected for a catch-up');
+  assert.equal(childrenOf(merged, 'review').length, 0, 'no review on an already integrated branch');
+});
+
 test('barrier: opened SYNCHRONOUSLY on receiving task_done', async () => {
   // The heart of the fix of the bet on git latency: between `task_done` and the end
   // of the chain, the wake-loop must have something to WAIT for. If the barrier
