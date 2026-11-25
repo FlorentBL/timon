@@ -235,14 +235,77 @@ function nvmBinDirectories(
 ): string[] {
   const root = env.NVM_DIR || (home ? pathJoin(home, '.nvm') : '');
   if (!root) return [];
-  const versions = pathJoin(root, 'versions', 'node');
+  return versionedDirectories(pathJoin(root, 'versions', 'node'), ['bin'], reader, pathJoin);
+}
+
+/**
+ * `<versions>/<x.y.z>/<tail…>` for each version-named folder (a leading `v`
+ * allowed), highest version first; nothing when `versions` cannot be read.
+ */
+function versionedDirectories(
+  versions: string,
+  tail: readonly string[],
+  reader: DirectoryReader,
+  pathJoin: (dir: string, ...parts: string[]) => string,
+): string[] {
   let folders: string[];
   try { folders = reader.subdirectories(versions); } catch { return []; }
   return folders
     .map((folder) => ({ folder, semver: parseSemver(folder.replace(/^v/, '')) }))
     .filter((entry): entry is { folder: string; semver: Semver } => entry.semver !== null)
     .sort((a, b) => compareSemver(b.semver, a.semver))
-    .map((entry) => pathJoin(versions, entry.folder, 'bin'));
+    .map((entry) => pathJoin(versions, entry.folder, ...tail));
+}
+
+/**
+ * The Node installs fnm, mise and asdf keep, the user's default first, then
+ * highest version first. Like nvm, they only reach PATH through a line the
+ * login shell runs (`fnm env`, `mise activate`, asdf's shims), which a service
+ * never sources: a CLI installed with their npm, or one that runs on their
+ * `node`, otherwise fails with `env: node: No such file or directory` (#1102).
+ */
+function versionManagerDirectories(
+  platform: NodeJS.Platform,
+  home: string,
+  env: NodeJS.ProcessEnv,
+  reader: DirectoryReader,
+  pathJoin: (dir: string, ...parts: string[]) => string,
+): string[] {
+  // On Windows fnm keeps `node.exe` in the installation folder itself, elsewhere in its `bin`.
+  const fnmTail = platform === 'win32' ? ['installation'] : ['installation', 'bin'];
+  const fnmDefault = platform === 'win32' ? [] : ['bin'];
+  const out: string[] = [];
+  for (const root of fnmRoots(platform, home, env, pathJoin)) {
+    out.push(pathJoin(root, 'aliases', 'default', ...fnmDefault));
+    out.push(...versionedDirectories(pathJoin(root, 'node-versions'), fnmTail, reader, pathJoin));
+  }
+  if (platform === 'win32') return out;
+  const xdgData = env.XDG_DATA_HOME || (home ? pathJoin(home, '.local', 'share') : '');
+  const mise = env.MISE_DATA_DIR || (xdgData ? pathJoin(xdgData, 'mise') : '');
+  if (mise) out.push(...versionedDirectories(pathJoin(mise, 'installs', 'node'), ['bin'], reader, pathJoin));
+  const asdf = env.ASDF_DATA_DIR || (home ? pathJoin(home, '.asdf') : '');
+  if (asdf) out.push(...versionedDirectories(pathJoin(asdf, 'installs', 'nodejs'), ['bin'], reader, pathJoin));
+  return out;
+}
+
+/**
+ * Where fnm keeps its data: `FNM_DIR` when set, else its per-OS default, then
+ * the `~/.fnm` older releases used, which an upgrade leaves in place.
+ */
+function fnmRoots(
+  platform: NodeJS.Platform,
+  home: string,
+  env: NodeJS.ProcessEnv,
+  pathJoin: (dir: string, ...parts: string[]) => string,
+): string[] {
+  if (env.FNM_DIR) return [env.FNM_DIR];
+  if (platform === 'win32') return env.APPDATA ? [pathJoin(env.APPDATA, 'fnm')] : [];
+  if (!home) return [];
+  const xdg = pathJoin(env.XDG_DATA_HOME || pathJoin(home, '.local', 'share'), 'fnm');
+  // macOS releases have used both the Apple data folder and the XDG one.
+  return platform === 'darwin'
+    ? [pathJoin(home, 'Library', 'Application Support', 'fnm'), xdg, pathJoin(home, '.fnm')]
+    : [xdg, pathJoin(home, '.fnm')];
 }
 
 /**
@@ -263,7 +326,9 @@ function managerDirectories(
       // nvm-windows keeps the active node behind this link; its default
       // (`Program Files\nodejs`) is already listed.
       env.NVM_SYMLINK ?? '',
+      env.VOLTA_HOME ? pathJoin(env.VOLTA_HOME, 'bin') : '',
       env.LOCALAPPDATA ? pathJoin(env.LOCALAPPDATA, 'Volta', 'bin') : '',
+      ...versionManagerDirectories(platform, home, env, reader, pathJoin),
       // Scoop and Chocolatey stay per binary (a provider's `searchDirs`): a
       // shim there must not outrank the copy its own installer wrote.
     ];
@@ -272,9 +337,11 @@ function managerDirectories(
     ...(platform === 'darwin' ? ['/opt/homebrew/bin', '/usr/local/bin', '/usr/bin', '/bin'] : []),
     ...(platform === 'linux' ? ['/usr/local/bin', '/home/linuxbrew/.linuxbrew/bin'] : []),
     // Per-account npm prefixes a service never puts on PATH.
+    env.VOLTA_HOME ? pathJoin(env.VOLTA_HOME, 'bin') : '',
     home ? pathJoin(home, '.volta', 'bin') : '',
     home ? pathJoin(home, '.npm-global', 'bin') : '',
     ...nvmBinDirectories(home, env, reader, pathJoin),
+    ...versionManagerDirectories(platform, home, env, reader, pathJoin),
   ];
 }
 

@@ -712,6 +712,55 @@ test('SUG-0006: npm CLIs under nvm, Volta and npm-global are found without the l
   }
 });
 
+test('#1102: node installed by fnm, mise or asdf is found without their shell hook', { skip: POSIX_HOST }, () => {
+  const home = mkdtempSync(join(tmpdir(), 'timon-fnm-'));
+  try {
+    const options = { platform: 'linux' as const, path: '', homeDir: home, env: {} };
+    const fnm = join(home, '.local', 'share', 'fnm', 'node-versions');
+    stubBinary(join(fnm, 'v18.20.0', 'installation', 'bin', 'timon-probe-fnm'));
+    const newest = stubBinary(join(fnm, 'v22.3.0', 'installation', 'bin', 'timon-probe-fnm'));
+    assert.equal(findExecutableBinary('timon-probe-fnm', options), newest);
+    // The user's default alias outranks the highest version.
+    const chosen = stubBinary(join(home, '.local', 'share', 'fnm', 'aliases', 'default', 'bin', 'timon-probe-fnm'));
+    assert.equal(findExecutableBinary('timon-probe-fnm', options), chosen);
+    // Older fnm releases kept `~/.fnm`; FNM_DIR moves the root.
+    const legacy = stubBinary(join(home, '.fnm', 'node-versions', 'v20.0.0', 'installation', 'bin', 'timon-probe-fnm-old'));
+    assert.equal(findExecutableBinary('timon-probe-fnm-old', options), legacy);
+    const moved = stubBinary(join(home, 'fnm-elsewhere', 'node-versions', 'v20.0.0', 'installation', 'bin', 'timon-probe-fnm-moved'));
+    assert.equal(findExecutableBinary('timon-probe-fnm-moved', { ...options, env: { FNM_DIR: join(home, 'fnm-elsewhere') } }), moved);
+    const mise = stubBinary(join(home, '.local', 'share', 'mise', 'installs', 'node', '22.3.0', 'bin', 'timon-probe-mise'));
+    assert.equal(findExecutableBinary('timon-probe-mise', options), mise);
+    const asdf = stubBinary(join(home, '.asdf', 'installs', 'nodejs', '22.3.0', 'bin', 'timon-probe-asdf'));
+    assert.equal(findExecutableBinary('timon-probe-asdf', options), asdf);
+    const volta = stubBinary(join(home, 'volta-home', 'bin', 'timon-probe-volta'));
+    assert.equal(findExecutableBinary('timon-probe-volta', { ...options, env: { VOLTA_HOME: join(home, 'volta-home') } }), volta);
+    // macOS: fnm's Apple data folder.
+    const mac = stubBinary(join(home, 'Library', 'Application Support', 'fnm', 'node-versions', 'v22.3.0', 'installation', 'bin', 'timon-probe-fnm-mac'));
+    assert.equal(findExecutableBinary('timon-probe-fnm-mac', { ...options, platform: 'darwin' }), mac);
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test('#1102: Windows looks in fnm\'s versions and VOLTA_HOME for node.exe', () => {
+  const appData = 'C:\\Users\\Sam\\AppData\\Roaming';
+  const versions = `${appData}\\fnm\\node-versions`;
+  const reader = {
+    subdirectories: (dir: string) => (dir === versions ? ['v20.0.0', 'v22.3.0', 'junk'] : []),
+    fileMtimeMs: () => null,
+  };
+  const windows = binaryCandidates('node', {
+    platform: 'win32', path: '', homeDir: 'C:\\Users\\Sam', installedBinariesFile: absentInstalled, directoryReader: reader,
+    env: { APPDATA: appData, VOLTA_HOME: 'D:\\volta' },
+  });
+  const newest = windows.indexOf(`${versions}\\v22.3.0\\installation\\node.exe`);
+  assert.ok(newest >= 0, windows.join('\n'));
+  assert.ok(newest < windows.indexOf(`${versions}\\v20.0.0\\installation\\node.exe`));
+  assert.ok(windows.includes(`${appData}\\fnm\\aliases\\default\\node.exe`));
+  assert.ok(windows.includes('D:\\volta\\bin\\node.exe'));
+  assert.ok(!windows.some((c) => c.includes('junk')));
+});
+
 test('SUG-0006: Linuxbrew, Volta and nvm-windows folders are candidates', () => {
   const linux = binaryCandidates('codex', { platform: 'linux', path: '', homeDir: '/home/sam', env: {} });
   assert.ok(linux.includes(join('/home/linuxbrew/.linuxbrew/bin', 'codex'))); // portability: Linux candidate under test
