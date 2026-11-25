@@ -109,7 +109,7 @@ export function ClaudeTokenPanel(): ReactElement | null {
               <DropdownMenuItem disabled={busy} onSelect={() => setEditing(true)}>{t('hostSignIn.token.paste')}</DropdownMenuItem>
             ) : null}
             {state.configured ? (
-              <DropdownMenuItem className="text-destructive focus:text-destructive" disabled={busy}
+              <DropdownMenuItem variant="destructive" disabled={busy}
                 onSelect={() => { void send('DELETE').catch(() => {}); }}>
                 {t('backendsSettings.claudeToken.clear')}
               </DropdownMenuItem>
