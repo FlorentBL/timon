@@ -23,7 +23,7 @@ import { createGenericHost } from './generic.js';
 import { builtinBinaries } from '../backends/builtin-declarations.js';
 import { packagedRuntime } from './bundled-node.js';
 import { findExecutableBinary, resolvePinnedBinary } from './binary-path.js';
-import { nodelessBackends, nodelessBackendText, type NodelessBackend } from './launch-path.js';
+import { daemonNode, nodelessBackends, nodelessBackendText, type NodelessBackend } from './launch-path.js';
 import { inspectListenPort, type ListenPortState } from './listen-port.js';
 import { linuxRelease, readOsRelease, windowsJoin, type WindowsJoin } from './machine.js';
 import { orphanServices, orphanServiceText, type OrphanService } from './orphan-services.js';
@@ -399,6 +399,7 @@ function nodelessHere(cfg: TimonConfig): NodelessBackend[] {
         const pin = pins[name];
         return pin ? resolvePinnedBinary(name, pin) : findExecutableBinary(name);
       },
+      runtimeNode: daemonNode(),
     });
   } catch { return []; }
 }
