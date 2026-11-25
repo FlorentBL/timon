@@ -84,7 +84,10 @@ export function launchPath(path: string, opts: LaunchPathOptions): string {
     if (!listed(dir)) out.unshift(dir);
   }
   const hasNode = opts.hasNode ?? nodeInDir;
-  if ((opts.findNode || opts.runtimeNode) && !out.some((dir) => hasNode(dir, platform))) {
+  // A relative entry (a mission's own PATH may carry one) is read here against the daemon's cwd
+  // and by the CLI's `env node` against the mission's: it never proves a `node` is there.
+  const offersNode = (dir: string) => isAbsoluteFor(dir, platform) && hasNode(dir, platform);
+  if ((opts.findNode || opts.runtimeNode) && !out.some(offersNode)) {
     const self = opts.selfExecutable;
     const usable = (file: string | null | undefined): file is string =>
       !!file && isAbsoluteFor(file, platform) && !(self && sameDir(file, self, platform));

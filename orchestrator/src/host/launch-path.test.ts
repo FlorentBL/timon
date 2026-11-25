@@ -150,6 +150,23 @@ test('#1102: the daemon\'s own Node is the last resort, after the machine\'s', (
   }).split(posix.delimiter), [...linuxPath.split(posix.delimiter), posix.dirname(bundled)]);
 });
 
+test('#1102 review: a relative PATH entry never counts as holding a node', () => {
+  const bundled = posix.join('/opt', 'Timon', 'resources', 'node', 'node');
+  const probed: string[] = [];
+  const hasNode = (dir: string) => { probed.push(dir); return true; };
+  // `bin` and `./tools` would be read against the daemon's cwd here, against the project's by the CLI.
+  const path = ['bin', './tools', '/usr/bin'].join(posix.delimiter); // portability: simulated Linux PATH
+  assert.equal(launchPath(path, { platform: 'linux', hasNode, runtimeNode: bundled }), path);
+  assert.deepEqual(probed, ['/usr/bin']); // portability: simulated Linux PATH
+  const relativeOnly = ['bin', './tools'].join(posix.delimiter);
+  assert.deepEqual(launchPath(relativeOnly, { platform: 'linux', hasNode, runtimeNode: bundled }).split(posix.delimiter),
+    ['bin', './tools', posix.dirname(bundled)]);
+  const windows = ['tools', 'C:\\Windows'].join(';');
+  const winProbed: string[] = [];
+  launchPath(windows, { platform: 'win32', hasNode: (dir) => { winProbed.push(dir); return false; }, findNode: () => null });
+  assert.deepEqual(winProbed, ['C:\\Windows']);
+});
+
 test('#1102: daemonNode is the runtime only when it is a node, never Electron', () => {
   // The name alone rules these out, before any file is looked at.
   const none = { node: null, problem: null };
