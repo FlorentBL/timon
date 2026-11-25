@@ -148,6 +148,40 @@ test('a symlink that leaves the root is judged by where it lands', { skip: !canS
   assert.equal(openMissionMedia(join(root, 'link.png'), [root, outside]).media.mime, 'image/png');
 });
 
+/** Links whose target exists, next to the same link with its target gone: an
+ *  agent must not learn which is which from the refusal (TODO #1160). */
+const LINK_PAIRS: Array<{ name: string; code: string; present: string; absent: string }> = [];
+if (canSymlink) {
+  symlinkSync(join(outside, 'elsewhere.png'), join(root, 'out-present.png'));
+  symlinkSync(join(outside, 'nothing.png'), join(root, 'out-absent.png'));
+  symlinkSync(outside, join(root, 'out-dir'));
+  symlinkSync(join(root, 'ok.png'), join(root, '.secret', 'link-present.png'));
+  symlinkSync(join(root, 'nothing.png'), join(root, '.secret', 'link-absent.png'));
+  symlinkSync(join(root, '.secret', 'hidden.png'), join(root, 'into-hidden-present.png'));
+  symlinkSync(join(root, '.secret', 'nothing.png'), join(root, 'into-hidden-absent.png'));
+  LINK_PAIRS.push(
+    { name: 'a link that leaves the root', code: 'path_outside_roots', present: join(root, 'out-present.png'), absent: join(root, 'out-absent.png') },
+    { name: 'a folder link that leaves the root', code: 'path_outside_roots', present: join(root, 'out-dir', 'elsewhere.png'), absent: join(root, 'out-dir', 'nothing.png') },
+    { name: 'a link inside a hidden folder', code: 'path_hidden_segment', present: join(root, '.secret', 'link-present.png'), absent: join(root, '.secret', 'link-absent.png') },
+    { name: 'a link into a hidden folder', code: 'path_hidden_segment', present: join(root, 'into-hidden-present.png'), absent: join(root, 'into-hidden-absent.png') },
+  );
+}
+
+test('a symlink is refused the same whether its target exists or not', { skip: !canSymlink }, () => {
+  for (const pair of LINK_PAIRS) {
+    const present = refusalOf(() => openMissionMedia(pair.present, [root], true));
+    const absent = refusalOf(() => openMissionMedia(pair.absent, [root], true));
+    assert.equal(present?.status, 403, pair.name);
+    assert.equal(present?.code, pair.code, pair.name);
+    assert.deepEqual(absent, present, pair.name);
+  }
+  // A link that stays under the roots still opens, and a dangling one there is missing.
+  symlinkSync(join(root, 'ok.png'), join(root, 'inside-link.png'));
+  symlinkSync(join(root, 'gone.png'), join(root, 'inside-dangling.png'));
+  assert.equal(openMissionMedia(join(root, 'inside-link.png'), [root], true).media.mime, 'image/png');
+  assert.equal(refusalOf(() => openMissionMedia(join(root, 'inside-dangling.png'), [root], true))?.code, 'not_found');
+});
+
 test('byte ranges: one range, suffix form, and out-of-bounds', () => {
   assert.deepEqual(parseRange('bytes=0-9', 100), { start: 0, end: 9 });
   assert.deepEqual(parseRange('bytes=90-', 100), { start: 90, end: 99 });
@@ -297,6 +331,18 @@ test('a local file outside the roots, hidden, or not a media is refused', async 
   assert.equal(missing.json.error, 'not_found');
   assert.equal((await show({ src: join(root, 'fake.png') })).status, 415);
   assert.equal((await show({ src: join(root, 'icon.svg') })).status, 415);
+  assert.equal(dbApi.listEvents(missionId).filter((e) => e.type === 'media').length, 0, 'no refusal leaves a block');
+});
+
+test('the media route answers a symlink the same whether its target exists or not', { skip: !canSymlink }, async () => {
+  for (const pair of LINK_PAIRS) {
+    const present = await show({ src: pair.present });
+    const absent = await show({ src: pair.absent });
+    assert.equal(present.status, 403, pair.name);
+    assert.equal(present.json.error, pair.code, pair.name);
+    assert.equal(absent.status, present.status, pair.name);
+    assert.deepEqual(absent.json, present.json, pair.name);
+  }
   assert.equal(dbApi.listEvents(missionId).filter((e) => e.type === 'media').length, 0, 'no refusal leaves a block');
 });
 

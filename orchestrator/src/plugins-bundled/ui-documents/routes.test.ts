@@ -10,7 +10,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { once } from 'node:events';
 import { createServer } from 'node:http';
-import { mkdtempSync, mkdirSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
@@ -197,6 +197,41 @@ test.describe('ui documents', { concurrency: false }, () => {
     assert.equal((await send('POST', '', agentOf('m-path'), { title: 't', path: 'page.html' })).status, 400, 'a relative path');
     writeFileSync(join(root, 'big.html'), 'x'.repeat(MAX_HTML_BYTES + 1));
     assert.equal((await send('POST', '', agentOf('m-path'), { title: 't', path: join(root, 'big.html') })).status, 413);
+  });
+
+  test('a symlink is refused the same whether its target exists or not', async (t) => {
+    const root = mkdtempSync(join(tmpdir(), 'ui-doc-link-root-'));
+    const outside = mkdtempSync(join(tmpdir(), 'ui-doc-link-out-'));
+    mkdirSync(join(root, '.hidden'));
+    writeFileSync(join(root, 'page.html'), HTML);
+    writeFileSync(join(root, '.hidden', 'page.html'), HTML);
+    writeFileSync(join(outside, 'page.html'), HTML);
+    try {
+      symlinkSync(join(outside, 'page.html'), join(root, 'out-present.html'));
+    } catch {
+      t.skip('no symlink on this system');
+      return;
+    }
+    symlinkSync(join(outside, 'gone.html'), join(root, 'out-absent.html'));
+    symlinkSync(join(root, 'page.html'), join(root, '.hidden', 'link-present.html'));
+    symlinkSync(join(root, 'gone.html'), join(root, '.hidden', 'link-absent.html'));
+    symlinkSync(join(root, '.hidden', 'page.html'), join(root, 'into-hidden-present.html'));
+    symlinkSync(join(root, '.hidden', 'gone.html'), join(root, 'into-hidden-absent.html'));
+    dbApi.setMissionCwdOverride('m-path', root);
+    const pairs: Array<[string, string, string]> = [
+      ['out-present.html', 'out-absent.html', 'path_outside_roots'],
+      [join('.hidden', 'link-present.html'), join('.hidden', 'link-absent.html'), 'path_hidden_segment'],
+      ['into-hidden-present.html', 'into-hidden-absent.html', 'path_hidden_segment'],
+    ];
+    for (const [present, absent, code] of pairs) {
+      const a = await send('POST', '', agentOf('m-path'), { title: 't', path: join(root, present) });
+      const b = await send('POST', '', agentOf('m-path'), { title: 't', path: join(root, absent) });
+      assert.equal(a.status, 403, present);
+      assert.equal(b.status, a.status, absent);
+      const bodyA = await a.json() as { error: string };
+      assert.equal(bodyA.error, code, present);
+      assert.deepEqual(await b.json(), bodyA, absent);
+    }
   });
 
   test('a secret in the HTML or the title is masked before it is served', async () => {

@@ -21,10 +21,10 @@
  */
 
 import {
-  closeSync, copyFileSync, createReadStream, fstatSync, mkdirSync, openSync, readSync, readdirSync, realpathSync, statSync,
-  type Dirent, type ReadStream,
+  closeSync, copyFileSync, createReadStream, fstatSync, lstatSync, mkdirSync, openSync, readSync, readdirSync, readlinkSync,
+  realpathSync, statSync, type Dirent, type ReadStream, type Stats,
 } from 'node:fs';
-import { isAbsolute, join, relative, resolve, sep, win32 } from 'node:path';
+import { dirname, isAbsolute, join, relative, resolve, sep, win32 } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { chatAttachmentsRoot, safeAttachmentName } from './chat-attachments.js';
 import { bus } from './bus.js';
@@ -139,27 +139,69 @@ function hasHiddenStep(rel: string): boolean {
  */
 export type PathRefusal = 'path_hidden_segment' | 'path_outside_roots' | 'not_found';
 
-function refusalUnder(roots: readonly string[], target: string): Exclude<PathRefusal, 'not_found'> | null {
+/** A root as configured and as it resolves: an agent may write either form. */
+type RootForms = { written: string; real: string | null };
+
+/** Symlinks followed for one path before giving up, like the kernel's ELOOP. */
+const MAX_LINK_HOPS = 40;
+
+/** Where `target` sits, judged on its letters only: the real root to walk
+ *  from and the steps below it, or why it may not be read. */
+function placeUnder(roots: readonly RootForms[], target: string):
+  { base: string | null; steps: string[] } | Exclude<PathRefusal, 'not_found'> {
   let hidden = false;
   for (const root of roots) {
-    const rel = relativeBelow(root, target);
-    if (rel === null) continue;
-    if (!hasHiddenStep(rel)) return null;
-    hidden = true;
+    for (const form of [root.written, root.real]) {
+      if (form === null) continue;
+      const rel = relativeBelow(form, target);
+      if (rel === null) continue;
+      if (hasHiddenStep(rel)) { hidden = true; continue; }
+      return { base: root.real, steps: rel.split(sep) };
+    }
   }
   return hidden ? 'path_hidden_segment' : 'path_outside_roots';
 }
 
+/** A Windows link may read back in its `\\?\` namespace form. */
+function linkTarget(link: string): string {
+  return link.startsWith('\\\\?\\') ? link.slice(4) : link;
+}
+
 /**
- * Why `path` may not be read under `roots`, or null when it may. `real` is
- * `path` with its symlinks resolved, null when nothing is there. A missing
- * file is judged on its written path, so a path outside the roots gets the
- * same answer whether something exists there or not.
+ * Resolves `path` under `roots`, or says why it may not be read. The written
+ * path is judged first, on its letters alone. Then its steps are walked from
+ * the real root, and each symlink met is judged on where it points before
+ * anything there is looked at: nothing outside the roots or in a hidden
+ * folder is ever touched. The answer for a path hidden, outside, or behind a
+ * link that leaves the roots is therefore the same whether its target exists
+ * or not; only a path that stays readable all along can answer `not_found`.
  */
-export function pathRefusal(path: string, real: string | null, roots: readonly string[]): PathRefusal | null {
-  const realRoots = roots.map(realOrNull).filter((r): r is string => r !== null);
-  if (real) return refusalUnder(realRoots, real);
-  return refusalUnder([...roots.map((root) => resolve(root)), ...realRoots], path) ?? 'not_found';
+export function resolveMissionPath(path: string, roots: readonly string[]): { real: string } | { refusal: PathRefusal } {
+  const forms = roots.map((root) => ({ written: resolve(root), real: realOrNull(root) }));
+  const placed = placeUnder(forms, path);
+  if (typeof placed === 'string') return { refusal: placed };
+  let base = placed.base;
+  const steps = placed.steps;
+  let hops = 0;
+  while (base !== null && steps.length > 0) {
+    const next = join(base, steps.shift() as string);
+    let st: Stats;
+    try { st = lstatSync(next); } catch { return { refusal: 'not_found' }; }
+    if (!st.isSymbolicLink()) { base = next; continue; }
+    if (++hops > MAX_LINK_HOPS) return { refusal: 'not_found' };
+    let link: string;
+    try { link = readlinkSync(next); } catch { return { refusal: 'not_found' }; }
+    const landed = placeUnder(forms, resolve(dirname(next), linkTarget(link)));
+    if (typeof landed === 'string') return { refusal: landed };
+    base = landed.base;
+    steps.unshift(...landed.steps);
+  }
+  if (base === null) return { refusal: 'not_found' };
+  // The walk saw no link left; a link swapped in since is still caught here.
+  const real = realOrNull(base);
+  if (real === null) return { refusal: 'not_found' };
+  const check = placeUnder(forms.map((root) => ({ written: root.real ?? root.written, real: root.real })), real);
+  return typeof check === 'string' ? { refusal: check } : { real };
 }
 
 const PATH_REFUSAL_TEXT: Record<PathRefusal, string> = {
@@ -207,17 +249,15 @@ function openChecked(real: string, maxBytes: number): OpenedMedia {
 
 /** Opens a file the agent named, provided it resolves — symlinks followed —
  *  under one of `roots`. Missing roots are ignored. With `explain`, a refused
- *  path says why (`pathRefusal`); without, it answers like a missing file. */
+ *  path says why (`resolveMissionPath`); without, it answers like a missing file. */
 export function openMissionMedia(raw: unknown, roots: readonly string[], explain = false): OpenedMedia {
-  const path = parseMediaPath(raw);
-  const real = realOrNull(path);
-  const refusal = pathRefusal(path, real, roots);
-  if (refusal || !real) {
+  const resolved = resolveMissionPath(parseMediaPath(raw), roots);
+  if ('refusal' in resolved) {
     if (!explain) throw new MediaError(404, 'not found');
-    const why = explainPathRefusal(refusal ?? 'not_found');
+    const why = explainPathRefusal(resolved.refusal);
     throw new MediaError(why.status, why.message, why.code);
   }
-  return openChecked(real, MAX_LOCAL_MEDIA_BYTES);
+  return openChecked(resolved.real, MAX_LOCAL_MEDIA_BYTES);
 }
 
 /** Where a mission's collected images live: inside its chat attachments, so
