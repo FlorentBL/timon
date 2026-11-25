@@ -340,14 +340,50 @@ export async function exchangeCode(
     // The status and the OAuth error code only: the provider's body may echo
     // the code it refuses, and this message reaches the callback page and the log.
     const errorCode = await r.json().then((j: unknown) => oauthErrorCode((j as { error?: unknown } | null)?.error)).catch(() => null);
-    throw new Error(`token exchange failed: HTTP ${r.status}${errorCode ? ` (${errorCode})` : ''}`);
+    throw new OAuthExchangeError(`token exchange failed: HTTP ${r.status}${errorCode ? ` (${errorCode})` : ''}`);
   }
-  return parseTokenResponse(await r.json());
+  return parseTokenResponse(await tokenResponseJson(r, 'token exchange failed'));
 }
 
-/** An RFC 6749 error code (`invalid_grant`, `access_denied`…), or null for free text. */
-export function oauthErrorCode(value: unknown): string | null {
-  return typeof value === 'string' && /^[a-z0-9_.-]{1,64}$/i.test(value) ? value : null;
+/**
+ * The error codes a publisher may send (RFC 6749 §4.1.2.1 and §5.2, plus
+ * `invalid_target` of RFC 8707, which MCP uses). A closed list: a free-form
+ * value can carry anything, the code verifier included, and the code reaches
+ * the page, its link and the log.
+ */
+export const OAUTH_ERROR_CODES = [
+  'invalid_request', 'unauthorized_client', 'access_denied', 'unsupported_response_type',
+  'invalid_scope', 'server_error', 'temporarily_unavailable',
+  'invalid_client', 'invalid_grant', 'unsupported_grant_type', 'invalid_target',
+] as const;
+export type OAuthErrorCode = typeof OAUTH_ERROR_CODES[number] | 'unknown_error';
+
+/** A known OAuth error code, else `unknown_error`: never the value itself. */
+export function oauthErrorCode(value: unknown): OAuthErrorCode {
+  return (OAUTH_ERROR_CODES as readonly unknown[]).includes(value) ? value as OAuthErrorCode : 'unknown_error';
+}
+
+/**
+ * A failed token exchange, worded for the callback page and the log: a
+ * status and a known error code at most, never the publisher's body.
+ */
+export class OAuthExchangeError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'OAuthExchangeError';
+  }
+}
+
+/**
+ * The JSON body of a token response. The parser's own error quotes the start
+ * of what it could not read, which may be a token: it is replaced.
+ */
+async function tokenResponseJson(r: Response, what: string): Promise<unknown> {
+  try {
+    return await r.json();
+  } catch {
+    throw new OAuthExchangeError(`${what}: the token response is not valid JSON`);
+  }
 }
 
 /**
@@ -381,7 +417,7 @@ export async function refreshTokens(
     await r.body?.cancel().catch(() => undefined);
     throw new OAuthRefreshError(r.status);
   }
-  const next = parseTokenResponse(await r.json());
+  const next = parseTokenResponse(await tokenResponseJson(r, 'refresh failed'));
   // Servers may omit refresh_token on refresh → keep the old one.
   if (!next.refresh_token) next.refresh_token = refreshToken;
   return next;
@@ -390,7 +426,7 @@ export async function refreshTokens(
 function parseTokenResponse(j: unknown): OAuthTokens {
   const o = (j ?? {}) as Record<string, unknown>;
   const access_token = o.access_token;
-  if (typeof access_token !== 'string') throw new Error('token response missing access_token');
+  if (typeof access_token !== 'string') throw new OAuthExchangeError('token response missing access_token');
   const expires_in = typeof o.expires_in === 'number' ? o.expires_in : undefined;
   return {
     access_token,

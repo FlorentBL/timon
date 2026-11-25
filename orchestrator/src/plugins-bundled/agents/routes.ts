@@ -27,7 +27,7 @@ import { browseAgentFiles, deleteAgentPath, mkdirAgentPath, moveAgentPath, openA
 import { sendMedia } from '../../media-send.js';
 import { handleSpawn } from '../../http-helpers.js';
 import { defaultExcludedMcpIds, deleteMcp, getMcp, listMcp, mcpOAuthClient, missionTransport, presentMcpServer, redactMcpServer, setMcpOAuth, type McpHttpConfig, type McpStdioConfig, upsertMcp } from '../../mcp.js';
-import { buildAuthorizeUrl, discoverOAuth, dynamicRegister, exchangeCode, OAUTH_CALLBACK_PATH, oauthErrorCode, oauthRedirectUri, oauthReturnPath, oauthState, pkcePair, putPending, settleState, takePending, usedState, type OAuthReturn } from '../../oauth.js';
+import { buildAuthorizeUrl, discoverOAuth, dynamicRegister, exchangeCode, OAUTH_CALLBACK_PATH, OAuthExchangeError, oauthErrorCode, oauthRedirectUri, oauthReturnPath, oauthState, pkcePair, putPending, settleState, takePending, usedState, type OAuthReturn } from '../../oauth.js';
 import { apiPort } from '../../api-url.js';
 import { agentDir, skillFile } from '../../paths.js';
 import { findAgentFolder, isValidAgentName } from '../../agent-config.js';
@@ -2051,9 +2051,10 @@ export function registerRoutes(app: express.IRouter): void {
     const back: OAuthReturn = { return_to: pending.return_to, return_path: pending.return_path };
     if (errParam || !code) {
       settleState(state, 'failed');
-      const providerCode = oauthErrorCode(errParam);
+      // The code only, from a closed list: `error_description` is the
+      // publisher's free text and is never read.
       refuse(400, { mcpId: pending.mcp_id, back, message: errParam
-        ? `The publisher refused the authorization${providerCode ? ` (${providerCode})` : ''}.`
+        ? `The publisher refused the authorization (${oauthErrorCode(errParam)}).`
         : 'The publisher sent no authorization code. Start the authorization again from Timon.' });
       return;
     }
@@ -2072,7 +2073,10 @@ export function registerRoutes(app: express.IRouter): void {
         message: 'You can close this tab. Returning to Timon…' }));
     } catch (err) {
       settleState(state, 'failed');
-      refuse(500, { mcpId: pending.mcp_id, back, message: (err as Error).message });
+      // Anything else (network, vault) may quote what it failed on: a generic word.
+      refuse(500, { mcpId: pending.mcp_id, back, message: err instanceof OAuthExchangeError
+        ? err.message
+        : 'The authorization could not be completed. Start it again from Timon.' });
     }
   });
 

@@ -36,10 +36,15 @@ const LOCAL_APP = 'http://localhost:3101';
 
 const SECRET_CODE = 'code-that-must-never-leak';
 let tokenAnswer: { status: number; body: unknown } = { status: 200, body: { access_token: 'at', token_type: 'Bearer' } };
+/** A raw body for the token endpoint, sent as JSON whatever it holds. */
+let rawTokenAnswer: string | null = null;
 
 const app = express();
 app.use(express.json());
-app.post('/token', (_req, res) => { res.status(tokenAnswer.status).json(tokenAnswer.body); });
+app.post('/token', (_req, res) => {
+  if (rawTokenAnswer !== null) { res.status(200).type('application/json').send(rawTokenAnswer); return; }
+  res.status(tokenAnswer.status).json(tokenAnswer.body);
+});
 registerRoutes(app);
 const server = app.listen(0, '127.0.0.1');
 await once(server, 'listening');
@@ -218,12 +223,41 @@ test('a refused exchange names the status and the OAuth error, never the provide
   }
 });
 
-test('a provider error that is not a code is not echoed', async () => {
+test('a provider error outside the RFC list becomes unknown_error, and its description is never read', async () => {
   resetOAuthFlowsForTests();
-  const state = startFlow('cloudflare');
-  const { html } = await callback({ state, error: '<script>alert(1)</script>' });
-  assert.match(html, /The publisher refused the authorization\./);
-  assert.doesNotMatch(html, /alert\(1\)/);
+  warnings.length = 0;
+  // Shaped like a code verifier: base64url, which a pattern filter would let through.
+  const VERIFIER_LIKE = 'dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk';
+  for (const error of [VERIFIER_LIKE, '<script>alert(1)</script>', 'login_required']) {
+    const state = startFlow('cloudflare', { return_to: PUBLIC_APP });
+    const { html } = await callback({ state, error, error_description: `leaked ${VERIFIER_LIKE}` });
+    assert.match(html, /The publisher refused the authorization \(unknown_error\)\./);
+    assert.doesNotMatch(html, new RegExp(VERIFIER_LIKE));
+    assert.doesNotMatch(html, /alert\(1\)|login_required|leaked/);
+  }
+  const state = startFlow('cloudflare', { return_to: PUBLIC_APP });
+  const { html } = await callback({ state, error: 'access_denied', error_description: 'leaked text' });
+  assert.match(html, /The publisher refused the authorization \(access_denied\)\./);
+  assert.ok(backLink(html)?.includes('error=The%20publisher%20refused%20the%20authorization%20(access_denied)'), String(backLink(html)));
+  assert.doesNotMatch(html, /leaked/);
+  for (const w of warnings) assert.doesNotMatch(w, new RegExp(`${VERIFIER_LIKE}|leaked`));
+});
+
+test('a malformed token response fails with a generic error, without an excerpt of the body', async () => {
+  resetOAuthFlowsForTests();
+  warnings.length = 0;
+  const TOKEN = 'at-secret-that-must-not-leak';
+  rawTokenAnswer = `{"access_token":"${TOKEN}",`;
+  try {
+    const state = startFlow('cloudflare', { return_to: PUBLIC_APP });
+    const { status, html } = await callback({ state, code: SECRET_CODE });
+    assert.equal(status, 500);
+    assert.match(html, /token exchange failed: the token response is not valid JSON/);
+    assert.doesNotMatch(html, new RegExp(TOKEN));
+    for (const w of warnings) assert.doesNotMatch(w, new RegExp(TOKEN));
+  } finally {
+    rawTokenAnswer = null;
+  }
 });
 
 test('a failure redirects only to an app URL configured on purpose', async () => {
