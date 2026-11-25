@@ -204,6 +204,30 @@ test('without an account on the project, Publish stays off; "Do not publish" clo
   }
 });
 
+test('an account without forge:publish reads the proposal but Publish stays off and says which right is missing', async () => {
+  let deny = true;
+  const m = await mount(({ url }) => (url === '/api/ui/auth/me'
+    ? Response.json({ user: null, needsSetup: false, can: { 'projects:manage': true, 'forge:publish': !deny } })
+    : undefined));
+  const { refreshMe } = await import('@/hooks/use-me');
+  try {
+    await m.React.act(async () => { await refreshMe(); });
+    await open(m);
+    await m.until(() => (q('[data-publish-body]') as HTMLTextAreaElement | null)?.value === PROPOSAL.body || (q('[data-publish-text]')?.textContent ?? '').includes(PROPOSAL.body), 'the text read');
+    const send = q('[data-publish-send]') as HTMLButtonElement;
+    assert.equal(send.disabled, true);
+    assert.match(send.title, /forge:publish/);
+    // Granted, the same window publishes.
+    deny = false;
+    await m.React.act(async () => { await refreshMe(); });
+    await m.until(() => !(q('[data-publish-send]') as HTMLButtonElement).disabled, 'publish allowed');
+  } finally {
+    deny = false;
+    await m.React.act(async () => { await refreshMe(); });
+    await m.unmount();
+  }
+});
+
 test('a new comment on a pull request becomes a proposal, then is published; an empty one cannot leave', async () => {
   const created = { ...PROPOSAL, id: 'b'.repeat(8) + '-0000-4000-8000-' + 'c'.repeat(12), trigger: 'person' as const,
     target: { type: 'pull' as const, number: 58, url: 'https://github.com/acme/app/pull/58' } };
