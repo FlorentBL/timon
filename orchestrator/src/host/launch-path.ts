@@ -21,6 +21,12 @@ export type LaunchPathOptions = {
    * when no PATH folder holds one. `null` = none on this machine.
    */
   findNode?: () => string | null;
+  /**
+   * The Node the daemon itself runs on (`daemonNode`), tried last when the
+   * machine shows none: the one a desktop package ships, or the one a source
+   * install was started with. `null` = the daemon is not on a Node.
+   */
+  runtimeNode?: string | null;
   /** The runtime to refuse as a `node`: Electron's binary runs as Node only with ELECTRON_RUN_AS_NODE. */
   selfExecutable?: string;
   /** Whether `dir` holds an executable `node`; injectable for tests. */
@@ -65,7 +71,8 @@ export function nodeInDir(dir: string, platform: NodeJS.Platform): boolean {
 /**
  * `path` with what a Node CLI needs: the folder of `binary` first when it is not
  * listed (npm, nvm and Volta put `node` beside the CLIs they install), then the
- * folder of a `node` found elsewhere, last, when still no folder holds one.
+ * folder of a `node` found elsewhere, last, when still no folder holds one:
+ * the machine's own first, the daemon's runtime when the machine has none.
  */
 export function launchPath(path: string, opts: LaunchPathOptions): string {
   const { platform } = opts;
@@ -77,15 +84,44 @@ export function launchPath(path: string, opts: LaunchPathOptions): string {
     if (!listed(dir)) out.unshift(dir);
   }
   const hasNode = opts.hasNode ?? nodeInDir;
-  if (opts.findNode && !out.some((dir) => hasNode(dir, platform))) {
-    const node = opts.findNode();
+  if ((opts.findNode || opts.runtimeNode) && !out.some((dir) => hasNode(dir, platform))) {
     const self = opts.selfExecutable;
-    if (node && isAbsoluteFor(node, platform) && !(self && sameDir(node, self, platform))) {
+    const usable = (file: string | null | undefined): file is string =>
+      !!file && isAbsoluteFor(file, platform) && !(self && sameDir(file, self, platform));
+    const found = opts.findNode?.();
+    const node = usable(found) ? found : usable(opts.runtimeNode) ? opts.runtimeNode : null;
+    if (node) {
       const dir = pathModule(platform).dirname(node);
       if (!out.some((entry) => sameDir(entry, dir, platform))) out.push(dir);
     }
   }
   return out.join(delimiterOf(platform));
+}
+
+export type NodeRuntimeFacts = {
+  execPath: string;
+  /** `process.versions.electron`: set, the runtime is Electron, which is no `node`. */
+  electron?: string | undefined;
+  platform: NodeJS.Platform;
+};
+
+/**
+ * The daemon's own runtime when it is a Node a CLI can run on: since 0.1.6 a
+ * desktop package runs its daemon on the Node it ships
+ * (`resources/node/node[.exe]`), and a source install runs on the Node it was
+ * started with. The fence already opens that runtime to the mission, whose
+ * Timon MCP servers start with it. Electron is never one: its binary runs as
+ * Node only with `ELECTRON_RUN_AS_NODE`, which the package's fuse turns off.
+ * Only a file named `node` helps: `#!/usr/bin/env node` looks for that name.
+ */
+export function daemonNode(runtime: NodeRuntimeFacts = {
+  execPath: process.execPath, electron: process.versions.electron, platform: process.platform,
+}): string | null {
+  if (runtime.electron) return null;
+  const path = pathModule(runtime.platform);
+  if (!path.isAbsolute(runtime.execPath)) return null;
+  const name = path.basename(runtime.execPath);
+  return (runtime.platform === 'win32' ? /^node\.exe$/i : /^node$/).test(name) ? runtime.execPath : null;
 }
 
 /** The key holding PATH: Windows keeps the case it was read with (`Path`), and two spellings would be two variables. */
@@ -150,6 +186,8 @@ export function nodelessBackends(
     resolve: (name: string) => string | null;
     read?: (file: string) => string;
     hasNode?: (dir: string, platform: NodeJS.Platform) => boolean;
+    /** The daemon's own Node (`daemonNode`), which a launch falls back on. */
+    runtimeNode?: string | null;
   },
 ): NodelessBackend[] {
   const hasNode = opts.hasNode ?? nodeInDir;
@@ -157,7 +195,7 @@ export function nodelessBackends(
   return names.flatMap((name) => {
     const path = opts.resolve(name);
     if (!path || !runsOnNode(path, opts.platform, opts.read)) return [];
-    node ??= opts.resolve('node');
+    node ??= opts.resolve('node') ?? opts.runtimeNode ?? null;
     if (node || hasNode(pathModule(opts.platform).dirname(path), opts.platform)) return [];
     return [{ name, path }];
   });
@@ -166,5 +204,7 @@ export function nodelessBackends(
 /** The sentence both diagnostics print for one such CLI. */
 export function nodelessBackendText(backend: NodelessBackend): string {
   return `${backend.name} (${backend.path}) runs on Node.js, which Timon cannot find: its missions fail with `
-    + '"env: node: No such file or directory". Install Node.js.';
+    + '"env: node: No such file or directory". Install Node.js system-wide (your package manager, or nodejs.org), '
+    + 'or set host.binaries.node in timon.config.json to the path `node -p process.execPath` prints in your terminal, '
+    + 'then restart Timon.';
 }

@@ -249,9 +249,15 @@ does not contact the provider or verify whether a session has expired.
 ## Codex fails with "env: node: No such file or directory"
 
 Codex installed with npm runs on Node.js. Timon launches it with the folder it
-was found in and with the Node.js it finds on the machine (nvm, Volta,
-nvm-windows, Homebrew, `~/.local/bin`, the PATH). When none is found,
-`timon doctor` and the diagnostic report name the CLI: install Node.js.
+was found in and with the Node.js it finds on the machine: the PATH, then the
+places version managers keep it without telling a background service (nvm,
+fnm, mise, asdf, Volta, nvm-windows, Homebrew, `~/.local/bin`). When the
+machine has none, Timon lends the CLI the Node.js it runs on itself.
+
+If `timon doctor` or the diagnostic report still names the CLI, install Node.js
+system-wide (your package manager, or nodejs.org), or point Timon at yours: run
+`node -p process.execPath` in a terminal, put the path it prints under
+`host.binaries.node` in `timon.config.json`, then restart Timon.
 
 The same Node.js runs Timon's own tools inside a Claude session: without it,
 Claude reports that `mcp__timon_ask__request` was not found.
