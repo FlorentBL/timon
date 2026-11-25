@@ -148,15 +148,21 @@ Timon checks every few minutes whether the pull request was merged, by looking f
 
 ### What the job leaves behind
 
-Once the job has landed and none of its tasks still waits or runs, Timon removes, a few minutes later, what was only there to build it: the working folders of its tasks, the working folder of the agent that ran a sequential job, and the integration branch on your machine, once the target branch contains it. Nothing that did not land is removed: a branch with commits the target branch does not have (a pull request merged by squash, a commit added after the merge) stays, and so does a working folder holding changes never committed. A branch checked out in one of your folders waits until you leave it.
+Timon can remove, once a job has landed, what was only there to build it: the working folders of its tasks, the working folder of the agent that ran a sequential job, and the integration branch on your machine. This cleanup is **off by default**. Turn it on with **Cleanup after a job lands** in **Settings → Missions → Cleanup**, or with `TIMON_INTEGRATION_CLEANUP_ENABLED` set to `true` under `settings` in `timon.config.json`.
 
-The branch on the remote stays unless you ask:
+Once on, it waits until the job has landed, none of its tasks still waits or runs, and a few minutes have passed. Then it keeps anything it cannot prove is safe to remove:
+
+- Only the job's own tasks are touched: another job built on the same branch keeps its folders.
+- A working folder goes only when it holds no uncommitted change and its last commit is in the target branch. A commit made after the merge keeps it, and so does a task reopened in the meantime.
+- A branch goes only when the target branch contains it. A pull request merged by squash or rebase leaves everything in place. A branch checked out in one of your folders waits until you leave it. `main` and the target branch are never deleted.
+
+The branch on the remote stays unless you also ask:
 
 ```bash
 timon project set-integration my-app --delete-remote-branch on
 ```
 
-Timon then deletes it once the pull request is merged, after the same account and push URL checks as for the push, and only while it still ends on the commit that was merged: a branch someone pushed to since is kept. If GitHub already deleted it, nothing more happens.
+Timon then deletes it once the pull request is merged, on the repository the pull request was opened on and nowhere else: if the project or `origin` now point to another repository, the branch is kept. It checks the account and push URL as for the push, never deletes the repository's default branch or a protected branch, and deletes it only while it still ends on the commit that was merged: a branch someone pushed to since is kept. If GitHub already deleted it, nothing more happens.
 
 A pull request closed without a merge keeps its branch: only the sequential agent's working folder goes, once its commits are in the branch.
 
