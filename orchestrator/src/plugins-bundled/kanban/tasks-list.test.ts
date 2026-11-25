@@ -198,6 +198,72 @@ test('done_project windows the DONE tasks of one project, alone or with done_age
   assert.equal(r.status, 400);
 });
 
+test('project scopes the whole list, unfinished tasks included', async () => {
+  for (const [name, cfg] of [['gamma.coder', { project: 'gamma' }], ['delta.coder', { project: 'delta' }]] as const) {
+    mkdirSync(agentDir(name), { recursive: true });
+    writeFileSync(join(agentDir(name), 'config.json'), JSON.stringify(cfg));
+  }
+  const gammaPending = randomUUID();
+  dbApi.createTask(gammaPending, 'gamma pending', 'gamma.coder', {});
+  const gammaDone = randomUUID();
+  dbApi.createTask(gammaDone, 'gamma done', 'gamma.coder', {});
+  dbApi.updateTaskStatus(gammaDone, 'DONE', { doneComment: 'ok' });
+  // Its own project wins over its agent's.
+  const pinned = randomUUID();
+  dbApi.createTask(pinned, 'pinned to gamma', 'delta.coder', { project: 'gamma' });
+  const delta = randomUUID();
+  dbApi.createTask(delta, 'delta pending', 'delta.coder', {});
+
+  const body = await get<{ tasks: Row[]; total?: number; truncated?: boolean }>('/api/tasks?project=gamma');
+  assert.deepEqual(body.tasks.map((t) => t.id).sort(), [gammaPending, gammaDone, pinned].sort());
+  assert.equal(body.total, undefined, 'no limit, no count');
+  assert.equal(body.truncated, undefined);
+
+  const pending = await get<{ tasks: Row[] }>('/api/tasks?project=gamma&status=PENDING');
+  assert.deepEqual(pending.tasks.map((t) => t.id).sort(), [gammaPending, pinned].sort());
+
+  const none = await get<{ tasks: Row[] }>('/api/tasks?project=nobody-here');
+  assert.deepEqual(none.tasks, []);
+
+  const everything = await get<{ tasks: Row[] }>('/api/tasks?project=');
+  assert.equal(everything.tasks.length, dbApi.listTasks().length, 'an empty value filters nothing');
+  assert.ok(everything.tasks.some((t) => t.id === delta));
+
+  const r = await fetch(`${base}/api/tasks?project=${encodeURIComponent('../etc')}`, { headers: { Authorization: 'Bearer list-test' } });
+  assert.equal(r.status, 400);
+});
+
+test('limit cuts the list, unfinished tasks first, and says how many matched', async () => {
+  mkdirSync(agentDir('epsilon.coder'), { recursive: true });
+  writeFileSync(join(agentDir('epsilon.coder'), 'config.json'), JSON.stringify({ project: 'epsilon' }));
+  const make = (title: string, done: boolean, at: number) => {
+    const id = randomUUID();
+    dbApi.createTask(id, title, 'epsilon.coder', {});
+    if (done) dbApi.updateTaskStatus(id, 'DONE', { doneComment: 'ok' });
+    db.prepare('UPDATE tasks SET updated_at = ? WHERE id = ?').run(at, id);
+    return id;
+  };
+  // Created first, so the database order puts the old DONE ahead of the rest.
+  const oldDone = make('old done', true, 1_000);
+  const recentDone = make('recent done', true, 9_000_000_000_000);
+  const open = make('open', false, 5_000);
+
+  const two = await get<{ tasks: Row[]; total: number; truncated: boolean }>('/api/tasks?project=epsilon&limit=2');
+  assert.deepEqual(two.tasks.map((t) => t.id), [open, recentDone]);
+  assert.equal(two.total, 3);
+  assert.equal(two.truncated, true);
+
+  const roomy = await get<{ tasks: Row[]; total: number; truncated: boolean }>('/api/tasks?project=epsilon&limit=10');
+  assert.deepEqual(roomy.tasks.map((t) => t.id).sort(), [oldDone, recentDone, open].sort());
+  assert.equal(roomy.total, 3);
+  assert.equal(roomy.truncated, false);
+
+  for (const bad of ['0', '-1', 'abc', '1.5']) {
+    const r = await fetch(`${base}/api/tasks?limit=${bad}`, { headers: { Authorization: 'Bearer list-test' } });
+    assert.equal(r.status, 400, bad);
+  }
+});
+
 test('TIM-0101: a stored status the board has no column for is listed as DONE, the row untouched', async () => {
   const id = randomUUID();
   dbApi.createTask(id, 'cancelled review', 'acme.bare', { priority: 1, type: 'review' });
