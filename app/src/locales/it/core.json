@@ -1782,8 +1782,11 @@
     "interruptionUnknown": "missione interrotta: causa indeterminata (nessun segnale utilizzabile)",
     "interruptionDefault": "missione interrotta",
     "runBy": {
-      "label": "eseguita da {agent}",
+      "assigned": "assegnata a {named}",
       "title": "Assegnata a {named}, eseguita da {agent}: {reason}",
+      "titlePlanned": "Assegnata a {named}, sarà eseguita da {agent}: {reason}",
+      "detail": "Eseguita da {agent}",
+      "detailPlanned": "Sarà eseguita da {agent}",
       "reasonPinned": "il progetto assegna questo ruolo a {agent} (roles.json)",
       "reasonMissing": "{named} non esiste",
       "reasonOtherProject": "{named} non appartiene al progetto dell’attività",

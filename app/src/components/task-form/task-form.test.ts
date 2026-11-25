@@ -370,6 +370,29 @@ test('the agent picker lists every agent with its role and searches them; the mo
   }
 });
 
+// #1109: the roles hand the task to another agent; the detail says who, and the
+// model chip shows that agent's model (the daemon resolves it for the runner).
+test('a rerouted task names the agent that will run it under the agent field', async () => {
+  const m = await mount({ task: {
+    ...TASK, agent_name: 'timon.reviewer', type: 'research', effective_backend: 'claude', effective_model: 'opus',
+    run_by: { agent: 'timon.coder', source: 'role', reason: 'other_role', planned: true },
+  } });
+  try {
+    await m.until(() => !!m.$('[data-task-runner="timon.coder"]'), 'the runner line');
+    const line = m.$('[data-task-runner="timon.coder"]')!;
+    assert.equal(line.textContent, 'Will be run by timon.coder');
+    assert.match(line.getAttribute('title') ?? '', /Assigned to timon\.reviewer, will be run by timon\.coder/);
+    await m.until(() => m.$('[data-model-chip]')?.textContent === 'Opus (inherited)', 'the runner\'s model');
+    // Given to another agent by hand, the line no longer applies.
+    await m.click(m.$('[data-agent-picker]'));
+    await m.until(() => !!m.$('[data-agent-card="timon.coder"]'), 'the agent list');
+    await m.click(m.$('[data-agent-card="timon.coder"]'));
+    assert.equal(m.$('[data-task-runner]'), null);
+  } finally {
+    await m.unmount();
+  }
+});
+
 test('an edited task can inherit its fallback and permission again from the popup', async () => {
   const m = await mount({ task: {
     ...TASK, fallback_backend_override: 'claude', fallback_model_override: 'haiku', permission_mode_override: 'plan',

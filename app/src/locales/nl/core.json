@@ -1782,8 +1782,11 @@
     "interruptionUnknown": "missie beëindigd: oorzaak onbekend (geen bruikbaar signaal)",
     "interruptionDefault": "missie onderbroken",
     "runBy": {
-      "label": "uitgevoerd door {agent}",
+      "assigned": "toegewezen aan {named}",
       "title": "Toegewezen aan {named}, uitgevoerd door {agent}: {reason}",
+      "titlePlanned": "Toegewezen aan {named}, wordt uitgevoerd door {agent}: {reason}",
+      "detail": "Uitgevoerd door {agent}",
+      "detailPlanned": "Wordt uitgevoerd door {agent}",
       "reasonPinned": "het project zet deze rol vast op {agent} (roles.json)",
       "reasonMissing": "{named} bestaat niet",
       "reasonOtherProject": "{named} hoort niet bij het project van de taak",

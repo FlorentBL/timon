@@ -1782,8 +1782,11 @@
     "interruptionUnknown": "미션 강제 종료: 원인 불명 (사용할 수 있는 신호 없음)",
     "interruptionDefault": "미션 중단됨",
     "runBy": {
-      "label": "실행: {agent}",
+      "assigned": "담당: {named}",
       "title": "담당 {named}, 실행 {agent}: {reason}",
+      "titlePlanned": "담당 {named}, 실행 예정 {agent}: {reason}",
+      "detail": "실행: {agent}",
+      "detailPlanned": "실행 예정: {agent}",
       "reasonPinned": "프로젝트가 이 역할을 {agent}에게 고정했습니다 (roles.json)",
       "reasonMissing": "{named}이(가) 존재하지 않습니다",
       "reasonOtherProject": "{named}은(는) 작업의 프로젝트에 속하지 않습니다",

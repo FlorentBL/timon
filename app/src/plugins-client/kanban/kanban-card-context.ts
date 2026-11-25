@@ -57,6 +57,8 @@ export type KanbanTaskCardValue = KanbanCardBase & {
   board: ReadonlyMap<string, Task>;
   /** The clock the running times are counted against, ticked by the board. */
   now: number;
+  /** The agent that runs the task: the one the dispatcher hands it to, which a
+   *  project's roles may make another than `task.agent_name` (`task.run_by`). */
   agent: AgentIdentity;
   /** The role written on the agent's sheet, as its label; `null` when it has none. */
   agentRole: string | null;

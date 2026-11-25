@@ -1782,8 +1782,11 @@
     "interruptionUnknown": "ミッション強制終了: 原因不明 (有効なシグナルなし)",
     "interruptionDefault": "ミッション中断",
     "runBy": {
-      "label": "実行: {agent}",
+      "assigned": "担当: {named}",
       "title": "担当 {named}、実行 {agent}: {reason}",
+      "titlePlanned": "担当 {named}、実行予定 {agent}: {reason}",
+      "detail": "実行: {agent}",
+      "detailPlanned": "実行予定: {agent}",
       "reasonPinned": "プロジェクトがこのロールを {agent} に固定しています (roles.json)",
       "reasonMissing": "{named} は存在しません",
       "reasonOtherProject": "{named} はタスクのプロジェクトに属していません",

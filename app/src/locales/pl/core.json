@@ -1782,8 +1782,11 @@
     "interruptionUnknown": "misja zabita: nieustalona przyczyna (brak użytecznego sygnału)",
     "interruptionDefault": "misja przerwana",
     "runBy": {
-      "label": "wykonuje {agent}",
+      "assigned": "przypisane do {named}",
       "title": "Przypisane do {named}, wykonuje {agent}: {reason}",
+      "titlePlanned": "Przypisane do {named}, wykona {agent}: {reason}",
+      "detail": "Wykonuje {agent}",
+      "detailPlanned": "Wykona {agent}",
       "reasonPinned": "projekt przypina tę rolę do {agent} (roles.json)",
       "reasonMissing": "{named} nie istnieje",
       "reasonOtherProject": "{named} nie należy do projektu zadania",
