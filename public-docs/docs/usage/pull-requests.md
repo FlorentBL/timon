@@ -148,7 +148,9 @@ Timon checks every few minutes whether the pull request was merged, by looking f
 
 ### What the job leaves behind
 
-Timon can remove, once a job has landed, what was only there to build it: the working folders of its tasks, the working folder of the agent that ran a sequential job, and the integration branch on your machine. This cleanup is **off by default**. Turn it on with **Cleanup after a job lands** in **Settings → Missions → Cleanup**, or with `TIMON_INTEGRATION_CLEANUP_ENABLED` set to `true` under `settings` in `timon.config.json`.
+A job that has landed leaves on your machine what was only there to build it: the working folders of its tasks, the working folder of the agent that ran a sequential job, and the integration branch. They stay in place. Remove a task's working folder and branch with `timon worktree dispose <task>`, and the integration branch with `git branch -d <branch>` once you no longer need it.
+
+Timon has an automatic cleanup for them, but it is **experimental**: it is off by default and has no switch in Settings. It only runs if you set `TIMON_INTEGRATION_CLEANUP_ENABLED` to `true` in the environment or under `settings` in `timon.config.json`; leave it off unless you are testing it.
 
 Once on, it waits until the job has landed, none of its tasks still waits or runs, and a few minutes have passed. Then it keeps anything it cannot prove is safe to remove:
 
@@ -158,7 +160,7 @@ Once on, it waits until the job has landed, none of its tasks still waits or run
 - A branch goes only when the target branch contains it and it still ends on the commit that was checked. A branch checked out in one of your folders waits until you leave it, and so does everything after it. A branch made again under the same name since the job landed is kept. `main` and the target branch are never deleted.
 - When something has to wait (a task reopened, a branch you are on, GitHub not answering), the cleanup stops there and tries again later: nothing after it is removed.
 
-The branch on the remote stays unless you also ask:
+With the experimental cleanup on, the branch on the remote still stays unless you also ask:
 
 ```bash
 timon project set-integration my-app --delete-remote-branch on
