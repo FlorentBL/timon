@@ -141,6 +141,26 @@ test('the limit stops the program with its group, and says so', { skip: !posix }
   } finally { cleanUp(left); }
 });
 
+test('the stall limit waits on a program that keeps printing, and stops a silent one with its group', { skip: !posix }, async () => {
+  const talker = stub('talker', 'i=0\nwhile [ $i -lt 8 ]; do echo $i >&2; sleep 0.1; i=$((i + 1)); done\necho done');
+  const talked = await execTree(talker, [], { ...LIMITS, stallTimeout: 400 });
+  assert.equal(talked.timedOut, undefined, 'eight lines over 0.8 s, never 0.4 s apart');
+  assert.equal(talked.code, 0);
+  assert.equal(talked.stdout, 'done\n');
+
+  const pidFile = join(dir, 'stall-pid');
+  const silent = stub('silent', `echo started >&2\nsleep 8 &\necho $! > "${pidFile}"\nwait`);
+  const started = Date.now();
+  const stalled = await execTree(silent, [], { ...LIMITS, stallTimeout: 300 });
+  const left = readPid(pidFile);
+  try {
+    assert.equal(stalled.timedOut, true);
+    assert.equal(stalled.stderr, 'started\n');
+    assert.ok(Date.now() - started < 2_500, 'stopped by the stall limit, not the 5 s one');
+    assert.ok(await stopsRunning(left), `sleep ${left} survived`);
+  } finally { cleanUp(left); }
+});
+
 test('too much output stops the program: the start is kept, and it is no timeout', { skip: !posix }, async () => {
   const pidFile = join(dir, 'verbose-pid');
   const file = stub('verbose', `sleep 8 &\necho $! > "${pidFile}"\nwhile :; do echo xxxxxxxxxxxxxxxx; done`);
