@@ -27,7 +27,7 @@ import { requestNavigation } from '@/lib/navigate-proposals';
 import { ProductJobDialog } from './landing-preview-dialog';
 import { JobDialogContext, type JobDialogValue } from './job-dialog-context';
 import { useAccess } from '@/hooks/use-me';
-import { previewLanding, refreshLandingChecks, type Landing, type LandRequest, type RepairKind } from './landing-api';
+import { landable, previewLanding, refreshLandingChecks, type Landing, type LandRequest, type RepairKind } from './landing-api';
 import { askLand, landBlocked } from './landing-land';
 import { askRepair } from './landing-repair';
 
@@ -79,7 +79,7 @@ export function JobDialog({ landing, onClose, openTodo = null, onChange }: {
       setBusy(null);
     }
   }, [current, update]);
-  const kept = current.kept === true && current.state === 'branch';
+  const kept = landable(current);
 
   const value = useMemo<JobDialogValue>(() => ({
     landing: current,

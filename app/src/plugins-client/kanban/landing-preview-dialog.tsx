@@ -32,7 +32,7 @@ import {
   type CheckStatus, type DiffLineKind, type Landing, type LandingPreview, type LinkedIssue, type Precheck, type PreviewFile,
 } from './landing-api';
 import { RepairIcon, repairHint, repairLabel } from './landing-repair';
-import { LandIcon, landLabel, titleFromBranch } from './landing-land';
+import { LandIcon, landLabel, prTitle } from './landing-land';
 
 /** How each kind of diff line is painted, here and in the open pull requests' dialog. */
 export const DIFF_LINE_CLASS: Record<DiffLineKind, string> = {
@@ -263,7 +263,7 @@ export function JobChecksIsland({ landing }: { landing: Landing }): ReactElement
 function JobLandFoot({ host, commits }: { host: JobDialogValue; commits: number | null }): ReactElement | null {
   const { landing, busy, land, landBlocked: blocked } = host;
   const local = landsInPlace(landing);
-  const [title, setTitle] = useState(() => titleFromBranch(landing.branch));
+  const [title, setTitle] = useState(() => prTitle(landing));
   if (!land) return null;
   const label = landLabel(landing);
   const missingTitle = !local && !title.trim();
