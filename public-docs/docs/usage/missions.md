@@ -61,6 +61,12 @@ These choices are remembered for your account, except the role, which applies to
 
 `GET /api/missions?origin=user` (or `automated`, `task`, `routine`, `agent`, `system`) applies the same filter, and each mission carries its `origin`.
 
+### Reading the whole list through the API
+
+`GET /api/missions` returns the newest missions first, 100 by default. `limit` takes 1 to 1000; a value outside that range, or not a whole number, is refused with a 400 instead of being cut down. Next to `missions`, the response carries `has_more` and `next_cursor`: while `has_more` is `true`, pass `next_cursor` back as `before` to read the next page, until `next_cursor` is `null`. The pages follow each other without a mission twice or a mission skipped.
+
+`task_id` keeps the missions of one Kanban task, for example `GET /api/missions?task_id=<task id>`, and combines with `agent`, `project`, `status`, `origin` and `before`. Like every filter, it only returns the missions your account can see.
+
 ## The name of a mission
 
 The lists name a mission by its title: the one you typed (**Rename** in the chat list's right-click menu), the one its launcher gave it (a Kanban task's title, a workflow node, `timon spawn --title "Short name"` or the `title` of `mission_spawn`), or the one Timon generates at the end of the first reply of a conversation you opened. Without any, the first line of the message is shown. Which model writes the generated titles, and whether they are generated at all, is chosen in [Settings → Missions](settings.md#conversation-titles).
