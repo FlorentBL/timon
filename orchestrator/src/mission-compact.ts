@@ -26,11 +26,12 @@
  */
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
-import { getTurnState, loadConfig, respawnWithResume, sendToAgent } from './agent.js';
+import { getTurnState, loadConfig, registerCompactionHook, respawnWithResume, sendToAgent } from './agent.js';
 import {
-  catalogBackend, defaultBackendName, nativeCompactCommand, nativeCompactOf,
+  catalogBackend, defaultBackendName, getBackend, nativeCompactCommand, nativeCompactOf,
   type NativeCompact, type NativeCompactContext, type NativeCompactResult,
 } from './backends/index.js';
+import type { RunNativeCompactOpts } from './backends/types.js';
 import { existingMissionScratchPath } from './backends/provider-scratch.js';
 import { backendOwnerPlugin } from './backends/registry.js';
 import { bus, type BusEvent } from './bus.js';
@@ -86,6 +87,7 @@ export type CompactDeps = {
     backend: string,
     run: (ctx: NativeCompactContext) => Promise<NativeCompactResult | void>,
     timeoutMs: number,
+    signal?: AbortSignal,
   ): Promise<NativeCompactResult | 'not_resumable' | void>;
   /** Deliver the caller's message as an ordinary turn, after a native compaction. */
   sendMessage(missionId: string, text: string): Promise<boolean>;
@@ -337,6 +339,23 @@ async function deliverFollowUpMessage(op: CompactOperation, message: string | un
   }
 }
 
+/** Active programmatic native compactions, keyed by missionId for turn exclusion and kill abort. */
+const activeProgrammaticCompactions = new Map<string, AbortController>();
+
+function abortProgrammaticCompaction(missionId: string, reason?: string): boolean {
+  const controller = activeProgrammaticCompactions.get(missionId);
+  if (!controller) return false;
+  if (!controller.signal.aborted) {
+    controller.abort(new Error(reason ?? 'compaction aborted'));
+  }
+  return true;
+}
+
+registerCompactionHook({
+  isActive: (missionId) => activeProgrammaticCompactions.has(missionId),
+  abort: abortProgrammaticCompaction,
+});
+
 /** Programmatic native compaction (e.g. Codex App Server `thread/compact/start`):
  *  no turn runs on the mission stream, so the hook's promise settles the operation. */
 async function runNativeProgrammatic(
@@ -346,7 +365,14 @@ async function runNativeProgrammatic(
   deps: CompactDeps,
 ): Promise<void> {
   const limit = deps.timeoutMs();
+  const controller = new AbortController();
   let timer: ReturnType<typeof setTimeout> | undefined;
+  activeProgrammaticCompactions.set(op.missionId, controller);
+  const releaseCompaction = (): void => {
+    if (activeProgrammaticCompactions.get(op.missionId) === controller) {
+      activeProgrammaticCompactions.delete(op.missionId);
+    }
+  };
   try {
     advance(op, 'compacting');
     if (!deps.runNativeCompact) {
@@ -354,10 +380,14 @@ async function runNativeProgrammatic(
       return;
     }
     const timed = new Promise<never>((_resolve, reject) => {
-      timer = setTimeout(() => reject(new Error(`no compaction after ${Math.round(limit / 1000)} s`)), limit);
+      timer = setTimeout(() => {
+        const err = new Error(`no compaction after ${Math.round(limit / 1000)} s`);
+        controller.abort(err);
+        reject(err);
+      }, limit);
     });
     const result = await Promise.race([
-      deps.runNativeCompact(op.missionId, op.backend, run, limit),
+      deps.runNativeCompact(op.missionId, op.backend, run, limit, controller.signal),
       timed,
     ]);
     if (result === 'not_resumable') {
@@ -366,11 +396,13 @@ async function runNativeProgrammatic(
     }
     const metadata = result && typeof result === 'object' && result.metadata ? result.metadata : undefined;
     conclude(op, deps, { targetMissionId: op.missionId }, metadata ? { compact_metadata: metadata } : {});
+    releaseCompaction();
     await deliverFollowUpMessage(op, message, deps);
   } catch (err) {
     conclude(op, deps, { error: errorText(err, 'compaction') });
   } finally {
     if (timer) clearTimeout(timer);
+    releaseCompaction();
   }
 }
 
@@ -405,23 +437,38 @@ export function defaultCompactDeps(): CompactDeps {
     nativeCommand: nativeCompactCommand,
     nativeCompact: nativeCompactOf,
     turnActive: (missionId) => getTurnState(missionId)?.turnActive === true,
-    async runNativeCompact(missionId, backend, run, timeoutMs) {
+    async runNativeCompact(missionId, backendName, run, timeoutMs, signal) {
       const mission = dbApi.getMission(missionId);
       if (!mission?.session_id) return 'not_resumable';
-      let cwd: string | undefined;
-      try {
-        cwd = loadConfig(mission.agent_name).cwd;
-      } catch {
-        cwd = undefined;
-      }
-      const pluginId = backendOwnerPlugin(backend);
+      const backend = getBackend(backendName);
+      const pluginId = backendOwnerPlugin(backendName);
       const scratch = pluginId ? existingMissionScratchPath(pluginId, missionId) : undefined;
+      if (backend?.sessionStore === 'per-mission' && !scratch) return 'not_resumable';
+      let cfg: RunNativeCompactOpts['cfg'] = { cwd: '' };
+      try {
+        const loaded = loadConfig(mission.agent_name);
+        cfg = { cwd: loaded.cwd, project: loaded.project };
+      } catch {
+        // Agent config may be missing on an archived mission; proceed without cwd/project.
+      }
+      if (backend?.runNativeCompact) {
+        return backend.runNativeCompact({
+          missionId,
+          agentName: mission.agent_name,
+          cfg,
+          sessionId: mission.session_id,
+          ...(scratch ? { scratch } : {}),
+          timeoutMs,
+          ...(signal ? { signal } : {}),
+        });
+      }
       return run({
         missionId,
         sessionId: mission.session_id,
-        ...(cwd ? { cwd } : {}),
+        ...(cfg.cwd ? { cwd: cfg.cwd } : {}),
         ...(scratch ? { scratch } : {}),
         timeoutMs,
+        ...(signal ? { signal } : {}),
       });
     },
     async sendCommand(missionId, command) {

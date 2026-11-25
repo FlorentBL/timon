@@ -62,7 +62,7 @@ test('summarizeTranscript runs sections in parallel waves then merges in order',
     },
     {
       timeoutMs: 30_000,
-      singlePassMaxChars: 80,
+      singlePassMaxChars: 120,
       sectionMaxChars: 55,
       concurrency: 3,
     },
@@ -89,6 +89,7 @@ test('summarizeTranscript enforces the shared deadline across stages', async () 
       transcript,
       async (_prompt, _sys, timeoutMs) => {
         timeouts.push(timeoutMs);
+        await Promise.resolve();
         // Simulate section wave exhausting the entire budget before the merge call.
         clock += 5_000;
         return 'part';

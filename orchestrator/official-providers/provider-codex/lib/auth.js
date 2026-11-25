@@ -1,15 +1,15 @@
 import { readFileSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
-export function codexAuthPath() {
-    return join(resolve(process.env.CODEX_AUTH_DIR || join(homedir(), '.codex')), 'auth.json');
+export function codexAuthPath(env) {
+    return join(resolve(env?.CODEX_AUTH_DIR || process.env.CODEX_AUTH_DIR || join(homedir(), '.codex')), 'auth.json');
 }
 export function codexApiKey(env) {
     return env.CODEX_API_KEY?.trim() || env.OPENAI_API_KEY?.trim() || undefined;
 }
 /** A local presence check, not a provider request or a token-expiry verdict. */
 export function inspectCodexAuth(env) {
-    const path = codexAuthPath();
+    const path = codexAuthPath(env);
     const apiKeyReport = { ok: true, path, source: 'environment', detail: 'API key available to the mission.' };
     // CODEX_API_KEY explicitly overrides saved login in exec. A generic OpenAI
     // key must not silently move an existing subscription login onto API billing.

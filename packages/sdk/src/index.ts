@@ -775,6 +775,7 @@ export type {
   BackendProfile, Dialect, EnvResolver, SecretRef, BuildSpawnOpts, SpawnResult,
   ProfileRuntime, ProviderConfig, NormalizedEvent, PermissionModel,
   RateLimitReporting, SessionStore, ImageAttachment, LocalEnvPolicy, DiscoveredModel,
+  NativeCompact, NativeCompactContext, NativeCompactResult,
 } from '../../../orchestrator/src/plugins/contract/provider-kit.js';
 /** Backends with no local process (`transport: 'remote'`); exported in API 7. */
 export type {

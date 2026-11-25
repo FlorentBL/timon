@@ -5,7 +5,11 @@
 import '../test-home.js';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
 import { compactCodexThread } from '../../official-providers/provider-codex/lib/compact.js';
+import { createCodexProvider } from '../../official-providers/provider-codex/lib/codex.js';
 
 interface RecordedCall {
   name: string;
@@ -104,7 +108,7 @@ test('compactCodexThread: rejects on RPC error from thread/resume or thread/comp
     if (msg.id === 2) emit(`${JSON.stringify({ id: 2, error: { code: -32602, message: 'thread not found' } })}\n`);
   });
   await assert.rejects(
-    () => compactCodexThread(binary, { missionId: 'm-2', sessionId: 'thr-missing', timeoutMs: 5_000 }),
+    () => compactCodexThread(binary, { missionId: 'm-2', sessionId: 'thr-missing', scratch: '/tmp/scratch/m-2', timeoutMs: 5_000 }),
     /thread\/resume failed: thread not found \(code -32602\)/,
   );
 });
@@ -119,7 +123,7 @@ test('compactCodexThread: rejects when compaction turn fails or app-server exits
     }
   });
   await assert.rejects(
-    () => compactCodexThread(failBin, { missionId: 'm-3', sessionId: 'thr-1', timeoutMs: 5_000 }),
+    () => compactCodexThread(failBin, { missionId: 'm-3', sessionId: 'thr-1', scratch: '/tmp/scratch/m-3', timeoutMs: 5_000 }),
     /codex compaction failed: context limit/,
   );
 
@@ -130,16 +134,170 @@ test('compactCodexThread: rejects when compaction turn fails or app-server exits
     }
   });
   await assert.rejects(
-    () => compactCodexThread(exitBin, { missionId: 'm-4', sessionId: 'thr-1', timeoutMs: 5_000 }),
+    () => compactCodexThread(exitBin, { missionId: 'm-4', sessionId: 'thr-1', scratch: '/tmp/scratch/m-4', timeoutMs: 5_000 }),
     /exited before compaction completed/,
   );
 });
 
-test('compactCodexThread: rejects when sessionId is empty', async () => {
+test('compactCodexThread: rejects when sessionId or scratch is empty', async () => {
   const { binary, recorded } = makeFakeBinary(() => {});
   await assert.rejects(
-    () => compactCodexThread(binary, { missionId: 'm-5', sessionId: '   ', timeoutMs: 5_000 }),
+    () => compactCodexThread(binary, { missionId: 'm-5', sessionId: '   ', scratch: '/tmp/scratch/m-5', timeoutMs: 5_000 }),
     /requires a session id/,
   );
+  await assert.rejects(
+    () => compactCodexThread(binary, { missionId: 'm-5', sessionId: 'thr-1', timeoutMs: 5_000 }),
+    /requires a mission scratch directory/,
+  );
   assert.equal(recorded.length, 0);
+});
+
+test('compactCodexThread: merges ctx.env with CODEX_HOME and aborts cleanly via signal', async () => {
+  const controller = new AbortController();
+  const { binary, recorded } = makeFakeBinary((msg, emit) => {
+    if (msg.id === 1) emit(`${JSON.stringify({ id: 1, result: {} })}\n`);
+    if (msg.id === 2) emit(`${JSON.stringify({ id: 2, result: {} })}\n`);
+    if (msg.id === 3) {
+      emit(`${JSON.stringify({ id: 3, result: {} })}\n`);
+      controller.abort(new Error('mission killed'));
+    }
+  });
+
+  await assert.rejects(
+    () => compactCodexThread(binary, {
+      missionId: 'm-abort',
+      sessionId: 'thr-abort',
+      scratch: '/tmp/scratch/m-abort',
+      env: { CODEX_API_KEY: 'sk-test', EXTRA_FLAG: '1' },
+      signal: controller.signal,
+      timeoutMs: 10_000,
+    }),
+    /mission killed/,
+  );
+  assert.equal(recorded.length, 1);
+  assert.deepEqual(recorded[0]!.opts.env, {
+    CODEX_API_KEY: 'sk-test',
+    EXTRA_FLAG: '1',
+    CODEX_HOME: '/tmp/scratch/m-abort',
+  });
+  assert.equal(recorded[0]!.stopped, true);
+});
+
+test('compactCodexThread: reports pre_tokens from scratch snapshot and post_tokens from notification', async () => {
+  const scratch = mkdtempSync(join(tmpdir(), 'timon-codex-compact-'));
+  try {
+    const sessDir = join(scratch, 'sessions', '2026', '10', '25');
+    mkdirSync(sessDir, { recursive: true });
+    const rollout = join(sessDir, 'rollout-2026-10-25.jsonl');
+    writeFileSync(rollout, `${JSON.stringify({
+      type: 'event_msg',
+      payload: {
+        type: 'token_count',
+        info: { last_token_usage: { input_tokens: 48_000, output_tokens: 2_000 }, model_context_window: 200_000 },
+      },
+    })}\n`);
+
+    const { binary } = makeFakeBinary((msg, emit) => {
+      if (msg.id === 1) emit(`${JSON.stringify({ id: 1, result: {} })}\n`);
+      if (msg.id === 2) emit(`${JSON.stringify({ id: 2, result: {} })}\n`);
+      if (msg.id === 3) {
+        emit(`${JSON.stringify({ id: 3, result: {} })}\n`);
+        emit(`${JSON.stringify({
+          method: 'thread/tokenUsage/updated',
+          params: { threadId: 'thr-tok', tokenUsage: { last: { totalTokens: 6_400, inputTokens: 6_000, outputTokens: 400 } } },
+        })}\n`);
+        emit(`${JSON.stringify({ method: 'item/completed', params: { threadId: 'thr-tok', item: { type: 'contextCompaction' } } })}\n`);
+        emit(`${JSON.stringify({ method: 'turn/completed', params: { threadId: 'thr-tok', turn: { status: 'completed' } } })}\n`);
+      }
+    });
+
+    const result = await compactCodexThread(binary, {
+      missionId: 'm-tok',
+      sessionId: 'thr-tok',
+      scratch,
+      timeoutMs: 10_000,
+    });
+    assert.deepEqual(result, {
+      metadata: {
+        method: 'thread/compact/start',
+        context_compaction: true,
+        pre_tokens: 48_000,
+        post_tokens: 6_000,
+      },
+    });
+  } finally {
+    rmSync(scratch, { recursive: true, force: true });
+  }
+});
+
+test('codex session.compact.run: injects profile env / API key and isolates named account profiles', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'timon-codex-dialect-'));
+  try {
+    const scratch = join(dir, 'scratch');
+    const authDir = join(dir, 'auth');
+    mkdirSync(scratch, { recursive: true });
+    mkdirSync(authDir, { recursive: true });
+    writeFileSync(join(authDir, 'auth.json'), JSON.stringify({ tokens: { access_token: 'fresh-tok' } }));
+
+    const { binary, recorded } = makeFakeBinary((msg, emit) => {
+      if (msg.id === 1) emit(`${JSON.stringify({ id: 1, result: {} })}\n`);
+      if (msg.id === 2) emit(`${JSON.stringify({ id: 2, result: {} })}\n`);
+      if (msg.id === 3) {
+        emit(`${JSON.stringify({ id: 3, result: {} })}\n`);
+        emit(`${JSON.stringify({ method: 'turn/completed', params: { threadId: 'thr-auth', turn: { status: 'completed' } } })}\n`);
+      }
+    });
+
+    const provider = createCodexProvider(
+      {
+        binary,
+        runtime: {
+          usage: {
+            isUsageNotSignedInError: () => false,
+            UsageNotSignedInError: Error,
+          },
+          events: {
+            extractInitSessionId: () => undefined,
+          },
+        },
+        account: { of: (profile: { account?: unknown }) => profile?.account },
+      } as never,
+      { warn() {}, info() {}, error() {}, debug() {} } as never,
+    );
+    const run = provider.session.compact.run;
+
+    // 1. API-key profile with custom profile.env
+    await run({
+      missionId: 'm-api',
+      sessionId: 'thr-auth',
+      scratch,
+      env: { CODEX_AUTH_DIR: authDir },
+      profile: { id: 'codex', cmd: 'codex', env: { OPENAI_BASE_URL: 'https://proxy.example', CODEX_API_KEY: 'sk-prof-key' } },
+      timeoutMs: 10_000,
+    });
+    assert.equal(recorded[0]!.opts.env?.OPENAI_BASE_URL, 'https://proxy.example');
+    assert.equal(recorded[0]!.opts.env?.CODEX_API_KEY, 'sk-prof-key');
+    assert.equal(recorded[0]!.opts.env?.CODEX_HOME, scratch);
+
+    // 2. Named account profile: blanks CODEX_API_KEY and copies/links auth.json into scratch
+    await run({
+      missionId: 'm-acct',
+      sessionId: 'thr-auth',
+      scratch,
+      env: { CODEX_AUTH_DIR: authDir },
+      profile: {
+        id: 'codex@work',
+        cmd: 'codex',
+        env: { CODEX_EXTRA: 'yes' },
+        account: { id: 'work', name: 'Work', configDir: authDir },
+      },
+      timeoutMs: 10_000,
+    });
+    assert.equal(recorded[1]!.opts.env?.CODEX_API_KEY, '');
+    assert.equal(recorded[1]!.opts.env?.CODEX_EXTRA, 'yes');
+    assert.equal(recorded[1]!.opts.env?.CODEX_HOME, scratch);
+    assert.match(readFileSync(join(scratch, 'auth.json'), 'utf8'), /fresh-tok/);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });

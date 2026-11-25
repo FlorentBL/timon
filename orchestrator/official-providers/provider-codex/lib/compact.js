@@ -1,3 +1,5 @@
+import { codexContextSnapshot } from './context.js';
+
 /**
  * Native in-place compaction for Codex via `codex app-server` JSON-RPC
  * (`thread/compact/start`). Keeps the same thread and model without sending
@@ -6,6 +8,10 @@
 
 function asRecord(value) {
     return typeof value === 'object' && value !== null && !Array.isArray(value) ? value : null;
+}
+
+function positiveNumber(value) {
+    return typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : undefined;
 }
 
 function rpcErrorMessage(error) {
@@ -22,6 +28,23 @@ function notificationThreadId(params) {
     return null;
 }
 
+function extractNotificationTokens(params) {
+    const usage = asRecord(params?.tokenUsage) ?? asRecord(params?.token_usage) ?? asRecord(params?.info);
+    if (!usage) return undefined;
+    const last = asRecord(usage.last) ?? asRecord(usage.last_token_usage) ?? asRecord(usage.lastTokenUsage);
+    return positiveNumber(last?.inputTokens)
+        ?? positiveNumber(last?.input_tokens)
+        ?? positiveNumber(last?.totalTokens)
+        ?? positiveNumber(last?.total_tokens);
+}
+
+function abortError(signal) {
+    const reason = signal?.reason;
+    if (reason instanceof Error) return reason;
+    if (typeof reason === 'string' && reason.trim()) return new Error(reason.trim());
+    return new Error('codex compaction aborted');
+}
+
 /**
  * Compacts an existing Codex thread in place using `codex app-server`.
  * Runs `initialize` → `initialized` → `thread/resume` → `thread/compact/start`
@@ -32,7 +55,16 @@ export async function compactCodexThread(binary, ctx, binaryName = 'codex') {
     if (!sessionId) {
         throw new Error('codex native compaction requires a session id');
     }
-    const env = ctx.scratch ? { CODEX_HOME: ctx.scratch } : {};
+    if (!ctx?.scratch) {
+        throw new Error('codex native compaction requires a mission scratch directory');
+    }
+    if (ctx.signal?.aborted) {
+        throw abortError(ctx.signal);
+    }
+
+    let preTokens = positiveNumber(codexContextSnapshot(ctx.scratch)?.tokens);
+    let notifiedPostTokens;
+    const env = { ...(ctx.env ?? {}), CODEX_HOME: ctx.scratch };
     const conversation = await binary.converse(binaryName, ['app-server'], {
         env,
         timeoutMs: ctx.timeoutMs,
@@ -45,14 +77,26 @@ export async function compactCodexThread(binary, ctx, binaryName = 'codex') {
         let sawCompactionItem = false;
         let unsubscribe = () => {};
 
+        const onAbort = () => {
+            finish(abortError(ctx.signal));
+        };
+
         const finish = (err, result) => {
             if (settled) return;
             settled = true;
+            if (ctx.signal) ctx.signal.removeEventListener('abort', onAbort);
             unsubscribe();
             void conversation.stop();
             if (err) reject(err);
             else resolve(result);
         };
+
+        if (ctx.signal) {
+            if (ctx.signal.aborted) {
+                return finish(abortError(ctx.signal));
+            }
+            ctx.signal.addEventListener('abort', onAbort, { once: true });
+        }
 
         const send = (payload) => {
             conversation.write(`${JSON.stringify(payload)}\n`);
@@ -109,6 +153,15 @@ export async function compactCodexThread(binary, ctx, binaryName = 'codex') {
                 const threadId = notificationThreadId(params);
                 if (threadId && threadId !== sessionId) continue;
 
+                if (msg.method === 'thread/tokenUsage/updated') {
+                    const tokens = extractNotificationTokens(params);
+                    if (tokens !== undefined) {
+                        if (compactStarted) notifiedPostTokens = tokens;
+                        else if (preTokens === undefined) preTokens = tokens;
+                    }
+                    continue;
+                }
+
                 if (msg.method === 'item/completed') {
                     const item = asRecord(params?.item);
                     const type = typeof item?.type === 'string' ? item.type : '';
@@ -128,10 +181,13 @@ export async function compactCodexThread(binary, ctx, binaryName = 'codex') {
                             : '';
                         return finish(new Error(`codex compaction ${status}${detail}`));
                     }
+                    const postTokens = notifiedPostTokens ?? positiveNumber(codexContextSnapshot(ctx.scratch)?.tokens);
                     return finish(null, {
                         metadata: {
                             method: 'thread/compact/start',
                             ...(sawCompactionItem ? { context_compaction: true } : {}),
+                            ...(preTokens !== undefined ? { pre_tokens: preTokens } : {}),
+                            ...(postTokens !== undefined ? { post_tokens: postTokens } : {}),
                         },
                     });
                 }

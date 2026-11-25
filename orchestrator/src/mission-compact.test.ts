@@ -8,8 +8,12 @@ import './test-home.js';
 import { test, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { bus, type BusEvent } from './bus.js';
+import { killAgent, respawnWithResume, sendToAgent } from './agent.js';
+import { dbApi } from './db.js';
+import { registerProfile, registerProvider } from './backends/registry.js';
+import type { NativeProviderDefinition } from './backends/types.js';
 import {
-  compactOperation, planCompaction, resetCompactOperations, startCompaction,
+  compactOperation, defaultCompactDeps, planCompaction, resetCompactOperations, startCompaction,
   type CompactDeps, type MissionLlm,
 } from './mission-compact.js';
 
@@ -299,4 +303,70 @@ test('programmatic native: non-resumable session, hook error, and timeout all en
   const listSlow = await seenSlow.ended;
   assert.equal(listSlow.at(-1)?.phase, 'error');
   assert.match(String(listSlow.at(-1)?.error), /no compaction after/);
+});
+
+test('programmatic native: blocks concurrent sendToAgent/respawnWithResume and aborts on killAgent', async () => {
+  const id = 'm-prog-mutex';
+  const codex: MissionLlm = { agent: 'acme.main', backend: 'codex', model: 'gpt-6.2-sol', reasoningEffort: null };
+  let capturedSignal: AbortSignal | undefined;
+  let started!: () => void;
+  const hookStarted = new Promise<void>((resolve) => { started = resolve; });
+
+  const seen = phases(id);
+  startCompaction(id, {}, fakeDeps({
+    currentLlm: () => codex,
+    nativeCompact: () => ({ run: async () => undefined }),
+    runNativeCompact: (_missionId, _backend, _run, _timeoutMs, signal) => {
+      capturedSignal = signal;
+      started();
+      return new Promise((_resolve, reject) => {
+        signal?.addEventListener('abort', () => reject(signal.reason ?? new Error('aborted')), { once: true });
+      });
+    },
+  }));
+
+  await hookStarted;
+  assert.equal(await sendToAgent(id, 'hello'), 'turn_in_flight');
+  assert.equal(await respawnWithResume(id, 'hello'), false);
+
+  assert.equal(killAgent(id, { source: 'test' }), 'killed');
+  assert.equal(capturedSignal?.aborted, true);
+
+  const list = await seen.ended;
+  assert.equal(list.at(-1)?.phase, 'error');
+  assert.match(String(list.at(-1)?.error), /mission killed/);
+});
+
+test('defaultCompactDeps.runNativeCompact: returns not_resumable when per-mission scratch is missing', async () => {
+  const backendId = 'test-per-mission-compact';
+  const def = {
+    id: backendId,
+    transport: { kind: 'process-per-turn' },
+    launch: async () => ({ cmd: 'acme', args: [], initialStdin: null }),
+    codec: { kind: 'lines', parseLine: () => [], extractSessionId: () => null },
+    session: { store: 'per-mission', resumable: true, compact: { run: async () => undefined } },
+    permission: { model: 'sandbox' },
+    limits: { reporting: 'none' },
+    mcp: { timon: false },
+    declares: { binary: { names: ['acme'] } },
+  } as unknown as NativeProviderDefinition;
+  const releaseProvider = registerProvider('test-per-mission-compact', def);
+  const releaseProfile = registerProfile('test-per-mission-compact', {
+    id: backendId,
+    dialect: backendId,
+    label: 'Test Per-Mission',
+    models: ['m-1'],
+    defaultModel: 'm-1',
+  });
+  try {
+    const missionId = 'm-missing-scratch';
+    dbApi.createMission(missionId, 'acme.main', 'test prompt');
+    dbApi.setMissionSession(missionId, 'thr-1');
+    const deps = defaultCompactDeps();
+    const outcome = await deps.runNativeCompact!(missionId, backendId, async () => undefined, 5_000);
+    assert.equal(outcome, 'not_resumable');
+  } finally {
+    releaseProfile();
+    releaseProvider();
+  }
 });

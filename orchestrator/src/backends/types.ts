@@ -235,8 +235,27 @@ export type NativeCompactContext = {
   readonly cwd?: string;
   /** Per-mission private scratch directory (e.g. `CODEX_HOME`), when present on disk. */
   readonly scratch?: string;
+  /** Resolved profile runtime (env, account, provider config) for this mission. */
+  readonly profile?: ProfileRuntime;
+  /** Launch context identifying the mission, owner, agent, and project. */
+  readonly launch?: BackendLaunchContext;
+  /** Non-secret passthrough environment variables declared by the provider. */
+  readonly env?: Readonly<Record<string, string>>;
   /** Maximum time the compaction may run before timing out, in milliseconds. */
   readonly timeoutMs: number;
+  /** Aborted if the mission is killed or the compaction times out. */
+  readonly signal?: AbortSignal;
+};
+
+/** Input to `Backend.runNativeCompact` (orchestrator-bound programmatic compaction). */
+export type RunNativeCompactOpts = {
+  readonly missionId: string;
+  readonly agentName: string;
+  readonly cfg: Pick<ProviderAgentConfig, 'cwd' | 'project'>;
+  readonly sessionId: string;
+  readonly scratch?: string;
+  readonly timeoutMs: number;
+  readonly signal?: AbortSignal;
 };
 
 /** Optional metadata returned by a provider's programmatic native compaction hook. */
@@ -1300,6 +1319,13 @@ export interface Backend {
   /** Cf. `Dialect.nativeCompact`. Absent = the agent cannot compact its own
    *  session: a compaction summarizes and forks (`mission-compact.ts`). */
   readonly nativeCompact?: NativeCompact;
+
+  /**
+   * Bound programmatic compaction runner, present when `nativeCompact` uses
+   * `{ run }`. Resolves the profile runtime, journals injected secrets, and
+   * applies declared `passthroughEnv` before invoking `nativeCompact.run`.
+   */
+  runNativeCompact?(opts: RunNativeCompactOpts): Promise<NativeCompactResult | void>;
 
   /** Cleanup of per-mission resources created by the backend (scratch dir,
    *  sockets…), called when the mission is explicitly killed. Optional:

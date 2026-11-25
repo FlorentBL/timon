@@ -13,13 +13,15 @@ import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { TIMON_HOME } from '../paths.js';
+import { dbApi } from '../db.js';
 import { mountOfficialProviders, stubCliBinaries, buildUnderSeal } from '../../tests/helpers/official-providers.js';
 import { nativeCompactCommand, nativeCompactOf } from './capabilities.js';
-import { catalogBackend } from './index.js';
+import { catalogBackend, getBackend } from './index.js';
+import { registerProfile, registerProvider } from './registry.js';
 import { definitionProblems } from './engine/definition-check.js';
 import { dialectProblems } from './dialect-check.js';
 import { dialectFromDefinition } from './engine/native.js';
-import type { BuildSpawnOpts, NativeProviderDefinition } from './types.js';
+import type { BuildSpawnOpts, NativeCompactContext, NativeProviderDefinition } from './types.js';
 
 process.env.CODEX_AUTH_DIR = join(TIMON_HOME, 'codex-auth');
 mkdirSync(process.env.CODEX_AUTH_DIR, { recursive: true });
@@ -106,4 +108,60 @@ test('a malformed declaration is refused, in a definition and in a dialect', () 
   }
   assert.ok(dialectProblems({ nativeCompact: { command: ' ' } }).some((p) => p.includes('nativeCompact')));
   assert.ok(dialectProblems({ nativeCompact: { command: '/compact', run } }).some((p) => p.includes('nativeCompact')));
+});
+
+test('Backend.runNativeCompact resolves profile runtime, passthroughEnv, launch context, and signal', async () => {
+  const id = 'acme-bound-compact';
+  let received: NativeCompactContext | undefined;
+  process.env.ACME_COMPACT_DIR = 'from-host';
+  const def = {
+    ...MINIMAL,
+    id,
+    declares: { ...MINIMAL.declares, passthroughEnv: ['ACME_COMPACT_DIR'] },
+    session: {
+      ...MINIMAL.session,
+      compact: {
+        run: async (ctx: NativeCompactContext) => {
+          received = ctx;
+          return { metadata: { pre_tokens: 1000, post_tokens: 200 } };
+        },
+      },
+    },
+  } as unknown as NativeProviderDefinition;
+  const releaseProvider = registerProvider('@test/acme-bound-compact', def);
+  const releaseProfile = registerProfile('@test/acme-bound-compact', {
+    id,
+    dialect: id,
+    label: 'Acme Bound',
+    models: ['m-1'],
+    defaultModel: 'm-1',
+  });
+  try {
+    dbApi.createMission('m-bound-1', 'acme.main', 'test');
+    const backend = getBackend(id);
+    assert.ok(backend?.runNativeCompact);
+    const controller = new AbortController();
+    const res = await backend.runNativeCompact({
+      missionId: 'm-bound-1',
+      agentName: 'acme.main',
+      cfg: { cwd: TIMON_HOME, project: 'acme' },
+      sessionId: 'sess-bound-1',
+      scratch: join(TIMON_HOME, 'scratch-1'),
+      timeoutMs: 30_000,
+      signal: controller.signal,
+    });
+    assert.deepEqual(res, { metadata: { pre_tokens: 1000, post_tokens: 200 } });
+    assert.ok(received);
+    assert.equal(received.missionId, 'm-bound-1');
+    assert.equal(received.sessionId, 'sess-bound-1');
+    assert.equal(received.cwd, TIMON_HOME);
+    assert.equal(received.env?.ACME_COMPACT_DIR, 'from-host');
+    assert.equal(received.launch?.project, 'acme');
+    assert.equal(received.signal, controller.signal);
+    assert.ok(received.profile && typeof received.profile === 'object');
+  } finally {
+    delete process.env.ACME_COMPACT_DIR;
+    releaseProfile();
+    releaseProvider();
+  }
 });

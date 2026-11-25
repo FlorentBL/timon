@@ -2628,6 +2628,36 @@
         "label": "string",
         "description?": "string | undefined"
       }
+    },
+    "NativeCompact": {
+      "since": 19,
+      "signature": "NativeCompact",
+      "members": {
+        "|0": "{ readonly command: string; }",
+        "|1": "{ readonly run: (ctx: NativeCompactContext) => Promise<NativeCompactResult | void>; }"
+      }
+    },
+    "NativeCompactContext": {
+      "since": 19,
+      "signature": "NativeCompactContext",
+      "members": {
+        "missionId": "string",
+        "sessionId": "string",
+        "cwd?": "string | undefined",
+        "scratch?": "string | undefined",
+        "profile?": "ProfileRuntime | undefined",
+        "launch?": "BackendLaunchContext | undefined",
+        "env?": "Readonly<Record<string, string>> | undefined",
+        "timeoutMs": "number",
+        "signal?": "AbortSignal | undefined"
+      }
+    },
+    "NativeCompactResult": {
+      "since": 19,
+      "signature": "NativeCompactResult",
+      "members": {
+        "metadata?": "Readonly<Record<string, unknown>> | undefined"
+      }
     }
   },
   "kitExports": {
@@ -3161,6 +3191,7 @@
         "setModel?": "((proc: ChildProcessWithoutNullStreams, model: string) => Promise<boolean>) | undefined",
         "maxPromptBytes?": "number | undefined",
         "nativeCompact?": "NativeCompact | undefined",
+        "runNativeCompact?": "((opts: RunNativeCompactOpts) => Promise<NativeCompactResult | void>) | undefined",
         "dispose?": "((missionId: string) => void) | undefined",
         "enrichEvent?": "((ev: NormalizedEvent, missionId: string) => NormalizedEvent) | undefined"
       }
@@ -4070,6 +4101,36 @@
         "save": "(token: string) => void",
         "stored": "() => boolean",
         "ttlMs?": "number | undefined"
+      }
+    },
+    "NativeCompact": {
+      "since": 19,
+      "signature": "NativeCompact",
+      "members": {
+        "|0": "{ readonly command: string; }",
+        "|1": "{ readonly run: (ctx: NativeCompactContext) => Promise<NativeCompactResult | void>; }"
+      }
+    },
+    "NativeCompactContext": {
+      "since": 19,
+      "signature": "NativeCompactContext",
+      "members": {
+        "missionId": "string",
+        "sessionId": "string",
+        "cwd?": "string | undefined",
+        "scratch?": "string | undefined",
+        "profile?": "ProfileRuntime | undefined",
+        "launch?": "BackendLaunchContext | undefined",
+        "env?": "Readonly<Record<string, string>> | undefined",
+        "timeoutMs": "number",
+        "signal?": "AbortSignal | undefined"
+      }
+    },
+    "NativeCompactResult": {
+      "since": 19,
+      "signature": "NativeCompactResult",
+      "members": {
+        "metadata?": "Readonly<Record<string, unknown>> | undefined"
       }
     }
   },

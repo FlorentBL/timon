@@ -68,7 +68,9 @@ function stampBackend(events: NormalizedEvent[], profileId: string): NormalizedE
  * spawn with no mission row behind it (a daemon one-shot: `summary-…`) is not a
  * mission: it gets the `probe` context, never an id nobody can look up.
  */
-export function launchContextFor(spawn: Pick<BuildSpawnOpts, 'missionId' | 'agentName' | 'cfg'>): BackendLaunchContext {
+export function launchContextFor(
+  spawn: { readonly missionId: string; readonly agentName: string; readonly cfg: Pick<BuildSpawnOpts['cfg'], 'project'> },
+): BackendLaunchContext {
   let owner: string | null | undefined;
   try {
     owner = dbApi.getMission(spawn.missionId)?.owner_user_id;
@@ -93,7 +95,9 @@ export function launchContextFor(spawn: Pick<BuildSpawnOpts, 'missionId' | 'agen
  * else (TODO #531, decision 5-B). The backend is added by the credentials
  * layer, from the profile.
  */
-export function secretTargetFor(spawn: Pick<BuildSpawnOpts, 'agentName' | 'cfg'>): SecretTarget {
+export function secretTargetFor(
+  spawn: { readonly agentName: string; readonly cfg: Pick<BuildSpawnOpts['cfg'], 'cwd' | 'project'> },
+): SecretTarget {
   return { agent: spawn.agentName, project: spawn.cfg.project ?? projectFromCwd(spawn.cfg.cwd) ?? null };
 }
 
@@ -109,14 +113,44 @@ export function secretTargetFor(spawn: Pick<BuildSpawnOpts, 'agentName' | 'cfg'>
  * wins. The names were checked at registration (`passthroughProblem`): nothing that
  * reads like a credential gets here.
  */
-function withPassthroughEnv(spawn: SpawnResult, names: readonly string[] | undefined): SpawnResult {
-  if (!names || names.length === 0) return spawn;
+function passthroughEnvOf(names: readonly string[] | undefined): Record<string, string> | undefined {
+  if (!names || names.length === 0) return undefined;
   const copied: Record<string, string> = {};
   for (const name of names) {
     const value = process.env[name];
     if (value !== undefined) copied[name] = value;
   }
-  return Object.keys(copied).length === 0 ? spawn : { ...spawn, env: { ...copied, ...(spawn.env ?? {}) } };
+  return Object.keys(copied).length === 0 ? undefined : copied;
+}
+
+function withPassthroughEnv(spawn: SpawnResult, names: readonly string[] | undefined): SpawnResult {
+  const copied = passthroughEnvOf(names);
+  return copied ? { ...spawn, env: { ...copied, ...(spawn.env ?? {}) } } : spawn;
+}
+
+function bindNativeCompact(
+  profile: ResolvedProfile['profile'],
+  nativeCompact: Backend['nativeCompact'],
+  runtimeFor: ResolvedProfile['runtimeFor'],
+): Backend['runNativeCompact'] {
+  if (!nativeCompact || !('run' in nativeCompact)) return undefined;
+  return async (opts) => {
+    const launch = launchContextFor(opts);
+    const { runtime, injected } = await runtimeFor(secretTargetFor(opts), launch);
+    journalInjectedSecrets({ missionId: opts.missionId, agent: opts.agentName, injected });
+    const env = passthroughEnvOf(dialectDeclarations(profile.dialect)?.passthroughEnv);
+    return nativeCompact.run({
+      missionId: opts.missionId,
+      sessionId: opts.sessionId,
+      ...(opts.cfg.cwd ? { cwd: opts.cfg.cwd } : {}),
+      ...(opts.scratch ? { scratch: opts.scratch } : {}),
+      profile: runtime,
+      launch,
+      ...(env ? { env } : {}),
+      timeoutMs: opts.timeoutMs,
+      ...(opts.signal ? { signal: opts.signal } : {}),
+    });
+  };
 }
 
 function backendFromProfile({ profile, dialect, runtimeFor }: ResolvedProfile): Backend {
@@ -186,6 +220,9 @@ function backendFromProfile({ profile, dialect, runtimeFor }: ResolvedProfile): 
     ...(dialect.setModel ? { setModel: dialect.setModel.bind(dialect) } : {}),
     ...(dialect.maxPromptBytes ? { maxPromptBytes: dialect.maxPromptBytes } : {}),
     ...(dialect.nativeCompact ? { nativeCompact: dialect.nativeCompact } : {}),
+    ...(dialect.nativeCompact && 'run' in dialect.nativeCompact
+      ? { runNativeCompact: bindNativeCompact(profile, dialect.nativeCompact, runtimeFor) }
+      : {}),
     ...(dialect.dispose ? { dispose: dialect.dispose.bind(dialect) } : {}),
     ...(dialect.enrichEvent ? { enrichEvent: dialect.enrichEvent.bind(dialect) } : {}),
   };
@@ -218,6 +255,9 @@ function remoteBackendFromProfile(
     ...(dialect.browserToolsHint ? { browserToolsHint: dialect.browserToolsHint } : {}),
     ...(dialect.permissionsHint ? { permissionsHint: dialect.permissionsHint } : {}),
     ...(dialect.nativeCompact ? { nativeCompact: dialect.nativeCompact } : {}),
+    ...(dialect.nativeCompact && 'run' in dialect.nativeCompact
+      ? { runNativeCompact: bindNativeCompact(profile, dialect.nativeCompact, runtimeFor) }
+      : {}),
     ...(dialect.accountUsage
       ? {
         accountUsage: async (options?: UsageProbeOptions): Promise<AccountUsage | null> => {
