@@ -21,7 +21,7 @@
  */
 import { existsSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
-import { dbApi } from './db.js';
+import { dbApi, type SeriesPlanLandingRecord } from './db.js';
 import { baseRefLabel, ensureIntegrationBranch, type IntegrationRefusalCode } from './git-integration.js';
 import { execFileHost } from './host/index.js';
 import { TIMON_HOME } from './paths.js';
@@ -62,6 +62,19 @@ export type SeriesBranchDeps = {
   ensureBranch?: typeof ensureIntegrationBranch;
 };
 
+/**
+ * What the planner chose for the job of `seriesId`. The answer is recorded
+ * under the mission that answered it (`permissions.ts`), which is the series
+ * only for the pilot that opened it: a pilot that took the series over
+ * answers under its own mission, the series' current pilot.
+ */
+function plannedLanding(seriesId: string): SeriesPlanLandingRecord | undefined {
+  const own = dbApi.getSeriesPlanLanding(seriesId);
+  if (own) return own;
+  const pilot = dbApi.seriesPilotMission(seriesId);
+  return pilot && pilot !== seriesId ? dbApi.getSeriesPlanLanding(pilot) : undefined;
+}
+
 function refused(status: number, code: SeriesBranchRefusalCode, reason: string): SeriesBranchOutcome {
   return { ok: false, status, code, reason };
 }
@@ -98,7 +111,7 @@ export async function prepareSeriesBranch(
   const target = planProject(pilot.agent_name, seriesId);
   const found = target ? landingSetting(target.slug, target.cwd) : null;
   // What the planner chose for this job, when it chose this very branch.
-  const recorded = dbApi.getSeriesPlanLanding(seriesId);
+  const recorded = plannedLanding(seriesId);
   const local = found?.setting.mode !== 'pr';
   const planned = recorded && found && (recorded.project === target?.slug || recorded.repo === found.repo)
     && (recorded.branch === proposed.trim() || recorded.branch === planBranchName(proposed, found.setting.branch_prefix))

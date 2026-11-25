@@ -1,9 +1,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, lstatSync, mkdtempSync, readFileSync, readlinkSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readlinkSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { ArchiveError, extractTarGz, extractZip, installRaw } from './archive.js';
+import { ArchiveError, extractTarGz, extractZip, installRaw, type IdentityProbe } from './archive.js';
 import { buildTarGzWithModes, buildZip } from './archive-fixtures.js';
 
 const posix = process.platform !== 'win32';
@@ -190,14 +190,15 @@ test('tar.gz: a link to a folder above it is refused in both modes, even reached
   assert.equal(existsSync(join(dest, 'a', 'b', 'x')), false);
 });
 
-test('tar.gz: where the disk folds case and Unicode form, two spellings of one name are refused', async () => {
+test('tar.gz: two spellings of one name are refused on every system, whatever the disk', async () => {
   const nfc = 'caf\u00e9';
   const nfd = 'cafe\u0301';
   const cases: Array<[string, Parameters<typeof buildTarGzWithModes>[0], string]> = [
     ['case', [{ path: 'a/', type: '5' }, { path: 'A/f', data: 'x' }], 'unsafe-path'],
     ['case, files', [{ path: 'Readme', data: 'x' }, { path: 'README', data: 'y' }], 'unsafe-path'],
     ['unicode form', [{ path: `${nfc}/`, type: '5' }, { path: `${nfd}/f`, data: 'x' }], 'unsafe-path'],
-    // The reviewed case: on APFS or NTFS `../A` is `a` itself, which the string checks call another folder.
+    // The reviewed case: on APFS, NTFS, vfat or ext4 casefold `../A` is `a` itself, which the string checks call
+    // another folder. Refused here on a disk that compares bytes too: the check does not ask which disk it is.
     ['link to its folder by case', [{ path: 'a/', type: '5' }, { path: 'a/x', type: '2', link: '../A' }], 'link'],
     ['link by unicode form', [{ path: `${nfc}/f`, data: 'x' }, { path: 'l', type: '2', link: `${nfd}/f` }], 'link'],
     // The link entry comes first: its target is checked once every entry is known.
@@ -208,52 +209,75 @@ test('tar.gz: where the disk folds case and Unicode form, two spellings of one n
     for (const [label, files, code] of cases) {
       const dest = join(scratch(), 'o');
       await assert.rejects(
-        () => extractTarGz(archiveFile(buildTarGzWithModes(files), 'x.tar.gz'), dest, undefined, mode, true),
+        () => extractTarGz(archiveFile(buildTarGzWithModes(files), 'x.tar.gz'), dest, undefined, mode),
         (err: unknown) => err instanceof ArchiveError && err.code === code,
         `${mode}, ${label}: ${code}`,
       );
       assert.equal(existsSync(join(dest, 'a', 'x', 'x')), false, `${mode}, ${label}: nothing copied into itself`);
     }
   }
-  // Same spelling twice is no collision, and where the disk compares bytes both names are kept.
+  // Same spelling twice is no collision, and one name spelled two ways in two folders is two paths.
   const dest = join(scratch(), 'o');
   await extractTarGz(archiveFile(buildTarGzWithModes([
     { path: 'lib/', type: '5' }, { path: 'lib/', type: '5' }, { path: 'lib/f', data: 'x' }, { path: 'l', type: '2', link: 'lib/f' },
-  ]), 'same.tar.gz'), dest, undefined, 'copy', true);
+    { path: 'a/Readme', data: 'r' }, { path: 'b/README', data: 'R' },
+  ]), 'same.tar.gz'), dest, undefined, 'copy');
   assert.equal(readFileSync(join(dest, 'l'), 'utf8'), 'x');
-  if (process.platform === 'linux') {
-    const bytes = join(scratch(), 'o');
-    await extractTarGz(archiveFile(buildTarGzWithModes([{ path: 'Readme', data: 'x' }, { path: 'README', data: 'y' }]), 'r.tar.gz'), bytes);
-    assert.equal(readFileSync(join(bytes, 'README'), 'utf8'), 'y');
+  assert.equal(readFileSync(join(dest, 'a', 'Readme'), 'utf8'), 'r');
+  assert.equal(readFileSync(join(dest, 'b', 'README'), 'utf8'), 'R');
+});
+
+/**
+ * Stands for a disk that folds names, on any disk: `dest/B` is made beforehand as another way to reach `dest/a`,
+ * exactly what `A` is on a folding volume. The spelling check cannot see it (`B` is no spelling of `a`), so only
+ * the identity check stands between `a/x -> ../B` and an endless tree.
+ */
+function destWithFoldedRoute(): string {
+  const dest = join(scratch(), 'o');
+  mkdirSync(dest);
+  // A junction needs no privilege on Windows; elsewhere the type is ignored.
+  symlinkSync(join(dest, 'a'), join(dest, 'B'), 'junction');
+  return dest;
+}
+const FOLDED_TRAP: Parameters<typeof buildTarGzWithModes>[0] = [{ path: 'a/', type: '5' }, { path: 'a/x', type: '2', link: '../B' }];
+
+test('tar.gz: a link that reaches its own folder by a route the strings miss is refused by identity', async () => {
+  for (const mode of ['symlink', 'copy'] as const) {
+    if (mode === 'symlink' && !posix) continue;
+    const dest = destWithFoldedRoute();
+    await rejects(() => extractTarGz(archiveFile(buildTarGzWithModes(FOLDED_TRAP), 'x.tar.gz'), dest, undefined, mode), 'link');
+    // Linked, the refused link stays in the discarded partial folder; copied, nothing may have been copied into itself.
+    if (mode === 'copy') assert.equal(existsSync(join(dest, 'a', 'x')), false, 'nothing copied into itself');
   }
 });
 
-/** Whether the scratch disk calls two spellings one name (APFS, NTFS: case; APFS: Unicode form too). */
-function diskFolds(a: string, b: string): boolean {
-  const dir = scratch();
-  writeFileSync(join(dir, a), '');
-  return existsSync(join(dir, b));
-}
-
-test('tar.gz: on a disk that folds names, a link to its own folder by another spelling is refused by identity alone', async (t) => {
-  const nfc = 'caf\u00e9';
-  const nfd = 'cafe\u0301';
-  const cases: Array<[string, Parameters<typeof buildTarGzWithModes>[0], boolean]> = [
-    ['case', [{ path: 'a/', type: '5' }, { path: 'a/x', type: '2', link: '../A' }], diskFolds('Probe', 'probe')],
-    ['unicode form', [{ path: `${nfc}/`, type: '5' }, { path: `${nfc}/x`, type: '2', link: `../${nfd}` }], diskFolds(nfc, nfd)],
-  ];
-  if (!cases.some(([, , folds]) => folds)) return t.skip('this disk compares names byte for byte');
+test('tar.gz: a link target the disk cannot identify refuses the archive (no usable inode, or stat failing)', async () => {
+  const noInode: IdentityProbe = (path) => ({ ...statSync(path, { bigint: true }), ino: 0n });
+  const failing: IdentityProbe = () => { throw Object.assign(new Error('EIO: i/o error, stat'), { code: 'EIO' }); };
   for (const mode of ['symlink', 'copy'] as const) {
     if (mode === 'symlink' && !posix) continue;
-    for (const [label, files, folds] of cases) {
-      if (!folds) continue;
-      // `foldNames` off: the spelling check stays out of the way, the disk identity check alone must refuse.
+    for (const [label, probe] of [['ino 0', noInode], ['stat error', failing]] as const) {
+      // The reviewed hole: names that fold, a volume without identity. Refused, never waved through.
+      const dest = destWithFoldedRoute();
+      await rejects(() => extractTarGz(archiveFile(buildTarGzWithModes(FOLDED_TRAP), 'x.tar.gz'), dest, undefined, mode, probe), 'link');
+      if (mode === 'copy') assert.equal(existsSync(join(dest, 'a', 'x')), false, `${label}: nothing copied into itself`);
+      // The reviewed archive itself, `a/` + `a/x -> ../A`, on that volume: the spelling check refuses it first.
+      const folded = join(scratch(), 'o');
+      await rejects(() => extractTarGz(archiveFile(buildTarGzWithModes([
+        { path: 'a/', type: '5' }, { path: 'a/x', type: '2', link: '../A' },
+      ]), 'A.tar.gz'), folded, undefined, mode, probe), 'link');
+      assert.equal(existsSync(join(folded, 'a', 'x')), false, `${label}: no link to its own folder`);
+      // Fail-closed for every link that reaches something, a legitimate framework included.
       await assert.rejects(
-        () => extractTarGz(archiveFile(buildTarGzWithModes(files), 'x.tar.gz'), join(scratch(), 'o'), undefined, mode, false),
+        () => extractTarGz(archiveFile(buildTarGzWithModes(FRAMEWORK), 'f.tar.gz'), join(scratch(), 'o'), undefined, mode, probe),
         (err: unknown) => err instanceof ArchiveError && err.code === 'link',
-        `${mode}, ${label}`,
+        `${mode}, ${label}: framework`,
       );
     }
+    // An archive without links never asks the disk who a file is.
+    const plain = join(scratch(), 'o');
+    await extractTarGz(archiveFile(buildTarGzWithModes([{ path: 'bin/agent', data: 'x', mode: 0o755 }]), 'p.tar.gz'), plain, undefined, mode, failing);
+    assert.equal(readFileSync(join(plain, 'bin', 'agent'), 'utf8'), 'x');
   }
 });
 

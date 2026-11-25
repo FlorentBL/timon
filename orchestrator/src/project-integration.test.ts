@@ -84,6 +84,8 @@ test('a setting stored before remote_url existed still reads, with no push URL',
   assert.equal(read.invalid, undefined);
   assert.equal(read.integration.remote_url, null);
   assert.equal(read.integration.account, 'ai-bot');
+  assert.equal(read.integration.delete_remote_branch, false, 'a remote branch is never deleted unless asked');
+  assert.equal(updateProjectIntegration(slug, { delete_remote_branch: true }, { home }).delete_remote_branch, true);
 });
 
 test('a missing project is not_found, not created', () => {

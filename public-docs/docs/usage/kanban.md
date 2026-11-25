@@ -307,6 +307,8 @@ Git coding tasks use dedicated worktrees. This isolates tracked files, not an ex
 
 A `code` or `merge` task of a Git project never runs in the project's own folder, the checkout you and every agent share. When its base branch does not exist, or its worktree cannot be created, the task is blocked with the reason: create the branch or change the task's base, then move the task back to Pending. When a task is merged, its base branch moves by reference only: your checkout, its files and its current position stay as they are, unless you stand on that base branch yourself.
 
+Creating a worktree checks out every tracked file, which takes a while on a large repository or on a disk slowed down by an antivirus. Timon waits for as long as git reports its progress (`Updating files: 55% (4760/8608)`). When git reports nothing for 2 minutes, Timon stops it with every process it started, removes the half-made worktree, keeps its branch, and blocks the task with git's last line. Raise **Worktree creation without progress** in **Settings → Missions → Cleanup** (`TIMON_WORKTREE_ADD_STALL_MS`, in milliseconds) for a repository that slow, then move the task back to Pending. A task never starts in a worktree whose checkout is unfinished: while git still writes it, the task is blocked and says so.
+
 A worktree starts with the tracked files only. Timon links the installed `node_modules` of the main checkout into it, and you can ask for more: list folders in a `.worktreelinks` file at the root of the repository, one path per line (`#` starts a comment), and every task worktree links them from the main checkout. Use it for a folder git ignores and the agents need, such as a notes repository cloned inside your project:
 
 ```text

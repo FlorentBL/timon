@@ -212,3 +212,93 @@ test('an offer forged toward the Timon home is refused by the folder checks, not
   assert.equal(storedOf('lib.other'), undefined);
   assert.equal(dbApi.listEvents(m).some((e) => e.type === 'fence_grant_resolved'), false);
 });
+
+// ── TODO #1168: the project's folders, and a task the refusal blocked ──
+
+const { createProject } = await import('../../projects.js');
+const { projectExtraDirs } = await import('../../project-extra-dirs.js');
+createProject('libproj', { name: 'Library' });
+{
+  const made = await call('POST', '/api/agents', { bearer: TOKEN, body: { name: 'libproj.coder', system_prompt: 'p', config: { role: 'coder', project: 'libproj' } } });
+  assert.equal(made.status, 200, JSON.stringify(made.json));
+}
+const projectOffer = { path: mkdtempSync(join(tmpdir(), 'timon-fence-grant-project-')), display: 'shared', mode: 'write' as const, project: 'libproj' };
+
+test('"Allow for the project" adds the folder to the project, never to the agent', async () => {
+  const m = mission('libproj.coder', adminId);
+  const id = refusal(m, 'libproj.coder', projectOffer);
+  const r = await call('POST', route(m, id), { cookie: adminCookie, body: { decision: 'allow', scope: 'project' } });
+  assert.equal(r.status, 200, JSON.stringify(r.json));
+  assert.deepEqual(projectExtraDirs('libproj'), [{ path: projectOffer.path, mode: 'write' }]);
+  assert.equal(storedOf('libproj.coder'), undefined);
+  const resolution = r.json.resolution as Record<string, unknown>;
+  assert.equal(resolution.scope, 'project');
+  assert.equal(resolution.project, 'libproj');
+  assert.match(relaunched.at(-1)!.text, /missions of project libproj may now read and write/);
+});
+
+test('"Allow for the project" needs a project in the offer, and projects:manage', async () => {
+  const m = mission('lib.coder', adminId);
+  const id = refusal(m, 'lib.coder', offer);
+  const none = await call('POST', route(m, id), { cookie: adminCookie, body: { decision: 'allow', scope: 'project' } });
+  assert.equal(none.status, 404, JSON.stringify(none.json));
+  const other = mission('libproj.coder', managerId);
+  const asManager = refusal(other, 'libproj.coder', { ...projectOffer, path: mkdtempSync(join(tmpdir(), 'timon-fence-grant-mgr-')) });
+  const denied = await call('POST', route(other, asManager), { cookie: managerCookie, body: { decision: 'allow', scope: 'project' } });
+  assert.equal(denied.status, 403, JSON.stringify(denied.json));
+  assert.deepEqual(projectExtraDirs('libproj'), [{ path: projectOffer.path, mode: 'write' }]);
+  // The daemon token and a mission token are refused here too.
+  for (const bearer of [TOKEN, issueMissionApiToken(other)]) {
+    assert.equal((await call('POST', route(other, asManager), { bearer, body: { decision: 'allow', scope: 'project' } })).status, 403);
+  }
+  assert.equal((await call('POST', route(other, asManager), { cookie: adminCookie, body: { decision: 'allow', scope: 'team' } })).status, 400);
+});
+
+/** A task whose launch the fence refused: its mission was created, never linked, and the task is BLOCKED. */
+function blockedTask(agent: string, grant: typeof offer | typeof projectOffer): { taskId: string; missionId: string; refusalId: string } {
+  const taskId = randomUUID();
+  dbApi.createTask(taskId, 'fenced task', agent, { type: 'code', ownerUserId: adminId });
+  const missionId = randomUUID();
+  dbApi.createMission(missionId, agent, 'work', { channel: 'dispatcher', meta: { task_id: taskId } }, adminId);
+  const refusalId = refusal(missionId, agent, grant, { stage: 'launch' });
+  // What `blockOnFenceRefusal` (dispatcher.ts) writes; the dispatcher itself is not loaded here.
+  dbApi.updateTaskStatus(taskId, 'BLOCKED', { blockedReason: 'Mission not started: the mission fence refused ~/x. Then retry the task.' });
+  assert.equal(dbApi.getTask(taskId)!.status, 'BLOCKED');
+  return { taskId, missionId, refusalId };
+}
+
+test('a task blocked by a refused launch goes back to PENDING; its mission is not relaunched', async () => {
+  const before = relaunched.length;
+  const { taskId, missionId, refusalId } = blockedTask('lib.coder', { ...offer, path: mkdtempSync(join(tmpdir(), 'timon-fence-grant-task-')) });
+  const r = await call('POST', route(missionId, refusalId), { cookie: adminCookie, body: { decision: 'allow' } });
+  assert.equal(r.status, 200, JSON.stringify(r.json));
+  assert.equal(r.json.requeued, true);
+  assert.equal(r.json.relaunched, false);
+  assert.equal(r.json.taskId, taskId);
+  const task = dbApi.getTask(taskId)!;
+  assert.equal(task.status, 'PENDING');
+  assert.equal(task.blocked_reason, null);
+  assert.equal(relaunched.length, before);
+});
+
+test('the same with "Allow for the project"', async () => {
+  const { taskId, missionId, refusalId } = blockedTask('libproj.coder', { ...projectOffer, path: mkdtempSync(join(tmpdir(), 'timon-fence-grant-ptask-')) });
+  const r = await call('POST', route(missionId, refusalId), { cookie: adminCookie, body: { decision: 'allow', scope: 'project' } });
+  assert.equal(r.status, 200, JSON.stringify(r.json));
+  assert.equal(r.json.requeued, true);
+  assert.equal(dbApi.getTask(taskId)!.status, 'PENDING');
+});
+
+test('a task that moved on to another mission is left alone, and the old mission is not relaunched', async () => {
+  const before = relaunched.length;
+  const { taskId, missionId, refusalId } = blockedTask('lib.coder', { ...offer, path: mkdtempSync(join(tmpdir(), 'timon-fence-grant-moved-')) });
+  dbApi.updateTaskStatus(taskId, 'PENDING');
+  dbApi.assignTaskMission(taskId, mission('lib.coder', adminId));
+  const r = await call('POST', route(missionId, refusalId), { cookie: adminCookie, body: { decision: 'allow' } });
+  assert.equal(r.status, 200, JSON.stringify(r.json));
+  assert.equal(r.json.requeued, false);
+  assert.equal(r.json.relaunched, false);
+  assert.equal(r.json.taskMovedOn, true);
+  assert.equal(dbApi.getTask(taskId)!.status, 'IN_PROGRESS');
+  assert.equal(relaunched.length, before);
+});
