@@ -5,6 +5,7 @@ import { runInNewContext } from 'node:vm';
 import ts from 'typescript';
 import type { MenuItemConstructorOptions } from 'electron';
 import { appMenuTemplate, newWindowShortcut } from './app-menu.js';
+import { contextMenuTemplate } from './context-menu.js';
 import { canReadAppInfo } from './app-info.js';
 import { isMachineId, pageUrl, withMachineHeader, LOCAL_MACHINE_ID } from './window-machine.js';
 import { routeOfUrl } from './window-layout.js';
@@ -846,6 +847,23 @@ test('zoom: Ctrl+wheel steps one stop at a time', () => {
   wheel({}, 'in');
   wheel({}, 'out');
   assert.deepEqual(applied, [1.25, 1.1]);
+});
+
+test('context menu: a right click on a page pops the menu over its window, and nothing where there is nothing to offer', () => {
+  const popped: { items: MenuItemConstructorOptions[]; window: unknown }[] = [];
+  const w = { id: 'window' };
+  const context = {
+    w, contextMenuTemplate, uiLocale: () => 'en-US',
+    contents: { cut: () => {}, copy: () => {}, paste: () => {}, selectAll: () => {}, replaceMisspelling: () => {} },
+    Menu: { buildFromTemplate: (items: MenuItemConstructorOptions[]) => ({ popup: (options: { window: unknown }) => popped.push({ items, window: options.window }) }) },
+  };
+  const onMenu = runInNewContext(compile(`(${pageListener('context-menu')})`), context) as (event: unknown, params: unknown) => void;
+  const flags = { canUndo: true, canRedo: true, canCut: true, canCopy: true, canPaste: true, canDelete: true, canSelectAll: true, canEditRichly: false };
+  onMenu({}, { isEditable: true, editFlags: flags, selectionText: '', misspelledWord: '', dictionarySuggestions: [], formControlType: 'input-text' });
+  onMenu({}, { isEditable: false, editFlags: flags, selectionText: '', misspelledWord: '', dictionarySuggestions: [], formControlType: 'none' });
+  assert.equal(popped.length, 1);
+  assert.equal(popped[0]!.window, w);
+  assert.deepEqual(popped[0]!.items.map((item) => item.label ?? '-'), ['Cut', 'Copy', 'Paste', '-', 'Select All']);
 });
 
 test('zoom: each page is sized before it loads and again once it has, the size told to it', () => {

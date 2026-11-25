@@ -35,7 +35,7 @@ A task without `mirror` is an ordinary task: it is handed to its agent as soon a
 | Call | What it does |
 | --- | --- |
 | `ctx.kanban.get(id)` | One task with its `links`; `undefined` when unknown or not yours to see |
-| `ctx.kanban.list({ status, project, mirror, limit })` | Tasks you may see. `status` is one value or a list (`['PENDING', 'BLOCKED']`): a task matching any is returned once, and an empty list is `invalid` |
+| `ctx.kanban.list({ status, project, mirror, limit })` | Tasks you may see. `status` is one value or, from API 19, a list (`['PENDING', 'BLOCKED']`): a task matching any is returned once, and an empty list is `invalid` |
 | `ctx.kanban.add(task)` | Create. Accepts the options of the `kanban_add` tool: `model`, `backend`, `permissionMode`, `fallbackBackend`, `fallbackModel`, `base`, `pipeline`, `extraSkills`, `extraMcp`, `extraAllowedTools` |
 | `ctx.kanban.ensure(task, links)` | Create the task unless one of `links` already points at a task you see; returns `{ task, created }` |
 | `ctx.kanban.update(id, patch)` | Title, description, priority, dependencies, date, `status`, `agent`, `type` |
