@@ -356,6 +356,8 @@ timon app status
 
 If `systemctl` reports no such unit, list the Timon units of your account with `systemctl --user list-unit-files 'timon-*'` and restart the one that belongs to your data directory.
 
+When the desktop app runs its own built-in daemon instead of a background service (portable mode, or an app opened on another data folder), no service command restarts it: quit the app and open it again. Timon then says so itself, in the setup's restart step and in the notice that follows a change to its code.
+
 Restart when no mission is running: it interrupts active work. See [Running in the background](background.md) for macOS and Windows, and [Configuration](configuration.md) for the file itself.
 
 ## Keep it safe
