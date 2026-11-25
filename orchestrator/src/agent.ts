@@ -125,7 +125,8 @@ import { parkProviderScratch } from './backends/provider-scratch.js';
 import { packageCacheEnv } from './backends/package-cache-env.js';
 import { launchBackendName, launchForMission, replaceMissionLaunch, resolveLaunchBackend } from './backends/account-launch.js';
 import { servedIconUrl } from './uploads.js';
-import { launchExtraDirs, storedExtraDirs, type AgentExtraDir } from './agent-extra-dirs.js';
+import { storedExtraDirs, type AgentExtraDir } from './agent-extra-dirs.js';
+import { missionExtraDirs } from './project-extra-dirs.js';
 import { withFenceGrantOffer } from './fence-grant.js';
 import {
   systemEnv, secretsEnvFor, inheritEnvEnabled,
@@ -1941,15 +1942,16 @@ export function missionFenceTarget(input: {
     gitDirs: git.dirs,
     pluginDirs: pluginPackageDirs(commandLines, TIMON_HOME),
     timonRead: attachments ? [attachments] : [],
-    // Read again from the agent's config file, like `agentCwd`: the folders a
-    // person gave the agent, each checked again at this launch.
-    extraDirs: launchExtraDirs(input.agentName),
+    // Read again from the agent's config file and the project's row, like
+    // `agentCwd`: the folders a person gave the agent or its project, each
+    // checked again at this launch.
+    extraDirs: missionExtraDirs(input.agentName, input.project || null),
   };
 }
 
-/** The agent's extra folders for `BuildSpawnOpts`, each checked again; nothing when it has none. */
-function extraDirsOpt(agentName: string, missionId: string): Pick<BuildSpawnOpts, 'extraDirs'> {
-  const dirs = launchExtraDirs(agentName, (message) => console.warn(`[agent] mission ${missionId.slice(0, 8)}: ${message}`));
+/** The agent's and its project's extra folders for `BuildSpawnOpts`, each checked again; nothing when there are none. */
+function extraDirsOpt(agentName: string, project: string | null, missionId: string): Pick<BuildSpawnOpts, 'extraDirs'> {
+  const dirs = missionExtraDirs(agentName, project, (message) => console.warn(`[agent] mission ${missionId.slice(0, 8)}: ${message}`));
   return dirs.length > 0 ? { extraDirs: dirs } : {};
 }
 
@@ -2391,7 +2393,7 @@ async function spawnTurn(args: {
     missionId,
     memoryDir,
     // A mission that reads no file is handed no folder either.
-    ...(readOnlyTools ? {} : extraDirsOpt(agentName, missionId)),
+    ...(readOnlyTools ? {} : extraDirsOpt(agentName, cfg.project ?? projectFromCwd(cfg.cwd) ?? null, missionId)),
     // A backend that cannot use Timon's MCP servers is not handed them.
     ...(backendCapabilities(backend.name).timonMcp ? {} : { timonMcp: false }),
     ...(readOnlyTools ? { readOnlyTools: true } : {}),

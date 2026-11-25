@@ -1682,6 +1682,9 @@ if (!projectCols.includes('created_by')) db.exec(`ALTER TABLE projects ADD COLUM
 // `integration` = how the project's Kanban jobs land (`project-integration.ts`):
 // JSON validated by zod on every read and write; NULL = today's local merge.
 if (!projectCols.includes('integration')) db.exec(`ALTER TABLE projects ADD COLUMN integration TEXT`);
+// `extra_dirs` = the folders outside their working directories every mission of
+// the project may read, or read and write (`project-extra-dirs.ts`): JSON, NULL = none.
+if (!projectCols.includes('extra_dirs')) db.exec(`ALTER TABLE projects ADD COLUMN extra_dirs TEXT`);
 
 // the UI shows them as "unknown author"
 // rather than wrongly attributing them. Web Push:
@@ -4393,6 +4396,7 @@ export type ProjectRow = {
   grepai_watch: string | null; // conversation restarts empty without saying so. ── Memory & project types (DB
   created_by: string | null; // `plugin:<id>` for a project a plugin registered
   integration: string | null; // JSON of `project-integration.ts`; NULL = local merge
+  extra_dirs: string | null; // JSON of `project-extra-dirs.ts`; NULL = none
   created_at: number;
   updated_at: number;
 };
@@ -8558,13 +8562,19 @@ export const dbApi = {
     return db.prepare(`UPDATE projects SET integration = ?, updated_at = ? WHERE slug = ?`)
       .run(json, Date.now(), slug).changes > 0;
   },
+  /** The one door for `extra_dirs`: `upsertProject` never writes it, so a meta
+   *  edit cannot open a folder. False = no such project. */
+  setProjectExtraDirs(slug: string, json: string | null): boolean {
+    return db.prepare(`UPDATE projects SET extra_dirs = ?, updated_at = ? WHERE slug = ?`)
+      .run(json, Date.now(), slug).changes > 0;
+  },
   listProjectRows(): ProjectRow[] {
     return db.prepare(`SELECT * FROM projects ORDER BY slug`).all() as ProjectRow[];
   },
   /** Partial upsert: only defined fields are written (merge with the existing). */
   upsertProject(
     slug: string,
-    fields: Partial<Omit<ProjectRow, 'slug' | 'created_at' | 'updated_at' | 'created_by' | 'integration'>> = {},
+    fields: Partial<Omit<ProjectRow, 'slug' | 'created_at' | 'updated_at' | 'created_by' | 'integration' | 'extra_dirs'>> = {},
   ): void {
     const now = Date.now();
     const cur = this.getProjectRow(slug);
