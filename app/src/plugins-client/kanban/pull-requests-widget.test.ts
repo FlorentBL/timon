@@ -363,8 +363,8 @@ test('a click on a row opens its page in a window, at the mouse and at the keybo
     const zone = document.querySelector('[data-pull-row="12"] [data-pull-open]')!;
     assert.equal(zone.tagName, 'BUTTON');
     assert.equal(zone.getAttribute('role'), null);
-    assert.equal(zone.querySelector('button, a, [role="button"], [tabindex]'), null);
-    assert.equal(document.querySelector('[data-pull-row="12"] [role="button"]'), null);
+    assert.ok(!zone.querySelector('button, a, [role="button"], [tabindex]'));
+    assert.ok(!document.querySelector('[data-pull-row="12"] [role="button"]'));
     await m.click(zone);
     assert.equal(dialog()?.getAttribute('data-pull-dialog'), '12');
     assert.equal(pageReads(), 1);
@@ -399,7 +399,7 @@ test('a click on a row opens its page in a window, at the mouse and at the keybo
       [['thumbs_up', '👍3'], ['rocket', '🚀1']]);
     assert.equal(d.querySelector('[data-pull-body] [data-pull-reaction="thumbs_up"]')?.getAttribute('aria-label'), '3 reactions 👍');
     assert.equal(d.querySelector('[data-pull-timeline="comment"] [data-pull-reaction="heart"]')?.textContent, '❤️2');
-    assert.equal(d.querySelector('[data-pull-reactions] button'), null);
+    assert.ok(!d.querySelector('[data-pull-reactions] button'));
     assert.equal(d.querySelector('[data-pull-review-state]')?.textContent, 'Changes requested');
     assert.match(d.querySelector('[data-pull-more="timeline"]')?.textContent ?? '', /3 earlier entries/);
     assert.ok(d.querySelector('[data-pull-thread-state="open"]'));
@@ -807,7 +807,7 @@ test('a row\'s proposal chip sits beside its open button, not inside it, and doe
     const chip = row.querySelector('[data-proposal-chip]');
     assert.ok(chip, 'the chip shows on the row');
     assert.equal(chip.closest('[data-pull-open]'), null, 'the chip is not inside the open button');
-    assert.equal(row.querySelector('[data-pull-open]')?.querySelector('button'), null);
+    assert.ok(!row.querySelector('[data-pull-open]')?.querySelector('button'));
     await m.click(chip);
     await m.settle();
     assert.equal(dialog(), null, 'the chip opens the publish dialog, not the window');
@@ -844,13 +844,13 @@ test('a plugin that takes kanban.pull.dialog paints the window from usePullReque
     const painted = document.querySelector('[data-acme-pull]');
     assert.equal(painted?.getAttribute('data-acme-pull'), '12');
     assert.match(painted?.textContent ?? '', /Add a dark theme/);
-    assert.equal(document.querySelector('[data-pull-dialog]'), null, 'the product\'s window is not painted under it');
+    assert.ok(!document.querySelector('[data-pull-dialog]'), 'the product\'s window is not painted under it');
     await m.click(document.querySelector('[data-acme-diff]'));
     assert.equal(seen.diff, DETAIL_DIFF);
     assert.ok(m.calls.some((c) => c.url === '/api/ui/projects/acme/pull-requests/12/diff'));
     await m.click(document.querySelector('[data-acme-close]'));
     assert.equal(seen.closed, true);
-    assert.equal(document.querySelector('[data-acme-pull]'), null);
+    assert.ok(!document.querySelector('[data-acme-pull]'));
   } finally {
     off();
     await m.unmount();
