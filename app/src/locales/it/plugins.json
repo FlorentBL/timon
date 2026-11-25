@@ -455,6 +455,8 @@
       "unsupported_program": "Su Windows, scegli il file .exe del programma o il file .cmd che npm ha installato per esso.",
       "no_config": "Completa prima la configurazione.",
       "config_unreadable": "Impossibile leggere timon.config.json. Correggilo o ripristinalo, poi ricontrolla.",
+      "pin_write_failed": "Impossibile scrivere timon.config.json. Verifica che Timon possa scrivere nella sua cartella, poi riprova.",
+      "probe_setup_failed": "Impossibile verificare questo file: la cartella in cui avviene la verifica non è stata preparata. Riprova.",
       "invalid_body": "Questo percorso non può essere salvato.",
       "browse": "Impossibile aprire il selettore di file.",
       "generic": "La modifica non è riuscita (errore {status})."

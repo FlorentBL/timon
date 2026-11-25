@@ -254,6 +254,22 @@ test('a pin on another program is not ok, and the report says so without quoting
   }
 });
 
+/** The report's error is read alone (a log, a support message): it names the pin's key, never its path. */
+test('a pin whose file is missing: a fixed error, without the path', async () => {
+  const { tmpdir } = await import('node:os');
+  const { join } = await import('node:path');
+  const missing = join(tmpdir(), 'timon-doctor-missing-pin', 'codex');
+  try {
+    setConfig(TimonConfigSchema.parse({ host: { binaries: { codex: missing } } }));
+    const dead = diagnose().binaries.find((b) => b.name === 'codex')!;
+    assert.deepEqual([dead.ok, dead.path, dead.pinned], [false, null, true]);
+    assert.equal(dead.error, 'host.binaries.codex: the pinned file is missing or cannot be run');
+    assert.equal((dead.error ?? '').includes(tmpdir()), false);
+  } finally {
+    resetConfig();
+  }
+});
+
 /**
  * `/api/doctor` answers from `diagnose()`, in the daemon's thread. A pinned program that hangs on `--version`
  * used to hold every request for seconds, at each report. The report now reads what the daemon last learned

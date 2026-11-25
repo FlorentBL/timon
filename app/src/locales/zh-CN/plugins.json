@@ -465,6 +465,8 @@
       "unsupported_program": "在 Windows 上，请选择程序的 .exe，或 npm 为它安装的 .cmd 文件。",
       "no_config": "请先完成设置。",
       "config_unreadable": "无法读取 timon.config.json。请修复或还原该文件后重新检查。",
+      "pin_write_failed": "无法写入 timon.config.json。请确认 Timon 可以写入其所在文件夹，然后重试。",
+      "probe_setup_failed": "无法检查此文件：无法准备用于检查的文件夹。请重试。",
       "invalid_body": "无法保存此路径。",
       "browse": "无法打开文件选择器。",
       "generic": "更改失败（错误 {status}）。"

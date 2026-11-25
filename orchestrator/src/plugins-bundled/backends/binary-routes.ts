@@ -16,6 +16,7 @@ import type { Request, Response, Router } from 'express';
 import { z } from 'zod';
 import { forbidden } from '../../users/identity.js';
 import { requireProviderAccess } from '../../users/provider-access.js';
+import { errnoCode } from '../../backends/binary-identity.js';
 import {
   BinaryPinError, binaryPinStatuses, pinBinary, recheckBinaries, unpinBinary,
 } from '../../backends/binary-pins.js';
@@ -55,12 +56,18 @@ function nameOf(req: Request): string {
   return typeof value === 'string' ? value : '';
 }
 
-function sendError(res: Response, err: unknown, context: string): void {
+/**
+ * Every failure of these routes as a fixed diagnostic. Neither the answer nor the log carries an error's own
+ * message: a file-system one quotes the full path (the home folder, the temporary folder). The log keeps the
+ * errno code alone.
+ */
+export function sendBinaryRouteError(res: Response, err: unknown, context: string): void {
   if (err instanceof BinaryPinError) {
+    if (err.errno) console.warn(`[backends] ${context}: ${err.code} (${err.errno})`);
     res.status(err.status).json({ error: err.code, message: err.message });
     return;
   }
-  console.warn(`[backends] ${context}: ${(err as Error).message}`);
+  console.warn(`[backends] ${context}: unexpected failure (${errnoCode(err)})`);
   res.status(500).json({ error: 'pin_failed', message: 'The configuration could not be written.' });
 }
 
@@ -78,7 +85,7 @@ export function registerBinaryRoutes(router: Router): void {
       res.setHeader('Cache-Control', 'no-store');
       res.json(await recheckBinaries());
     } catch (err) {
-      sendError(res, err, 'binary recheck');
+      sendBinaryRouteError(res, err, 'binary recheck');
     }
   });
 
@@ -93,7 +100,7 @@ export function registerBinaryRoutes(router: Router): void {
     try {
       res.json({ binaries: await pinBinary(nameOf(req), body.data.path) });
     } catch (err) {
-      sendError(res, err, 'binary pin');
+      sendBinaryRouteError(res, err, 'binary pin');
     }
   });
 
@@ -102,7 +109,7 @@ export function registerBinaryRoutes(router: Router): void {
     try {
       res.json({ binaries: await unpinBinary(nameOf(req)) });
     } catch (err) {
-      sendError(res, err, 'binary unpin');
+      sendBinaryRouteError(res, err, 'binary unpin');
     }
   });
 }
