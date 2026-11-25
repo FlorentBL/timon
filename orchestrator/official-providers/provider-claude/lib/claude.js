@@ -148,11 +148,10 @@ const legacy = {
         const force = options?.force === true;
         const account = services.account.of(profile);
         if (account) {
-
-
-            if (process.platform === 'darwin')
-                return null;
-            return getClaudeAccountUsage(account.configDir, { force });
+            // The base profile on an account is the host's sign-in kept by Timon: its long-lived
+            // token, when one is kept, runs its missions (`buildSpawn`), so it measures it too.
+            const hostKept = !profile.id.includes('@');
+            return getClaudeAccountUsage(account.configDir, { force, platform, ...(hostKept ? { fallbackToken: readClaudeToken } : {}) });
         }
         if (Object.keys(profile.env).length > 0)
             return null;
