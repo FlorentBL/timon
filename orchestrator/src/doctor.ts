@@ -39,7 +39,7 @@ import { TIMON_HOME } from './paths.js';
 import { formatBytes, freeBytes, LOW_DISK_BYTES } from './storage-failure.js';
 import { CATALOG } from './kernel/catalog.js';
 import { degradation } from './kernel/degradation.js';
-import { daemonNode, nodelessBackends, nodelessBackendText } from './host/launch-path.js';
+import { checkDaemonNode, nodelessBackends, nodelessBackendText } from './host/launch-path.js';
 import { missingRequiredBinaries, REQUIRED_BINARIES } from './host/blocking-facts.js';
 import { nodePtyStatus } from './terminal-host/pty.js';
 import { binaryCandidates, findExecutableBinary, npmPrefixCandidates, pinnedBinaryCandidates, resolvePinnedBinary, type BinarySearchOptions } from './host/binary-path.js';
@@ -201,7 +201,10 @@ export function diagnose(): DoctorReport {
   });
   // A pin on another program is no backend: the blockers must not count it.
   const found = (n: string) => binaries.find((b) => b.name === n && b.ok)?.path ?? null;
-  for (const nodeless of nodelessBackends(PROVIDER_BINARIES.map((b) => b.name), { platform: process.platform, resolve: found, runtimeNode: daemonNode() })) {
+  const runtime = checkDaemonNode();
+  for (const nodeless of nodelessBackends(PROVIDER_BINARIES.map((b) => b.name), {
+    platform: process.platform, resolve: found, runtimeNode: runtime.node, runtimeProblem: runtime.problem,
+  })) {
     const report = binaries.find((b) => b.name === nodeless.name);
     if (report) report.warning = nodelessBackendText(nodeless);
   }

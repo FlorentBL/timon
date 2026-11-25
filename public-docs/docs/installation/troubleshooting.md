@@ -254,6 +254,15 @@ places version managers keep it without telling a background service (nvm,
 fnm, mise, asdf, Volta, nvm-windows, Homebrew, `~/.local/bin`). When the
 machine has none, Timon lends the CLI the Node.js it runs on itself.
 
+A Node.js found under a version manager is skipped when another account could
+have replaced it: on Linux and macOS, the file or one of the folders above it,
+up to the version manager's own folder, belongs to another user or is writable
+by its group or by everyone (`chmod go-w` on that folder fixes it); on Windows,
+a version manager folder outside your user profile (`FNM_DIR` or `VOLTA_HOME`
+set to `D:\fnm`, say). The Node.js Timon runs on is lent only while it is the
+very file Timon started from: after Node.js is upgraded or removed under a
+running Timon, restart Timon.
+
 If `timon doctor` or the diagnostic report still names the CLI, install Node.js
 system-wide (your package manager, or nodejs.org), or point Timon at yours: run
 `node -p process.execPath` in a terminal, put the path it prints under
