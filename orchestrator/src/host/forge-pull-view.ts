@@ -50,6 +50,12 @@ const VIEW_BUFFER = 8 * 1024 * 1024;
 const GH_TIMEOUT_MS = 60_000;
 /** Review threads asked of the forge in one call: GitHub's most. */
 const THREAD_PAGE = 100;
+/** Calls for the list of threads: the bound is on calls, not on the threads
+ *  kept, so pages a filter leaves empty cannot keep the loop going. */
+export const THREAD_PAGE_CALLS = Math.ceil(VIEW_THREAD_LIMIT / THREAD_PAGE);
+/** The whole read of the threads, their pages and their long threads' next
+ *  comments: past it no call starts, and a running one is stopped. */
+export const THREADS_READ_DEADLINE_MS = 90_000;
 /** Comments asked with each thread, then per follow-up call for a longer one. */
 const THREAD_COMMENT_PAGE = 20;
 const COMMENT_FOLLOW_PAGE = 100;
@@ -685,22 +691,31 @@ async function readLongThreads(reads: ThreadRead[], read: GhRead): Promise<void>
 }
 
 /** GitHub's page of a pull request through `gh`, signed in with the
- *  project's config folder. */
-export function githubPullPageReader(configDir: string | null, runners: { gh?: GhRunner } = {}): ForgePullPageReader {
+ *  project's config folder. `now` stands in for the clock in tests. */
+export function githubPullPageReader(
+  configDir: string | null, runners: { gh?: GhRunner; now?: () => number } = {},
+): ForgePullPageReader {
   const gh = runners.gh ?? hostGh;
-  const read: GhRead = async (args) => {
+  const now = runners.now ?? Date.now;
+  const timedOut: ForgeReadFailure = { ok: false, code: 'timed_out', reason: 'gh did not answer in time' };
+  /** One call of `gh`, within its own timeout and, given one, the deadline of
+   *  the whole read it belongs to. */
+  const readWithin = async (args: string[], deadline: number | null): Promise<{ ok: true; result: ExecResult } | ForgeReadFailure> => {
+    const left = deadline === null ? GH_TIMEOUT_MS : Math.min(GH_TIMEOUT_MS, deadline - now());
+    if (left <= 0) return timedOut;
     let result: ExecResult;
     try {
-      result = await gh(args, { env: ghEnv(configDir), timeout: GH_TIMEOUT_MS, windowsHide: true, maxBuffer: VIEW_BUFFER });
+      result = await gh(args, { env: ghEnv(configDir), timeout: left, windowsHide: true, maxBuffer: VIEW_BUFFER });
     } catch {
       return { ok: false, code: 'gh_missing', reason: 'the GitHub CLI (gh) was not found on this machine' };
     }
-    if (result.timedOut) return { ok: false, code: 'timed_out', reason: 'gh did not answer in time' };
+    if (result.timedOut) return timedOut;
     if (result.code !== 0) {
       return { ok: false, code: 'gh_failed', reason: redactedOutput(result.stderr || result.stdout) || `gh exited with code ${result.code}` };
     }
     return { ok: true, result };
   };
+  const read: GhRead = (args) => readWithin(args, null);
   const badTarget = (repo: string, number: number): ForgeReadFailure | null =>
     !GITHUB_REPO.test(repo) || repo.split('/').some((p) => p === '.' || p === '..') || !Number.isSafeInteger(number) || number <= 0
       ? { ok: false, code: 'unexpected_answer', reason: 'not a pull request of a GitHub repository' }
@@ -720,15 +735,21 @@ export function githubPullPageReader(configDir: string | null, runners: { gh?: G
       const bad = badTarget(repo, number);
       if (bad) return bad;
       const [owner = '', name = ''] = repo.split('/');
+      const deadline = now() + THREADS_READ_DEADLINE_MS;
+      const readThreads: GhRead = (args) => readWithin(args, deadline);
       const reads: ThreadRead[] = [];
       let total = 0;
       let after: string | null = null;
-      // Pages of threads until the bound: a page that fails past the first
-      // keeps what was read, and the list says how many it left out.
-      for (let first = true; first || (after !== null && reads.length < VIEW_THREAD_LIMIT); first = false) {
+      const seen = new Set<string>();
+      // Pages of threads until the bound, a set number of calls at most: a
+      // page that fails past the first keeps what was read, a cursor already
+      // asked ends the list, and the list says how many it left out.
+      for (let call = 0; call < THREAD_PAGE_CALLS; call++) {
+        if (call > 0 && (after === null || seen.has(after) || reads.length >= VIEW_THREAD_LIMIT)) break;
+        if (after !== null) seen.add(after);
         // `--raw-field` keeps each value a string: `-F` would read a value
         // starting with "@" as a file. The repository was checked above.
-        const out = await read([
+        const out = await readThreads([
           'api', 'graphql',
           `--raw-field=query=${REVIEW_THREADS_PAGE_QUERY}`,
           `--raw-field=owner=${owner}`,
@@ -738,7 +759,7 @@ export function githubPullPageReader(configDir: string | null, runners: { gh?: G
         ]);
         const answer = out.ok ? threadsAnswerOf(out.result.stdout) : null;
         if (!answer) {
-          if (!first) break;
+          if (call > 0) break;
           return out.ok
             ? { ok: false, code: 'unexpected_answer', reason: 'gh did not answer the review threads of a pull request' }
             : out;
@@ -747,7 +768,7 @@ export function githubPullPageReader(configDir: string | null, runners: { gh?: G
         reads.push(...answer.threads);
         after = answer.after;
       }
-      await readLongThreads(reads.slice(0, VIEW_THREAD_LIMIT), read);
+      await readLongThreads(reads.slice(0, VIEW_THREAD_LIMIT), readThreads);
       return { ok: true, value: threadsPageOf(reads, total) };
     },
     async pullRequestEvents(repo, number) {
