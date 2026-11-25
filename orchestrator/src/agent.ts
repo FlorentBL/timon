@@ -118,7 +118,7 @@ import { baseBackendId, isAccountInstanceId, splitBackendInstance } from './back
 import { backendOwnerPlugin, backendTrust, type BackendTrust } from './backends/registry.js';
 import { DEFAULT_BACKEND_CAPABILITIES } from './backends/types.js';
 import { BUILTIN_DECLARATIONS } from './backends/builtin-declarations.js';
-import { daemonNode, withLaunchPath } from './host/launch-path.js';
+import { chooseLaunchNode, withLaunchPath } from './host/launch-path.js';
 import { missionProcessDir, trackMissionProcess } from './host/mission-processes.js';
 import { closeLaunchSeal, openLaunchSeal } from './backends/launch-seal.js';
 import { assertSpawnPinned, buildSealedSpawn } from './backends/sealed-spawn.js';
@@ -2080,12 +2080,14 @@ async function spawnMissionProcess(
   }), {
     platform: host.platform,
     binary: backendBin,
-    findNode: () => { try { return host.bin('node'); } catch { return null; } },
-    // No `node` on the machine (one installed by fnm or mise, which only a login shell lists):
-    // the daemon's own Node, which the fence already opens to the mission (#1102).
-    runtimeNode: daemonNode(),
-    // Only Electron's binary is no `node`: a daemon run from sources IS on the right one.
-    selfExecutable: process.versions.electron ? process.execPath : undefined,
+    // Chosen on the host, never from the PATH the mission sets: the machine's own `node`, else
+    // the daemon's runtime once checked (#1102), which the fence already opens to the mission.
+    node: chooseLaunchNode({
+      platform: host.platform,
+      findNode: () => host.bin('node'),
+      // Only Electron's binary is no `node`: a daemon run from sources IS on the right one.
+      selfExecutable: process.versions.electron ? process.execPath : undefined,
+    }),
   });
   if (launch.fence?.state === 'fenced') {
     // A `mktemp` lands in the mission's own folder, not in a /tmp every other

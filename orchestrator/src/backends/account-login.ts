@@ -37,7 +37,7 @@ import { join } from 'node:path';
 import { dbApi } from '../db.js';
 import { getHost } from '../host/index.js';
 import { killProcessTree } from '../host/kill-tree.js';
-import { daemonNode, withLaunchPath } from '../host/launch-path.js';
+import { chooseLaunchNode, withLaunchPath } from '../host/launch-path.js';
 import { LAUNCHD_SYSTEM_KIND } from '../host/service-install.js';
 import { ensurePrivateDir } from '../host/private-dir.js';
 import { systemEnv } from '../secrets/env.js';
@@ -253,10 +253,12 @@ function launchEnv(cmd: string, env: Record<string, string>): Record<string, str
   const next = withLaunchPath(env, {
     platform: options.platform,
     binary: options.resolveBin(cmd),
-    findNode: () => options.resolveBin('node'),
-    runtimeNode: daemonNode(),
-    // Only Electron's binary is no `node`: a daemon run from sources IS on the right one.
-    selfExecutable: process.versions.electron ? process.execPath : undefined,
+    node: chooseLaunchNode({
+      platform: options.platform,
+      findNode: () => options.resolveBin('node'),
+      // Only Electron's binary is no `node`: a daemon run from sources IS on the right one.
+      selfExecutable: process.versions.electron ? process.execPath : undefined,
+    }),
   });
   if (next === env) return env;
   const out: Record<string, string> = {};
