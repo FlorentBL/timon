@@ -179,6 +179,31 @@ function listMarkdownFiles(dir: string): string[] {
   return out;
 }
 
+/** One folder-format skill (`<dir>/SKILL.md`), or null when the folder holds none. */
+function readSkillFolder(
+  dir: string, source: SkillSource, scope: 'global' | 'project',
+  editable: boolean, idPrefix = '',
+): SkillEntry | null {
+  const name = basename(dir);
+  const file = join(dir, 'SKILL.md');
+  const st = safeStat(file);
+  if (!st) return null;
+  const content = safeRead(file);
+  if (content == null) return null;
+  const { fm, body } = parseFrontmatter(content);
+  const id = idPrefix ? `${idPrefix}:${name}` : name;
+  if (!ID_RE.test(id)) return null;
+  return {
+    id,
+    title: deriveTitle(content, fm, name),
+    description: deriveDescription(body, fm),
+    source, format: source === 'timon' ? 'timon' : 'claude-skill', scope,
+    path: file, editable,
+    allowed_tools: fm.allowed_tools,
+    size: st.size, updated_at: st.mtimeMs,
+  };
+}
+
 /** Skills format-dossier (`<dir>/<id>/SKILL.md`) : TIMON, claude skills, plugin skills. */
 function scanSkillDir(
   baseDir: string, source: SkillSource, scope: 'global' | 'project',
@@ -186,23 +211,8 @@ function scanSkillDir(
 ): SkillEntry[] {
   const out: SkillEntry[] = [];
   for (const name of listDirs(baseDir)) {
-    const file = join(baseDir, name, 'SKILL.md');
-    const st = safeStat(file);
-    if (!st) continue;
-    const content = safeRead(file);
-    if (content == null) continue;
-    const { fm, body } = parseFrontmatter(content);
-    const id = idPrefix ? `${idPrefix}:${name}` : name;
-    if (!ID_RE.test(id)) continue;
-    out.push({
-      id,
-      title: deriveTitle(content, fm, name),
-      description: deriveDescription(body, fm),
-      source, format: source === 'timon' ? 'timon' : 'claude-skill', scope,
-      path: file, editable,
-      allowed_tools: fm.allowed_tools,
-      size: st.size, updated_at: st.mtimeMs,
-    });
+    const entry = readSkillFolder(join(baseDir, name), source, scope, editable, idPrefix);
+    if (entry) out.push(entry);
   }
   return out;
 }
