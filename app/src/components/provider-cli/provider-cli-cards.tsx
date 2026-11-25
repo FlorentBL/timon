@@ -286,7 +286,8 @@ function ProviderCliCard({ cli, job }: { cli: ProviderCli; job: InstallJob | nul
           </Button>
         </div>
       )}
-      {!running && (canInstall || canUpdate) && (failed?.result?.command ?? cli.installCommand) && (
+      {/* The installer's line by hand, under the card whose main action it is, or after it failed. */}
+      {!running && (primary === 'install' || primary === 'update' || (failed && (canInstall || canUpdate))) && (failed?.result?.command ?? cli.installCommand) && (
         <details className="text-xs">
           <summary className="cursor-pointer text-muted-foreground">{t('providerClis.manualSummary')}</summary>
           <CommandToRun command={(failed?.result?.command ?? cli.installCommand)!} label={t('providerClis.manual')} />
