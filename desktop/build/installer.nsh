@@ -121,13 +121,17 @@
       InitPluginsDir
       File /oname=$PLUGINSDIR\timon-service-pause.ps1 "${PROJECT_DIR}\build\timon-service-pause.ps1"
       ; The data directory, read on this machine while the installer runs.
+      ; TIMON_HOME comes from the caller's environment, which proves nothing
+      ; to an elevated script; $PROFILE, read here, before the elevation, is
+      ; the profile of the account that started the installer. The script
+      ; reads the daemon token only under it (-UserProfile).
       ReadEnvStr $3 TIMON_HOME
       ${If} $3 == ""
         StrCpy $3 "$PROFILE\.timon"
       ${EndIf}
       ${Do}
         System::Call 'kernel32::GetCurrentProcessId() i .r0'
-        ${StdUtils.ExecShellWaitEx} $1 $2 "$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" "runas" '-NoProfile -NonInteractive -ExecutionPolicy Bypass -WindowStyle Hidden -File "$PLUGINSDIR\timon-service-pause.ps1" -InstallerPid $0 -Exe "${APP_EXECUTABLE_FILENAME}" -InstallDir "$INSTDIR" -TimonHome "$3"'
+        ${StdUtils.ExecShellWaitEx} $1 $2 "$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" "runas" '-NoProfile -NonInteractive -ExecutionPolicy Bypass -WindowStyle Hidden -File "$PLUGINSDIR\timon-service-pause.ps1" -InstallerPid $0 -Exe "${APP_EXECUTABLE_FILENAME}" -InstallDir "$INSTDIR" -TimonHome "$3" -UserProfile "$PROFILE"'
         ${If} $1 == "ok"
           ${StdUtils.WaitForProcEx} $0 $2
         ${Else}
@@ -135,7 +139,7 @@
           ; the same script, unelevated, still pauses the user's own Interactive
           ; task and ends the daemon in the user's session. A session-0 S4U
           ; service is out of its reach, and the script says so.
-          ${StdUtils.ExecShellWaitEx} $1 $2 "$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" "open" '-NoProfile -NonInteractive -ExecutionPolicy Bypass -WindowStyle Hidden -File "$PLUGINSDIR\timon-service-pause.ps1" -InstallerPid $0 -Exe "${APP_EXECUTABLE_FILENAME}" -InstallDir "$INSTDIR" -TimonHome "$3"'
+          ${StdUtils.ExecShellWaitEx} $1 $2 "$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" "open" '-NoProfile -NonInteractive -ExecutionPolicy Bypass -WindowStyle Hidden -File "$PLUGINSDIR\timon-service-pause.ps1" -InstallerPid $0 -Exe "${APP_EXECUTABLE_FILENAME}" -InstallDir "$INSTDIR" -TimonHome "$3" -UserProfile "$PROFILE"'
           ${If} $1 == "ok"
             ${StdUtils.WaitForProcEx} $0 $2
           ${EndIf}
