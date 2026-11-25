@@ -8,6 +8,7 @@ import { openAgentEditor } from '@/components/agent-editor/agent-editor-modal';
 import { useCan } from '@/hooks/use-me';
 import { t } from '@/lib/i18n';
 import { cn } from '@/lib/utils';
+import { DESTRUCTIVE_MENU_ITEM } from '@/components/ui/dropdown-menu';
 import { NativeViewCover } from '@/lib/native-view-cover';
 
 export type AgentMenuTarget = { agent: string; x: number; y: number };
@@ -124,11 +125,11 @@ export function AgentContextMenu({
         <Crown className="size-4" aria-hidden />
         {t('agentChat.menu.makeMain')}
       </button>
-      <button type="button" role="menuitem" className={cn(ITEM, 'mt-2 text-destructive hover:text-destructive')} onClick={pick(onStop)}>
+      <button type="button" role="menuitem" className={cn(ITEM, 'mt-2', DESTRUCTIVE_MENU_ITEM)} onClick={pick(onStop)}>
         <OctagonX className="size-4" aria-hidden />
         {t('agentChat.menu.stop')}
       </button>
-      <button type="button" role="menuitem" className={cn(ITEM, 'text-destructive hover:text-destructive')} onClick={pick(onRemove)}>
+      <button type="button" role="menuitem" className={cn(ITEM, DESTRUCTIVE_MENU_ITEM)} onClick={pick(onRemove)}>
         <Trash2 className="size-4" aria-hidden />
         {t('agentChat.menu.remove')}
       </button>

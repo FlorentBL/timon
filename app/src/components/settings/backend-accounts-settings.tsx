@@ -312,7 +312,7 @@ export function AccountRow({ account, ownerName, canManage, panelOpen, icon, gra
       menuLabel={t('providerPage.connection.accountMore', { name: account.name })}
       menu={gestures.menu.length > 0 ? gestures.menu.map((gesture) => (
         <DropdownMenuItem key={gesture} onSelect={run[gesture]}
-          className={gesture === 'delete' ? 'text-destructive focus:text-destructive' : undefined}>
+          variant={gesture === 'delete' ? 'destructive' : 'default'}>
           {t(`backendAccounts.${gesture}`)}
         </DropdownMenuItem>
       )) : null}
