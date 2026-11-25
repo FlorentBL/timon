@@ -320,17 +320,58 @@ const interruptedStmt = db.prepare(`
   UPDATE forge_proposals SET state = 'failed', error_code = 'interrupted', error = NULL, updated_at = ? WHERE id = ? AND state = 'publishing'
 `);
 
+const refreshStmt = db.prepare(`
+  UPDATE forge_proposals SET body = ?, updated_at = ?
+  WHERE id = ? AND kind = 'comment' AND state IN ('draft', 'failed') AND edited_by IS NULL
+`);
+
 function get(id: string): ForgeProposalRow | undefined {
   return getStmt.get(id) as ForgeProposalRow | undefined;
 }
 
+/**
+ * The text a comment the daemon drafted should hold now, from what it was
+ * made of (an idea's public note written after the draft), or null to leave
+ * it. Registered by the modules that draft them (`issue-resolution.ts`,
+ * `issue-outcome.ts`), which this module cannot import.
+ */
+export type DraftRefresher = (row: ForgeProposalRow) => string | null;
+const refreshers = new Set<DraftRefresher>();
+
+export function registerDraftRefresher(refresher: DraftRefresher): () => void {
+  refreshers.add(refresher);
+  return () => { refreshers.delete(refresher); };
+}
+
+/**
+ * A comment Timon drafted and no person touched yet follows what it was made
+ * of: read again whenever it is read, so the window and the publication see
+ * the same text. A person's edit, theirs or a plugin's text are never rewritten.
+ */
+function fresh(row: ForgeProposalRow): ForgeProposalRow {
+  if (row.kind !== 'comment' || row.edited_by !== null || (row.state !== 'draft' && row.state !== 'failed')) return row;
+  if (row.trigger !== 'landing' && row.trigger !== 'todo_resolved') return row;
+  for (const refresher of refreshers) {
+    let body: string | null;
+    try { body = refresher(row); } catch (err) {
+      console.error('[forge-proposals] a draft could not be read again:', (err as Error).name);
+      continue;
+    }
+    if (body === null) continue;
+    if (body === row.body || bodyProblem(body)) return row;
+    if (refreshStmt.run(body, Date.now(), row.id).changes === 0) return row;
+    return get(row.id) ?? row;
+  }
+  return row;
+}
+
 export function getForgeProposal(project: string, id: string): ForgeProposalRow | undefined {
   const row = get(id);
-  return row && row.project === project ? row : undefined;
+  return row && row.project === project ? fresh(row) : undefined;
 }
 
 export function listForgeProposals(project: string, state?: ForgeProposalState): ForgeProposalRow[] {
-  return (state ? listByStateStmt.all(project, state) : listStmt.all(project)) as ForgeProposalRow[];
+  return ((state ? listByStateStmt.all(project, state) : listStmt.all(project)) as ForgeProposalRow[]).map(fresh);
 }
 
 /** The proposal a trigger already made under `key`, if any. */
