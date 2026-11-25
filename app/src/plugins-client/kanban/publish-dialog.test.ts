@@ -159,6 +159,7 @@ test('closing an issue says why it closes, writes no comment, and leaves the iss
     assert.match(dialog, /Closes asnot planned/);
     assert.match(dialog, /none, the answer is proposed apart/);
     assert.match(dialog, /A resolved TO DO/);
+    assert.doesNotMatch(dialog, /edit it before it leaves/, 'nothing to edit, so no word of editing');
     assert.equal(q('[data-publish-body]'), null, 'no comment to write');
     assert.equal(q('[data-publish-edit]'), null, 'nothing to edit');
     assert.equal(q('[data-publish-send]')?.textContent, 'Close the issue');

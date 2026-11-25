@@ -151,7 +151,8 @@ export function ProductPublishDialog(): ReactElement | null {
                 {body}
               </div>
             )}
-            {proposal && proposal.trigger !== 'person' && open && (
+            {/* "Edit it before it leaves" only where there is a text to edit. */}
+            {proposal && proposal.trigger !== 'person' && open && editable && (
               <p className="text-[11px] text-muted-foreground">
                 {t(proposal.trigger === 'plugin' ? 'forgePublish.preparedByPlugin' : 'forgePublish.preparedHint')}
               </p>
