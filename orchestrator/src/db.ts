@@ -3969,6 +3969,61 @@ function missionListSql(whereSql: string): string {
            ORDER BY p.started_at DESC, p.id DESC`;
 }
 const listMissionsStmt = db.prepare(missionListSql(''));
+/**
+ * The SQL of one `listMissions` page, its LIMIT left as the last parameter.
+ * Exported for the test that reads its query plan. `'all'` = no filter at all
+ * (the prepared statement), `'none'` = an empty agent list.
+ */
+export function missionListQuery(
+  agentNames: string[] | undefined,
+  status: string | undefined,
+  viewer: DbViewer | null | undefined,
+  origin: MissionOriginFilter | undefined,
+  page: MissionListPage,
+): { sql: string; params: unknown[] } | 'all' | 'none' {
+  const owner = ownerSql(viewer, 'missions', 'm.owner_user_id');
+  const scoped = owner.sql !== '1=1';
+  const { taskId, before } = page;
+  if (!agentNames && !status && !scoped && !origin && taskId === undefined && !before) return 'all';
+  if (agentNames && agentNames.length === 0) return 'none';
+  // missing: `/api/missions?status=running` returned the N latest missions of ALL
+  // statuses, in silence. An agent diagnosing
+  // cap saturation read 100 "running" missions
+  // where there were 11 (2026-08-22) — an ignored filter lies more efficiently than an
+  // error.
+  const where: string[] = [];
+  const params: unknown[] = [];
+  if (agentNames) {
+    where.push(`m.agent_name IN (${agentNames.map(() => '?').join(', ')})`);
+    params.push(...agentNames);
+  }
+  if (status) {
+    where.push('m.status = ?');
+    params.push(status);
+  }
+  if (origin === 'automated') {
+    where.push(`(${MISSION_ORIGIN_SQL}) <> 'user'`);
+  } else if (origin) {
+    where.push(`(${MISSION_ORIGIN_SQL}) = ?`);
+    params.push(origin);
+  }
+  if (taskId !== undefined) {
+    where.push('m.task_id = ?');
+    params.push(taskId);
+  }
+  if (before) {
+    // The redundant `<=` lets the started_at index bound the range; the
+    // OR then drops the cursor row and the ties already served.
+    where.push('m.started_at <= ? AND (m.started_at < ? OR m.id < ?)');
+    params.push(before.startedAt, before.startedAt, before.id);
+  }
+  if (scoped) {
+    where.push(owner.sql);
+    params.push(...owner.params);
+  }
+  const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
+  return { sql: missionListSql(whereSql), params };
+}
 const missionOriginStmt = db.prepare(
   `SELECT ${MISSION_ORIGIN_SQL} AS origin FROM missions m LEFT JOIN tasks ot ON ot.id = m.task_id WHERE m.id = ?`,
 );
@@ -7108,51 +7163,10 @@ export const dbApi = {
     origin?: MissionOriginFilter,
     page: MissionListPage = {},
   ): MissionListRow[] {
-    const owner = ownerSql(viewer, 'missions', 'm.owner_user_id');
-    const scoped = owner.sql !== '1=1';
-    const { taskId, before } = page;
-    if (!agentNames && !status && !scoped && !origin && taskId === undefined && !before) {
-      return listMissionsStmt.all(limit) as MissionListRow[];
-    }
-    if (agentNames && agentNames.length === 0) return [];
-    // missing: `/api/missions?status=running` returned the N latest missions of ALL
-    // statuses, in silence. An agent diagnosing
-    // cap saturation read 100 "running" missions
-    // where there were 11 (2026-08-22) — an ignored filter lies more efficiently than an
-    // error.
-    const where: string[] = [];
-    const params: unknown[] = [];
-    if (agentNames) {
-      where.push(`m.agent_name IN (${agentNames.map(() => '?').join(', ')})`);
-      params.push(...agentNames);
-    }
-    if (status) {
-      where.push('m.status = ?');
-      params.push(status);
-    }
-    if (origin === 'automated') {
-      where.push(`(${MISSION_ORIGIN_SQL}) <> 'user'`);
-    } else if (origin) {
-      where.push(`(${MISSION_ORIGIN_SQL}) = ?`);
-      params.push(origin);
-    }
-    if (taskId !== undefined) {
-      where.push('m.task_id = ?');
-      params.push(taskId);
-    }
-    if (before) {
-      // The redundant `<=` lets the started_at index bound the range; the
-      // OR then drops the cursor row and the ties already served.
-      where.push('m.started_at <= ? AND (m.started_at < ? OR m.id < ?)');
-      params.push(before.startedAt, before.startedAt, before.id);
-    }
-    if (scoped) {
-      where.push(owner.sql);
-      params.push(...owner.params);
-    }
-    const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
-    const stmt = db.prepare(missionListSql(whereSql));
-    return stmt.all(...params, limit) as MissionListRow[];
+    const query = missionListQuery(agentNames, status, viewer, origin, page);
+    if (query === 'all') return listMissionsStmt.all(limit) as MissionListRow[];
+    if (query === 'none') return [];
+    return db.prepare(query.sql).all(...query.params, limit) as MissionListRow[];
   },
   /**
    * The candidates the chat binds when its URL names no mission: the agent's
