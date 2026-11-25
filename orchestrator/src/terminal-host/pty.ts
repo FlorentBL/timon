@@ -17,6 +17,7 @@ type NodePty = {
 };
 
 let nodePty: NodePty | null | undefined;
+let loadFailure: string | null = null;
 
 /**
  * node-pty's macOS prebuild ships `spawn-helper` without its executable bit
@@ -37,18 +38,52 @@ export function ensureSpawnHelperExecutable(moduleDir: string, platform: NodeJS.
   }
 }
 
+/**
+ * Why node-pty did not load, in the words of the loader that refused it.
+ * node-pty tries `build/Release`, then `build/Debug`, then the prebuilds, and
+ * reports only the LAST error: a `pty.node` that exists but needs a newer
+ * glibc (TIM-0162) was reported as a missing prebuild. Loading the built
+ * addon directly gives its own error back.
+ */
+export function explainNodePtyFailure(
+  moduleDir: string | null,
+  error: Error,
+  load: (path: string) => unknown = createRequire(import.meta.url),
+): string {
+  if (moduleDir) {
+    for (const dir of ['Release', 'Debug']) {
+      const addon = join(moduleDir, 'build', dir, 'pty.node');
+      if (!existsSync(addon)) continue;
+      try {
+        load(addon);
+      } catch (direct) {
+        return `${addon}: ${(direct as Error).message.split('\n')[0]}`;
+      }
+    }
+  }
+  return error.message.split('\n')[0] ?? String(error);
+}
+
 /** node-pty, or null when its native binary does not load on this host. */
 export function loadNodePty(): NodePty | null {
   if (nodePty !== undefined) return nodePty;
+  const req = createRequire(import.meta.url);
+  let moduleDir: string | null = null;
   try {
-    const req = createRequire(import.meta.url);
-    ensureSpawnHelperExecutable(dirname(req.resolve('node-pty/package.json')));
+    moduleDir = dirname(req.resolve('node-pty/package.json'));
+    ensureSpawnHelperExecutable(moduleDir);
     nodePty = req('node-pty') as NodePty;
   } catch (err) {
-    console.warn('[terminal-web] node-pty unavailable:', (err as Error).message);
+    loadFailure = explainNodePtyFailure(moduleDir, err as Error, req);
+    console.warn('[terminal-web] node-pty unavailable:', loadFailure);
     nodePty = null;
   }
   return nodePty;
+}
+
+/** Whether the built-in terminal can start here, and why not; the doctor and the diagnostic report read it. */
+export function nodePtyStatus(): { available: boolean; reason: string | null } {
+  return loadNodePty() ? { available: true, reason: null } : { available: false, reason: loadFailure ?? 'node-pty did not load' };
 }
 
 /**

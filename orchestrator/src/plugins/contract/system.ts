@@ -106,6 +106,12 @@ export type DoctorReport = {
   docker: { present: boolean; usable: boolean; detail: string };
   display: string | null;
   /**
+   * Whether the built-in terminal can start: node-pty's native module loads
+   * in this process, and the loader's own error when it does not (TIM-0162).
+   * A warning, never a blocker. Optional: reports built before it lack it.
+   */
+  terminal?: { available: boolean; reason: string | null };
+  /**
    * Mission isolation: whether the kernel fences a mission launched now
    * (`host/fence.ts`, `resources.ts` `hostFenceStatus`), and what a launch does
    * when it cannot. `tampered` is apart from `unsupported` on purpose: the
