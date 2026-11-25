@@ -266,7 +266,10 @@ removed, or replaced by another account, under a running Timon, restart Timon.
 
 When no Node.js passes these checks, a mission on such a CLI does not start and
 reports `no trusted Node.js to run codex` (or the CLI's name): Timon never lets
-the CLI pick the first `node` of the mission's own PATH instead.
+the CLI pick the first `node` of the mission's own PATH instead. The same holds
+for a CLI whose first line hands `env` options, variables or quotes Timon cannot
+read with certainty (`#!/usr/bin/env -S "node --flag"`, say): without a trusted
+Node.js, it does not start either.
 
 If `timon doctor` or the diagnostic report still names the CLI, install Node.js
 system-wide (your package manager, or nodejs.org), or point Timon at yours: run
