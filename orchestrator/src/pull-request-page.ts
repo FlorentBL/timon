@@ -13,7 +13,9 @@
  * that account before anything is read with its config folder; the login it
  * answers is kept a minute per folder and per state of that folder's
  * credentials (`ghCredentialsStamp`), so opening windows does not ask the
- * forge each time, and switching accounts in the folder asks it at once.
+ * forge each time, and switching accounts in the folder asks it at once. A
+ * folder whose tokens live in the system keyring is asked at every read: any
+ * other folder can switch its account there without a trace in this one.
  */
 import { bus, type BusEvent } from './bus.js';
 import { projectRepository, type ExternalPrRefusal } from './external-pr-review.js';
@@ -45,7 +47,7 @@ export type PageDeps = {
   checkLogReader?: (configDir: string | null) => ForgeCheckLogReader;
   /** Stands in for `gh api user`, the check the integration's page runs. */
   ghLogin?: (configDir: string | null) => Promise<GhLoginOutcome>;
-  /** Stands in for the `stat` of the folder's `hosts.yml`. */
+  /** Stands in for the stamp of the folder's `hosts.yml` (`ghCredentialsStamp`). */
   credentialsStamp?: (configDir: string | null) => string | null;
   now?: () => number;
 };
@@ -110,7 +112,7 @@ async function accountRefusal(
     const out = await (deps.ghLogin ?? ((dir: string | null) => ghLogin(dir)))(integration.gh_config_dir);
     if (!out.ok) return { ok: false, status: 502, code: 'forge_read_failed', reason: `the GitHub account could not be checked: ${out.reason}` };
     known = { at: now, stamp: stamp ?? '', login: out.login };
-    // Unreadable credentials are checked again at every read.
+    // No stamp (keyring, or an unreadable file): checked again at every read.
     if (stamp !== null) logins.set(key, known);
   }
   // GitHub logins ignore case.

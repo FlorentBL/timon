@@ -32,7 +32,10 @@ dbApi.setProjectIntegration('acme', JSON.stringify({
 // Its own gh config folder, whose active account a test switches.
 const ghDir = join(home, 'gh-switch');
 mkdirSync(ghDir, { recursive: true });
-const hostsFile = (user: string) => `github.com:\n    users:\n        ai-bot:\n        someone-else:\n    user: ${user}\n`;
+// File storage: the active token is written under the host (a placeholder,
+// never a token). Without that key gh reads it from the keyring.
+const hostsFile = (user: string, storage: 'file' | 'keyring' = 'file') =>
+  `github.com:\n    users:\n        ai-bot:\n        someone-else:\n${storage === 'file' ? '    oauth_token: in-file\n' : ''}    user: ${user}\n`;
 dbApi.upsertProject('switch', { cwd: join(home, 'code', 'switch') });
 dbApi.setProjectIntegration('switch', JSON.stringify({
   mode: 'pr', remote: 'origin', target: 'main', forge: 'github', account: 'ai-bot',
@@ -290,6 +293,38 @@ test('switching accounts in the same config folder is refused before the check e
   }
   assert.equal(calls.length, pageReads);
   assert.equal(loginCalls.length, 2, 'the new stamp is checked once, then kept');
+});
+
+test('a folder that keeps its token in hosts.yml is checked once within the minute', async () => {
+  const url = '/api/projects/switch/pull-requests/12';
+  assert.equal((await get(`${url}?fresh=1`, 'manager')).status, 200);
+  clock += 5_000;
+  assert.equal((await get(`${url}?fresh=1`, 'manager')).status, 200);
+  assert.equal((await get(url, 'manager')).status, 200);
+  assert.deepEqual(loginCalls, [ghDir]);
+});
+
+test('a folder whose token lives in the keyring asks gh at every read, its hosts.yml unchanged', async () => {
+  // The keyring's active token is shared by every config folder: a switch
+  // made with another one leaves this hosts.yml as it is.
+  writeFileSync(join(ghDir, 'hosts.yml'), hostsFile('ai-bot', 'keyring'));
+  const url = '/api/projects/switch/pull-requests/12';
+  assert.equal((await get(url, 'manager')).status, 200);
+  assert.deepEqual(loginCalls, [ghDir]);
+  clock += 1_000;
+  const pageReads = calls.length;
+  loginAnswer = { ok: true, login: 'someone-else' };
+  // Even the page its cache holds is refused.
+  const res = await get(url, 'manager');
+  assert.equal(res.status, 409);
+  assert.equal(((await res.json()) as { code: string }).code, 'forge_account_mismatch');
+  assert.equal((await get(`${url}/check-log?url=${encodeURIComponent('https://github.com/acme/widgets/actions/runs/1/job/2')}`, 'manager')).status, 409);
+  assert.equal(loginCalls.length, 3);
+  assert.equal(calls.length, pageReads);
+  loginAnswer = { ok: true, login: 'ai-bot' };
+  const back = await (await get(url, 'manager')).json() as { cached: boolean };
+  assert.equal(back.cached, true);
+  assert.equal(loginCalls.length, 4);
 });
 
 test('a stamp that moves, or that cannot be read, asks gh again', async () => {
