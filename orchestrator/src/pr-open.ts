@@ -29,6 +29,7 @@ import { nodeRuntime } from './host/node-runtime.js';
 import type { ExecResult } from './host/types.js';
 import { readProjectIntegration, type ProjectIntegration } from './project-integration.js';
 import { issueLines, jobIssueClosings, pullRequestBody } from './issue-closing.js';
+import { notifyIntegrationOutcome } from './wake.js';
 
 export const PR_CHECKS = [
   'branch_name',
@@ -94,6 +95,13 @@ export type PrOpenDeps = {
   /** Stand-in for the repository's own public tree check. */
   publicTree?: (repo: string, branch: string) => Promise<PublicTreeOutcome>;
   agentCwd?: (agentName: string) => string | null;
+  /** Tells the job's pilot and the person that the pull request is open
+   *  (`notifyIntegrationOutcome`); `recap` false keeps only the card. */
+  notifyOpened?: (integrationId: string, recap: boolean) => void;
+};
+
+const defaultNotifyOpened = (id: string, recap: boolean): void => {
+  notifyIntegrationOutcome(id, 'open', [], undefined, { recap });
 };
 
 // ─── Text rules ─────────────────────────────────────────────────────────────
@@ -549,7 +557,15 @@ export async function openPullRequest(request: PrOpenRequest, deps: PrOpenDeps =
     if (!created.ok) {
       return refuse(502, 'pr_create_failed', `${branch} was pushed, the pull request was not created: ${created.reason}. Run the command again to retry.`, checks);
     }
-    dbApi.markIntegrationOpen(row.id, { number: created.pr.number, url: created.pr.url, headSha: head });
+    if (dbApi.markIntegrationOpen(row.id, { number: created.pr.number, url: created.pr.url, headSha: head })) {
+      // A task that opens it reports it to the pilot with its own return: the
+      // pilot is woken for a gesture it did not make (the board's, a person's).
+      try {
+        (deps.notifyOpened ?? defaultNotifyOpened)(row.id, request.target !== 'task');
+      } catch (err) {
+        console.error(`[pr-open] notice of the pull request of ${branch} failed: ${(err as Error).message}`);
+      }
+    }
     return {
       ok: true,
       pr: created.pr,

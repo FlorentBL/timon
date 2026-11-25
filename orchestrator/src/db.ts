@@ -2529,6 +2529,10 @@ export type TaskRow = {
   landing?: string | null;
 };
 
+/** What a job's pilot is told of its integration: its pull request opened,
+ *  then merged or closed. */
+export type IntegrationNotice = 'open' | 'merged' | 'closed';
+
 /** One integration branch (see the `integrations` migration). */
 export type IntegrationRow = {
   id: string;
@@ -6086,13 +6090,13 @@ export const dbApi = {
   touchIntegrationPolled(id: string): void {
     touchIntegrationPolledStmt.run(Date.now(), id);
   },
-  /** Claims the notice of `state` ('merged' | 'closed'): true for one caller
-   *  only, and only while the row is in that state. */
-  claimIntegrationNotice(id: string, state: 'merged' | 'closed'): boolean {
+  /** Claims the notice of `state` ('open' | 'merged' | 'closed'): true for one
+   *  caller only, and only while the row is in that state. */
+  claimIntegrationNotice(id: string, state: IntegrationNotice): boolean {
     return claimIntegrationNoticeStmt.run(state, Date.now(), id, state, state).changes === 1;
   },
   /** Hands back a notice that could not be sent. */
-  releaseIntegrationNotice(id: string, state: 'merged' | 'closed'): void {
+  releaseIntegrationNotice(id: string, state: IntegrationNotice): void {
     releaseIntegrationNoticeStmt.run(Date.now(), id, state);
   },
   /** Concluded integrations whose pilot was not told yet. */
