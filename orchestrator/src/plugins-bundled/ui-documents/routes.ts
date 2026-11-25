@@ -19,7 +19,7 @@ import { randomUUID } from 'node:crypto';
 import { isAutonomousMission, missionPermissionModel } from '../../agent.js';
 import { loadConfig } from '../../agent-config.js';
 import type { PermissionModel } from '../../backends/types.js';
-import { MediaError, parseMediaPath, realOrNull, underRoot } from '../../chat-media.js';
+import { MediaError, explainPathRefusal, parseMediaPath, pathRefusal, realOrNull } from '../../chat-media.js';
 import { dbApi, type MissionRow } from '../../db.js';
 import { auditRequest } from '../../users/audit-actor.js';
 import { forbidden, viewerFromRequest, isPersonAuth } from '../../users/identity.js';
@@ -81,7 +81,7 @@ function readMission(req: Request, res: Response, missionId: string): Read | nul
 }
 
 class HtmlFileError extends Error {
-  constructor(readonly status: 400 | 404 | 413 | 415, readonly code: string) {
+  constructor(readonly status: 400 | 403 | 404 | 413 | 415, readonly code: string, readonly detail?: string) {
     super(code);
   }
 }
@@ -95,18 +95,23 @@ function missionRoots(mission: MissionRow): string[] {
 
 /**
  * An HTML file named by absolute path, read only under the mission's roots
- * (the check of `chat_show_media`), bounded and decoded as UTF-8. Every
- * refusal outside the roots answers like a missing file.
+ * (the check of `chat_show_media`), bounded and decoded as UTF-8. A refusal
+ * outside the roots answers like a missing file, unless `explain` (the
+ * caller is the mission's own agent): then it says why (TODO #1160).
  */
-export function readMissionHtml(raw: string, roots: readonly string[]): string {
+export function readMissionHtml(raw: string, roots: readonly string[], explain = false): string {
   let path: string;
   try { path = parseMediaPath(raw); } catch (err) {
     if (err instanceof MediaError) throw new HtmlFileError(400, err.code);
     throw err;
   }
   const real = realOrNull(path);
-  const realRoots = roots.map(realOrNull).filter((r): r is string => r !== null);
-  if (!real || !realRoots.some((root) => underRoot(root, real))) throw new HtmlFileError(404, 'not_found');
+  const refusal = pathRefusal(path, real, roots);
+  if (refusal || !real) {
+    if (!explain) throw new HtmlFileError(404, 'not_found');
+    const why = explainPathRefusal(refusal ?? 'not_found');
+    throw new HtmlFileError(why.status, why.code, why.message);
+  }
   let fd: number;
   try { fd = openSync(real, 'r'); } catch { throw new HtmlFileError(404, 'not_found'); }
   try {
@@ -185,9 +190,12 @@ export function registerRoutes(app: Router, opts: UiDocumentRouteOptions = {}): 
       html = body.html;
     } else {
       try {
-        html = readMissionHtml(body.path!, missionRoots(mission));
+        html = readMissionHtml(body.path!, missionRoots(mission), origin.kind === 'agent');
       } catch (err) {
-        if (err instanceof HtmlFileError) { res.status(err.status).json({ error: err.code }); return; }
+        if (err instanceof HtmlFileError) {
+          res.status(err.status).json({ error: err.code, ...(err.detail ? { message: err.detail } : {}) });
+          return;
+        }
         throw err;
       }
     }

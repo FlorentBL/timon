@@ -1076,7 +1076,9 @@ const TOOLS = [
     description:
       'Shows an image or a video in the chat of YOUR mission, as a media card (preview, '
       + 'enlarge, download). `src` is one of: an absolute path of a file under your working '
-      + 'directory (PNG, JPEG, GIF, WebP, AVIF, MP4, WebM, MOV, Ogg); an https:// address on a '
+      + 'directory (PNG, JPEG, GIF, WebP, AVIF, MP4, WebM, MOV, Ogg), never inside a hidden folder (a name '
+      + 'starting with ".", like .git or .timon) — symlinks are followed, and a refused path answers '
+      + 'path_hidden_segment or path_outside_roots, a missing file not_found; an https:// address on a '
       + 'public host name, which Timon downloads itself (never the browser); a data:image/png|jpeg|gif|webp;base64 '
       + 'URL. Refused: http:, file:, javascript:, blob:, SVG, IP addresses, localhost, custom ports, '
       + 'user:password@ in the address. Never put a secret or a piece of the conversation in the address. '
@@ -1085,7 +1087,7 @@ const TOOLS = [
     inputSchema: {
       type: 'object',
       properties: {
-        src: { type: 'string', description: 'Absolute file path, https:// address, or raster data: URL.' },
+        src: { type: 'string', description: 'Absolute file path (under your working directory, outside hidden folders), https:// address, or raster data: URL.' },
         caption: { type: 'string', description: 'Plain text shown under the media (max 300 characters).' },
       },
       required: ['src'],

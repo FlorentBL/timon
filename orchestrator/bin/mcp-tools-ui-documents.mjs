@@ -26,7 +26,9 @@ export const tools = [
     description:
       'Shows an HTML document as an interactive card in the chat of YOUR mission (CLI `timon ui-doc render`): '
       + 'a table, a chart, a preview or a form that plain text cannot render. Give exactly one of `html` (the '
-      + 'whole document, at most 512 KiB) or `path` (absolute path of an .html file under your working directory). '
+      + 'whole document, at most 512 KiB) or `path` (absolute path of an .html file under your working directory, '
+      + 'never inside a hidden folder — a name starting with ".", like .git or .timon; symlinks are followed; a refused '
+      + 'path answers path_hidden_segment or path_outside_roots, a missing file not_found). '
       + 'The document runs in an isolated frame: inline <style> and <script> only, images as data: URLs; no network, '
       + 'no external file, no cookie. With `reply: true` the card waits for the user\'s answer: in the page, call '
       + '`timon.submit(object)` (at most 16 KiB of JSON) from a button. The call waits a short while and returns '
@@ -41,7 +43,7 @@ export const tools = [
       properties: {
         title: { type: 'string', description: 'One line shown above the document (max 120 characters).' },
         html: { type: 'string', description: 'The whole HTML document. Exclusive with `path`.' },
-        path: { type: 'string', description: 'Absolute path of an HTML file under your working directory. Exclusive with `html`.' },
+        path: { type: 'string', description: 'Absolute path of an HTML file under your working directory, outside hidden folders. Exclusive with `html`.' },
         reply: { type: 'boolean', description: 'Wait for the user\'s answer, sent by `timon.submit(object)` in the page.' },
         height: { type: 'integer', minimum: 80, maximum: 2000, description: 'Initial height in pixels, before the document reports its own.' },
       },

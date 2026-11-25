@@ -105,8 +105,46 @@ test('a file is served only from inside a root, by its bytes', () => {
   assert.equal(statusOf(() => openMissionMedia(join(root, 'ok.png'), [])), 404);
 });
 
+function refusalOf(fn: () => unknown): { status: number; code: string; message: string } | null {
+  try {
+    fn();
+    return null;
+  } catch (err) {
+    assert.ok(err instanceof MediaError);
+    return { status: err.status, code: err.code, message: err.message };
+  }
+}
+
+test('the agent learns why a path is refused: hidden, outside the roots, or missing', () => {
+  const hidden = refusalOf(() => openMissionMedia(join(root, '.secret', 'hidden.png'), [root], true));
+  assert.equal(hidden?.status, 403);
+  assert.equal(hidden?.code, 'path_hidden_segment');
+  assert.match(hidden!.message, /hidden folder/);
+  const out = refusalOf(() => openMissionMedia(join(outside, 'elsewhere.png'), [root], true));
+  assert.equal(out?.status, 403);
+  assert.equal(out?.code, 'path_outside_roots');
+  assert.match(out!.message, /outside your working directory/);
+  const missing = refusalOf(() => openMissionMedia(join(root, 'missing.png'), [root], true));
+  assert.equal(missing?.status, 404);
+  assert.equal(missing?.code, 'not_found');
+  // A missing file is judged on its written path: outside or hidden says so, existing or not.
+  assert.equal(refusalOf(() => openMissionMedia(join(outside, 'nothing.png'), [root], true))?.code, 'path_outside_roots');
+  assert.equal(refusalOf(() => openMissionMedia(join(root, '.secret', 'nothing.png'), [root], true))?.code, 'path_hidden_segment');
+  assert.equal(refusalOf(() => openMissionMedia(join(root, '..', 'x.png'), [root], true))?.code, 'path_outside_roots');
+  // The rule itself is unchanged: an allowed file still opens.
+  assert.equal(openMissionMedia(join(root, 'ok.png'), [root], true).media.mime, 'image/png');
+});
+
+test('without explain, every refused path still answers like a missing file', () => {
+  for (const path of [join(root, '.secret', 'hidden.png'), join(outside, 'elsewhere.png'), join(root, 'missing.png')]) {
+    const r = refusalOf(() => openMissionMedia(path, [root]));
+    assert.deepEqual(r, { status: 404, code: 'refused', message: 'not found' }, path);
+  }
+});
+
 test('a symlink that leaves the root is judged by where it lands', { skip: !canSymlink }, () => {
   assert.equal(statusOf(() => openMissionMedia(join(root, 'link.png'), [root])), 404);
+  assert.equal(refusalOf(() => openMissionMedia(join(root, 'link.png'), [root], true))?.code, 'path_outside_roots');
   assert.equal(openMissionMedia(join(root, 'link.png'), [root, outside]).media.mime, 'image/png');
 });
 
@@ -246,10 +284,29 @@ test('refused sources: every scheme but https, non-raster data:, and what zod do
 });
 
 test('a local file outside the roots, hidden, or not a media is refused', async () => {
-  assert.equal((await show({ src: join(outside, 'elsewhere.png') })).status, 404);
-  assert.equal((await show({ src: join(root, '.secret', 'hidden.png') })).status, 404);
+  // The mission's own agent reads three distinct answers (TODO #1160).
+  const out = await show({ src: join(outside, 'elsewhere.png') });
+  assert.equal(out.status, 403);
+  assert.equal(out.json.error, 'path_outside_roots');
+  assert.match(String(out.json.message), /under your working directory/);
+  const hidden = await show({ src: join(root, '.secret', 'hidden.png') });
+  assert.equal(hidden.status, 403);
+  assert.equal(hidden.json.error, 'path_hidden_segment');
+  const missing = await show({ src: join(root, 'missing.png') });
+  assert.equal(missing.status, 404);
+  assert.equal(missing.json.error, 'not_found');
   assert.equal((await show({ src: join(root, 'fake.png') })).status, 415);
   assert.equal((await show({ src: join(root, 'icon.svg') })).status, 415);
+  assert.equal(dbApi.listEvents(missionId).filter((e) => e.type === 'media').length, 0, 'no refusal leaves a block');
+});
+
+test('a browser session still gets one 404 for every refused path', async () => {
+  const session: Caller = { user: owner, kind: 'session' };
+  for (const src of [join(outside, 'elsewhere.png'), join(root, '.secret', 'hidden.png'), join(root, 'missing.png')]) {
+    const r = await show({ src }, session);
+    assert.equal(r.status, 404, src);
+    assert.deepEqual(r.json, { error: 'refused', message: 'not found' }, src);
+  }
 });
 
 test('somebody else\'s mission is a 404, a sibling mission\'s agent a 403', async () => {
