@@ -22,9 +22,7 @@
  * - **Never a forced push.** The push is built here, from a branch name, as a
  *   plain `refs/heads/<b>:refs/heads/<b>` refspec; `assertNoForce` refuses any
  *   argument that would overwrite, delete or mirror a remote branch, so a
- *   branch already pushed is never rewritten. One deletion exists, built apart
- *   (`deleteBranchArguments`): a merged job's branch, leased on the commit that
- *   landed, when its project asks for it.
+ *   branch already pushed is never rewritten.
  * - **No secret in an answer.** What `gh` or `git` print is shortened and every
  *   token-shaped string masked before it reaches a caller, a log or an error.
  */
@@ -485,31 +483,6 @@ export interface ForgeBranchWriter extends ForgeBranchReader {
    *  a push of the contributor. */
   commitParents(repo: string, sha: string): Promise<CommitParentsOutcome>;
 }
-
-/** What the forge says of a branch before it is deleted. */
-export type BranchStanding = {
-  /** The repository's default branch. */
-  defaultBranch: string;
-  /** A classic protection, or a ruleset that restricts its deletion. */
-  protected: boolean;
-};
-export type BranchStandingOutcome = { ok: true; standing: BranchStanding } | ForgeReadFailure;
-
-/**
- * Read before the deletion of a landed job's remote branch
- * (`integration-cleanup.ts`): the deletion refuses the default branch and a
- * protected one on its own side, whatever the server would allow.
- */
-export interface ForgeBranchStanding {
-  branchStanding(repo: string, branch: string): Promise<BranchStandingOutcome>;
-  /**
-   * Whether the head branch of pull request `number` was ever deleted or
-   * restored since it was opened (its timeline): a branch there now at the
-   * same commit may then be another one, pushed again under the same name.
-   */
-  headRefDeleted(repo: string, number: number): Promise<HeadRefDeletedOutcome>;
-}
-export type HeadRefDeletedOutcome = { ok: true; deleted: boolean } | ForgeReadFailure;
 
 /** Most issues a list asks for, the most recent first. */
 export const ISSUE_LIST_LIMIT = 50;
@@ -1049,7 +1022,7 @@ function pullRequestFrom(text: string): PullRequestRef | null {
 export function githubForge(
   configDir: string | null, runners: ForgeRunners = {},
 ): Forge & ForgeReader & ForgeChecksReader & ForgeCheckLogReader & ForgeIssueReader & ForgeCommentWriter & ForgeBranchWriter
-  & ForgeBranchStanding & ForgeReviewsReader
+  & ForgeReviewsReader
   & ForgeIssueCloser & ForgeIssueStateReader {
   const gh = runners.gh ?? hostGh;
   // Read-only `gh` calls: one shape for every failure, nothing secret in it.
@@ -1351,42 +1324,6 @@ export function githubForge(
         ? { ok: true, kib }
         : { ok: false, code: 'unexpected_answer', reason: 'gh did not answer the size of a repository' };
     },
-    async branchStanding(repo, branch) {
-      if (!plainRepo(repo) || !plainBranch(branch)) {
-        return { ok: false, code: 'unexpected_answer', reason: 'not a branch of a GitHub repository' };
-      }
-      const info = await read(['api', `repos/${repo}`, '--jq=.default_branch']); // portability: a GitHub API path and a jq filter, no file
-      if (!info.ok) return info;
-      if (info.result.code !== 0) return failed(info.result);
-      const defaultBranch = info.result.stdout.trim();
-      if (!plainBranch(defaultBranch)) return { ok: false, code: 'unexpected_answer', reason: 'gh did not answer the default branch' };
-      const classic = await read(['api', `repos/${repo}/branches/${branch}`, '--jq=.protected']); // portability: a GitHub API path and a jq filter, no file
-      if (!classic.ok) return classic;
-      if (classic.result.code !== 0) return failed(classic.result);
-      const flag = classic.result.stdout.trim();
-      if (flag !== 'true' && flag !== 'false') return { ok: false, code: 'unexpected_answer', reason: 'gh did not answer whether the branch is protected' };
-      // Rulesets apply without showing in the classic flag.
-      const rules = await read(['api', `repos/${repo}/rules/branches/${branch}`, '--jq=[.[].type] | join(" ")']); // portability: a GitHub API path and a jq filter, no file
-      if (!rules.ok) return rules;
-      if (rules.result.code !== 0) return failed(rules.result);
-      const types = rules.result.stdout.trim().split(/\s+/).filter((t) => t.length > 0);
-      return { ok: true, standing: { defaultBranch, protected: flag === 'true' || types.includes('deletion') } };
-    },
-    async headRefDeleted(repo, number) {
-      const bad = badTarget(repo, number);
-      if (bad) return bad;
-      const out = await read([
-        'api', '--paginate', `repos/${repo}/issues/${number}/timeline?per_page=100`, // portability: a GitHub API path, no file
-        '--jq=.[] | select(.event == "head_ref_deleted" or .event == "head_ref_restored") | .event',
-      ], 16 * 1024 * 1024);
-      if (!out.ok) return out;
-      if (out.result.code !== 0) return failed(out.result);
-      const events = out.result.stdout.split('\n').map((line) => line.trim()).filter((line) => line.length > 0);
-      if (events.some((e) => e !== 'head_ref_deleted' && e !== 'head_ref_restored')) {
-        return { ok: false, code: 'unexpected_answer', reason: 'gh did not answer the timeline of a pull request' };
-      }
-      return { ok: true, deleted: events.length > 0 };
-    },
     async commitParents(repo, sha) {
       if (!plainRepo(repo) || !COMMIT_SHA.test(sha)) {
         return { ok: false, code: 'unexpected_answer', reason: 'not a commit of a GitHub repository' };
@@ -1542,37 +1479,6 @@ export function gitTransport(repo: string, runners: ForgeRunners = {}): GitTrans
       return result.code === 0 ? { ok: true } : failure(result, 'the push');
     },
   };
-}
-
-/**
- * The words after `git push` that delete `branch` on the remote at `url`, and
- * only while it still ends on `sha`: the one deletion this module builds, for
- * a branch whose pull request was merged (`integration-cleanup.ts`). The lease
- * names the exact commit, so a branch someone pushed to since is refused, never
- * deleted; no other ref is touched.
- */
-export function deleteBranchArguments(url: string, branch: string, sha: string): string[] {
-  if (!plainBranch(branch)) throw new Error('refusing to delete a branch with an unusual name');
-  if (!COMMIT_SHA.test(sha)) throw new Error('refusing to delete a branch without the commit it must end on');
-  return [`--force-with-lease=refs/heads/${branch}:${sha}`, '--', url, `:refs/heads/${branch}`];
-}
-
-/** Deletes `branch` on the remote at `url` while it still ends on `sha`. */
-export async function deleteRemoteBranch(
-  repo: string, url: string, branch: string, sha: string, runners: ForgeRunners = {},
-): Promise<GitNetworkOutcome> {
-  let args: string[];
-  try { args = deleteBranchArguments(url, branch, sha); } catch (err) {
-    return { ok: false, code: 'failed', reason: (err as Error).message };
-  }
-  const git = runners.git ?? hostGit;
-  let result: ExecResult;
-  try {
-    result = await git(['-C', repo, 'push', ...args], { env: networkEnv(), timeout: NETWORK_TIMEOUT_MS, windowsHide: true });
-  } catch (err) {
-    result = { code: 1, stdout: '', stderr: (err as Error).message };
-  }
-  return result.code === 0 ? { ok: true } : failure(result, 'the deletion of the remote branch');
 }
 
 // Shared with the reader of a pull request's whole page (`forge-pull-view.ts`),

@@ -140,35 +140,9 @@ A branch under embargo (`sec/<topic>`, for a security fix) is never pushed by th
 
 If the push succeeds but the pull request cannot be created, run the command again: the branch is already there and only the pull request is opened.
 
-Once the pull request is open, a card in your notifications gives its link, and the conversation that planned the job gets a message with it, unless the job's own final task opened it: that task's report already says so.
-
 ## Once the pull request is merged
 
 Timon checks every few minutes whether the pull request was merged, by looking for its branch in the remote's target branch. Once it was, the job's TO DO ideas close, its documentation task is created, a card in your notifications says the pull request was merged, and the conversation that planned the job gets a message listing what closed. A pull request closed without a merge closes nothing and keeps the branches: the card is an alert, and the job's conversation is asked what comes next. Without access to the forge, `timon task mark-merged <task> --sha <merge commit>` on a task of the job does the same by hand. If the conversation that planned the job no longer exists, the card is the only notice.
-
-### What the job leaves behind
-
-A job that has landed leaves on your machine what was only there to build it: the working folders of its tasks, the working folder of the agent that ran a sequential job, and the integration branch. They stay in place. Remove a task's working folder and branch with `timon worktree dispose <task>`, and the integration branch with `git branch -d <branch>` once you no longer need it.
-
-Timon has an automatic cleanup for them, but it is **experimental**: it is off by default and has no switch in Settings. It only runs if you set `TIMON_INTEGRATION_CLEANUP_ENABLED` to `true` in the environment or under `settings` in `timon.config.json`; leave it off unless you are testing it.
-
-Once on, it waits until the job has landed, none of its tasks still waits or runs, and a few minutes have passed. Then it keeps anything it cannot prove is safe to remove:
-
-- Only the job's own tasks are touched: another job built on the same branch keeps its folders.
-- A pull request merged by squash or rebase leaves everything in place, even a working folder whose last commit is already in the target branch.
-- A working folder goes only when it holds no uncommitted change and its last commit is in the target branch, checked again right before it is removed. A commit made after the merge keeps it, and so does a task reopened in the meantime: a task started again while its folder is being removed waits for the removal, then gets a folder of its own.
-- A branch goes only when the target branch contains it and it still ends on the commit that was checked. A branch checked out in one of your folders waits until you leave it, and so does everything after it. A branch made again under the same name since the job landed is kept. `main` and the target branch are never deleted.
-- When something has to wait (a task reopened, a branch you are on, GitHub not answering), the cleanup stops there and tries again later: nothing after it is removed.
-
-With the experimental cleanup on, the branch on the remote still stays unless you also ask:
-
-```bash
-timon project set-integration my-app --delete-remote-branch on
-```
-
-Timon then deletes it once the pull request is merged, on the repository the pull request was opened on and nowhere else: if the project or `origin` now point to another repository, the branch is kept. It checks the account and push URL as for the push, never deletes the repository's default branch or a protected branch, and deletes it only while it still ends on the commit that was merged: a branch someone pushed to since is kept, and so is one the pull request shows as deleted or restored since it was opened, even at the same commit. If GitHub already deleted it, nothing more happens.
-
-A pull request closed without a merge keeps its branch: only the sequential agent's working folder goes, once its commits are in the branch.
 
 ## Follow the job and review contributors
 

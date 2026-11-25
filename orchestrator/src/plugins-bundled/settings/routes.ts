@@ -140,7 +140,7 @@ export function registerRoutes(app: Router): void {
   app.get('/api/settings', (req, res) => {
     if (rejectIfDenied(req, res, 'page:/settings')) return;
     res.json({
-      settings: resolveAll().filter((r) => !r.def.hidden).map((r) => ({
+      settings: resolveAll().map((r) => ({
         key: r.def.key,
         type: r.def.type,
         group: r.def.group,

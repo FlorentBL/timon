@@ -77,9 +77,6 @@ export const ProjectIntegrationSchema = z.object({
   remote_url: RemoteUrl.nullable().default(null),
   // Added later still: a row without it asks the contributor.
   contributor_conflicts: z.enum(CONTRIBUTOR_CONFLICT_MODES).default('ask'),
-  // Once a job's pull request is merged, delete its branch on the remote too
-  // (`integration-cleanup.ts`). Off unless asked: the forge may do it itself.
-  delete_remote_branch: z.boolean().default(false),
 }).strict();
 
 export type ProjectIntegration = z.infer<typeof ProjectIntegrationSchema>;
@@ -96,7 +93,6 @@ export const ProjectIntegrationPatchSchema = z.object({
   branch_prefix: BranchPrefix.optional(),
   remote_url: RemoteUrl.nullable().optional(),
   contributor_conflicts: z.enum(CONTRIBUTOR_CONFLICT_MODES).optional(),
-  delete_remote_branch: z.boolean().optional(),
 }).strict();
 
 export type ProjectIntegrationPatch = z.infer<typeof ProjectIntegrationPatchSchema>;
@@ -111,7 +107,6 @@ export const DEFAULT_PROJECT_INTEGRATION: Readonly<ProjectIntegration> = Object.
   branch_prefix: 'feat/',
   remote_url: null,
   contributor_conflicts: 'ask',
-  delete_remote_branch: false,
 });
 
 export class ProjectIntegrationError extends Error {

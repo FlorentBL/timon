@@ -70,7 +70,7 @@ import { composePrompt } from './prompt-presentation.js';
 import { randomUUID } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { bus, type BusEvent } from './bus.js';
-import { CRASH_LOOP_HARD_CEILING, MAX_SYSTEM_REQUEUES, dbApi, type TaskRow, type AgentMessageRow, type MissionRow, type IntegrationRow, type IntegrationNotice } from './db.js';
+import { CRASH_LOOP_HARD_CEILING, MAX_SYSTEM_REQUEUES, dbApi, type TaskRow, type AgentMessageRow, type MissionRow, type IntegrationRow } from './db.js';
 import { diedOfSystemCause } from './crash-loop.js';
 import { isRequeueableInterruption, requeueBackoffMs, toInterruptionReason } from './interruption.js';
 import { presentInboxDigest, isUrgentReturn, returnPayloadOf, type ReturnPayload } from './wake-digest.js';
@@ -1540,16 +1540,9 @@ function tasksOfIntegration(row: IntegrationRow): TaskRow[] {
  * recap to a missing agent would only be expired by the wake loop after a
  * spawn that cannot work, so the notification card is the whole notice.
  */
-function integrationPilot(tasks: readonly TaskRow[], anchor: TaskRow | undefined, rowSeries: string | null = null): string | null {
-  // A sequential job has no task on its branch until its last one: the
-  // series that cut the branch (`timon pr branch`) still names its pilot.
-  const taskSeries = tasks.find((t) => t.series_id)?.series_id;
-  const seriesId = taskSeries ?? rowSeries;
-  // A series is named after the mission that opened it, its pilot until one
-  // of its tasks names another.
-  const pilotId = seriesId
-    ? dbApi.seriesPilotMission(seriesId) ?? (!taskSeries && dbApi.getMission(seriesId) ? seriesId : null)
-    : null;
+function integrationPilot(tasks: readonly TaskRow[], anchor: TaskRow | undefined): string | null {
+  const seriesId = tasks.find((t) => t.series_id)?.series_id;
+  const pilotId = seriesId ? dbApi.seriesPilotMission(seriesId) : null;
   if (pilotId) {
     const pilot = dbApi.getMission(pilotId);
     return pilot && agentExists(pilot.agent_name) ? pilot.agent_name : null;
@@ -1560,19 +1553,17 @@ function integrationPilot(tasks: readonly TaskRow[], anchor: TaskRow | undefined
 }
 
 /**
- * Tells the pilot of a job that its pull request was opened, merged or closed
+ * Tells the pilot of a job that its pull request was merged or closed
  * (`docs/KANBAN-PR-PIPELINE.md` §2.6): once per outcome, whoever learnt it
- * (`timon pr open`, the landing poller, a `mark-merged` by hand, the replay of
- * a notice a stop cut short) and across restarts (`integrations.notified_state`,
- * claimed before the message, handed back if it cannot be queued).
+ * (the landing poller, a `mark-merged` by hand, the replay of a notice a stop
+ * cut short) and across restarts (`integrations.notified_state`, claimed
+ * before the message, handed back if it cannot be queued).
  *
  * Two channels: a recap in the pilot's inbox, which leaves from the mission of
  * a task of the job so routing by series delivers it to the series' current
  * pilot like a task return, and a card in the notification centre (a report
- * for an opening or a merge, an alert for a pull request closed without one).
- * A pilot that no longer exists gets no recap: the card alone tells the person.
- * `recap: false` keeps only the card, for an opening whose own task already
- * reports it to the pilot.
+ * for a merge, an alert for a pull request closed without one). A pilot that
+ * no longer exists gets no recap: the card alone tells the person.
  *
  * `lines` adds what the caller knows (the landing replay). Returns false when
  * there was nothing to tell. `wake` is injectable so a test can drive it
@@ -1580,10 +1571,9 @@ function integrationPilot(tasks: readonly TaskRow[], anchor: TaskRow | undefined
  */
 export function notifyIntegrationOutcome(
   integrationId: string,
-  outcome: IntegrationNotice,
+  outcome: 'merged' | 'closed',
   lines: readonly string[] = [],
   wake: (agent: string) => void = scheduleWake,
-  opts: { recap?: boolean } = {},
 ): boolean {
   const row = dbApi.getIntegrationById(integrationId);
   if (!row || row.state !== outcome) return false;
@@ -1593,35 +1583,24 @@ export function notifyIntegrationOutcome(
   const pr = row.pr_url ?? (row.pr_number ? `#${row.pr_number}` : null);
   // A branch under embargo lands by hand, without a pull request.
   const what = pr ? 'Pull request' : 'Integration branch';
-  const title = outcome === 'open'
-    ? `Pull request opened: ${row.branch}`
-    : outcome === 'merged' ? `${what} merged: ${row.branch}` : `${what} closed: ${row.branch}`;
-  const target = integrationTargetLabel(row);
+  const title = outcome === 'merged' ? `${what} merged: ${row.branch}` : `${what} closed: ${row.branch}`;
   try {
     const tasks = tasksOfIntegration(row);
     anchor = tasks.find((t) => t.mission_id && t.series_id) ?? tasks.find((t) => t.mission_id) ?? tasks[0];
     owner = tasks.find((t) => t.owner_user_id)?.owner_user_id;
-    const agent = opts.recap === false ? null : integrationPilot(tasks, anchor, row.series_id);
-    const body = outcome === 'open'
-      ? [
-          `Pull request opened: ${pr ?? row.branch}`,
-          `Branch \`${row.branch}\` waits for a review before it lands in \`${target}\`${row.head_sha ? ` (head \`${row.head_sha}\`)` : ''}.`,
-          ...lines,
-          ``,
-          `A person reviews and merges it on the forge; Timon notices the merge on its own and closes the job's TO DO ideas then.`,
-        ]
-      : outcome === 'merged'
+    const agent = integrationPilot(tasks, anchor);
+    const body = outcome === 'merged'
       ? [
           pr ? `Pull request merged: ${pr}`
             : row.remote ? `Integration branch landed by hand: ${row.branch}` : `Branch merged on this machine: ${row.branch}`,
-          `Branch \`${row.branch}\` landed in \`${target}\`${row.merge_sha ? ` (merge commit \`${row.merge_sha}\`)` : ''}.`,
+          `Branch \`${row.branch}\` landed in \`${integrationTargetLabel(row)}\`${row.merge_sha ? ` (merge commit \`${row.merge_sha}\`)` : ''}.`,
           ...lines,
           ``,
           `The job's TO DO ideas and doc tasks follow on their own. Nothing to decide unless the plan goes on.`,
         ]
       : [
           `Pull request closed without a merge: ${pr ?? row.branch}`,
-          `Branch \`${row.branch}\` did not land in \`${target}\`: no TO DO idea closes, no doc task is created, the branches are kept.`,
+          `Branch \`${row.branch}\` did not land in \`${integrationTargetLabel(row)}\`: no TO DO idea closes, no doc task is created, the branches are kept.`,
           ...lines,
           ``,
           `Decide what comes next: reopen it on the forge, plan a new pull request, or abandon the job.`,
@@ -1629,7 +1608,7 @@ export function notifyIntegrationOutcome(
     if (agent) {
       enqueueRecap(agent, anchor?.mission_id ?? null, title, body.join('\n'), anchor?.id ?? null, owner);
       wake(agent);
-    } else if (opts.recap !== false) {
+    } else {
       console.log(`[wake] pilot of ${row.branch} no longer exists: the ${outcome} notice goes to the notification centre only`);
     }
   } catch (err) {
@@ -1639,19 +1618,17 @@ export function notifyIntegrationOutcome(
   // After the claim holds: a card that fails must not hand the notice back,
   // or the recap would leave twice.
   try {
-    const params = { branch: row.branch, pr: pr ?? 'none', target };
+    const target = integrationTargetLabel(row);
     createNotification({
-      type: outcome === 'closed' ? 'alert' : 'report',
+      type: outcome === 'merged' ? 'report' : 'alert',
       urgent: false,
       title,
-      body: outcome === 'open'
-        ? `${row.branch} waits for a review before it lands in ${target}. Merge it on the forge: Timon notices it on its own.`
-        : outcome === 'merged'
+      body: outcome === 'merged'
         ? `${row.branch} landed in ${target}. Its TO DO ideas and doc tasks follow on their own.`
         : `${row.branch} did not land in ${target}: nothing closes and the branches are kept. Its pilot decides what comes next.`,
-      message: outcome === 'open' ? daemonMessage('integration_opened', params)
-        : outcome === 'merged' ? daemonMessage('integration_merged', params)
-        : daemonMessage('integration_closed', params),
+      message: outcome === 'merged'
+        ? daemonMessage('integration_merged', { branch: row.branch, pr: pr ?? 'none', target })
+        : daemonMessage('integration_closed', { branch: row.branch, pr: pr ?? 'none', target }),
       taskId: anchor?.id ?? null,
       missionId: anchor?.mission_id ?? null,
       anchor: `integration:${row.id}:${outcome}`,
