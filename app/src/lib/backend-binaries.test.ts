@@ -14,6 +14,8 @@ test('daemon codes become sentences; an unknown one does not leak its message', 
 
 test('a program pinned elsewhere is refused by name (#1101)', () => {
   assert.equal(binaryErrorMessage(400, 'wrong_program', 'codex'), 'This file is not the codex CLI.');
+  assert.equal(binaryErrorMessage(400, 'no_answer', 'codex'), 'This program did not answer `--version`: it failed, took too long or printed too much.');
+  assert.match(binaryErrorMessage(400, 'unsupported_program', 'codex'), /^On Windows, pick the program's \.exe/);
 });
 
 test('the example path is the program\'s own, on the OS of the daemon that runs it', () => {

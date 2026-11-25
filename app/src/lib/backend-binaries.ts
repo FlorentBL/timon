@@ -30,7 +30,7 @@ export class BinaryPinError extends Error {
 
 const KNOWN_CODES = [
   'unknown_binary', 'path_not_absolute', 'path_missing', 'path_not_file', 'path_not_executable',
-  'wrong_program', 'no_config', 'config_unreadable', 'invalid_body',
+  'wrong_program', 'no_answer', 'unsupported_program', 'no_config', 'config_unreadable', 'invalid_body',
 ];
 
 /**
