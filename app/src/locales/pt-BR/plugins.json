@@ -357,6 +357,7 @@
         "npm-missing": "O npm não está disponível na máquina que executa o Timon. Instale o Node.js e tente novamente.",
         "install-failed": "A instalação falhou. O log do Timon tem os detalhes.",
         "name-taken": "Outro pacote já usa este nome na pasta de plugins.",
+        "already-installed": "Esta versão do plugin já está instalada. Para instalá-la novamente, remova-a primeiro.",
         "generic": "O daemon recusou (HTTP {status}).",
         "unreadable": "O Timon não tem permissão para ler este local. No macOS, permita-o em Ajustes do Sistema › Privacidade e Segurança, ou mova o plugin para outro lugar.",
         "mismatch": "O que este plugin solicita (um programa, um segredo ou um host) mudou desde que foi exibido.",

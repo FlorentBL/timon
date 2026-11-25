@@ -223,7 +223,7 @@ export function installErrorMessage(status: number, body: unknown): string {
   if (status === 403 && code === 'plugin_composition_fixed') return t('freeLicense.plugin_composition_fixed');
   if (status === 403) return t('pluginsPage.install.errors.forbidden');
   const known = ['too-large', 'too-many-entries', 'not-gzip', 'not-archive', 'not-zip', 'zip64', 'encrypted', 'multi-volume', 'compression', 'unsafe-path', 'link', 'layout', 'corrupt', 'not-a-plugin',
-    'invalid-path', 'forbidden-path', 'unreadable', 'not-found', 'expired', 'tampered', 'manifest', 'npm-missing', 'install-failed', 'name-taken',
+    'invalid-path', 'forbidden-path', 'unreadable', 'not-found', 'expired', 'tampered', 'manifest', 'npm-missing', 'install-failed', 'name-taken', 'already-installed',
     'mismatch', 'refused', 'not-provider', 'not-grantable', 'conflict'];
   if (known.includes(code)) return t(`pluginsPage.install.errors.${code}`);
   return message || t('pluginsPage.install.errors.generic', { status });
