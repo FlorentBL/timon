@@ -196,3 +196,29 @@ test('REFUSAL: grok\'s installer writes its `agent` over the authorized one — 
   await assert.rejects(assertLaunchIdentity('cursor', 'agent'), (error: Error) =>
     error instanceof BinaryIdentityError && /`agent` is not Cursor's agent CLI/.test(error.message) && !error.message.includes('grok'));
 });
+
+/**
+ * A CI runner, or a machine where the daemon's PATH does not list the CLI: before the Codex provider declared
+ * an identity, its launch went on to the spawn, which reports `missing` through the child's `error` event.
+ * The identity check must not turn that into an exception of its own, and must not start anything.
+ */
+test('a declared CLI the daemon\'s PATH does not resolve is not probed: the launch goes on to its spawn', async () => {
+  await mountOfficialProviders();
+  assert.ok(declaredBinary('codex')?.identity, 'the Codex provider declares how its CLI describes itself');
+  const { getHost } = await import('../src/host/index.js');
+  const host = getHost();
+  const { bin, spawn } = host;
+  let started = 0;
+  host.bin = (name: string) => {
+    if (name === 'codex') throw new Error('binary "codex" not found in PATH');
+    return bin.call(host, name);
+  };
+  host.spawn = ((...args: Parameters<typeof spawn>) => { started += 1; return spawn.apply(host, args); }) as typeof spawn;
+  try {
+    await assertLaunchIdentity('codex', 'codex');
+  } finally {
+    host.bin = bin;
+    host.spawn = spawn;
+  }
+  assert.equal(started, 0, 'nothing is started to ask a name that names no file');
+});

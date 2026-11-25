@@ -288,11 +288,18 @@ export function binaryIdentityRefusal(
 /**
  * Before a mission starts `cmd` for `backend`: throws `BinaryIdentityError` when the provider declared an
  * identity and the program does not have it. A backend that declared none passes untouched.
+ *
+ * A `cmd` the daemon's host does not resolve to a file is not checked: there is no file to ask, and asking
+ * the bare name would throw from `execTree` before the launch. The launch then goes on as it did before
+ * the provider declared an identity: `host.spawn` passes a path that cannot exist and the mission ends
+ * on its `spawn_failed` notice (`missing`). A launch wrapper (resource guard, fence) may still find the
+ * name on the mission's PATH: that program was never checked, as before the declaration.
  */
 export async function assertLaunchIdentity(backend: string, cmd: string): Promise<void> {
   const identity = profileDeclarations(backend)?.binary?.identity;
   if (!identity) return;
-  const program = resolveExecutable(cmd) ?? cmd;
+  const program = resolveExecutable(cmd);
+  if (!program) return;
   const result = await checkBinaryIdentity(program, identity);
   if (!result.ok) throw new BinaryIdentityError(binaryIdentityRefusal(`backend \`${backend}\``, program, identity, result.reason));
 }
