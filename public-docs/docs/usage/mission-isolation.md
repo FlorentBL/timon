@@ -83,6 +83,8 @@ When the fence keeps a mission from a path its command-line tool needs, the chat
 
 - **Before the mission starts.** Timon checks every path inside its data folder that it hands the tool (its settings, its instructions, its own folders). If the fence would refuse one, the mission is not started, rather than failing the same way turn after turn. A Kanban task is blocked with the same sentence, for you to retry once it is solved.
 - **When a turn fails.** If the tool's error names a path the fence refuses while your account could reach it, the notice names it too, as does the last error of a Kanban task. A backend set aside after such failures says the fence was the cause, instead of an unknown one.
+- **During a turn that goes on.** A command of the agent that meets the fence in the middle of a turn gets the same notice, even when the agent carries on with something else. A mission shows at most five of them, so that a tool walking through your home does not bury the conversation.
+- **When the tool names no path.** Some tools stop on "Operation not permitted" without saying which file (Codex: `os error 1`). Timon cannot check such a refusal against the fence, so the notice quotes the tool, says the fence may be the cause, and points to the agent's extra folders and to **Settings → System → Security**. It is shown once per mission.
 
 What to do depends on the path:
 
@@ -102,7 +104,7 @@ When the refusal stopped a Kanban task before its mission started, allowing puts
 
 The folder offered is the refused folder itself, or the folder of a refused file. Timon offers no card for its own data folder, a credential folder, a path of `host.isolation.deny`, a whole home folder or the root of a disk: those keep the notice above. Only a person signed in to the app can answer the card; an agent, a script or the `timon` command cannot. Allowing takes the same rights as changing the agent's extra folders on its page, or the project's in its settings.
 
-`timon doctor` checks each active backend against this computer's fence: for each one, it has the fence open the folders a mission of that backend uses, and the private files of Timon a mission must never read, under the policy such a mission gets. A line marked ✗ names the path and whether the policy or the kernel refused it.
+`timon doctor` checks each active backend against this computer's fence: for each one, it prepares the command line a mission of that backend would get, without running it, and has the fence open every path of Timon's data folder that command names, the folders a mission of that backend uses, and the private files of Timon a mission must never read, under the policy such a mission gets. A line marked ✗ names the path and whether the policy or the kernel refused it. When the command line cannot be prepared (a backend you are not signed in to), the line says so and only the folders the fence grants are checked. Nothing it prepares is left in Timon's data folder.
 
 ## An agent's extra folders
 

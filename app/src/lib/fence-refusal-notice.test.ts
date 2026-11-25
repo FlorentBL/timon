@@ -4,7 +4,7 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { fenceRefusalEndsTurn, fenceRefusalNotice } from './fence-refusal-notice';
+import { fenceRefusalEndsTurn, fenceRefusalNotice, fenceSuspicionNotice } from './fence-refusal-notice';
 import { setLocale } from './i18n';
 import './i18n-test-locales';
 
@@ -38,4 +38,18 @@ test('a credential folder or a damaged payload: a readable sentence, never "unde
   assert.match(notice, /always keeps this folder from missions/);
   const damaged = fenceRefusalNotice({});
   assert.doesNotMatch(damaged, /undefined|chatPage\./);
+});
+
+test('a refusal naming no path: the words of the CLI, the fence as the likely cause, and where it is set', () => {
+  setLocale('en');
+  const notice = fenceSuspicionNotice({ said: 'Operation not permitted (os error 1)', mechanism: 'seatbelt', backend: 'codex' });
+  assert.match(notice, /codex CLI stopped on “Operation not permitted \(os error 1\)” without naming a path/);
+  assert.match(notice, /macOS sandbox/);
+  assert.match(notice, /extra folders/);
+  assert.match(notice, /Settings → System → Security/);
+  assert.doesNotMatch(fenceSuspicionNotice({}), /undefined|chatPage\./);
+  setLocale('fr');
+  // french-ok: the French message is what this line checks
+  assert.match(fenceSuspicionNotice({ said: 'EPERM', mechanism: 'landlock', backend: 'codex' }), /clôture des missions \(Landlock\)/);
+  setLocale('en');
 });
