@@ -41,7 +41,7 @@ The headers of a remote server, an API key for example, are kept in the secrets 
 
 A program that runs on your machine (a `stdio` server) with environment variables is handled the same way: its variables are kept in the secrets vault, show as `***` in the form, and are never written into the agent's configuration. Timon starts the program itself for each conversation that uses it, gives it its variables, and the agent reaches it through Timon. The program runs in the conversation's folder and stops when the conversation ends. If it cannot start (the command is not found, for example), the agent runs without it and you receive a notification; its variables are never handed to the agent instead. A program without variables is started by the agent's own tool, as before. Agents that cannot reach an MCP server through Timon yet, such as opencode and Hermes, start the program themselves and receive its variables, as in earlier versions. The **Run MCP servers with variables outside the agent** setting, under **Settings → Missions → Permissions**, turns this off: the agent's tool then starts the program and its variables are written into the agent's configuration, as in earlier versions.
 
-Agents on opencode and Hermes do not receive a server that Timon relays, since they only load programs they start themselves: a remote server, or a program with variables while the setting above is on.
+Agents on opencode and Hermes do not receive a remote server that Timon relays, since they only load programs they start themselves.
 
 When a server signs in with OAuth, the secret the publisher gives Timon at registration is kept in the secrets vault too.
 
