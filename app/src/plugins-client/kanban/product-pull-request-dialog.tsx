@@ -1,8 +1,10 @@
 'use client';
 
 /**
- * The detail window of a pull request, opened by a click on its row in the
- * Pull requests widget: what GitHub's page shows, read only. The header (state,
+ * The product's detail window of a pull request (`kanban.pull.dialog`, host
+ * `pull-request-dialog.tsx`), opened by a click on its row in the Pull
+ * requests widget: what GitHub's page shows, read only. It reads the page, the
+ * row and the gestures from `usePullRequestDialog()`. The header (state,
  * author, branches, date), then four tabs — the conversation
  * (description, comments, reviews, review threads by file), the commits, the
  * checks (the end of a failed job's log on demand) and the files (each one's
@@ -20,7 +22,7 @@
  * room for the column: the card moves above the tabs, across the window.
  */
 
-import { useEffect, useLayoutEffect, useMemo, useState, type ReactElement, type ReactNode } from 'react';
+import { useLayoutEffect, useMemo, useState, type ReactElement, type ReactNode } from 'react';
 import * as Dropdown from '@radix-ui/react-dropdown-menu';
 import {
   ChevronRight, CircleAlert, CircleCheck, CircleDot, CircleMinus, ExternalLink, GitCommitHorizontal, GitMerge,
@@ -36,12 +38,13 @@ import { cn } from '@/lib/utils';
 import { diffLineKind, patchBody } from './landing-api';
 import { DIFF_LINE_CLASS } from './landing-preview-dialog';
 import {
-  checkCounts, checkSeconds, forgeHref, forgeMarkdownHtml, getCheckLog, getPullRequestDiff, getPullRequestPage, isPageText, mergeState, placeThreads,
+  checkCounts, checkSeconds, forgeHref, forgeMarkdownHtml, isPageText, mergeState, placeThreads,
   splitDiffByFile, type CheckLog, type ForgeLabel, type MergeState, type PageCheck, type PageEvent, type PageReaction, type PageThread,
   type PageTimelineItem, type PullRequestPage, type Read, type ReactionContent,
 } from './pull-request-page-api';
 import { branchLock, reviewBadge, type PullActionId, type PullActions, type PullRequestItem } from './pull-requests-model';
-import { PullActionButton, PullActionMenuItems } from './pull-request-actions';
+import { PullActionButton, PullActionMenuItems, PullLinkItems } from './pull-request-actions';
+import { usePullRequestDialog, type PullRequestDialogValue, type PullRequestPageLoad } from './pull-request-dialog-context';
 
 const ISLAND = 'rounded-lg bg-foreground/[0.035]';
 const CHIP = 'inline-flex h-5 shrink-0 items-center gap-1 rounded-md px-1.5 text-[10.5px] font-medium tabular-nums';
@@ -297,7 +300,7 @@ function Thread({ thread, showPath }: { thread: PageThread; showPath: boolean })
   );
 }
 
-type PageLoad = { kind: 'loading' } | { kind: 'error'; message: string } | { kind: 'ready'; page: PullRequestPage };
+type PageLoad = PullRequestPageLoad;
 
 type BoxLine = { icon: typeof CircleCheck; tone: string };
 
@@ -515,7 +518,7 @@ function duration(seconds: number): string {
 
 type LogLoad = { kind: 'loading' } | { kind: 'error'; message: string } | { kind: 'ready'; log: CheckLog };
 
-function CheckRow({ check, project, number }: { check: PageCheck; project: string; number: number }) {
+function CheckRow({ check, readLog: read }: { check: PageCheck; readLog: PullRequestDialogValue['readCheckLog'] }) {
   const [log, setLog] = useState<LogLoad | null>(null);
   const Icon = CHECK_ICON[check.status];
   const seconds = checkSeconds(check);
@@ -523,7 +526,7 @@ function CheckRow({ check, project, number }: { check: PageCheck; project: strin
     if (log) { setLog(null); return; }
     if (!check.url) return;
     setLog({ kind: 'loading' });
-    const out = await getCheckLog(project, number, check.url);
+    const out = await read(check.url);
     setLog(out.ok ? { kind: 'ready', log: out.value } : { kind: 'error', message: out.message });
   };
   return (
@@ -570,7 +573,7 @@ function CheckRow({ check, project, number }: { check: PageCheck; project: strin
 
 const CHECK_ORDER: Record<PageCheck['status'], number> = { fail: 0, pending: 1, pass: 2, skipped: 3 };
 
-function ChecksTab({ page, project }: { page: PullRequestPage; project: string }) {
+function ChecksTab({ page, readLog }: { page: PullRequestPage; readLog: PullRequestDialogValue['readCheckLog'] }) {
   if (page.checks.length === 0) return <p className="text-xs text-muted-foreground">{t('pullRequests.detail.noChecks')}</p>;
   const sorted = [...page.checks].sort((a, b) => CHECK_ORDER[a.status] - CHECK_ORDER[b.status]);
   const counts = checkCounts(page.checks);
@@ -578,7 +581,7 @@ function ChecksTab({ page, project }: { page: PullRequestPage; project: string }
     <div className="flex flex-col gap-2">
       <p className="text-[11.5px] tabular-nums text-muted-foreground">{t('pullRequests.detail.checksSummary', counts)}</p>
       <ul className="flex flex-col gap-1">
-        {sorted.map((check, i) => <CheckRow key={`${check.name}-${i}`} check={check} project={project} number={page.number} />)}
+        {sorted.map((check, i) => <CheckRow key={`${check.name}-${i}`} check={check} readLog={readLog} />)}
       </ul>
       <More count={page.checksMore} what="checks" />
     </div>
@@ -623,7 +626,7 @@ function FilePatch({ patch, threads }: { patch: string; threads: PageThread[] })
   );
 }
 
-function FilesTab({ page, project }: { page: PullRequestPage; project: string }) {
+function FilesTab({ page, readDiff }: { page: PullRequestPage; readDiff: PullRequestDialogValue['readDiff'] }) {
   const [diff, setDiff] = useState<DiffLoad>({ kind: 'idle' });
   const [open, setOpen] = useState<ReadonlySet<string>>(new Set());
   const threadsByPath = useMemo(() => {
@@ -641,7 +644,7 @@ function FilesTab({ page, project }: { page: PullRequestPage; project: string })
     });
     if (diff.kind !== 'idle') return;
     setDiff({ kind: 'loading' });
-    void getPullRequestDiff(project, page.number).then((out: Read<{ diff: string; truncated: boolean }>) => {
+    void readDiff().then((out: Read<{ diff: string; truncated: boolean }>) => {
       if (!out.ok) { setDiff({ kind: 'error', message: out.message }); return; }
       const lines = out.value.diff.split('\n');
       const cut = lines.length > DIFF_LINES_SHOWN;
@@ -838,43 +841,18 @@ function useNarrow(el: HTMLElement | null, px: number): boolean {
 
 // ─── The window ────────────────────────────────────────────────────────────
 
-export function PullRequestDialog({ project, repo, pull, actions, onAction, links, onOpenJob, onOpenTodo, onClose }: {
-  project: string;
-  repo: string | null;
-  /** The row the window was opened from: its title shows at once, its chips and links come from the list. */
-  pull: PullRequestItem;
-  /** Its gestures, as `pullRequestActions` places them; the row's menu lists the same. */
-  actions: PullActions;
-  onAction: (id: PullActionId) => void;
-  /** The job and the ideas behind it, after the gestures in "…". */
-  links: ReactNode;
-  /** Timon's links (job, ideas): the window closes before the one they open. */
-  onOpenJob: (id: string) => void;
-  onOpenTodo: (id: number) => void;
-  onClose: () => void;
-}): ReactElement {
-  const [load, setLoad] = useState<PageLoad>({ kind: 'loading' });
-  const [refreshing, setRefreshing] = useState(false);
+/** The product's window: the slot's fallback, painted directly by the host while no plugin holds the slot. */
+export function ProductPullRequestDialog(): ReactElement | null {
+  const host = usePullRequestDialog();
+  if (!host) return null;
+  return <PullRequestWindow host={host} />;
+}
+
+function PullRequestWindow({ host }: { host: PullRequestDialogValue }): ReactElement {
+  const { repo, pull, actions, load, refreshing, refresh, run: onAction, close: onClose, openJob: onOpenJob, openTodo: onOpenTodo } = host;
   const [tab, setTab] = useState('conversation');
   const [body, setBody] = useState<HTMLDivElement | null>(null);
   const narrow = useNarrow(body, NARROW_WINDOW_PX);
-
-  useEffect(() => {
-    let alive = true;
-    setLoad({ kind: 'loading' });
-    void getPullRequestPage(project, pull.number, pull.updatedAt ? { updated: pull.updatedAt } : {}).then((out) => {
-      if (!alive) return;
-      setLoad(out.ok ? { kind: 'ready', page: out.value } : { kind: 'error', message: out.message });
-    });
-    return () => { alive = false; };
-  }, [project, pull.number, pull.updatedAt]);
-
-  const refresh = async () => {
-    setRefreshing(true);
-    const out = await getPullRequestPage(project, pull.number, { fresh: true });
-    setRefreshing(false);
-    setLoad(out.ok ? { kind: 'ready', page: out.value } : { kind: 'error', message: out.message });
-  };
 
   const page = load.kind === 'ready' ? load.page : null;
   const state = stateOf(page ?? { state: 'open', isDraft: pull.isDraft });
@@ -929,7 +907,7 @@ export function PullRequestDialog({ project, repo, pull, actions, onAction, link
                   <Dropdown.Content sideOffset={6} align="end" className="z-[60] min-w-44 rounded-lg border border-border bg-popover p-1 text-xs text-popover-foreground shadow-elev-2">
                     <NativeViewCover />
                     <PullActionMenuItems actions={actions.overflow} onRun={onAction} />
-                    {links}
+                    <PullLinkItems pull={pull} onOpenJob={onOpenJob} onOpenTodo={onOpenTodo} />
                   </Dropdown.Content>
                 </Dropdown.Portal>
               </Dropdown.Root>
@@ -992,10 +970,10 @@ export function PullRequestDialog({ project, repo, pull, actions, onAction, link
                 <CommitsTab page={page} />
               </TabsContent>
               <TabsContent value="checks" className={tabPanel(narrow)}>
-                <ChecksTab page={page} project={project} />
+                <ChecksTab page={page} readLog={host.readCheckLog} />
               </TabsContent>
               <TabsContent value="files" className={tabPanel(narrow)}>
-                <FilesTab page={page} project={project} />
+                <FilesTab page={page} readDiff={host.readDiff} />
               </TabsContent>
             </Tabs>
           ) : <div aria-hidden className={narrow ? 'min-h-0 flex-1' : cn(TAB_BAR, 'col-start-1 row-start-1')} />}

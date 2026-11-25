@@ -770,3 +770,41 @@ test('a row\'s proposal chip sits beside its open button, not inside it, and doe
     await m.unmount();
   }
 });
+
+test('a plugin that takes kanban.pull.dialog paints the window from usePullRequestDialog, with the host\'s reads', async () => {
+  const m = await mount([pull()]);
+  const slots = await import('@/lib/plugin-host/slots');
+  const React = await import('react');
+  const { usePullRequestDialog } = await import('./pull-request-dialog-context');
+  const seen: { diff?: string; closed?: boolean } = {};
+  const Acme = () => {
+    const host = usePullRequestDialog();
+    if (!host) return null;
+    return React.createElement('div', { 'data-acme-pull': host.pull.number },
+      host.load.kind === 'ready' ? host.load.page.title : host.load.kind,
+      React.createElement('button', {
+        type: 'button', 'data-acme-diff': '',
+        onClick: () => { void host.readDiff().then((out) => { if (out.ok) seen.diff = out.value.diff; }); },
+      }),
+      React.createElement('button', { type: 'button', 'data-acme-close': '', onClick: () => { seen.closed = true; host.close(); } }),
+    );
+  };
+  const off = slots.register({ slot: 'kanban.pull.dialog', pluginId: 'acme-prs' }, Acme);
+  try {
+    await m.choose(document.querySelector('[data-stack-project]'), 'acme');
+    await m.click(document.querySelector('[data-pull-row="12"] [data-pull-open]'));
+    const painted = document.querySelector('[data-acme-pull]');
+    assert.equal(painted?.getAttribute('data-acme-pull'), '12');
+    assert.match(painted?.textContent ?? '', /Add a dark theme/);
+    assert.equal(document.querySelector('[data-pull-dialog]'), null, 'the product\'s window is not painted under it');
+    await m.click(document.querySelector('[data-acme-diff]'));
+    assert.equal(seen.diff, DETAIL_DIFF);
+    assert.ok(m.calls.some((c) => c.url === '/api/ui/projects/acme/pull-requests/12/diff'));
+    await m.click(document.querySelector('[data-acme-close]'));
+    assert.equal(seen.closed, true);
+    assert.equal(document.querySelector('[data-acme-pull]'), null);
+  } finally {
+    off();
+    await m.unmount();
+  }
+});

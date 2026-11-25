@@ -60,7 +60,7 @@ import { ConflictDialog } from './conflict-dialog';
 import { useLandingChanges, useLandingFallbackPoll, type LandingChange } from './landing-events';
 import { landsLocally, LocalLandingEmpty, useProjectIntegration } from './local-landing';
 import { onIntegrationChanged } from './project-integration-api';
-import { PullRequestDialog } from './product-pull-request-dialog';
+import { PullRequestDialog } from './pull-request-dialog';
 import { PullActionMenuItems, PullLinkItems } from './pull-request-actions';
 
 /** How often a running review is asked for its verdict. */
@@ -331,13 +331,6 @@ export function PullRequestsWidget({ handle, className }: WidgetProps) {
           onOpenTodo={(id) => { setDetail(null); openTodo(id); }}
           actions={pullRequestActions(detail, workOn(detail))}
           onAction={(id) => run(detail, id)}
-          links={(
-            <PullLinkItems
-              pull={detail}
-              onOpenJob={(id) => { setDetail(null); void openJob(id); }}
-              onOpenTodo={(id) => { setDetail(null); openTodo(id); }}
-            />
-          )}
         />
       )}
 
