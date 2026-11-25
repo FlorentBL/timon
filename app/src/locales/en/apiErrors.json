@@ -314,6 +314,8 @@
     "pipeline_run_failed": "The pipeline could not start: {detail}",
     "pipeline_run_not_found": "This pipeline run no longer exists.",
     "done_project_invalid": "The project filter must be a project identifier.",
+    "project_invalid": "The project must be a project identifier.",
+    "limit_invalid": "The limit must be a positive whole number.",
     "task_body_invalid": "This task request is invalid: {detail}",
     "series_rule_refused": "This series rule was refused: {detail}",
     "series_group_invalid": "The group must be a single text value.",
