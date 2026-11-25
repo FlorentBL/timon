@@ -103,7 +103,7 @@ function reach(path: string, walk: Walk): Reached {
     let target: string;
     try { target = walk.readlink(next); } catch { return { problem: `${next} cannot be read` }; }
     // Joined as text, not with `posix.join`: a `..` in the target is resolved by the walk, after the links before it.
-    const followed = reach(target.startsWith('/') ? target : `${current}/${target}`, walk);
+    const followed = reach(target.startsWith('/') ? target : `${current}/${target}`, walk); // portability: POSIX paths only, Windows returns before any walk
     if ('problem' in followed) return followed;
     current = followed.real;
     kind = followed.kind;
