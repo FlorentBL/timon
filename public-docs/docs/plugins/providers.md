@@ -389,7 +389,9 @@ published checksum · verified 1.5.0 available to replace it*.
   before downloading, and records the install as unverified.
 - **Safe unpacking.** An archive that tries to write outside its folder, holds
   a hard link or a device, or a symbolic link that points outside the agent's
-  folder (or through another link) is refused with nothing installed. Symbolic
+  folder (or through another link) or to a folder above it is refused with
+  nothing installed. On macOS and Windows, whose disks ignore case, so is an
+  archive holding two names that differ only by case or accent form. Symbolic
   links that stay inside the agent's folder, such as those of a macOS framework,
   are kept; on Windows, where creating one needs a privilege, Timon copies what
   the link points to instead. A `.zip` holding a link is refused.

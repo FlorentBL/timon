@@ -22,10 +22,16 @@
  * `linkTargetOf` proves without touching the disk, and links are placed after
  * every file and folder, so no entry is ever written through one. The zip
  * reader still refuses them: no agent needs one there.
+ *
+ * Path strings are not identities: on a disk that ignores case or Unicode form
+ * (APFS, NTFS), `a` and `A`, or an accented letter written two ways, name one
+ * entry. So two spellings of one name are refused where the disk folds them (`Spellings`),
+ * and what a link reaches on disk is compared by file identity, never by
+ * string, before it is kept or copied (`assertNotAncestor`).
  */
 import {
   chmodSync, closeSync, copyFileSync, createReadStream, fstatSync, lstatSync, mkdirSync, openSync, readdirSync, readSync,
-  realpathSync, symlinkSync, writeSync,
+  realpathSync, statSync, symlinkSync, writeSync,
 } from 'node:fs';
 import { basename, dirname, isAbsolute, join, resolve, sep } from 'node:path';
 import { createGunzip, createInflateRaw } from 'node:zlib';
@@ -169,7 +175,77 @@ function linkTargetOf(root: string, linkPath: string, raw: string): string {
   if (resolved === root || !resolved.startsWith(root + sep)) {
     throw new ArchiveError('link', 'archive contains a link pointing outside its folder');
   }
+  // A link to a folder above it makes an endless tree (`self/sub/self/…`), and its copy would never end. This is the
+  // string check; `assertNotAncestor` repeats it on disk, where another spelling or another link reaches the same folder.
+  if (linkPath.startsWith(resolved + sep)) throw new ArchiveError('link', 'archive contains a link to a folder above it');
   return parts.join('/');
+}
+
+/** Case and Unicode form folded the way APFS and NTFS compare names, a little stricter when unsure (sharp s = `ss`). */
+function foldName(name: string): string {
+  return name.normalize('NFD').toUpperCase().toLowerCase().normalize('NFC');
+}
+
+/**
+ * One spelling per name. Where the disk folds case and Unicode form, `a/` then
+ * `A/x`, or a link to `../A` beside `a/`, would reach an entry the string
+ * checks believe distinct: refused instead. Off where the disk compares bytes
+ * (Linux), so a Linux build holding `README` and `readme` still installs there.
+ */
+class Spellings {
+  private readonly seen = new Map<string, string>();
+  constructor(private readonly root: string, private readonly enabled: boolean) {}
+
+  private *prefixes(path: string): Generator<[key: string, spelled: string]> {
+    const parts = path.slice(this.root.length + 1).split(sep);
+    for (let i = 1; i <= parts.length; i += 1) {
+      const spelled = parts.slice(0, i).join('/');
+      yield [parts.slice(0, i).map(foldName).join('/'), spelled];
+    }
+  }
+
+  /** Records an entry and every folder on its way. */
+  claim(path: string): void {
+    if (!this.enabled) return;
+    for (const [key, spelled] of this.prefixes(path)) {
+      const known = this.seen.get(key);
+      if (known === undefined) this.seen.set(key, spelled);
+      else if (known !== spelled) {
+        throw new ArchiveError('unsafe-path', 'archive holds two names that differ only by case or Unicode form');
+      }
+    }
+  }
+
+  /** Checks where a link points against the recorded entries, once they are all known. */
+  checkTarget(path: string): void {
+    if (!this.enabled) return;
+    for (const [key, spelled] of this.prefixes(path)) {
+      const known = this.seen.get(key);
+      if (known !== undefined && known !== spelled) {
+        throw new ArchiveError('link', 'archive contains a link spelling an entry with another case or Unicode form');
+      }
+    }
+  }
+}
+
+/** What the disk calls a file, whatever the string spelling it. Null where the volume gives no usable id (FAT). */
+function identityOf(path: string): string | null {
+  try {
+    const info = statSync(path, { bigint: true });
+    return info.ino === 0n ? null : `${info.dev}:${info.ino}`;
+  } catch {
+    return null;
+  }
+}
+
+/** Refuses `target` when it is, on disk, `linkPath`'s own folder or one of the folders above it, up to `root`. */
+function assertNotAncestor(root: string, linkPath: string, target: string): void {
+  const id = identityOf(target);
+  if (id === null) return;
+  for (let dir = dirname(linkPath); dir.length >= root.length; dir = dirname(dir)) {
+    if (identityOf(dir) === id) throw new ArchiveError('link', 'archive contains a link to a folder above it');
+    if (dir === root) return;
+  }
 }
 
 /** Refuses to create anything below a folder that is in fact a link. */
@@ -200,7 +276,8 @@ function placeSymlinks(root: string, links: readonly PendingLink[]): void {
     }
   }
   // Belt and braces over the shape rule: what the system really reaches. A loop is refused (nothing needs one, and
-  // it would trap whoever follows it); a dangling link reaches nothing, so it may stay.
+  // it would trap whoever follows it), whether the system sees it (ELOOP) or not (a link to a folder above it, reached
+  // through another link or another spelling); a dangling link reaches nothing, so it may stay.
   const realRoot = realpathSync(root);
   for (const link of links) {
     let real: string;
@@ -210,9 +287,12 @@ function placeSymlinks(root: string, links: readonly PendingLink[]): void {
       if ((err as NodeJS.ErrnoException | null)?.code === 'ENOENT') continue;
       throw new ArchiveError('link', 'archive contains a link that loops');
     }
+    // A string test, safe here: both sides come from `realpath` over the same root, so another spelling of the root
+    // can only make it refuse a link that is inside, never accept one that is out.
     if (real === realRoot || !real.startsWith(realRoot + sep)) {
       throw new ArchiveError('link', 'archive contains a link pointing outside its folder');
     }
+    assertNotAncestor(root, link.path, link.path);
   }
 }
 
@@ -234,8 +314,9 @@ function copyEntry(from: string, to: string, budget: Budget): void {
 /**
  * The Windows stand-in for links: each one becomes a copy of its target. A link
  * may point through another one (`Python -> Versions/Current/Python`), so
- * passes repeat until none progresses; what is left (dangling, loops, a link to
- * its own ancestor) is skipped, never followed.
+ * passes repeat until none progresses; what is left (dangling, or links that
+ * wait on each other) is skipped, never followed. A link to a folder above it is
+ * refused: its copy would contain itself.
  */
 function placeCopies(root: string, links: readonly PendingLink[], budget: Budget): void {
   let left = [...links];
@@ -243,8 +324,6 @@ function placeCopies(root: string, links: readonly PendingLink[], budget: Budget
     const waiting: PendingLink[] = [];
     for (const link of left) {
       const source = resolve(dirname(link.path), ...link.target.split('/'));
-      // A copy of its own ancestor would never end.
-      if (link.path.startsWith(source + sep)) continue;
       let exists = true;
       try { lstatSync(source); } catch { exists = false; }
       // Wait while another pending link sits on the way to the source or inside it: copied now, it would be missing.
@@ -256,6 +335,9 @@ function placeCopies(root: string, links: readonly PendingLink[], budget: Budget
       }
       assertNoLinkAbove(root, link.path);
       mkdirSync(dirname(link.path), { recursive: true });
+      // By identity, once every folder above the link exists: on NTFS `../A` beside `a/` is the folder `a`, which the
+      // strings call another one.
+      assertNotAncestor(root, link.path, source);
       try {
         copyEntry(source, link.path, budget);
       } catch (err) {
@@ -268,16 +350,21 @@ function placeCopies(root: string, links: readonly PendingLink[], budget: Budget
   }
 }
 
+/** Whether names are compared as the usual disk of the platform does: folded on macOS and Windows. */
+const DISK_FOLDS_NAMES = process.platform === 'darwin' || process.platform === 'win32';
+
 /** Streams a `.tar.gz` into `dest`, layout and executable bits preserved. */
 export async function extractTarGz(
   file: string,
   dest: string,
   limits: ExtractLimits = DEFAULT_EXTRACT_LIMITS,
   linkMode: LinkMode = process.platform === 'win32' ? 'copy' : 'symlink',
+  foldNames: boolean = DISK_FOLDS_NAMES,
 ): Promise<void> {
   const root = resolve(dest);
   mkdirSync(root, { recursive: true });
   const budget = new Budget(limits);
+  const spellings = new Spellings(root, foldNames);
   const source: Readable = createReadStream(file).pipe(createGunzip());
   const chunks = source[Symbol.asyncIterator]() as AsyncIterator<Buffer>;
   let pending: Buffer = Buffer.alloc(0);
@@ -345,6 +432,7 @@ export async function extractTarGz(
 
       budget.entry();
       const target = targetOf(root, raw);
+      if (target) spellings.claim(target);
       if (kind === 'symlink') {
         if (!target) throw new ArchiveError('unsafe-path', 'archive link entry without a name');
         links.push({ path: target, target: linkTargetOf(root, target, rawLink) });
@@ -371,6 +459,7 @@ export async function extractTarGz(
     source.destroy();
   }
   // Last, so that no file or folder of the archive is ever written through a link.
+  for (const link of links) spellings.checkTarget(resolve(dirname(link.path), ...link.target.split('/')));
   if (linkMode === 'symlink') placeSymlinks(root, links);
   else placeCopies(root, links, budget);
 }
