@@ -229,6 +229,33 @@ test('no config file yet: the pin is refused rather than ending the first run', 
   }
 });
 
+/**
+ * #1101: a tester pinned `/usr/local/bin/ollama` for Ollama Cloud, which runs on the Codex CLI, and every
+ * mission ran `ollama exec …`. The Codex provider declares how its CLI describes itself: the pin asks first.
+ */
+test('a pin on another program is refused, naming the CLI expected; the right one is saved', async () => {
+  const stubOf = (name: string, line: string): string => {
+    const file = join(BIN_DIR, `${name}${RUNNABLE}`);
+    writeFileSync(file, process.platform === 'win32' ? `@echo ${line}\r\n` : `#!/bin/sh\necho "${line}"\n`, { mode: 0o755 });
+    return file;
+  };
+  const ollama = stubOf('ollama', 'ollama version is 0.16.2');
+  const codex = stubOf('codex', 'codex-cli 0.169.0');
+  const before = readFileSync(CONFIG_FILE, 'utf8');
+
+  const wrong = await call('PUT', '/api/host/binaries/codex', { cookie: adminCookie, body: { path: ollama } });
+  assert.equal(wrong.status, 400, wrong.text);
+  assert.deepEqual(wrong.json, { error: 'wrong_program', message: 'This file is not the Codex CLI: its `--version` answer does not match.' });
+  assert.equal(readFileSync(CONFIG_FILE, 'utf8'), before, 'nothing written');
+  assert.equal(config().host.binaries.codex, undefined);
+
+  const right = await call('PUT', '/api/host/binaries/codex', { cookie: adminCookie, body: { path: codex } });
+  assert.equal(right.status, 200, right.text);
+  assert.equal(config().host.binaries.codex, codex);
+  assert.equal((await call('DELETE', '/api/host/binaries/codex', { cookie: adminCookie })).status, 200);
+  assert.equal(readFileSync(CONFIG_FILE, 'utf8'), before);
+});
+
 test('normalizePinPath: quotes, tilde and Windows paths', () => {
   assert.equal(normalizePinPath('"/opt/x/claude"', 'linux', '/home/u'), '/opt/x/claude');
   assert.equal(normalizePinPath('~/bin/claude', 'linux', '/home/u'), join('/home/u', 'bin', 'claude'));
