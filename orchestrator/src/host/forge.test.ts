@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import {
   actionsJobOf, assertNoForce, CHECK_LOG_TAIL_CHARS, CHECK_LOG_TAIL_LINES, checkLogTail, FORGE_BODY_LIMIT, FORGE_TITLE_LIMIT, githubForge, githubRepoFromUrl, gitTransport, ISSUE_COMMENT_LIMIT, ISSUE_LIST_LIMIT,
-  parsePullRequestBranch, parsePullRequestChecks, pushArguments, pushCommitArguments, redactedOutput, REVIEW_THREAD_BODY_LIMIT, REVIEW_THREAD_LIMIT, type GitRunner,
+  parseGeneralReviews, parsePullRequestBranch, parsePullRequestChecks, GENERAL_REVIEW_LIMIT, pushArguments, pushCommitArguments, redactedOutput, REVIEW_THREAD_BODY_LIMIT, REVIEW_THREAD_LIMIT, type GitRunner,
 } from './forge.js';
 import type { GhRunner } from './gh.js';
 import type { ExecOpts } from './types.js';
@@ -292,6 +292,42 @@ test('review threads: one read-only GraphQL call, unresolved ones only, values k
   assert.ok(args.includes('--raw-field=owner=acme') && args.includes('--raw-field=name=app') && args.includes('--field=number=51'));
   assert.ok(!args.some((a) => /mutation/i.test(a)), 'a query, never a mutation');
   assert.equal(calls[0]!.opts.env?.GH_CONFIG_DIR, '/home/u/.config/gh-work');
+});
+
+test('general reviews: one read-only GraphQL query, the submitted ones with a text, the latest kept, oldest first', async () => {
+  const node = (i: number, extra: Record<string, unknown> = {}) => ({
+    state: 'CHANGES_REQUESTED', body: `rename ${i}`, url: `https://github.com/a/b/pull/1#pullrequestreview-${i}`,
+    submittedAt: '2026-11-20T10:00:00Z', author: { login: `rev${i}` }, ...extra,
+  });
+  const answer = (nodes: unknown[], totalCount = nodes.length) => JSON.stringify({ data: { repository: { pullRequest: { reviews: { totalCount, nodes } } } } });
+  const { run, calls } = recorder({ stdout: answer([
+    node(0, { state: 'COMMENTED', body: 'x\u0000y'.repeat(GENERAL_REVIEW_LIMIT * 200), url: 'http://plain', author: null }),
+    node(1, { body: '   ' }),
+    node(2, { state: 'DISMISSED' }),
+    node(3, { state: 'APPROVED', submittedAt: 'not a date' }),
+  ]) });
+  const out = await githubForge('/home/u/.config/gh-work', { gh: run }).pullRequestReviews('acme/app', 51);
+  assert.ok(out.ok);
+  assert.equal(out.truncated, false);
+  assert.deepEqual(out.reviews.map((r) => r.state), ['commented', 'approved'], 'no empty text, no dismissed review');
+  assert.equal(out.reviews[0]!.author, null);
+  assert.equal(out.reviews[0]!.url, null);
+  assert.ok(!out.reviews[0]!.body.includes('\u0000'));
+  assert.equal(out.reviews[0]!.body.length, REVIEW_THREAD_BODY_LIMIT);
+  assert.deepEqual(out.reviews[1], { state: 'approved', author: 'rev3', body: 'rename 3', url: 'https://github.com/a/b/pull/1#pullrequestreview-3', submittedAt: null });
+  const args = calls[0]!.args;
+  assert.deepEqual(args.slice(0, 2), ['api', 'graphql']);
+  assert.ok(!args.some((a) => /mutation/i.test(a)), 'a query, never a mutation');
+  assert.equal(calls[0]!.opts.env?.GH_CONFIG_DIR, '/home/u/.config/gh-work');
+
+  const many = Array.from({ length: GENERAL_REVIEW_LIMIT + 3 }, (_, i) => node(i));
+  const bounded = await githubForge(null, { gh: recorder({ stdout: answer(many, 80) }).run }).pullRequestReviews('a/b', 1);
+  assert.ok(bounded.ok);
+  assert.equal(bounded.reviews.length, GENERAL_REVIEW_LIMIT);
+  assert.equal(bounded.reviews[0]!.body, 'rename 3');
+  assert.equal(bounded.truncated, true);
+  assert.equal(parseGeneralReviews('{"data":{"repository":null}}'), null);
+  assert.equal((await githubForge(null, { gh: recorder({ stdout: '{}' }).run }).pullRequestReviews('@etc/passwd', 1)).ok, false);
 });
 
 test('review threads are bounded, and say when the forge holds more', async () => {

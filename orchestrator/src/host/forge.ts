@@ -231,6 +231,27 @@ export interface ForgeThreadsReader {
   pullRequestReviewThreads(repo: string, number: number): Promise<ReviewThreadsOutcome>;
 }
 
+export const GENERAL_REVIEW_STATES = ['commented', 'changes_requested', 'approved'] as const;
+
+/** A submitted review's own text, the one written above its line comments. */
+export type GeneralReview = {
+  state: (typeof GENERAL_REVIEW_STATES)[number];
+  author: string | null;
+  body: string;
+  url: string | null;
+  submittedAt: string | null;
+};
+
+export type GeneralReviewsOutcome =
+  | { ok: true; reviews: GeneralReview[]; truncated: boolean }
+  | ForgeReadFailure;
+
+/** The text of the reviews submitted on a pull request: a reviewer often
+ *  writes what to change there rather than on a line. */
+export interface ForgeReviewsReader {
+  pullRequestReviews(repo: string, number: number): Promise<GeneralReviewsOutcome>;
+}
+
 /** The end of the log of a failed check, as the forge's CI printed it. */
 export type FailedCheckLog = {
   /** The last lines, at most `CHECK_LOG_TAIL_LINES` and `CHECK_LOG_TAIL_CHARS`. */
@@ -368,6 +389,9 @@ export const REVIEW_THREAD_LIMIT = 20;
 export const REVIEW_THREAD_BODY_LIMIT = 1_000;
 /** Most review threads asked of the forge in one call. */
 const REVIEW_THREAD_PAGE = 100;
+/** Most reviews with a text kept, the latest; and reviews asked of the forge. */
+export const GENERAL_REVIEW_LIMIT = 10;
+const GENERAL_REVIEW_PAGE = 50;
 const LABEL_LIMIT = 20;
 const LABEL_NAME_LIMIT = 100;
 const CLOSING_ISSUE_LIMIT = 20;
@@ -786,6 +810,55 @@ const REVIEW_THREADS_QUERY = `query($owner: String!, $name: String!, $number: In
   }
 }`;
 
+const GeneralReviewSchema = z.object({
+  state: z.string().transform((v) => v.toLowerCase()).pipe(z.enum(GENERAL_REVIEW_STATES)),
+  author: LoginSchema.nullable().catch(null),
+  body: z.string().catch(''),
+  url: z.string().catch(''),
+  submittedAt: z.string().nullable().catch(null),
+});
+
+const ReviewsAnswerSchema = z.object({
+  data: z.object({
+    repository: z.object({
+      pullRequest: z.object({
+        reviews: z.object({ totalCount: z.int().nonnegative(), nodes: z.array(z.unknown()) }),
+      }),
+    }),
+  }),
+});
+
+/** The submitted reviews of a GraphQL answer that hold a text, oldest first,
+ *  the latest `GENERAL_REVIEW_LIMIT`; null when the answer is not one. A
+ *  pending or dismissed review is not one a reviewer stands by. */
+export function parseGeneralReviews(stdout: string): { reviews: GeneralReview[]; truncated: boolean } | null {
+  const parsed = ReviewsAnswerSchema.safeParse(jsonOf(stdout));
+  if (!parsed.success) return null;
+  const connection = parsed.data.data.repository.pullRequest.reviews;
+  const worded = itemsOf(connection.nodes, GeneralReviewSchema, connection.nodes.length)
+    .map((r): GeneralReview => ({
+      state: r.state,
+      author: r.author,
+      body: boundedText(r.body, REVIEW_THREAD_BODY_LIMIT),
+      url: httpsUrl(r.url),
+      submittedAt: r.submittedAt && !Number.isNaN(Date.parse(r.submittedAt)) ? new Date(r.submittedAt).toISOString() : null,
+    }))
+    .filter((r) => r.body.trim().length > 0);
+  const reviews = worded.slice(-GENERAL_REVIEW_LIMIT);
+  return { reviews, truncated: connection.totalCount > connection.nodes.length || worded.length > reviews.length };
+}
+
+const GENERAL_REVIEWS_QUERY = `query($owner: String!, $name: String!, $number: Int!) {
+  repository(owner: $owner, name: $name) {
+    pullRequest(number: $number) {
+      reviews(last: ${GENERAL_REVIEW_PAGE}, states: [COMMENTED, CHANGES_REQUESTED, APPROVED]) {
+        totalCount
+        nodes { state body url submittedAt author { login } }
+      }
+    }
+  }
+}`;
+
 /** What `gh api` answers when it creates an issue comment. */
 const CreatedComment = z.object({ id: z.number().int().positive(), html_url: z.string() });
 
@@ -842,7 +915,7 @@ function pullRequestFrom(text: string): PullRequestRef | null {
 /** GitHub through `gh`, signed in with the project's config folder. */
 export function githubForge(
   configDir: string | null, runners: ForgeRunners = {},
-): Forge & ForgeReader & ForgeChecksReader & ForgeCheckLogReader & ForgeIssueReader & ForgeCommentWriter & ForgeBranchWriter {
+): Forge & ForgeReader & ForgeChecksReader & ForgeCheckLogReader & ForgeIssueReader & ForgeCommentWriter & ForgeBranchWriter & ForgeReviewsReader {
   const gh = runners.gh ?? hostGh;
   // Read-only `gh` calls: one shape for every failure, nothing secret in it.
   const read = async (args: string[], maxBuffer?: number): Promise<{ ok: true; result: ExecResult } | ForgeReadFailure> => {
@@ -925,6 +998,24 @@ export function githubForge(
       return answer
         ? { ok: true, ...answer }
         : { ok: false, code: 'unexpected_answer', reason: 'gh did not answer the review threads of a pull request' };
+    },
+    async pullRequestReviews(repo, number) {
+      const bad = badTarget(repo, number);
+      if (bad) return bad;
+      const [owner = '', name = ''] = repo.split('/');
+      const out = await read([
+        'api', 'graphql',
+        `--raw-field=query=${GENERAL_REVIEWS_QUERY}`,
+        `--raw-field=owner=${owner}`,
+        `--raw-field=name=${name}`,
+        `--field=number=${number}`,
+      ], 8 * 1024 * 1024);
+      if (!out.ok) return out;
+      if (out.result.code !== 0) return failed(out.result);
+      const answer = parseGeneralReviews(out.result.stdout);
+      return answer
+        ? { ok: true, ...answer }
+        : { ok: false, code: 'unexpected_answer', reason: 'gh did not answer the reviews of a pull request' };
     },
     async listIssues(repo, label) {
       const bad = badTarget(repo);
