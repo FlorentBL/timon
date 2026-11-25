@@ -156,13 +156,30 @@ test('the pattern keeps its JavaScript meaning: lookarounds, backreferences, lin
   assert.equal(testIdentityPattern('^(a+)+$', `${'a'.repeat(40)}!`, 50), null);
 });
 
-test('a program that ignores SIGTERM is killed at the time limit instead of holding the check', { skip: !posix }, async () => {
+test('a program that ignores SIGTERM is killed at the time limit, and the right version printed first is no answer', { skip: !posix }, async () => {
   resetBinaryIdentityCache();
   const file = stub('stubborn', `trap '' TERM; echo "2026.10.16"; exec sleep 30`);
   const started = Date.now();
   const result = await checkBinaryIdentity(file, CURSOR, { runTimeoutMs: 300, patternTimeoutMs: 250 });
   assert.ok(Date.now() - started < 5_000, `the check returned after ${Date.now() - started} ms`);
-  assert.deepEqual(result, { ok: true }, 'what it printed before the limit is still read');
+  assert.deepEqual(result, { ok: false, reason: 'no_answer' }, 'a program that never finished did not answer');
+});
+
+/** The identity is read only from a run that succeeded: a program can print the expected line and then fail. */
+test('the right version followed by exit 1 is no answer, and is asked again next time', { skip: !posix }, async () => {
+  resetBinaryIdentityCache();
+  const counter = join(dir, 'runs-exit1');
+  writeFileSync(counter, '');
+  const file = stub('fails-after', `echo x >> "${counter}"; echo "2026.10.16"; exit 1`);
+  assert.deepEqual(await checkBinaryIdentity(file, CURSOR), { ok: false, reason: 'no_answer' });
+  assert.deepEqual(await checkBinaryIdentity(file, CURSOR), { ok: false, reason: 'no_answer' });
+  assert.equal(readFileSync(counter, 'utf8').split('\n').filter(Boolean).length, 2, 'a failed run is not remembered');
+});
+
+test('the right version drowned in more than the output cap is no answer', { skip: !posix }, async () => {
+  resetBinaryIdentityCache();
+  const file = stub('floods', 'echo "2026.10.16"; head -c 200000 /dev/zero | tr "\\0" x; echo');
+  assert.deepEqual(await checkBinaryIdentity(file, CURSOR), { ok: false, reason: 'no_answer' });
 });
 
 /** Gone, or a zombie nobody reaped yet: either way it runs nothing any more. */

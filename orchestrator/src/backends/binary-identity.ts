@@ -83,16 +83,22 @@ function cacheKey(program: string, args: readonly string[], identity: ProviderBi
   return stamp ? `${program}\0${stamp}\0${args.join('\0')}\0${identity.pattern}` : '';
 }
 
-/** The verdict on what the program printed, kept unless the run or the match was cut short. */
-function verdict(
-  key: string, identity: ProviderBinaryIdentity, output: string, timedOut: boolean, limits: BinaryIdentityLimits,
-): BinaryIdentityResult {
-  const matched = testIdentityPattern(identity.pattern, output, limits.patternTimeoutMs);
+/**
+ * How one run ended, as the verdict reads it. `answered`: the program exited by itself with code 0, before
+ * the time limit and under the output cap. Anything else is no answer, whatever it printed first: a program
+ * that prints the expected version and then fails, hangs or floods is not the program a mission can run.
+ */
+type ProbeRun = { readonly answered: boolean; readonly output: string };
+
+/** The verdict on one run. Kept only for an answer read to its end: a failed or cut run is asked again next time. */
+function verdict(key: string, identity: ProviderBinaryIdentity, run: ProbeRun, limits: BinaryIdentityLimits): BinaryIdentityResult {
+  // On a loaded machine a sane program can miss its limit once: the next try must really ask.
+  if (!run.answered) return { ok: false, reason: 'no_answer' };
+  const matched = testIdentityPattern(identity.pattern, run.output, limits.patternTimeoutMs);
   // Not cached: under a heavy load a sane pattern could run past the limit once.
   if (matched === null) return { ok: false, reason: 'slow_pattern' };
-  const result: BinaryIdentityResult = matched ? { ok: true } : { ok: false, reason: output.trim() ? 'mismatch' : 'no_answer' };
-  // A program stopped by the timeout said nothing about itself: on a loaded machine, the next try must really ask.
-  if (key && !timedOut) {
+  const result: BinaryIdentityResult = matched ? { ok: true } : { ok: false, reason: run.output.trim() ? 'mismatch' : 'no_answer' };
+  if (key) {
     if (cache.size >= CACHE_MAX) cache.delete(cache.keys().next().value!);
     cache.set(key, result);
   }
@@ -108,17 +114,18 @@ export async function checkBinaryIdentity(
   const known = key ? cache.get(key) : undefined;
   if (known) return known;
   // `execTree`: a program that leaves a child on its stdout would otherwise cost the whole limit at
-  // every mission start, and leave that child running after each check.
+  // every mission start, and leave that child running after each check. Its `code` is 1 past the output cap.
   const run = await execTree(program, args, {
     timeout: limits.runTimeoutMs, maxBuffer: IDENTITY_MAX_OUTPUT, env: systemEnv(),
   });
-  return verdict(key, identity, `${run.stdout}\n${run.stderr}`, run.timedOut === true, limits);
+  return verdict(key, identity, {
+    answered: run.code === 0 && run.timedOut !== true, output: `${run.stdout}\n${run.stderr}`,
+  }, limits);
 }
 
 /**
  * The same check and the same cache for a caller that cannot wait: `doctor`'s report is synchronous. The
- * host adapter's synchronous run does not say whether its timeout stopped the program, so a program that
- * printed nothing is not remembered — the next report asks it again.
+ * host adapter's synchronous run answers a non-zero code when its timeout stopped the program.
  */
 export function checkBinaryIdentitySync(
   program: string, identity: ProviderBinaryIdentity, limits: BinaryIdentityLimits = LIMITS,
@@ -130,8 +137,7 @@ export function checkBinaryIdentitySync(
   const run = getHost().exec(program, args, {
     timeout: limits.runTimeoutMs, maxBuffer: IDENTITY_MAX_OUTPUT, env: systemEnv(), windowsHide: true,
   });
-  const output = `${run.stdout}\n${run.stderr}`;
-  return verdict(key, identity, output, output.trim() === '', limits);
+  return verdict(key, identity, { answered: run.code === 0, output: `${run.stdout}\n${run.stderr}` }, limits);
 }
 
 /**

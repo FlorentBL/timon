@@ -280,6 +280,14 @@ test('a pin on another program is refused, naming the CLI expected; the right on
   assert.equal(readFileSync(CONFIG_FILE, 'utf8'), before, 'nothing written');
   assert.equal(config().host.binaries.codex, undefined);
 
+  // The right version, then a failure: the identity is read only from a run that succeeded.
+  const failing = join(BIN_DIR, `codex-failing${RUNNABLE}`);
+  writeFileSync(failing, process.platform === 'win32' ? '@echo codex-cli 0.169.0\r\n@exit /b 1\r\n' : '#!/bin/sh\necho "codex-cli 0.169.0"\nexit 1\n', { mode: 0o755 });
+  const failed = await call('PUT', '/api/host/binaries/codex', { cookie: adminCookie, body: { path: failing } });
+  assert.equal(failed.status, 400, failed.text);
+  assert.equal((failed.json as { error: string }).error, 'no_answer');
+  assert.equal(readFileSync(CONFIG_FILE, 'utf8'), before, 'nothing written');
+
   const right = await call('PUT', '/api/host/binaries/codex', { cookie: adminCookie, body: { path: codex } });
   assert.equal(right.status, 200, right.text);
   assert.equal(config().host.binaries.codex, codex);
