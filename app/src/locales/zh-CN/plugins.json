@@ -367,6 +367,7 @@
         "npm-missing": "运行 Timon 的设备上没有可用的 npm。请安装 Node.js 后重试。",
         "install-failed": "安装失败。详情请查看 Timon 日志。",
         "name-taken": "插件文件夹中已有另一个插件包使用此名称。",
+        "already-installed": "此版本的插件已安装。如需重新安装，请先将其移除。",
         "generic": "守护进程拒绝了请求（HTTP {status}）。",
         "unreadable": "Timon 无权读取此位置。在 macOS 上，请前往“系统设置 › 隐私与安全性”授权，或将插件移到其他位置。",
         "mismatch": "此插件请求的程序、机密或主机与上次显示的内容不一致。",

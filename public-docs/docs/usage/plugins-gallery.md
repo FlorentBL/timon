@@ -55,6 +55,8 @@ Timon reads the package without running any of it and opens its sheet: name, ver
 
 Nothing is installed until you click **Install** on that sheet. Read the disclaimer above the button: third-party plugins are not made, reviewed or guaranteed by Timon, and Timon is not responsible for what they do. Once installed, a plugin runs inside Timon with the rights of your account, so only install plugins from authors you trust.
 
+To update a plugin, install the newer folder or archive the same way: Timon replaces the installed release, keeps its data and settings, and applies the hosts and secrets ticked on the sheet. An archive holding the very version already installed is refused as already installed; remove the plugin first to install that version again.
+
 The plugin appears in the gallery without restarting Timon. Its files are kept in the plugins folder (`~/.timon/plugins/` — on Windows `%USERPROFILE%\.timon\plugins\`), so you can delete the folder or archive you picked afterwards. Installing needs `npm`, which comes with Node.js, on the computer that runs Timon.
 
 A bundle whose plugins sit in neighbouring folders (declared as `file:../name`) can be picked as a folder: the gallery copies those neighbours into the plugins folder too and installs them with the bundle. A dependency further away (`file:../../…`) is not copied, and a `.tgz` or `.zip` only carries its own folder: install such a bundle with `timon plugin add <folder>`.

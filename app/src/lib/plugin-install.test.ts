@@ -67,6 +67,13 @@ test('a refusal reaches the user as a sentence, with the daemon code kept', asyn
   assert.equal(installErrorMessage(500, { error: 'weird', message: 'daemon says' }), 'daemon says');
 });
 
+test('the same release installed again reads as a sentence of the locale, not the words of the daemon (#133)', () => {
+  const message = '@acme/foo@1.0.0 is already installed';
+  const shown = installErrorMessage(409, { error: 'already-installed', message });
+  assert.notEqual(shown, message);
+  assert.notEqual(shown, 'pluginsPage.install.errors.already-installed');
+});
+
 test('a binary identity refusal keeps the words of the daemon: only they quote what the program printed (TODO #588)', () => {
   const message = '`/usr/bin/agent` is not the program provider `acme` runs: `--version` printed "other 1.0".';
   assert.equal(installErrorMessage(409, { error: 'binary-identity', message }), message);

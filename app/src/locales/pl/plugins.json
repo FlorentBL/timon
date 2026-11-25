@@ -357,6 +357,7 @@
         "npm-missing": "npm nie jest dostępny na maszynie, na której działa Timon. Zainstaluj Node.js i spróbuj ponownie.",
         "install-failed": "Instalacja nie powiodła się. Szczegóły są w dzienniku Timon.",
         "name-taken": "Inny pakiet używa już tej nazwy w folderze wtyczek.",
+        "already-installed": "Ta wersja wtyczki jest już zainstalowana. Aby zainstalować ją ponownie, najpierw ją usuń.",
         "generic": "Demon odmówił (HTTP {status}).",
         "unreadable": "Timon nie ma uprawnień do odczytu tej lokalizacji. Na macOS zezwól na to w Ustawieniach systemowych › Prywatność i ochrona albo przenieś wtyczkę w inne miejsce.",
         "mismatch": "To, o co prosi ta wtyczka (program, sekret lub host), zmieniło się od czasu wyświetlenia.",

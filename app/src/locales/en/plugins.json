@@ -397,6 +397,7 @@
         "npm-missing": "npm is not available on the machine running Timon. Install Node.js, then try again.",
         "install-failed": "The installation failed. The Timon log has the details.",
         "name-taken": "Another package already uses this name in the plugins folder.",
+        "already-installed": "This version of the plugin is already installed. To install it again, remove it first.",
         "generic": "The daemon refused (HTTP {status}).",
         "unreadable": "Timon is not allowed to read this location. On macOS, allow it in System Settings › Privacy & Security, or move the plugin elsewhere.",
         "mismatch": "What this plugin asks for (a program, a secret or a host) changed since it was shown.",

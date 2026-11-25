@@ -15,7 +15,7 @@
 import { LicenseCapabilityError, assertCompositionMutable, fixedComposition, withCompositionWrite } from '../license/capabilities.js';
 import { mutationLicenseState } from '../license/runtime.js';
 import type { LicenseState } from '../license/license.js';
-import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, realpathSync, statSync, writeFileSync } from 'node:fs';
 import { join, resolve, win32 } from 'node:path';
 import { CONFIG_FILE, config, loadConfig, setConfig } from '../config/load.js';
 import { BRAND } from '../brand.js';
@@ -39,6 +39,7 @@ import { closePluginSecretCards, revokePluginSecretGrants } from '../secrets/plu
 import { closePluginLaunchCard } from '../backends/launch-card.js';
 import { closePluginSpawnCards, narrowLivePluginGrants } from './policy.js';
 import { withdrawPluginUserConnections } from './user-connections-host.js';
+import { DEFAULT_TAR_LIMITS, readTarGz } from './tar-reader.js';
 
 /** A line of `timon plugin list`. Built offline, without a daemon. */
 export type InventoryEntry = {
@@ -295,6 +296,17 @@ export class PluginEngineError extends Error {
   }
 }
 
+/**
+ * An archive holding the very release already installed: npm would rewrite the
+ * same files and nothing would change, so it is refused before npm runs.
+ */
+export class PluginAlreadyInstalledError extends Error {
+  constructor(readonly pkg: string, readonly version: string) {
+    super(`${pkg}@${version} is already installed — remove it first (timon plugin remove ${pkg}) to install the same release again`);
+    this.name = 'PluginAlreadyInstalledError';
+  }
+}
+
 /** `timon plugin remove` on a plugin shipped with the product. */
 export class BuiltinPluginError extends Error {
   constructor(readonly id: string) {
@@ -419,6 +431,14 @@ async function addPluginAdmitted(
   const before = new Set(installedPackages(root));
   // What an update may have to put back: npm overwrites the release in place.
   const previous = previousReleases(root, before);
+  // An archive names its package nowhere but inside (npm's file name drops
+  // the `@` and `/` of a scope): read it now, to tell an update from a
+  // reinstall of the same release, and to find the package once npm is done.
+  const archive = archivePackageOf(spec, root);
+  if (archive?.version && before.has(archive.name)
+    && versionOf(join(root, 'node_modules', archive.name)) === archive.version) {
+    throw new PluginAlreadyInstalledError(archive.name, archive.version);
+  }
   // An update from the registry is read BEFORE npm too (TODO #794): refused
   // there, the release that worked is never replaced.
   const registryPkg = registryPackageName(spec);
@@ -442,8 +462,8 @@ async function addPluginAdmitted(
   // child taken over on its own account): in that case nothing is "added", and
   // the package named by the spec is what counts. A local spec does not
   // necessarily contain the npm name (`./examples/plugin-widget` ≠ `@timon-ai/plugin-widget`)
-  // — it is then read from the `package.json` of the named folder.
-  const named = packageNameOf(localSpecDir(spec));
+  // — it is then read from the `package.json` of the named folder, or of the archive.
+  const named = packageNameOf(localSpecDir(spec)) ?? archive?.name ?? null;
   const d = found[0]
     ?? discoverPlugins(root).find((x) => (named ? x.pkg === named : spec.includes(x.pkg)));
   if (!d) throw new Error(`installed, but no new package detected in ${root} — check \`${spec}\``);
@@ -659,6 +679,28 @@ function localDepDir(base: string, spec: string): string | null {
   if (!isLocalSpec(spec)) return null;
   const dir = resolve(base, localSpecPath(spec));
   return existsSync(join(dir, 'package.json')) ? dir : null;
+}
+
+/**
+ * Name and version of the package a `.tgz` / `.tar.gz` spec on disk holds,
+ * read from its `package.json` without extracting anything; `null` for any
+ * other spec, a URL, or an archive this reader cannot open (npm then says why).
+ * A bare file name is looked up where npm reads it: the plugins root, its cwd.
+ */
+function archivePackageOf(spec: string, root: string): { name: string; version: string | null } | null {
+  if (!/\.(tgz|tar\.gz)$/i.test(spec)) return null;
+  let file: string;
+  if (isLocalSpec(spec)) file = resolve(localSpecPath(spec));
+  else if (/^[a-z][\w+.-]*:/i.test(spec)) return null;
+  else file = resolve(root, spec);
+  try {
+    if (!statSync(file).isFile()) return null;
+    const entry = readTarGz(readFileSync(file), DEFAULT_TAR_LIMITS).find((e) => e.type === 'file' && e.path === 'package.json');
+    if (!entry) return null;
+    const json = JSON.parse(entry.data.toString('utf8')) as { name?: unknown; version?: unknown };
+    if (typeof json.name !== 'string' || json.name === '') return null;
+    return { name: json.name, version: typeof json.version === 'string' ? json.version : null };
+  } catch { return null; }
 }
 
 /** Source folder of a local `spec` (`./examples/plugin-bundle`), otherwise `null`
