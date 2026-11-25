@@ -20,7 +20,7 @@ import { z } from 'zod';
 import { LicenseCapabilityError } from '../../license/capabilities.js';
 import { PLUGIN_INSTALL_PREFIX, PLUGIN_UPLOAD_MAX_BYTES } from '../../plugins/install-path.js';
 import { MAX_BUNDLE_CHILDREN, PluginInstallSources, PluginSourceError } from '../../plugins/install-sources.js';
-import { PluginEngineError, heldForWhiteLabel } from '../../plugins/install.js';
+import { PluginAlreadyInstalledError, PluginEngineError, heldForWhiteLabel } from '../../plugins/install.js';
 import { whiteLabelAllowed } from '../../license/capabilities.js';
 import { licenseState } from '../../license/runtime.js';
 import { forbidden, isPersonAuth } from '../../users/identity.js';
@@ -120,6 +120,11 @@ function sendError(res: Response, err: unknown, context: string): void {
   // The message names Node versions and the package, nothing of the machine's folders.
   if (err instanceof PluginEngineError) {
     res.status(422).json({ error: 'node-engine', message: err.message });
+    return;
+  }
+  // Names the package and its version, nothing of the machine's folders.
+  if (err instanceof PluginAlreadyInstalledError) {
+    res.status(409).json({ error: 'already-installed', message: err.message });
     return;
   }
   // npm's stderr names folders of this machine: logged, never sent back.

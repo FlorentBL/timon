@@ -946,6 +946,57 @@ test('vault: the consent REPLACES what an earlier package of the same id held', 
   assert.deepEqual(byPluginInConfig()[id], [`shared-${n}.test`]);
 });
 
+/** A copy of `dir` at another `version`, signed again. */
+function releaseOf(dir: string, version: string): string {
+  const next = `${dir}-${version}`;
+  cpSync(dir, next, { recursive: true });
+  const json = JSON.parse(readFileSync(join(next, 'package.json'), 'utf8')) as Record<string, unknown>;
+  writeFileSync(join(next, 'package.json'), JSON.stringify({ ...json, version }));
+  rmSync(join(next, 'SIGNATURE'), { force: true });
+  sign(next);
+  return next;
+}
+
+test('vault: a newer .tgz of an installed scoped plugin is an update, and the hosts ticked on its sheet are written (#133)', async () => {
+  const { dir, id, n } = vaultFolder();
+  const first = await call('POST', '/upload', tgzOf(dir));
+  assert.equal((await call('POST', '/confirm', { token: first.json.token, confirm: true })).status, 200);
+  assert.equal(byPluginInConfig()[id], undefined);
+
+  const preview = await call('POST', '/upload', tgzOf(releaseOf(dir, '1.0.1')));
+  assert.equal(preview.status, 201, preview.text);
+  const done = await call('POST', '/confirm', {
+    token: preview.json.token, confirm: true, vault: consentOf(preview.json.vault as VaultPreview, [`api.acme-${n}.test`]),
+  });
+  assert.equal(done.status, 200, done.text);
+  assert.equal(done.json.ok, true);
+  assert.equal(done.json.pkg, `@acme/vault-${n}`);
+  assert.equal(done.json.version, '1.0.1');
+  assert.deepEqual(byPluginInConfig()[id], [`api.acme-${n}.test`]);
+  const installed = JSON.parse(readFileSync(join(PLUGINS, 'node_modules', '@acme', `vault-${n}`, 'package.json'), 'utf8')) as { version: string };
+  assert.equal(installed.version, '1.0.1');
+});
+
+test('vault: the same release uploaded again is refused as already installed, before npm, and opens nothing', async () => {
+  const { dir, id, n } = vaultFolder();
+  const archive = tgzOf(dir);
+  const first = await call('POST', '/upload', archive);
+  assert.equal((await call('POST', '/confirm', { token: first.json.token, confirm: true })).status, 200);
+  const calls = npmCalls.length;
+
+  const preview = await call('POST', '/upload', archive);
+  assert.equal(preview.status, 201, preview.text);
+  const res = await call('POST', '/confirm', {
+    token: preview.json.token, confirm: true, vault: consentOf(preview.json.vault as VaultPreview, [`api.acme-${n}.test`]),
+  });
+  assert.equal(res.status, 409, res.text);
+  assert.equal(res.json.error, 'already-installed');
+  assert.match(String(res.json.message), new RegExp(`@acme/vault-${n}@1\\.0\\.0 is already installed`));
+  for (const secret of [PC, PLUGINS, STAGING, TIMON_HOME]) assert.ok(!res.text.includes(secret), `the refusal leaks ${secret}`);
+  assert.equal(npmCalls.length, calls, 'npm is never called');
+  assert.equal(byPluginInConfig()[id], undefined, 'the host ticked on the sheet is taken back');
+});
+
 test('vault: installing without sending the consent grants nothing', async () => {
   const { dir, id, secretIds } = vaultFolder();
   const preview = await call('POST', '/stage', { source: 'path', path: dir });
