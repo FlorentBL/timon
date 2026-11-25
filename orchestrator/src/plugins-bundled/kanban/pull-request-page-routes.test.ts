@@ -256,6 +256,26 @@ test('the account is checked once a minute per config folder, not at every windo
   assert.equal(loginCalls.length, 2);
 });
 
+test('once the account check expires, a page its cache still holds is refused for another account', async () => {
+  assert.equal((await get(PAGE_URL, 'manager')).status, 200);
+  // Refreshed 10 s before the account check expires: the page is cached until
+  // 20 s after it.
+  clock += ACCOUNT_CHECK_MS - 10_000;
+  const refreshed = await (await get(PAGE_URL, 'manager')).json() as { cached: boolean };
+  assert.equal(refreshed.cached, false);
+  assert.deepEqual(loginCalls, [null]);
+  const pageReads = calls.length;
+  // Past the account check, within the page cache.
+  clock += 15_000;
+  assert.ok(15_000 < PAGE_CACHE_MS);
+  loginAnswer = { ok: true, login: 'someone-else' };
+  const res = await get(PAGE_URL, 'manager');
+  assert.equal(res.status, 409);
+  assert.equal(((await res.json()) as { code: string }).code, 'forge_account_mismatch');
+  assert.equal(loginCalls.length, 2);
+  assert.equal(calls.length, pageReads);
+});
+
 test('switching accounts in the same config folder is refused before the check expires', async () => {
   const url = '/api/projects/switch/pull-requests/12';
   assert.equal((await get(url, 'manager')).status, 200);
