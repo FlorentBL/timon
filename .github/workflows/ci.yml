@@ -40,13 +40,19 @@ jobs:
         with:
           node-version: 22
       # The classifier as the base holds it, run from outside the checkout: a
-      # pull request cannot decide with its own copy. Without it in the base,
-      # the step fails and every suite runs.
+      # pull request cannot decide with its own copy. Without it in the base
+      # (the pull request that adds it), nothing decides: every suite runs,
+      # and the job says so instead of failing.
       - name: Decide which suites run
         id: decide
         env:
           EVENT: ${{ github.event_name }}
         run: |
+          if ! git cat-file -e HEAD^1:scripts/ci-changes.mjs 2>/dev/null; then
+            echo "::notice title=Every suite runs::The base has no scripts/ci-changes.mjs yet: nothing decides, so no suite is skipped."
+            echo "suites=full" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
           git show HEAD^1:scripts/ci-changes.mjs > "$RUNNER_TEMP/ci-changes.mjs"
           node "$RUNNER_TEMP/ci-changes.mjs" --event "$EVENT" --base HEAD^1 --head HEAD
 

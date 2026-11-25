@@ -248,6 +248,11 @@ test('ci.yml: the changes job runs the base\'s classifier on the merge commit, w
   const lines = decideStep.split('\n');
   const run = lines.slice(lines.findIndex((line) => /^ {8}run: \|$/.test(line)) + 1).map((line) => line.trim()).filter(Boolean);
   assert.deepEqual(run, [
+    'if ! git cat-file -e HEAD^1:scripts/ci-changes.mjs 2>/dev/null; then',
+    'echo "::notice title=Every suite runs::The base has no scripts/ci-changes.mjs yet: nothing decides, so no suite is skipped."',
+    'echo "suites=full" >> "$GITHUB_OUTPUT"',
+    'exit 0',
+    'fi',
     'git show HEAD^1:scripts/ci-changes.mjs > "$RUNNER_TEMP/ci-changes.mjs"',
     'node "$RUNNER_TEMP/ci-changes.mjs" --event "$EVENT" --base HEAD^1 --head HEAD',
   ], 'the copy of the base, never scripts/ci-changes.mjs of the checkout');
@@ -256,6 +261,67 @@ test('ci.yml: the changes job runs the base\'s classifier on the merge commit, w
     '      suites: ${{ steps.decide.outputs.suites }}',
     '      guards: ${{ steps.decide.outputs.guards }}',
   ]);
+});
+
+/** The shell of the `Decide which suites run` step, as the runner gets it. */
+function decideScript() {
+  const lines = ci.stepNamed('changes', 'Decide which suites run').split('\n');
+  return lines.slice(lines.findIndex((line) => /^ {8}run: \|$/.test(line)) + 1).map((line) => line.replace(/^ {10}/, '')).join('\n');
+}
+
+/** Runs the step in `dir` as GitHub's `bash -e` does: its exit status, its log, what it wrote to $GITHUB_OUTPUT. */
+function runDecideStep(dir) {
+  const temp = mkdtempSync(join(tmpdir(), 'ci-changes-runner-'));
+  try {
+    const output = join(temp, 'output');
+    writeFileSync(output, '');
+    const run = spawnSync('bash', ['--noprofile', '--norc', '-eo', 'pipefail', '-c', decideScript()], {
+      cwd: dir, encoding: 'utf8', env: { ...process.env, EVENT: 'pull_request', RUNNER_TEMP: temp, GITHUB_OUTPUT: output },
+    });
+    return { status: run.status, log: `${run.stdout}${run.stderr}`, output: readFileSync(output, 'utf8') };
+  } finally {
+    rmSync(temp, { recursive: true, force: true });
+  }
+}
+
+test('ci.yml: the pull request that adds the classifier runs every suite, says so, and does not fail', { skip: process.platform === 'win32' }, () => {
+  const dir = repoWith((d) => {
+    mkdirSync(join(d, 'scripts'), { recursive: true });
+    writeFileSync(join(d, 'scripts', 'ci-changes.mjs'), 'throw new Error("the copy of the pull request must not run");\n');
+  });
+  try {
+    const run = runDecideStep(dir);
+    assert.equal(run.status, 0, run.log);
+    assert.equal(run.output, 'suites=full\n');
+    assert.match(run.log, /::notice title=Every suite runs::The base has no scripts\/ci-changes\.mjs yet/);
+    assert.doesNotMatch(run.log, /must not run/);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('ci.yml: with the classifier in the base, the step runs the base\'s copy, not the pull request\'s', { skip: process.platform === 'win32' }, () => {
+  const dir = mkdtempSync(join(tmpdir(), 'ci-changes-'));
+  const git = (...args) => execFileSync('git', ['-c', 'user.name=test', '-c', 'user.email=test@example.invalid', '-c', 'commit.gpgsign=false', ...args], { cwd: dir, encoding: 'utf8' });
+  try {
+    git('init', '-q');
+    mkdirSync(join(dir, 'scripts'), { recursive: true });
+    writeFileSync(join(dir, 'scripts', 'ci-changes.mjs'), readFileSync(SCRIPT));
+    git('add', '-A');
+    git('commit', '-q', '-m', 'base');
+    // A pull request that only edits a page, and rewrites the classifier to say `guards` whatever it sees.
+    mkdirSync(join(dir, 'public-docs', 'docs'), { recursive: true });
+    writeFileSync(join(dir, 'public-docs', 'docs', 'a.md'), '# A\n');
+    writeFileSync(join(dir, 'scripts', 'ci-changes.mjs'), 'console.log("suites=guards");\n');
+    git('add', '-A');
+    git('commit', '-q', '-m', 'change');
+    const run = runDecideStep(dir);
+    assert.equal(run.status, 0, run.log);
+    assert.match(run.output, /^suites=full$/m, 'the base\'s classifier sees its own change and runs everything');
+    assert.doesNotMatch(run.log, /Every suite runs::/);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 test('ci.yml: the required checks keep their names, are never skipped, and guards needs a successful changes job', () => {
