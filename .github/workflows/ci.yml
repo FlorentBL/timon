@@ -19,9 +19,9 @@ concurrency:
 
 jobs:
   # Which suites a pull request needs (scripts/ci-changes.mjs): one that only
-  # changes workflows, public docs, changelog fragments or root Markdown runs
-  # the tests that read those paths, not the half hour of daemon and app
-  # suites. Pushes and manual runs always run everything.
+  # changes documentation pages, changelog fragments or root Markdown runs the
+  # tests that read those paths, not the half hour of daemon and app suites.
+  # Pushes and manual runs always run everything.
   changes:
     name: changed paths
     runs-on: ubuntu-latest
@@ -39,19 +39,25 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
+      # The classifier as the base holds it, run from outside the checkout: a
+      # pull request cannot decide with its own copy. Without it in the base,
+      # the step fails and every suite runs.
       - name: Decide which suites run
         id: decide
         env:
           EVENT: ${{ github.event_name }}
-        run: node scripts/ci-changes.mjs --event "$EVENT" --base HEAD^1 --head HEAD
+        run: |
+          git show HEAD^1:scripts/ci-changes.mjs > "$RUNNER_TEMP/ci-changes.mjs"
+          node "$RUNNER_TEMP/ci-changes.mjs" --event "$EVENT" --base HEAD^1 --head HEAD
 
   test:
     name: ${{ matrix.os }} · ${{ matrix.part.suite }}${{ matrix.part.shard && format(' {0}', matrix.part.shard) || '' }}
     needs: changes
-    # The checks of this job are required to merge: it always runs, and skips
-    # its heavy steps instead of itself. When `changes` fails, SUITES is empty
-    # and every suite runs.
-    if: ${{ !cancelled() }}
+    # The checks of this job are required to merge, and GitHub counts a skipped
+    # job as passed: it is never skipped, even on a cancelled run, and skips its
+    # heavy steps instead of itself. Its last step fails it unless the suites or
+    # the guard tests passed.
+    if: ${{ always() }}
     runs-on: ${{ matrix.os }}
     # Linux gates the merge. macOS and Windows report without blocking until
     # their suites have been green for a while: they never ran in CI before.
@@ -72,7 +78,9 @@ jobs:
           - { suite: app, shard: '' }
     env:
       NODE_ENV: test
-      SUITES: ${{ needs.changes.outputs.suites }}
+      # `guards` only from a `changes` that succeeded and said exactly that;
+      # failed, cancelled, skipped or anything else: every suite.
+      SUITES: ${{ needs.changes.result == 'success' && needs.changes.outputs.suites == 'guards' && 'guards' || 'full' }}
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
@@ -82,15 +90,14 @@ jobs:
         shell: bash
         run: echo "TIMON_HOME=${RUNNER_TEMP}/timon-home" >> "$GITHUB_ENV"
 
-      # Skipped suites: the first daemon half runs the guard tests, the
-      # other jobs stop here, green.
+      # Skipped suites: every required job runs the guard tests instead, so
+      # each check stands on a test run of its own.
       - name: Suites skipped
         if: env.SUITES == 'guards'
         shell: bash
         run: echo "::notice title=Suites skipped::Only workflows, public docs, changelog fragments or root Markdown changed (scripts/ci-changes.mjs)."
 
       - uses: actions/setup-node@v4
-        if: env.SUITES != 'guards' || (matrix.part.suite == 'daemon' && matrix.part.shard == '1/2')
         with:
           node-version: 22
           cache: npm
@@ -100,7 +107,6 @@ jobs:
             desktop/package-lock.json
 
       - name: Install the daemon
-        if: env.SUITES != 'guards' || (matrix.part.suite == 'daemon' && matrix.part.shard == '1/2')
         working-directory: orchestrator
         run: npm ci --include=dev
 
@@ -132,12 +138,14 @@ jobs:
         run: node scripts/check-portability.mjs
 
       - name: Test the daemon
+        id: daemon
         if: env.SUITES != 'guards' && matrix.part.suite == 'daemon'
         working-directory: orchestrator
         run: npm test -- --test-shard=${{ matrix.part.shard }}
 
       - name: Test what the changed paths can break
-        if: env.SUITES == 'guards' && matrix.part.suite == 'daemon' && matrix.part.shard == '1/2'
+        id: guards
+        if: env.SUITES == 'guards'
         working-directory: orchestrator
         shell: bash
         env:
@@ -151,9 +159,33 @@ jobs:
         run: npm run typecheck
 
       - name: Test the web app
+        id: app
         if: env.SUITES != 'guards' && matrix.part.suite == 'app'
         working-directory: app
         run: npm test
+
+      # The check passes on a test run that passed, never on steps that all
+      # stood down: a cancelled run, a failed install or an unknown mode fails.
+      - name: Verdict
+        if: ${{ always() }}
+        shell: bash
+        env:
+          PART: ${{ matrix.part.suite }}
+          DAEMON: ${{ steps.daemon.outcome }}
+          APP: ${{ steps.app.outcome }}
+          GUARDS: ${{ steps.guards.outcome }}
+        run: |
+          case "$SUITES/$PART" in
+            guards/*) outcome="$GUARDS" ;;
+            full/daemon) outcome="$DAEMON" ;;
+            full/app) outcome="$APP" ;;
+            *) outcome="" ;;
+          esac
+          if [ "$outcome" != success ]; then
+            echo "::error title=No passing test run::suites=$SUITES, part=$PART, outcome=${outcome:-none}"
+            exit 1
+          fi
+          echo "suites=$SUITES: the $PART tests passed"
 
   docs:
     name: public docs policy
