@@ -6,7 +6,7 @@
  */
 import '../../test-home.js';
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, realpathSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { once } from 'node:events';
 import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
@@ -16,7 +16,7 @@ import express from 'express';
 import { bus } from '../../bus.js';
 import { dbApi } from '../../db.js';
 import { getHost } from '../../host/index.js';
-import type { GhLoginOutcome } from '../../host/gh.js';
+import { ghCredentialsStamp, type GhLoginOutcome } from '../../host/gh.js';
 import type { ExecOpts, ExecResult } from '../../host/types.js';
 import { ACCOUNT_CHECK_MS, forgetPullRequestPages, PAGE_CACHE_MS, watchPullRequestPages } from '../../pull-request-page.js';
 import { registerExternalPrRoutes } from './external-pr-routes.js';
@@ -28,6 +28,15 @@ dbApi.upsertProject('solo', { cwd: join(home, 'code', 'solo') });
 dbApi.setProjectIntegration('acme', JSON.stringify({
   mode: 'pr', remote: 'origin', target: 'main', forge: 'github', account: 'ai-bot',
   gh_config_dir: null, branch_prefix: 'feat/', remote_url: 'git@github.com:acme/widgets.git',
+}));
+// Its own gh config folder, whose active account a test switches.
+const ghDir = join(home, 'gh-switch');
+mkdirSync(ghDir, { recursive: true });
+const hostsFile = (user: string) => `github.com:\n    users:\n        ai-bot:\n        someone-else:\n    user: ${user}\n`;
+dbApi.upsertProject('switch', { cwd: join(home, 'code', 'switch') });
+dbApi.setProjectIntegration('switch', JSON.stringify({
+  mode: 'pr', remote: 'origin', target: 'main', forge: 'github', account: 'ai-bot',
+  gh_config_dir: ghDir, branch_prefix: 'feat/', remote_url: 'git@github.com:acme/widgets.git',
 }));
 // Stored before an account was required: its reads run as they always did.
 dbApi.upsertProject('open', { cwd: join(home, 'code', 'open') });
@@ -82,9 +91,13 @@ app.use((req, _res, next) => {
 let clock = 1_000_000;
 const loginCalls: Array<string | null> = [];
 let loginAnswer: GhLoginOutcome = { ok: true, login: 'AI-Bot' };
+// The default folder is the machine's own: its stamp is set here; a named
+// folder is stamped for real.
+let defaultStamp: string | null = 'stamp-1';
 registerExternalPrRoutes(app, {
   now: () => clock,
   ghLogin: async (dir) => { loginCalls.push(dir); return loginAnswer; },
+  credentialsStamp: (dir) => (dir ? ghCredentialsStamp(dir) : defaultStamp),
 });
 const server = app.listen(0, '127.0.0.1');
 await once(server, 'listening');
@@ -103,6 +116,8 @@ beforeEach(() => {
   calls.length = 0;
   loginCalls.length = 0;
   loginAnswer = { ok: true, login: 'AI-Bot' };
+  defaultStamp = 'stamp-1';
+  writeFileSync(join(ghDir, 'hosts.yml'), hostsFile('ai-bot'));
   forgetPullRequestPages();
   threadsFail = false;
   eventsFail = false;
@@ -239,10 +254,39 @@ test('the account is checked once a minute per config folder, not at every windo
   clock += ACCOUNT_CHECK_MS;
   await get(`${PAGE_URL}?fresh=1`, 'manager');
   assert.equal(loginCalls.length, 2);
-  // The folder now signs in as someone else: even a cached page is refused.
-  clock += ACCOUNT_CHECK_MS;
+});
+
+test('switching accounts in the same config folder is refused before the check expires', async () => {
+  const url = '/api/projects/switch/pull-requests/12';
+  assert.equal((await get(url, 'manager')).status, 200);
+  assert.deepEqual(loginCalls, [ghDir]);
+  // What `gh auth switch` does: the folder's hosts.yml names another user.
+  clock += 5_000;
+  writeFileSync(join(ghDir, 'hosts.yml'), hostsFile('someone-else'));
   loginAnswer = { ok: true, login: 'someone-else' };
-  assert.equal((await get(PAGE_URL, 'manager')).status, 409);
+  const pageReads = calls.length;
+  for (const target of [url, `${url}?fresh=1`, `${url}/check-log?url=${encodeURIComponent('https://github.com/acme/widgets/actions/runs/1/job/2')}`]) {
+    assert.equal((await get(target, 'manager')).status, 409);
+  }
+  assert.equal(calls.length, pageReads);
+  assert.equal(loginCalls.length, 2, 'the new stamp is checked once, then kept');
+});
+
+test('a stamp that moves, or that cannot be read, asks gh again', async () => {
+  await get(`${PAGE_URL}?fresh=1`, 'manager');
+  defaultStamp = 'stamp-2';
+  await get(`${PAGE_URL}?fresh=1`, 'manager');
+  assert.equal(loginCalls.length, 2);
+  defaultStamp = null;
+  await get(`${PAGE_URL}?fresh=1`, 'manager');
+  await get(`${PAGE_URL}?fresh=1`, 'manager');
+  assert.equal(loginCalls.length, 4);
+  // A real folder whose hosts.yml is gone.
+  rmSync(join(ghDir, 'hosts.yml'));
+  const url = '/api/projects/switch/pull-requests/12?fresh=1';
+  await get(url, 'manager');
+  await get(url, 'manager');
+  assert.equal(loginCalls.length, 6);
 });
 
 test('a project that names no account reads as before, without checking one', async () => {
