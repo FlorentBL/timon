@@ -66,7 +66,7 @@ When the device is paired, a **New device connected** notification appears here.
 
 A device acts **as the account that authorized it, with all its rights**: if you are an administrator here, so is the device. It can run missions, open the built-in terminal, change settings, approve plugins, everything you can do from this machine's own interface.
 
-It cannot change that account's password, profile, email or avatar. Connecting an AI provider's account (a CLI sign-in) is done from this machine directly.
+It cannot change that account's password, profile, email or avatar, nor publish a proposed write on GitHub ([Publish on GitHub](git.md#publish-on-github)). Connecting an AI provider's account (a CLI sign-in) is done from this machine directly.
 
 ## The list
 

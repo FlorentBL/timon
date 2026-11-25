@@ -534,6 +534,28 @@ test('the contributor pushed since the merge: nothing is pushed, whether GitHub 
   assert.equal(posted.length, 0);
 });
 
+test('the publication reads both sizes again before git: a fork grown past the cap, or that no longer tells its size, is never fetched nor pushed', async () => {
+  for (const [repo, kib, code] of [
+    ['contrib/widgets', 513 * 1024, 'conflict_fetch_too_large'],
+    ['contrib/widgets', null, 'forge_read_failed'],
+    ['acme/widgets', 600 * 1024, 'conflict_fetch_too_large'],
+  ] as const) {
+    conflictingFixture();
+    repoSizes.clear();
+    const r = await proposedResolution();
+    repoSizes.set(repo, kib);
+    sizeReads.length = 0;
+    const gitBefore = f.calls.length;
+    const out = await publish(r.proposalId);
+    assert.equal(out.json.code, code, `${repo} ${kib}`);
+    assert.equal(out.json.proposal.state, 'failed');
+    assert.equal(f.calls.length, gitBefore, `${repo} ${kib}: git never ran`);
+    assert.ok(sizeReads.includes(repo), `${repo} was read again at publication`);
+    assert.equal(f.head(f.fork, 'refs/heads/fix/typo'), r.head);
+  }
+  assert.equal(posted.length, 0);
+});
+
 test('a stored resolution that no longer rebuilds the commit shown is never pushed', async () => {
   const r = await proposedResolution();
   const row = db.prepare(`SELECT files FROM forge_conflicts WHERE id = ?`).get(r.id) as { files: string };
