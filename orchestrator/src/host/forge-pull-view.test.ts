@@ -7,7 +7,8 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import type { GhRunner } from './gh.js';
 import {
-  githubPullPageReader, githubUrl, parsePullRequestPage, parseReviewThreadsPage, PULL_PAGE_FIELDS, VIEW_BODY_LIMIT,
+  githubPullPageReader, githubUrl, parsePullEventsPage, parsePullRequestPage, parseReviewThreadsPage, PULL_PAGE_FIELDS, reactionsOf, VIEW_BODY_LIMIT,
+  VIEW_EVENT_LIMIT,
   VIEW_COMMENT_LIMIT, VIEW_FILE_LIMIT, VIEW_THREAD_COMMENT_BUDGET, VIEW_THREAD_COMMENTS, VIEW_THREAD_LIMIT, VIEW_TIMELINE_LIMIT, viewText,
 } from './forge-pull-view.js';
 
@@ -38,13 +39,17 @@ const PAGE = {
   deletions: 8,
   changedFiles: 2,
   body: '## Why\n\nThe app hurts at night. <script>alert(1)</script>',
+  reactionGroups: [{ content: 'THUMBS_UP', users: { totalCount: 3 } }, { content: 'ROCKET', users: { totalCount: 1 } }],
   labels: [{ name: 'ui', color: 'A2EEEF' }, { name: 'bad', color: 'url(x)' }],
   milestone: { number: 3, title: '0.2', url: 'https://github.com/acme/widgets/milestone/3' },
   assignees: [{ login: 'maintainer' }],
   reviewRequests: [{ __typename: 'User', login: 'reviewer' }, { __typename: 'Team', name: 'Core', slug: 'core', organization: { login: 'acme' } }],
   closingIssuesReferences: [{ number: 7, url: 'https://github.com/acme/widgets/issues/7', repository: { name: 'widgets', owner: { login: 'acme' } } }],
   comments: [
-    { author: { login: 'maintainer' }, body: 'Thanks!', createdAt: '2026-11-17T12:00:00Z', url: 'https://github.com/acme/widgets/pull/42#issuecomment-1' },
+    {
+      author: { login: 'maintainer' }, body: 'Thanks!', createdAt: '2026-11-17T12:00:00Z', url: 'https://github.com/acme/widgets/pull/42#issuecomment-1',
+      reactionGroups: [{ content: 'HEART', users: { totalCount: 2 } }, { content: 'THUMBS_DOWN', users: { totalCount: 0 } }],
+    },
     { author: { login: 'spammer' }, body: 'buy now', createdAt: '2026-11-17T13:00:00Z', url: 'https://evil.example/x', isMinimized: true },
   ],
   reviews: [
@@ -314,4 +319,68 @@ test('thread comments stay within the page\'s budget, the rest counted', () => {
   const last = read.threads[read.threads.length - 1]!;
   assert.equal(last.comments.length, 0);
   assert.equal(last.commentsMore, 20);
+});
+
+test('reactions keep each emoji someone gave, in GitHub\'s order, and nothing else', () => {
+  const page = parsePullRequestPage(JSON.stringify(PAGE));
+  assert.ok(page);
+  assert.deepEqual(page.reactions, [{ content: 'thumbs_up', count: 3 }, { content: 'rocket', count: 1 }]);
+  const comment = page.timeline.find((e) => e.kind === 'comment' && !e.hidden);
+  assert.ok(comment && comment.kind === 'comment');
+  assert.deepEqual(comment.reactions, [{ content: 'heart', count: 2 }]);
+  assert.deepEqual(reactionsOf([
+    { content: 'EYES', reactors: { totalCount: 4 } },
+    { content: 'SHRUG', users: { totalCount: 9 } },
+    { content: 'HEART', users: { totalCount: -1 } },
+    'junk',
+  ]), [{ content: 'eyes', count: 4 }]);
+  assert.deepEqual(reactionsOf(null), []);
+});
+
+const EVENTS = (nodes: unknown[], totalCount = nodes.length) => JSON.stringify({
+  data: { repository: { pullRequest: { timelineItems: { totalCount, nodes } } } },
+});
+
+test('timeline events: labels added or removed, force-pushes with their comparison, nothing else', () => {
+  const before = 'c'.repeat(40);
+  const after = 'd'.repeat(40);
+  const read = parsePullEventsPage(EVENTS([
+    { __typename: 'HeadRefForcePushedEvent', createdAt: '2026-11-18T09:00:00Z', actor: { login: 'stranger' }, beforeCommit: { oid: before }, afterCommit: { oid: after } },
+    { __typename: 'LabeledEvent', createdAt: '2026-11-17T10:30:00Z', actor: { login: 'maintainer' }, label: { name: 'ui', color: 'A2EEEF' } },
+    { __typename: 'UnlabeledEvent', createdAt: '2026-11-17T10:40:00Z', actor: null, label: { name: 'bad', color: 'url(x)' } },
+    { __typename: 'HeadRefForcePushedEvent', createdAt: '2026-11-18T09:10:00Z', actor: { login: 'stranger' }, beforeCommit: null, afterCommit: { oid: 'nope' } },
+    { __typename: 'MentionedEvent', createdAt: '2026-11-17T10:50:00Z' },
+    { __typename: 'LabeledEvent', createdAt: 'yesterday', label: { name: 'x' } },
+  ], 9), 'acme/widgets');
+  assert.ok(read);
+  assert.deepEqual(read.events.map((e) => e.kind), ['labeled', 'unlabeled', 'force_pushed', 'force_pushed']);
+  assert.deepEqual(read.events[0], { kind: 'labeled', actor: 'maintainer', createdAt: '2026-11-17T10:30:00Z', label: { name: 'ui', color: 'a2eeef' } });
+  assert.equal(read.events[1]!.kind === 'unlabeled' && read.events[1]!.label.color, null);
+  const push = read.events[2]!;
+  assert.ok(push.kind === 'force_pushed');
+  assert.equal(push.url, `https://github.com/acme/widgets/compare/${before}..${after}`);
+  const odd = read.events[3]!;
+  assert.ok(odd.kind === 'force_pushed');
+  assert.deepEqual([odd.before, odd.after, odd.url], [null, null, null]);
+  assert.equal(read.eventsMore, 5);
+  assert.equal(parsePullEventsPage('{"data":{}}', 'acme/widgets'), null);
+  const many = parsePullEventsPage(EVENTS(Array.from({ length: VIEW_EVENT_LIMIT + 5 }, (_, i) => ({
+    __typename: 'LabeledEvent', createdAt: `2026-11-17T10:${String(i % 60).padStart(2, '0')}:00Z`, label: { name: `l${i}` },
+  }))), 'acme/widgets');
+  assert.equal(many!.events.length, VIEW_EVENT_LIMIT);
+  assert.equal(many!.eventsMore, 5);
+});
+
+test('the timeline events are one more read of gh, never a write', async () => {
+  const calls: string[][] = [];
+  const gh: GhRunner = async (args) => { calls.push(args); return { code: 0, stdout: EVENTS([]), stderr: '' }; };
+  const out = await githubPullPageReader(null, { gh }).pullRequestEvents('acme/widgets', 42);
+  assert.ok(out.ok);
+  assert.deepEqual(out.value, { events: [], eventsMore: 0 });
+  assert.equal(calls.length, 1);
+  assert.deepEqual(calls[0]!.slice(0, 2), ['api', 'graphql']);
+  assert.match(calls[0]!.find((a) => a.startsWith('--raw-field=query='))!, /timelineItems/);
+  assert.ok(!calls[0]!.some((a) => /mutation/i.test(a)));
+  assert.equal((await githubPullPageReader(null, { gh }).pullRequestEvents('../x', 1)).ok, false);
+  assert.equal(calls.length, 1);
 });

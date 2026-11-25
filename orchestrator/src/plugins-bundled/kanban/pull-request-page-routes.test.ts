@@ -38,16 +38,23 @@ const PAGE = {
   statusCheckRollup: [],
 };
 const THREADS = { data: { repository: { pullRequest: { reviewThreads: { totalCount: 0, nodes: [] } } } } };
+const EVENTS = { data: { repository: { pullRequest: { timelineItems: { totalCount: 1, nodes: [
+  { __typename: 'LabeledEvent', createdAt: '2026-11-17T11:00:00Z', actor: { login: 'maintainer' }, label: { name: 'ui', color: 'a2eeef' } },
+] } } } } };
 
 type Call = { name: string; args: string[] };
 const calls: Call[] = [];
 let threadsFail = false;
+let eventsFail = false;
 let updatedAt = PAGE.updatedAt;
 
 mock.method(getHost(), 'execAsync', async (name: string, args: string[], _opts: ExecOpts = {}): Promise<ExecResult> => {
   calls.push({ name, args });
   if (name !== 'gh') return { code: 1, stdout: '', stderr: 'no process in this test' };
   if (args[0] === 'pr' && args[1] === 'view') return { code: 0, stdout: JSON.stringify({ ...PAGE, updatedAt }), stderr: '' };
+  if (args[0] === 'api' && args[1] === 'graphql' && args.some((a) => a.includes('timelineItems'))) {
+    return eventsFail ? { code: 1, stdout: '', stderr: 'HTTP 502' } : { code: 0, stdout: JSON.stringify(EVENTS), stderr: '' };
+  }
   if (args[0] === 'api' && args[1] === 'graphql') {
     return threadsFail ? { code: 1, stdout: '', stderr: 'HTTP 502' } : { code: 0, stdout: JSON.stringify(THREADS), stderr: '' };
   }
@@ -83,6 +90,7 @@ beforeEach(() => {
   calls.length = 0;
   forgetPullRequestPages();
   threadsFail = false;
+  eventsFail = false;
   updatedAt = PAGE.updatedAt;
 });
 
@@ -125,7 +133,17 @@ test('the page is read from gh, reads only, without a token in it', async () => 
   assert.deepEqual(body.pull.threads, []);
   assert.equal(body.pull.threadsError, null);
   assert.equal(body.cached, false);
-  assert.deepEqual(calls.map((c) => [c.name, c.args[0], c.args[1]]).sort(), [['gh', 'api', 'graphql'], ['gh', 'pr', 'view']]);
+  assert.deepEqual(calls.map((c) => [c.name, c.args[0], c.args[1]]).sort(), [['gh', 'api', 'graphql'], ['gh', 'api', 'graphql'], ['gh', 'pr', 'view']]);
+});
+
+test('the timeline events sit among the comments; their failing leaves the page', async () => {
+  const body = await (await get(PAGE_URL, 'manager')).json() as { pull: { timeline: Array<{ kind: string }> } };
+  assert.deepEqual(body.pull.timeline.map((e) => e.kind), ['labeled']);
+  forgetPullRequestPages();
+  eventsFail = true;
+  const failed = await get(PAGE_URL, 'manager');
+  assert.equal(failed.status, 200);
+  assert.deepEqual(((await failed.json()) as { pull: { timeline: unknown[] } }).pull.timeline, []);
 });
 
 test('the threads failing leaves the rest of the page', async () => {
@@ -137,22 +155,22 @@ test('the threads failing leaves the rest of the page', async () => {
 
 test('a page read a moment ago is shown again without gh, until it ages or the pull request changed', async () => {
   await get(PAGE_URL, 'manager');
-  assert.equal(calls.length, 2);
+  assert.equal(calls.length, 3);
   const again = await (await get(PAGE_URL, 'manager')).json() as { cached: boolean };
   assert.equal(again.cached, true);
-  assert.equal(calls.length, 2);
+  assert.equal(calls.length, 3);
   // The list says the pull request changed since: read again.
   updatedAt = '2026-11-19T00:00:00Z';
   const changed = await (await get(`${PAGE_URL}?updated=${encodeURIComponent(updatedAt)}`, 'manager')).json() as { cached: boolean };
   assert.equal(changed.cached, false);
-  assert.equal(calls.length, 4);
+  assert.equal(calls.length, 6);
   // A fresh read asked for.
   await get(`${PAGE_URL}?fresh=1`, 'manager');
-  assert.equal(calls.length, 6);
+  assert.equal(calls.length, 9);
   // Aged out.
   clock += PAGE_CACHE_MS;
   await get(PAGE_URL, 'manager');
-  assert.equal(calls.length, 8);
+  assert.equal(calls.length, 12);
 });
 
 test('a job of the project that moves drops its pages', async () => {
@@ -171,4 +189,22 @@ test('the end of a failed check\'s log comes from the repository\'s own CI only'
   const other = await get(`${PAGE_URL}/check-log?url=${encodeURIComponent('https://github.com/other/repo/actions/runs/1/job/2')}`, 'manager');
   assert.equal(other.status, 422);
   assert.equal(calls.length, 1);
+});
+
+test('an event older than the first comment kept counts with the entries left out', async () => {
+  const { withEvents } = await import('../../pull-request-page.js');
+  const comment = (at: string) => ({ kind: 'comment' as const, author: null, body: '', bodyTruncated: false, createdAt: at, url: null, hidden: false, reactions: [] });
+  const label = (at: string) => ({ kind: 'labeled' as const, actor: null, createdAt: at, label: { name: 'ui', color: null } });
+  const page = { timeline: [comment('2026-11-17T12:00:00Z'), comment('2026-11-17T14:00:00Z')], timelineMore: 4 };
+  const merged = withEvents(page as Parameters<typeof withEvents>[0], {
+    events: [label('2026-11-17T11:00:00Z'), label('2026-11-17T13:00:00Z')], eventsMore: 2,
+  });
+  assert.deepEqual(merged.timeline.map((e) => [e.kind, e.createdAt]), [
+    ['comment', '2026-11-17T12:00:00Z'], ['labeled', '2026-11-17T13:00:00Z'], ['comment', '2026-11-17T14:00:00Z'],
+  ]);
+  assert.equal(merged.timelineMore, 4 + 2 + 1);
+  // Nothing cut: every event shows.
+  const whole = withEvents({ ...page, timelineMore: 0 } as Parameters<typeof withEvents>[0], { events: [label('2026-11-17T11:00:00Z')], eventsMore: 0 });
+  assert.equal(whole.timeline[0]!.kind, 'labeled');
+  assert.equal(whole.timelineMore, 0);
 });

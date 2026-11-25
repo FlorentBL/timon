@@ -6,8 +6,10 @@
  *
  * Reads only, through `gh`: `gh pr view --json` for the page, and GraphQL
  * queries for the review threads (`gh pr view` does not give their
- * resolution), paged past the forge's hundred per call and bounded. Nothing
- * touches git: the contributor's branch never reaches this machine.
+ * resolution), paged past the forge's hundred per call and bounded, and one
+ * for the timeline events `gh pr view` leaves out (labels added or removed,
+ * force-pushes). Reactions come with each text. Nothing touches git: the
+ * contributor's branch never reaches this machine.
  *
  * Every text here was written by someone on the forge: it is bounded, its
  * control characters dropped, and a list cut past its bound says how many it
@@ -40,6 +42,8 @@ export const VIEW_COMMIT_LIMIT = 250;
 export const VIEW_FILE_LIMIT = 300;
 export const VIEW_CHECK_LIMIT = 100;
 export const VIEW_PEOPLE_LIMIT = 20;
+/** Latest timeline events kept (labels, force-pushes). */
+export const VIEW_EVENT_LIMIT = 100;
 /** Bytes `gh` may print for one page or the threads: a page of 300 files and
  *  250 commits stays far below. */
 const VIEW_BUFFER = 8 * 1024 * 1024;
@@ -57,6 +61,11 @@ const GRAPHQL_TOKEN = /^[A-Za-z0-9_=+/:-]{1,200}$/;
 
 export type ViewText = { text: string; truncated: boolean };
 
+export const REACTION_CONTENTS = ['thumbs_up', 'thumbs_down', 'laugh', 'hooray', 'confused', 'heart', 'rocket', 'eyes'] as const;
+export type ViewReactionContent = (typeof REACTION_CONTENTS)[number];
+/** How many people reacted with one emoji; a reaction nobody gave is left out. */
+export type ViewReaction = { content: ViewReactionContent; count: number };
+
 export type ViewComment = {
   kind: 'comment';
   author: string | null;
@@ -66,6 +75,7 @@ export type ViewComment = {
   url: string | null;
   /** Hidden by a maintainer on the forge (spam, off topic): its text is not kept. */
   hidden: boolean;
+  reactions: ViewReaction[];
 };
 
 export const REVIEW_STATES = ['approved', 'changes_requested', 'commented', 'dismissed', 'pending'] as const;
@@ -78,9 +88,25 @@ export type ViewReview = {
   body: string;
   bodyTruncated: boolean;
   createdAt: string;
+  reactions: ViewReaction[];
 };
 
-export type ViewTimelineItem = ViewComment | ViewReview;
+/** A label added to or removed from the pull request. */
+export type ViewLabelEvent = { kind: 'labeled' | 'unlabeled'; actor: string | null; createdAt: string; label: ForgeLabel };
+
+/** Its branch rewritten: the head before and after, and GitHub's comparison of the two. */
+export type ViewForcePushEvent = {
+  kind: 'force_pushed';
+  actor: string | null;
+  createdAt: string;
+  before: string | null;
+  after: string | null;
+  url: string | null;
+};
+
+export type ViewEvent = ViewLabelEvent | ViewForcePushEvent;
+
+export type ViewTimelineItem = ViewComment | ViewReview | ViewEvent;
 
 export type ViewThreadComment = {
   author: string | null;
@@ -88,6 +114,7 @@ export type ViewThreadComment = {
   bodyTruncated: boolean;
   createdAt: string;
   url: string | null;
+  reactions: ViewReaction[];
 };
 
 export type ViewThread = {
@@ -144,6 +171,8 @@ export type PullRequestPage = {
   changedFiles: number;
   body: string;
   bodyTruncated: boolean;
+  /** The reactions to the description. */
+  reactions: ViewReaction[];
   labels: ForgeLabel[];
   milestone: ViewMilestone | null;
   assignees: string[];
@@ -165,13 +194,18 @@ export type PullRequestPage = {
 
 export type ReviewThreadsPage = { threads: ViewThread[]; threadsMore: number };
 
+/** The latest timeline events, oldest first, and how many earlier ones were left out. */
+export type PullEventsPage = { events: ViewEvent[]; eventsMore: number };
+
 export type PullRequestPageOutcome = { ok: true; page: PullRequestPage } | ForgeReadFailure;
 export type ReviewThreadsPageOutcome = { ok: true; value: ReviewThreadsPage } | ForgeReadFailure;
+export type PullEventsPageOutcome = { ok: true; value: PullEventsPage } | ForgeReadFailure;
 
-/** A pull request's page and its review threads, read only. */
+/** A pull request's page, its review threads and its timeline events, read only. */
 export interface ForgePullPageReader {
   pullRequestPage(repo: string, number: number): Promise<PullRequestPageOutcome>;
   pullRequestThreadsPage(repo: string, number: number): Promise<ReviewThreadsPageOutcome>;
+  pullRequestEvents(repo: string, number: number): Promise<PullEventsPageOutcome>;
 }
 
 /** What `gh pr view --json` is asked for the page. */
@@ -180,7 +214,7 @@ export const PULL_PAGE_FIELDS = [
   'baseRefName', 'headRefName', 'headRefOid', 'headRepository', 'headRepositoryOwner', 'isCrossRepository',
   'maintainerCanModify', 'mergeable', 'mergeStateStatus', 'reviewDecision', 'additions', 'deletions', 'changedFiles',
   'body', 'labels', 'milestone', 'assignees', 'reviewRequests', 'closingIssuesReferences', 'comments', 'reviews',
-  'commits', 'files', 'statusCheckRollup',
+  'commits', 'files', 'statusCheckRollup', 'reactionGroups',
 ].join(',');
 
 const GITHUB_HOST = /^(?:[a-z0-9-]+\.)*(?:github\.com|githubusercontent\.com)$/i;
@@ -225,6 +259,26 @@ function bounded<T>(value: unknown, parse: (entry: unknown) => T | null, max: nu
   return { items: all.slice(0, max), more: Math.max(0, all.length - max) };
 }
 
+const ReactionGroupSchema = z.object({
+  content: z.string().transform((s) => s.toLowerCase()).pipe(z.enum(REACTION_CONTENTS)),
+  // `gh pr view` names the count `users`; GraphQL's current field is `reactors`.
+  users: z.object({ totalCount: z.int().nonnegative() }).optional(),
+  reactors: z.object({ totalCount: z.int().nonnegative() }).optional(),
+});
+
+/** The reactions of a text, as the forge groups them by emoji; an unknown emoji is left out. */
+export function reactionsOf(value: unknown): ViewReaction[] {
+  if (!Array.isArray(value)) return [];
+  const out = new Map<ViewReactionContent, number>();
+  for (const entry of value) {
+    const group = ReactionGroupSchema.safeParse(entry);
+    if (!group.success) continue;
+    const n = group.data.reactors?.totalCount ?? group.data.users?.totalCount ?? 0;
+    if (n > 0) out.set(group.data.content, (out.get(group.data.content) ?? 0) + n);
+  }
+  return REACTION_CONTENTS.filter((c) => out.has(c)).map((content) => ({ content, count: out.get(content)! }));
+}
+
 const loginOf = (value: unknown): string | null => {
   const parsed = LoginSchema.safeParse(value);
   return parsed.success ? boundedText(parsed.data, 100) : null;
@@ -237,7 +291,7 @@ function commentOf(entry: unknown): ViewComment | null {
   const body = hidden ? { text: '', truncated: false } : viewText(o.body, VIEW_COMMENT_LIMIT);
   return {
     kind: 'comment', author: loginOf(o.author), body: body.text, bodyTruncated: body.truncated,
-    createdAt: isoDate(o.createdAt), url: githubUrl(o.url), hidden,
+    createdAt: isoDate(o.createdAt), url: githubUrl(o.url), hidden, reactions: reactionsOf(o.reactionGroups),
   };
 }
 
@@ -254,7 +308,7 @@ function reviewOf(entry: unknown): ViewReview | null {
   if ((state.data === 'commented' || state.data === 'pending') && body.text.trim() === '') return null;
   return {
     kind: 'review', author: loginOf(o.author), state: state.data, body: body.text, bodyTruncated: body.truncated,
-    createdAt: isoDate(o.submittedAt) || isoDate(o.createdAt),
+    createdAt: isoDate(o.submittedAt) || isoDate(o.createdAt), reactions: reactionsOf(o.reactionGroups),
   };
 }
 
@@ -374,6 +428,7 @@ export function parsePullRequestPage(stdout: string): PullRequestPage | null {
     changedFiles: count(o.changedFiles),
     body: body.text,
     bodyTruncated: body.truncated,
+    reactions: reactionsOf(o.reactionGroups),
     labels: itemsOf(o.labels, LabelSchema, LABEL_LIMIT),
     milestone: milestoneOf(o.milestone),
     assignees: assignees.items,
@@ -416,7 +471,10 @@ function threadCommentOf(entry: unknown): ViewThreadComment | null {
   if (typeof entry !== 'object' || entry === null) return null;
   const o = entry as Record<string, unknown>;
   const body = viewText(o.body, VIEW_THREAD_COMMENT_LIMIT);
-  return { author: loginOf(o.author), body: body.text, bodyTruncated: body.truncated, createdAt: isoDate(o.createdAt), url: githubUrl(o.url) };
+  return {
+    author: loginOf(o.author), body: body.text, bodyTruncated: body.truncated, createdAt: isoDate(o.createdAt), url: githubUrl(o.url),
+    reactions: reactionsOf(o.reactionGroups),
+  };
 }
 
 /** A next page to ask for, when the forge says there is one. */
@@ -503,7 +561,7 @@ const REVIEW_THREADS_PAGE_QUERY = `query($owner: String!, $name: String!, $numbe
           comments(first: ${THREAD_COMMENT_PAGE}) {
             totalCount
             pageInfo { hasNextPage endCursor }
-            nodes { author { login } body createdAt url }
+            nodes { author { login } body createdAt url reactionGroups { content reactors { totalCount } } }
           }
         }
       }
@@ -517,7 +575,73 @@ const THREAD_COMMENTS_QUERY = `query($id: ID!, $after: String!) {
       comments(first: ${COMMENT_FOLLOW_PAGE}, after: $after) {
         totalCount
         pageInfo { hasNextPage endCursor }
-        nodes { author { login } body createdAt url }
+        nodes { author { login } body createdAt url reactionGroups { content reactors { totalCount } } }
+      }
+    }
+  }
+}`;
+
+const EventsAnswerSchema = z.object({
+  data: z.object({
+    repository: z.object({
+      pullRequest: z.object({
+        timelineItems: z.object({ totalCount: z.int().nonnegative(), nodes: z.array(z.unknown()) }),
+      }),
+    }),
+  }),
+});
+
+const LabelEventSchema = z.object({ __typename: z.enum(['LabeledEvent', 'UnlabeledEvent']), label: LabelSchema });
+
+function oidOf(value: unknown): string | null {
+  const oid = typeof value === 'object' && value !== null ? (value as { oid?: unknown }).oid : null;
+  return typeof oid === 'string' && COMMIT_SHA.test(oid) ? oid : null;
+}
+
+function eventOf(repo: string) {
+  return (entry: unknown): ViewEvent | null => {
+    if (typeof entry !== 'object' || entry === null) return null;
+    const o = entry as Record<string, unknown>;
+    const createdAt = isoDate(o.createdAt);
+    if (!createdAt) return null;
+    const actor = loginOf(o.actor);
+    const label = LabelEventSchema.safeParse(o);
+    if (label.success) {
+      return { kind: label.data.__typename === 'LabeledEvent' ? 'labeled' : 'unlabeled', actor, createdAt, label: label.data.label };
+    }
+    if (o.__typename !== 'HeadRefForcePushedEvent') return null;
+    const before = oidOf(o.beforeCommit);
+    const after = oidOf(o.afterCommit);
+    return {
+      kind: 'force_pushed', actor, createdAt, before, after,
+      url: before && after ? githubUrl(`https://github.com/${repo}/compare/${before}..${after}`) : null,
+    };
+  };
+}
+
+/** The timeline events one GraphQL answer holds, oldest first, or null when
+ *  the answer is not one. `repo` builds a force-push's comparison address. */
+export function parsePullEventsPage(stdout: string, repo: string): PullEventsPage | null {
+  const parsed = EventsAnswerSchema.safeParse(jsonOf(stdout));
+  if (!parsed.success) return null;
+  const connection = parsed.data.data.repository.pullRequest.timelineItems;
+  const events = connection.nodes.map(eventOf(repo)).filter((e): e is ViewEvent => e !== null)
+    .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
+    .slice(-VIEW_EVENT_LIMIT);
+  return { events, eventsMore: Math.max(0, connection.totalCount - events.length) };
+}
+
+const PULL_EVENTS_QUERY = `query($owner: String!, $name: String!, $number: Int!) {
+  repository(owner: $owner, name: $name) {
+    pullRequest(number: $number) {
+      timelineItems(last: ${VIEW_EVENT_LIMIT}, itemTypes: [LABELED_EVENT, UNLABELED_EVENT, HEAD_REF_FORCE_PUSHED_EVENT]) {
+        totalCount
+        nodes {
+          __typename
+          ... on LabeledEvent { createdAt actor { login } label { name color } }
+          ... on UnlabeledEvent { createdAt actor { login } label { name color } }
+          ... on HeadRefForcePushedEvent { createdAt actor { login } beforeCommit { oid } afterCommit { oid } }
+        }
       }
     }
   }
@@ -625,6 +749,23 @@ export function githubPullPageReader(configDir: string | null, runners: { gh?: G
       }
       await readLongThreads(reads.slice(0, VIEW_THREAD_LIMIT), read);
       return { ok: true, value: threadsPageOf(reads, total) };
+    },
+    async pullRequestEvents(repo, number) {
+      const bad = badTarget(repo, number);
+      if (bad) return bad;
+      const [owner = '', name = ''] = repo.split('/');
+      const out = await read([
+        'api', 'graphql',
+        `--raw-field=query=${PULL_EVENTS_QUERY}`,
+        `--raw-field=owner=${owner}`,
+        `--raw-field=name=${name}`,
+        `--field=number=${number}`,
+      ]);
+      if (!out.ok) return out;
+      const value = parsePullEventsPage(out.result.stdout, repo);
+      return value
+        ? { ok: true, value }
+        : { ok: false, code: 'unexpected_answer', reason: 'gh did not answer the timeline of a pull request' };
     },
   };
 }
