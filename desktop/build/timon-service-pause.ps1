@@ -33,10 +33,6 @@ param(
   # The data directory of the account that runs the installer, which names it:
   # under another account's elevation, this script's own profile is not it.
   [string]$TimonHome = '',
-  # The profile directory of the account that started the installer, resolved
-  # by the installer before it asked for elevation. The daemon token is only
-  # read under it, and only when Windows records it for that account's SID.
-  [string]$UserProfile = '',
   # The journal of both phases. The stop phase computes it and hands it to the
   # resume phase, whose environment comes from WMI, not from the installer.
   [string]$Log = '',
@@ -138,9 +134,7 @@ if (-not $account) {
   $accountSource = 'this process, the installer could not be read'
 }
 $mine = { param($process) $account -and ((& $sidOf $process) -eq $account) }
-# The installation, lower-cased: what runs from under it is Timon's.
-$root = $InstallDir.TrimEnd('\').ToLowerInvariant()
-& $note ("pause: start, elevated: {0}, installer pid {1}, account SID {2} (from {3}), installation '{4}', data '{5}', profile '{6}'" -f $elevated, $InstallerPid, $account, $accountSource, $InstallDir, $TimonHome, $UserProfile)
+& $note ("pause: start, elevated: {0}, installer pid {1}, account SID {2} (from {3}), installation '{4}', data '{5}'" -f $elevated, $InstallerPid, $account, $accountSource, $InstallDir, $TimonHome)
 
 # Disabled first: its 5-minute repeating trigger would otherwise start the
 # daemon again from half-replaced files.
@@ -165,41 +159,26 @@ if ($TimonHome) {
 # request as `timon service stop` (host/cooperative-stop.ts), with the same
 # wait: TIMON_COOPERATIVE_STOP_MS, 10 s by default, 120 s at most, 0 to skip
 # it (desktop/src/packaging.test.ts holds the three values to that file).
-# Only a service's daemon is asked, after its task was disabled: the launcher
-# ends once its daemon exits 0, while a desktop without a service restarts the
-# daemon it embeds.
-#
-# This script may run elevated, under another account's administrator, and it
-# holds the daemon token: whoever receives it drives Timon. So the request is
-# an improvement, never a condition to install. Unless every guard below is
-# proven, nothing is sent and the forced stop that follows does the work, as
-# it did before the request existed:
-# - the token is this account's: the installer named its profile before the
-#   elevation (-UserProfile), it is the profile Windows records for the SID
-#   that owns the installer, the data directory lies under it, and the token
-#   file, read through the handle that was checked, is owned by that SID;
-# - the listener is this data directory's daemon: the pid it wrote, the only
-#   process on the port, run from this installation by this account, and the
-#   process at the other end of the very connection the token goes through;
-# - one deadline, on a monotonic clock, bounds connecting, sending and reading,
-#   and the answer is read up to its status line only, within a fixed size.
-# The token never reaches the journal or a command line.
+# The daemon token is read into this process only: it never reaches the
+# journal or a command line, and goes to the loopback listener alone, with no
+# proxy and no redirect. Only a service's daemon is asked, after its task was
+# disabled: the launcher ends once its daemon exits 0, while a desktop
+# without a service restarts the daemon it embeds.
 $stopWaitMs = 10000
 $stopWaitMaxMs = 120000
 $stopWaitRaw = "$env:TIMON_COOPERATIVE_STOP_MS".Trim()
 if ($stopWaitRaw -match '^[0-9]+$') { $stopWaitMs = [int][Math]::Min([double]$stopWaitRaw, $stopWaitMaxMs) }
-$requestMs = 3000
-$answerMaxBytes = 4096
 $loopback = "http://127.0.0.1:$port"
-# Carries no token: it only tells whether something still answers.
 $localRequest = {
-  param([string]$method, [string]$path, [int]$timeoutMs)
+  param([string]$method, [string]$path, [int]$timeoutMs, [string]$bearer)
   $request = [Net.HttpWebRequest]::Create("$loopback$path")
   $request.Method = $method
   $request.Proxy = $null
   $request.AllowAutoRedirect = $false
   $request.Timeout = $timeoutMs
   $request.ReadWriteTimeout = $timeoutMs
+  if ($bearer) { $request.Headers.Add('Authorization', "Bearer $bearer") }
+  if ($method -eq 'POST') { $request.ContentLength = 0 }
   $request
 }
 # The HTTP answer an error carries, if any: a status other than 2xx is thrown
@@ -212,126 +191,12 @@ $httpAnswer = {
 # Any HTTP answer means a listener; only a failed connection or a timeout means none.
 $answers = {
   try {
-    $response = (& $localRequest 'GET' '/api/health' 1000).GetResponse()
+    $response = (& $localRequest 'GET' '/api/health' 1000 '').GetResponse()
     $response.Close()
     $true
   } catch {
     $answer = & $httpAnswer $_.Exception
     if ($answer) { $answer.Close(); $true } else { $false }
-  }
-}
-$fullPath = {
-  param([string]$path)
-  if (-not $path) { return '' }
-  try { [IO.Path]::GetFullPath($path).TrimEnd('\') } catch { '' }
-}
-# The text of a file of the data directory, or $null when it is not this
-# account's. The owner is read from the handle the text is read through, not
-# from the path: a file swapped between a check and a read, or a link to
-# another account's file, is never the one that was checked.
-$readOwned = {
-  param([string]$path, [int]$limit)
-  $file = $null
-  try {
-    $file = [IO.File]::Open($path, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::ReadWrite)
-    $owner = $file.GetAccessControl().GetOwner([Security.Principal.SecurityIdentifier]).Value
-    if ($owner -ne $account) { return $null }
-    if ($file.Length -gt $limit) { return $null }
-    $bytes = New-Object byte[] ([int]$file.Length)
-    $count = 0
-    while ($count -lt $bytes.Length) {
-      $read = $file.Read($bytes, $count, $bytes.Length - $count)
-      if ($read -le 0) { break }
-      $count += $read
-    }
-    [Text.Encoding]::UTF8.GetString($bytes, 0, $count)
-  } catch { $null } finally { if ($file) { $file.Dispose() } }
-}
-# Why the token is not proven to be this account's, or nothing.
-$tokenRefusal = {
-  if ($elevated -and -not $installer) { return 'the installer process could not be read, whose token this is is not proven' }
-  if ("$account" -notmatch '^S-1-[0-9]+(-[0-9]+)+$') { return 'no account SID' }
-  if (-not $UserProfile) { return 'the installer named no user profile' }
-  # The 64-bit view: the installer starts the 32-bit PowerShell, whose view of
-  # the machine's registry may be redirected.
-  $recorded = ''
-  try {
-    $machine = [Microsoft.Win32.RegistryKey]::OpenBaseKey([Microsoft.Win32.RegistryHive]::LocalMachine, [Microsoft.Win32.RegistryView]::Registry64)
-    $key = $machine.OpenSubKey("SOFTWARE\Microsoft\Windows NT\CurrentVersion\ProfileList\$account")
-    if ($key) { $recorded = "$($key.GetValue('ProfileImagePath'))"; $key.Close() }
-    $machine.Close()
-  } catch { }
-  $profileDir = & $fullPath $recorded
-  if (-not $profileDir) { return 'Windows records no profile for the account' }
-  if ($profileDir -ne (& $fullPath $UserProfile)) { return "the profile the installer named is not the account's" }
-  $dataDir = & $fullPath $TimonHome
-  if (-not $dataDir.StartsWith("$profileDir\", [StringComparison]::OrdinalIgnoreCase)) { return "the data directory is not under the account's profile" }
-  ''
-}
-# Why the process on the port is not this data directory's daemon, or nothing.
-$listenerRefusal = {
-  param([int]$expected)
-  $owners = @()
-  try { $owners = @(Get-NetTCPConnection -State Listen -LocalPort $port -ErrorAction Stop | Select-Object -ExpandProperty OwningProcess -Unique) } catch { return 'nothing listens on the port' }
-  if ($owners.Count -ne 1 -or [int]$owners[0] -ne $expected) {
-    return ("the port is held by pid {0}, not only by the daemon of this data directory (pid {1})" -f ($owners -join ', '), $expected)
-  }
-  $listener = $null
-  try { $listener = Get-CimInstance Win32_Process -Filter "ProcessId=$expected" -ErrorAction Stop } catch { }
-  if (-not $listener) { return 'the listener could not be read' }
-  if (-not $root -or -not $listener.ExecutablePath -or -not $listener.ExecutablePath.ToLowerInvariant().StartsWith("$root\")) {
-    return 'the listener does not run from this installation'
-  }
-  if ((& $sidOf $listener) -ne $account) { return "the listener is not this account's" }
-  ''
-}
-# POST /api/daemon/shutdown over a socket whose other end is checked before
-# the token is written. Answers the HTTP status, or 0 with the reason.
-$askToStop = {
-  param([string]$bearer, [int]$expected)
-  $clock = [Diagnostics.Stopwatch]::StartNew()
-  $remaining = { [int][Math]::Max(0, $requestMs - $clock.ElapsedMilliseconds) }
-  $client = $null
-  $payload = $null
-  try {
-    $client = New-Object -TypeName Net.Sockets.TcpClient -ArgumentList ([Net.Sockets.AddressFamily]::InterNetwork)
-    $connecting = $client.BeginConnect([Net.IPAddress]::Loopback, $port, $null, $null)
-    if (-not $connecting.AsyncWaitHandle.WaitOne((& $remaining))) { return @{ status = 0; why = 'the connection timed out' } }
-    $client.EndConnect($connecting)
-    # The accepted end of this connection belongs to the process that listens:
-    # it must be the daemon checked above, not whoever took the port since.
-    $ours = ([Net.IPEndPoint]$client.Client.LocalEndPoint).Port
-    $peers = @()
-    try {
-      $peers = @(Get-NetTCPConnection -State Established -LocalAddress '127.0.0.1' -LocalPort $port -RemoteAddress '127.0.0.1' -RemotePort $ours -ErrorAction Stop | Select-Object -ExpandProperty OwningProcess -Unique)
-    } catch { }
-    if ($peers.Count -ne 1 -or [int]$peers[0] -ne $expected) { return @{ status = 0; why = 'the connection does not end at the daemon' } }
-    $left = & $remaining
-    if ($left -le 0) { return @{ status = 0; why = 'the deadline passed before sending' } }
-    $client.SendTimeout = $left
-    $payload = [Text.Encoding]::ASCII.GetBytes("POST /api/daemon/shutdown HTTP/1.1`r`nHost: 127.0.0.1:$port`r`nAuthorization: Bearer $bearer`r`nContent-Length: 0`r`nConnection: close`r`n`r`n")
-    $stream = $client.GetStream()
-    $stream.Write($payload, 0, $payload.Length)
-    # Only the status line is wanted: an answer that never ends, or ends
-    # slowly, is cut at the deadline or at the size, whichever comes first.
-    $received = New-Object IO.MemoryStream
-    $buffer = New-Object byte[] 512
-    while ($received.Length -lt $answerMaxBytes) {
-      $left = & $remaining
-      if ($left -le 0) { return @{ status = 0; why = 'no status line before the deadline' } }
-      $client.ReceiveTimeout = $left
-      $read = $stream.Read($buffer, 0, [int][Math]::Min($buffer.Length, $answerMaxBytes - $received.Length))
-      if ($read -le 0) { break }
-      $received.Write($buffer, 0, $read)
-      $text = [Text.Encoding]::ASCII.GetString($received.ToArray())
-      if ($text -match '^HTTP/1\.[01] ([0-9]{3})[^\r\n]*\r?\n') { return @{ status = [int]$Matches[1]; why = '' } }
-    }
-    @{ status = 0; why = 'no status line in the answer' }
-  } catch {
-    @{ status = 0; why = 'the connection failed' }
-  } finally {
-    if ($payload) { [Array]::Clear($payload, 0, $payload.Length) }
-    if ($client) { $client.Close() }
   }
 }
 $stopOutcome = 'skipped'
@@ -340,46 +205,42 @@ if ((& $taskState) -eq 'not registered') {
 } elseif ($stopWaitMs -le 0) {
   & $note 'pause: daemon not asked to stop (TIMON_COOPERATIVE_STOP_MS=0)'
 } else {
-  $daemonPid = 0
   $token = $null
-  $why = & $tokenRefusal
-  $dataDir = & $fullPath $TimonHome
-  if (-not $why) {
-    # The pid the daemon of this data directory wrote when it took it (home-lock.ts).
-    $holder = $null
-    try { $holder = (& $readOwned (Join-Path $dataDir 'daemon.lock.json') 4096) | ConvertFrom-Json -ErrorAction Stop } catch { }
-    if ($holder -and "$($holder.pid)" -match '^[0-9]+$') { $daemonPid = [int]$holder.pid }
-    if ($daemonPid -le 0) {
-      $why = 'no daemon pid of this account in the data directory'
-    } elseif ($holder.port -and "$($holder.port)" -ne "$port") {
-      $why = "the daemon of the data directory listens on port $($holder.port), not $port"
-    }
+  if ($TimonHome) {
+    try { $token = "$(Get-Content -LiteralPath (Join-Path $TimonHome 'daemon-token') -Raw -ErrorAction Stop)".Trim() } catch { }
   }
-  if (-not $why) { $why = & $listenerRefusal $daemonPid }
-  if (-not $why) {
-    $token = "$(& $readOwned (Join-Path $dataDir 'daemon-token') 4096)".Trim()
-    if (-not $token) { $why = 'no daemon token of this account' }
-  }
-  if ($why) {
-    $token = $null
-    & $note ("pause: daemon not asked to stop: {0}; it is ended by force" -f $why)
+  if (-not $token) {
+    & $note 'pause: daemon not asked to stop: no daemon token'
   } else {
-    $asked = & $askToStop $token $daemonPid
+    $daemonPid = 0
+    $status = 0
+    try {
+      $response = (& $localRequest 'POST' '/api/daemon/shutdown' 3000 $token).GetResponse()
+      $status = [int]$response.StatusCode
+      try {
+        $reader = New-Object IO.StreamReader($response.GetResponseStream())
+        $body = $reader.ReadToEnd() | ConvertFrom-Json -ErrorAction Stop
+        if ([int]$body.pid -gt 0) { $daemonPid = [int]$body.pid }
+      } catch { }
+      $response.Close()
+    } catch {
+      $answer = & $httpAnswer $_.Exception
+      if ($answer) { $status = [int]$answer.StatusCode; $answer.Close() }
+    }
     $token = $null
-    $status = [int]$asked.status
     if ($status -eq 0) {
       $stopOutcome = 'unreachable'
-      & $note ("pause: no daemon answered the stop request on port {0} ({1})" -f $port, $asked.why)
+      & $note ("pause: no daemon answered the stop request on port {0}" -f $port)
     } elseif ($status -ne 202) {
       $stopOutcome = 'refused'
       & $note ("pause: the daemon did not accept to stop (HTTP {0}): ending it" -f $status)
     } else {
       $stopOutcome = 'timeout'
-      $waited = [Diagnostics.Stopwatch]::StartNew()
+      $deadline = (Get-Date).AddMilliseconds($stopWaitMs)
       while ($true) {
-        $alive = [bool](Get-Process -Id $daemonPid -ErrorAction Ignore)
+        $alive = $daemonPid -gt 0 -and [bool](Get-Process -Id $daemonPid -ErrorAction Ignore)
         if (-not $alive -and -not (& $answers)) { $stopOutcome = 'stopped'; break }
-        if ($waited.ElapsedMilliseconds -ge $stopWaitMs) { break }
+        if ((Get-Date) -ge $deadline) { break }
         Start-Sleep -Milliseconds 250
       }
       if ($stopOutcome -eq 'stopped') {
@@ -466,6 +327,7 @@ foreach ($daemon in $daemons) {
 # update, 22/10/2026). The window and Electron's own helpers (--type=) carry
 # none of these paths. Two passes: a child whose parent went first in a pass
 # has no tree left to be ended with.
+$root = $InstallDir.TrimEnd('\').ToLowerInvariant()
 $shipped = "$root\resources\node\"
 $needles = @("$root\resources\orchestrator\", "$root\resources\app\")
 $fromInstallation = {
