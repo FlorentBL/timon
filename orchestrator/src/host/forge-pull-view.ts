@@ -4,10 +4,10 @@
  * the commits, the checks and the files. The detail window of the Pull
  * requests widget paints it (`pull-request-view.ts`).
  *
- * Two calls to `gh`, both reads: `gh pr view --json` for the page, and one
- * GraphQL query for the review threads (`gh pr view` does not give their
- * resolution). Nothing touches git: the contributor's branch never reaches
- * this machine.
+ * Reads only, through `gh`: `gh pr view --json` for the page, and GraphQL
+ * queries for the review threads (`gh pr view` does not give their
+ * resolution), paged past the forge's hundred per call and bounded. Nothing
+ * touches git: the contributor's branch never reaches this machine.
  *
  * Every text here was written by someone on the forge: it is bounded, its
  * control characters dropped, and a list cut past its bound says how many it
@@ -31,8 +31,11 @@ export const VIEW_COMMENT_LIMIT = 8_000;
 export const VIEW_THREAD_COMMENT_LIMIT = 4_000;
 /** Most entries kept of each list. */
 export const VIEW_TIMELINE_LIMIT = 100;
-export const VIEW_THREAD_LIMIT = 50;
-export const VIEW_THREAD_COMMENTS = 20;
+export const VIEW_THREAD_LIMIT = 300;
+export const VIEW_THREAD_COMMENTS = 100;
+/** Most thread comments kept over the whole page: a page of 300 threads of
+ *  100 comments each would weigh tens of megabytes. */
+export const VIEW_THREAD_COMMENT_BUDGET = 1_500;
 export const VIEW_COMMIT_LIMIT = 250;
 export const VIEW_FILE_LIMIT = 300;
 export const VIEW_CHECK_LIMIT = 100;
@@ -41,8 +44,16 @@ export const VIEW_PEOPLE_LIMIT = 20;
  *  250 commits stays far below. */
 const VIEW_BUFFER = 8 * 1024 * 1024;
 const GH_TIMEOUT_MS = 60_000;
-/** Review threads asked of the forge in one call. */
+/** Review threads asked of the forge in one call: GitHub's most. */
 const THREAD_PAGE = 100;
+/** Comments asked with each thread, then per follow-up call for a longer one. */
+const THREAD_COMMENT_PAGE = 20;
+const COMMENT_FOLLOW_PAGE = 100;
+/** Follow-up calls for long threads, and how many run at once. */
+const COMMENT_FOLLOW_CALLS = 12;
+const COMMENT_FOLLOW_PARALLEL = 4;
+/** What GitHub returns as a node id or a page cursor; anything else is not asked back. */
+const GRAPHQL_TOKEN = /^[A-Za-z0-9_=+/:-]{1,200}$/;
 
 export type ViewText = { text: string; truncated: boolean };
 
@@ -381,12 +392,22 @@ export function parsePullRequestPage(stdout: string): PullRequestPage | null {
   };
 }
 
+const PageInfoSchema = z.object({ hasNextPage: z.boolean(), endCursor: z.string().nullable() }).partial();
+
 const ThreadsAnswerSchema = z.object({
   data: z.object({
     repository: z.object({
       pullRequest: z.object({
-        reviewThreads: z.object({ totalCount: z.int().nonnegative(), nodes: z.array(z.unknown()) }),
+        reviewThreads: z.object({ totalCount: z.int().nonnegative(), pageInfo: PageInfoSchema.optional(), nodes: z.array(z.unknown()) }),
       }),
+    }),
+  }),
+});
+
+const ThreadCommentsAnswerSchema = z.object({
+  data: z.object({
+    node: z.object({
+      comments: z.object({ totalCount: z.int().nonnegative(), pageInfo: PageInfoSchema.optional(), nodes: z.array(z.unknown()) }),
     }),
   }),
 });
@@ -398,45 +419,105 @@ function threadCommentOf(entry: unknown): ViewThreadComment | null {
   return { author: loginOf(o.author), body: body.text, bodyTruncated: body.truncated, createdAt: isoDate(o.createdAt), url: githubUrl(o.url) };
 }
 
-function threadOf(entry: unknown): ViewThread | null {
+/** A next page to ask for, when the forge says there is one. */
+function nextCursor(info: z.infer<typeof PageInfoSchema> | undefined): string | null {
+  return info?.hasNextPage === true && typeof info.endCursor === 'string' && GRAPHQL_TOKEN.test(info.endCursor) ? info.endCursor : null;
+}
+
+/** A thread as one answer gives it, with what it takes to read its next comments. */
+type ThreadRead = {
+  thread: ViewThread;
+  /** All of its comments on the forge. */
+  total: number;
+  id: string | null;
+  commentsAfter: string | null;
+};
+
+function threadOf(entry: unknown): ThreadRead | null {
   if (typeof entry !== 'object' || entry === null) return null;
   const o = entry as Record<string, unknown>;
   if (typeof o.isResolved !== 'boolean') return null;
   const connection = typeof o.comments === 'object' && o.comments !== null ? o.comments as Record<string, unknown> : {};
   const comments = bounded(connection.nodes, threadCommentOf, VIEW_THREAD_COMMENTS);
   const line = [o.line, o.originalLine].find((l): l is number => typeof l === 'number' && Number.isSafeInteger(l) && l > 0) ?? null;
+  const total = Math.max(count(connection.totalCount), comments.items.length + comments.more);
+  const info = PageInfoSchema.safeParse(connection.pageInfo);
   return {
-    path: boundedText(o.path, 500) || null,
-    line,
-    resolved: o.isResolved,
-    outdated: o.isOutdated === true,
-    comments: comments.items,
-    commentsMore: Math.max(comments.more, count(connection.totalCount) - comments.items.length),
+    thread: {
+      path: boundedText(o.path, 500) || null,
+      line,
+      resolved: o.isResolved,
+      outdated: o.isOutdated === true,
+      comments: comments.items,
+      commentsMore: total - comments.items.length,
+    },
+    total,
+    id: typeof o.id === 'string' && GRAPHQL_TOKEN.test(o.id) ? o.id : null,
+    commentsAfter: info.success ? nextCursor(info.data) : null,
   };
 }
 
-/** Every review thread a GraphQL answer holds, resolved or not, or null when
- *  the answer is not one. */
-export function parseReviewThreadsPage(stdout: string): ReviewThreadsPage | null {
+type ThreadsAnswer = { total: number; threads: ThreadRead[]; after: string | null };
+
+function threadsAnswerOf(stdout: string): ThreadsAnswer | null {
   const parsed = ThreadsAnswerSchema.safeParse(jsonOf(stdout));
   if (!parsed.success) return null;
   const connection = parsed.data.data.repository.pullRequest.reviewThreads;
-  const read = bounded(connection.nodes, threadOf, VIEW_THREAD_LIMIT);
   return {
-    threads: read.items,
-    threadsMore: Math.max(read.more, connection.totalCount - read.items.length),
+    total: connection.totalCount,
+    threads: connection.nodes.map(threadOf).filter((x): x is ThreadRead => x !== null),
+    after: nextCursor(connection.pageInfo),
   };
 }
 
-const REVIEW_THREADS_PAGE_QUERY = `query($owner: String!, $name: String!, $number: Int!) {
+/**
+ * The threads read so far, as the page shows them: the first
+ * `VIEW_THREAD_LIMIT`, their comments within `VIEW_THREAD_COMMENTS` each and
+ * `VIEW_THREAD_COMMENT_BUDGET` in all, each list saying how many it left out.
+ */
+function threadsPageOf(reads: readonly ThreadRead[], total: number): ReviewThreadsPage {
+  let budget = VIEW_THREAD_COMMENT_BUDGET;
+  const threads = reads.slice(0, VIEW_THREAD_LIMIT).map(({ thread, total: all }) => {
+    const comments = thread.comments.slice(0, Math.min(VIEW_THREAD_COMMENTS, budget));
+    budget -= comments.length;
+    return { ...thread, comments, commentsMore: Math.max(0, all - comments.length) };
+  });
+  return { threads, threadsMore: Math.max(0, Math.max(total, reads.length) - threads.length) };
+}
+
+/** Every review thread one GraphQL answer holds, resolved or not, or null
+ *  when the answer is not one. */
+export function parseReviewThreadsPage(stdout: string): ReviewThreadsPage | null {
+  const answer = threadsAnswerOf(stdout);
+  return answer ? threadsPageOf(answer.threads, answer.total) : null;
+}
+
+const REVIEW_THREADS_PAGE_QUERY = `query($owner: String!, $name: String!, $number: Int!, $after: String) {
   repository(owner: $owner, name: $name) {
     pullRequest(number: $number) {
-      reviewThreads(first: ${THREAD_PAGE}) {
+      reviewThreads(first: ${THREAD_PAGE}, after: $after) {
         totalCount
+        pageInfo { hasNextPage endCursor }
         nodes {
-          isResolved isOutdated path line originalLine
-          comments(first: ${VIEW_THREAD_COMMENTS}) { totalCount nodes { author { login } body createdAt url } }
+          id isResolved isOutdated path line originalLine
+          comments(first: ${THREAD_COMMENT_PAGE}) {
+            totalCount
+            pageInfo { hasNextPage endCursor }
+            nodes { author { login } body createdAt url }
+          }
         }
+      }
+    }
+  }
+}`;
+
+const THREAD_COMMENTS_QUERY = `query($id: ID!, $after: String!) {
+  node(id: $id) {
+    ... on PullRequestReviewThread {
+      comments(first: ${COMMENT_FOLLOW_PAGE}, after: $after) {
+        totalCount
+        pageInfo { hasNextPage endCursor }
+        nodes { author { login } body createdAt url }
       }
     }
   }
@@ -444,11 +525,46 @@ const REVIEW_THREADS_PAGE_QUERY = `query($owner: String!, $name: String!, $numbe
 
 const hostGh: GhRunner = (args, opts) => getHost().execAsync('gh', args, opts);
 
+type GhRead = (args: string[]) => Promise<{ ok: true; result: ExecResult } | ForgeReadFailure>;
+
+/**
+ * The rest of each long thread's comments, a page each, within the bounds:
+ * the first threads first, never past the page's comment budget, a few calls
+ * at a time. A call that fails leaves its thread as it was, its "more" count
+ * still true.
+ */
+async function readLongThreads(reads: ThreadRead[], read: GhRead): Promise<void> {
+  let budget = VIEW_THREAD_COMMENT_BUDGET - reads.reduce((n, r) => n + r.thread.comments.length, 0);
+  const long = reads.filter((r) => r.id !== null && r.commentsAfter !== null && r.thread.comments.length < VIEW_THREAD_COMMENTS);
+  const asked: ThreadRead[] = [];
+  for (const r of long) {
+    if (asked.length >= COMMENT_FOLLOW_CALLS || budget <= 0) break;
+    asked.push(r);
+    budget -= Math.min(COMMENT_FOLLOW_PAGE, VIEW_THREAD_COMMENTS - r.thread.comments.length);
+  }
+  for (let i = 0; i < asked.length; i += COMMENT_FOLLOW_PARALLEL) {
+    await Promise.all(asked.slice(i, i + COMMENT_FOLLOW_PARALLEL).map(async (r) => {
+      const out = await read([
+        'api', 'graphql',
+        `--raw-field=query=${THREAD_COMMENTS_QUERY}`,
+        `--raw-field=id=${r.id!}`,
+        `--raw-field=after=${r.commentsAfter!}`,
+      ]);
+      if (!out.ok) return;
+      const parsed = ThreadCommentsAnswerSchema.safeParse(jsonOf(out.result.stdout));
+      if (!parsed.success) return;
+      const more = parsed.data.data.node.comments.nodes.map(threadCommentOf).filter((c): c is ViewThreadComment => c !== null);
+      r.thread.comments = [...r.thread.comments, ...more].slice(0, VIEW_THREAD_COMMENTS);
+      r.commentsAfter = nextCursor(parsed.data.data.node.comments.pageInfo);
+    }));
+  }
+}
+
 /** GitHub's page of a pull request through `gh`, signed in with the
  *  project's config folder. */
 export function githubPullPageReader(configDir: string | null, runners: { gh?: GhRunner } = {}): ForgePullPageReader {
   const gh = runners.gh ?? hostGh;
-  const read = async (args: string[]): Promise<{ ok: true; result: ExecResult } | ForgeReadFailure> => {
+  const read: GhRead = async (args) => {
     let result: ExecResult;
     try {
       result = await gh(args, { env: ghEnv(configDir), timeout: GH_TIMEOUT_MS, windowsHide: true, maxBuffer: VIEW_BUFFER });
@@ -480,20 +596,35 @@ export function githubPullPageReader(configDir: string | null, runners: { gh?: G
       const bad = badTarget(repo, number);
       if (bad) return bad;
       const [owner = '', name = ''] = repo.split('/');
-      // `--raw-field` keeps each value a string: `-F` would read a value
-      // starting with "@" as a file. The repository was checked above.
-      const out = await read([
-        'api', 'graphql',
-        `--raw-field=query=${REVIEW_THREADS_PAGE_QUERY}`,
-        `--raw-field=owner=${owner}`,
-        `--raw-field=name=${name}`,
-        `--field=number=${number}`,
-      ]);
-      if (!out.ok) return out;
-      const value = parseReviewThreadsPage(out.result.stdout);
-      return value
-        ? { ok: true, value }
-        : { ok: false, code: 'unexpected_answer', reason: 'gh did not answer the review threads of a pull request' };
+      const reads: ThreadRead[] = [];
+      let total = 0;
+      let after: string | null = null;
+      // Pages of threads until the bound: a page that fails past the first
+      // keeps what was read, and the list says how many it left out.
+      for (let first = true; first || (after !== null && reads.length < VIEW_THREAD_LIMIT); first = false) {
+        // `--raw-field` keeps each value a string: `-F` would read a value
+        // starting with "@" as a file. The repository was checked above.
+        const out = await read([
+          'api', 'graphql',
+          `--raw-field=query=${REVIEW_THREADS_PAGE_QUERY}`,
+          `--raw-field=owner=${owner}`,
+          `--raw-field=name=${name}`,
+          `--field=number=${number}`,
+          ...(after ? [`--raw-field=after=${after}`] : []),
+        ]);
+        const answer = out.ok ? threadsAnswerOf(out.result.stdout) : null;
+        if (!answer) {
+          if (!first) break;
+          return out.ok
+            ? { ok: false, code: 'unexpected_answer', reason: 'gh did not answer the review threads of a pull request' }
+            : out;
+        }
+        total = answer.total;
+        reads.push(...answer.threads);
+        after = answer.after;
+      }
+      await readLongThreads(reads.slice(0, VIEW_THREAD_LIMIT), read);
+      return { ok: true, value: threadsPageOf(reads, total) };
     },
   };
 }

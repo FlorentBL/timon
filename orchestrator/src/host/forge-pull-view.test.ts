@@ -8,7 +8,7 @@ import { test } from 'node:test';
 import type { GhRunner } from './gh.js';
 import {
   githubPullPageReader, githubUrl, parsePullRequestPage, parseReviewThreadsPage, PULL_PAGE_FIELDS, VIEW_BODY_LIMIT,
-  VIEW_COMMENT_LIMIT, VIEW_FILE_LIMIT, VIEW_THREAD_COMMENTS, VIEW_TIMELINE_LIMIT, viewText,
+  VIEW_COMMENT_LIMIT, VIEW_FILE_LIMIT, VIEW_THREAD_COMMENT_BUDGET, VIEW_THREAD_COMMENTS, VIEW_THREAD_LIMIT, VIEW_TIMELINE_LIMIT, viewText,
 } from './forge-pull-view.js';
 
 const SHA = 'b'.repeat(40);
@@ -227,4 +227,91 @@ test('a failed read says why, without a token', async () => {
   const out = await githubPullPageReader(null, { gh }).pullRequestPage('acme/widgets', 42);
   assert.equal(out.ok, false);
   assert.doesNotMatch(JSON.stringify(out), /ghp_/);
+});
+
+const threadNode = (i: number, extra: Record<string, unknown> = {}) => ({
+  id: `T${i}`, isResolved: false, isOutdated: false, path: 'src/theme.ts', line: i + 1, originalLine: null,
+  comments: { totalCount: 1, nodes: [{ author: { login: 'reviewer' }, body: `note ${i}`, createdAt: '2026-11-17T11:00:00Z', url: null }] },
+  ...extra,
+});
+
+const threadsAnswer = (nodes: unknown[], totalCount: number, endCursor: string | null) => JSON.stringify({
+  data: { repository: { pullRequest: { reviewThreads: { totalCount, pageInfo: { hasNextPage: endCursor !== null, endCursor }, nodes } } } },
+});
+
+const valueOf = (raw: string[], key: string) => raw.find((a) => a.startsWith(`--raw-field=${key}=`))?.slice(`--raw-field=${key}=`.length);
+
+test('review threads are read page after page, past the forge\'s hundred, up to the bound', async () => {
+  const calls: string[][] = [];
+  const total = VIEW_THREAD_LIMIT + 40;
+  const gh: GhRunner = async (args) => {
+    calls.push(args);
+    const after = valueOf(args, 'after');
+    const start = after ? Number(after.slice(1)) : 0;
+    const nodes = Array.from({ length: Math.min(100, total - start) }, (_, i) => threadNode(start + i));
+    const next = start + nodes.length < total ? `c${start + nodes.length}` : null;
+    return { code: 0, stdout: threadsAnswer(nodes, total, next), stderr: '' };
+  };
+  const out = await githubPullPageReader(null, { gh }).pullRequestThreadsPage('acme/widgets', 42);
+  assert.ok(out.ok);
+  assert.equal(out.value.threads.length, VIEW_THREAD_LIMIT);
+  assert.equal(out.value.threadsMore, 40);
+  assert.equal(out.value.threads[150]!.comments[0]!.body, 'note 150');
+  // Three pages of a hundred: the bound is reached, the fourth is never asked.
+  assert.deepEqual(calls.map((c) => valueOf(c, 'after') ?? null), [null, 'c100', 'c200']);
+});
+
+test('a page of threads that fails past the first keeps what was read', async () => {
+  let n = 0;
+  const gh: GhRunner = async () => {
+    n += 1;
+    return n === 1
+      ? { code: 0, stdout: threadsAnswer([threadNode(0), threadNode(1)], 150, 'c2'), stderr: '' }
+      : { code: 1, stdout: '', stderr: 'HTTP 502' };
+  };
+  const out = await githubPullPageReader(null, { gh }).pullRequestThreadsPage('acme/widgets', 42);
+  assert.ok(out.ok);
+  assert.equal(out.value.threads.length, 2);
+  assert.equal(out.value.threadsMore, 148);
+});
+
+test('a long thread\'s next comments are read through its id, within the bound per thread', async () => {
+  const calls: string[][] = [];
+  const first = Array.from({ length: 20 }, (_, i) => ({ author: { login: 'a' }, body: `c${i}`, createdAt: '2026-11-17T11:00:00Z', url: null }));
+  const long = threadNode(0, { comments: { totalCount: 130, pageInfo: { hasNextPage: true, endCursor: 'k20' }, nodes: first } });
+  // A cursor that is not one GitHub writes is never asked back.
+  const odd = threadNode(1, { comments: { totalCount: 40, pageInfo: { hasNextPage: true, endCursor: 'bad cursor' }, nodes: first } });
+  const gh: GhRunner = async (args) => {
+    calls.push(args);
+    if (valueOf(args, 'id')) {
+      const nodes = Array.from({ length: 100 }, (_, i) => ({ author: { login: 'b' }, body: `c${20 + i}`, createdAt: '2026-11-17T12:00:00Z', url: null }));
+      return { code: 0, stdout: JSON.stringify({ data: { node: { comments: { totalCount: 130, pageInfo: { hasNextPage: true, endCursor: 'k120' }, nodes } } } }), stderr: '' };
+    }
+    return { code: 0, stdout: threadsAnswer([long, odd], 2, null), stderr: '' };
+  };
+  const out = await githubPullPageReader(null, { gh }).pullRequestThreadsPage('acme/widgets', 42);
+  assert.ok(out.ok);
+  const [a, b] = out.value.threads;
+  assert.equal(a!.comments.length, VIEW_THREAD_COMMENTS);
+  assert.equal(a!.comments[20]!.body, 'c20');
+  assert.equal(a!.commentsMore, 130 - VIEW_THREAD_COMMENTS);
+  assert.equal(b!.comments.length, 20);
+  assert.equal(b!.commentsMore, 20);
+  const followUps = calls.filter((c) => valueOf(c, 'id'));
+  assert.deepEqual(followUps.map((c) => [valueOf(c, 'id'), valueOf(c, 'after')]), [['T0', 'k20']]);
+  assert.ok(!calls.flat().some((x) => /mutation/i.test(x)));
+});
+
+test('thread comments stay within the page\'s budget, the rest counted', () => {
+  const comments = Array.from({ length: 20 }, (_, i) => ({ author: null, body: `x${i}`, createdAt: '', url: null }));
+  const n = Math.ceil(VIEW_THREAD_COMMENT_BUDGET / 20) + 5;
+  const read = parseReviewThreadsPage(threadsAnswer(
+    Array.from({ length: n }, (_, i) => threadNode(i, { comments: { totalCount: 20, nodes: comments } })), n, null,
+  ));
+  assert.ok(read);
+  const kept = read.threads.reduce((sum, t) => sum + t.comments.length, 0);
+  assert.equal(kept, VIEW_THREAD_COMMENT_BUDGET);
+  const last = read.threads[read.threads.length - 1]!;
+  assert.equal(last.comments.length, 0);
+  assert.equal(last.commentsMore, 20);
 });
