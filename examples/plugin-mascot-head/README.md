@@ -4,7 +4,8 @@ A **mascot pack whose part is a head the plugin draws itself**: an ember, a
 flame in the agent's colour whose eyes follow its state. It shows in the skull
 grid of the mascot configurator (the onboarding's « Customise » panel and the
 Avatar tab of the agent editor), in its own group under the pack's name, and a
-random look may draw it. Client API 15.
+random look may draw it. Client API 19: a head the plugin draws shipped in
+Timon 0.1.10, and an older Timon would install the pack and never show it.
 
 Only the agents that wear the ember are drawn by this plugin: every other
 agent stays Timon's mascot, in the person's 2D or 3D style, and several packs
