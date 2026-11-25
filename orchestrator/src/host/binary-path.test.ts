@@ -19,7 +19,7 @@ test('the Codex CLI embedded in the ChatGPT app is a macOS candidate', { skip: P
   assert.ok(codex.includes('/Users/sam/Applications/ChatGPT.app/Contents/Resources/codex'));
 });
 
-import { chmodSync, mkdtempSync, mkdirSync, realpathSync, symlinkSync, writeFileSync, rmSync } from 'node:fs';
+import { chmodSync, existsSync, mkdtempSync, mkdirSync, realpathSync, symlinkSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { findExecutableBinary } from './binary-path.js';
@@ -710,6 +710,68 @@ test('SUG-0006: npm CLIs under nvm, Volta and npm-global are found without the l
   } finally {
     rmSync(home, { recursive: true, force: true });
   }
+});
+
+test('#1102: node installed by fnm, mise or asdf is found without their shell hook', { skip: POSIX_HOST }, () => {
+  const homes: string[] = [];
+  const fresh = () => { const dir = mkdtempSync(join(tmpdir(), 'timon-fnm-')); homes.push(dir); return dir; };
+  // Only the fake home counts: a CI runner has its own node in /usr/local/bin.
+  const inHome = (home: string, options: Parameters<typeof binaryCandidates>[1]) => binaryCandidates('node', options)
+    .filter((file) => file.startsWith(home) && existsSync(file))[0] ?? null;
+  try {
+    let home = fresh();
+    const options = (env: NodeJS.ProcessEnv = {}, platform: NodeJS.Platform = 'linux') => ({ platform, path: '', homeDir: home, env });
+    const fnm = join(home, '.local', 'share', 'fnm', 'node-versions');
+    stubBinary(join(fnm, 'v18.20.0', 'installation', 'bin', 'node'));
+    const newest = stubBinary(join(fnm, 'v22.3.0', 'installation', 'bin', 'node'));
+    assert.equal(inHome(home, options()), newest);
+    // The user's default alias outranks the highest version.
+    const chosen = stubBinary(join(home, '.local', 'share', 'fnm', 'aliases', 'default', 'bin', 'node'));
+    assert.equal(inHome(home, options()), chosen);
+    // Only `node` is searched there: the other CLIs keep the daemon's common order.
+    stubBinary(join(fnm, 'v22.3.0', 'installation', 'bin', 'timon-probe-fnm'));
+    assert.equal(findExecutableBinary('timon-probe-fnm', options()), null);
+
+    home = fresh(); // older fnm releases kept `~/.fnm`
+    const legacy = stubBinary(join(home, '.fnm', 'node-versions', 'v20.0.0', 'installation', 'bin', 'node'));
+    assert.equal(inHome(home, options()), legacy);
+    home = fresh(); // FNM_DIR moves the root
+    const moved = stubBinary(join(home, 'fnm-elsewhere', 'node-versions', 'v20.0.0', 'installation', 'bin', 'node'));
+    assert.equal(inHome(home, options({ FNM_DIR: join(home, 'fnm-elsewhere') })), moved);
+    home = fresh();
+    const mise = stubBinary(join(home, '.local', 'share', 'mise', 'installs', 'node', '22.3.0', 'bin', 'node'));
+    assert.equal(inHome(home, options()), mise);
+    home = fresh();
+    const asdf = stubBinary(join(home, '.asdf', 'installs', 'nodejs', '22.3.0', 'bin', 'node'));
+    assert.equal(inHome(home, options()), asdf);
+    home = fresh();
+    const volta = stubBinary(join(home, 'volta-home', 'bin', 'node'));
+    assert.equal(inHome(home, options({ VOLTA_HOME: join(home, 'volta-home') })), volta);
+    home = fresh(); // macOS: fnm's Apple data folder
+    const mac = stubBinary(join(home, 'Library', 'Application Support', 'fnm', 'node-versions', 'v22.3.0', 'installation', 'bin', 'node'));
+    assert.equal(inHome(home, options({}, 'darwin')), mac);
+  } finally {
+    for (const dir of homes) rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('#1102: Windows looks in fnm\'s versions and VOLTA_HOME for node.exe', () => {
+  const appData = 'C:\\Users\\Sam\\AppData\\Roaming';
+  const versions = `${appData}\\fnm\\node-versions`;
+  const reader = {
+    subdirectories: (dir: string) => (dir === versions ? ['v20.0.0', 'v22.3.0', 'junk'] : []),
+    fileMtimeMs: () => null,
+  };
+  const windows = binaryCandidates('node', {
+    platform: 'win32', path: '', homeDir: 'C:\\Users\\Sam', installedBinariesFile: absentInstalled, directoryReader: reader,
+    env: { APPDATA: appData, VOLTA_HOME: 'D:\\volta' },
+  });
+  const newest = windows.indexOf(`${versions}\\v22.3.0\\installation\\node.exe`);
+  assert.ok(newest >= 0, windows.join('\n'));
+  assert.ok(newest < windows.indexOf(`${versions}\\v20.0.0\\installation\\node.exe`));
+  assert.ok(windows.includes(`${appData}\\fnm\\aliases\\default\\node.exe`));
+  assert.ok(windows.includes('D:\\volta\\bin\\node.exe'));
+  assert.ok(!windows.some((c) => c.includes('junk')));
 });
 
 test('SUG-0006: Linuxbrew, Volta and nvm-windows folders are candidates', () => {

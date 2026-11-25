@@ -13,16 +13,30 @@
  * Each profile gets a mission id of its own, and the folders the fence grants a
  * mission from that id are made for the check, as a launch makes them, then
  * removed: a grant on a folder that does not exist is dropped, which would
- * prove nothing. Nothing else is created but a probe file in each folder a
- * mission writes, removed with it. No CLI runs, no credential is read.
+ * prove nothing.
+ *
+ * The profile's real `buildSpawn` then builds the launch a mission would get,
+ * under a seal that issues no token, and every path of the Timon home the
+ * launch names (`launchFenceNeeds`, the pre-flight's own reading) is checked
+ * too: a provider and the fence that disagree on a folder show here, on this
+ * machine, not only in the test matrix. Whatever the build wrote lives in the
+ * check's own mission folders, removed with them (`disposeProviderScratch`), and
+ * in the plugin's shared folders (`provider-cache/<plugin>`): those it made are
+ * removed when they are still empty, and left alone otherwise, since a mission
+ * may have started using them meanwhile. Nothing else is created but a probe
+ * file in each folder a mission writes, removed with it. No CLI runs.
  */
 import { randomUUID } from 'node:crypto';
-import { existsSync, mkdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, lstatSync, mkdirSync, readdirSync, rmdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, isAbsolute, join, relative, sep } from 'node:path';
 import { config } from './config/load.js';
 import type { TimonConfig } from './config/schema.js';
-import { activeProfiles, backendOwnerPlugin } from './backends/registry.js';
+import { activeProfiles, backendOwnerPlugin, backendTrust } from './backends/registry.js';
+import { getBackend } from './backends/index.js';
+import { closeLaunchSeal, openLaunchSeal } from './backends/launch-seal.js';
+import { disposeProviderScratch } from './backends/provider-scratch.js';
+import type { BuildSpawnOpts, SpawnResult } from './backends/types.js';
 import { splitBackendInstance } from './backends/instance-id.js';
 import { credentialAccountOf } from './backends/host-sign-in.js';
 import { getHost } from './host/index.js';
@@ -32,11 +46,42 @@ import type { HostFence } from './host/types.js';
 import { witnessFenceAccess, type FenceAccessWitness } from './host/fence-witness.js';
 import { daemonRuntimePaths } from './mission-fence-target.js';
 import { fencePolicyFile, hostFenceStatus } from './resources.js';
-import { realPathOf } from './fence-refusal.js';
+import { launchFenceNeeds, realPathOf } from './fence-refusal.js';
 import { DAEMON_TOKEN_FILE, SECRET_KEY_FILE, TIMON_HOME } from './paths.js';
-import type { FenceCoverageCheck, FenceCoverageProfile, FenceCoverageReport } from './fence-coverage-report.js';
+import { failedCheck, type FenceCoverageCheck, type FenceCoverageProfile, type FenceCoverageReport } from './fence-coverage-report.js';
 
-type Planned = Omit<FenceCoverageCheck, 'policy' | 'kernel' | 'reason'> & { path: string };
+type Planned = Omit<FenceCoverageCheck, 'policy' | 'kernel' | 'reason'> & { path: string; witness: boolean };
+
+/** What a profile's launch is built from: a throwaway mission of no agent, in the check's own folder. */
+export type FenceCoverageLaunch = (profile: string, missionId: string, cwd: string) => Promise<SpawnResult>;
+
+/** The name the check's launch goes by: no agent is behind it, and the vault's journal says so. */
+const DOCTOR_AGENT = '_doctor';
+
+/**
+ * The launch a mission of `profile` would get, built by the profile's own
+ * `buildSpawn` and nothing else: no program is checked or started
+ * (`buildSealedSpawn` would run it to read its identity). The seal makes the
+ * provider's scratch work as at a launch; it issues no token, so a reference
+ * written into a file reads empty.
+ */
+const buildProfileLaunch: FenceCoverageLaunch = async (profile, missionId, cwd) => {
+  const backend = getBackend(profile);
+  const spawnOpts: BuildSpawnOpts = {
+    agentName: DOCTOR_AGENT,
+    systemPrompt: 'Timon doctor: fence coverage. This launch is never run.',
+    message: 'ping',
+    resumeSession: null,
+    missionId,
+    cfg: { cwd, permission_mode: 'auto' },
+  };
+  const seal = backendTrust(profile) === 'core' ? null : openLaunchSeal(missionId, profile, spawnOpts, () => '');
+  try {
+    return await backend.buildSpawn(spawnOpts);
+  } finally {
+    if (seal) closeLaunchSeal(seal);
+  }
+};
 
 /** `child` is `parent` or beneath it. */
 function within(parent: string, child: string): boolean {
@@ -60,6 +105,23 @@ const isDir = (path: string): boolean => {
   try { return statSync(path).isDirectory(); } catch { return false; }
 };
 
+/** Every folder below `root` (itself included when it exists), links not followed. */
+function foldersBelow(root: string, depth = 4): string[] {
+  let stat;
+  try { stat = lstatSync(root); } catch { return []; }
+  if (!stat.isDirectory()) return [];
+  if (depth === 0) return [root];
+  return [root, ...readdirSync(root).flatMap((name) => foldersBelow(join(root, name), depth - 1))];
+}
+
+/** Removes the folders of `after` that `before` did not hold, deepest first, each only if it is empty. */
+function removeNewEmptyFolders(before: readonly string[], after: readonly string[]): void {
+  const known = new Set(before);
+  for (const dir of after.filter((path) => !known.has(path)).sort((a, b) => b.length - a.length)) {
+    try { rmdirSync(dir); } catch { /* not empty: someone uses it now */ }
+  }
+}
+
 export type FenceCoverageDeps = {
   cfg?: TimonConfig;
   fence?: HostFence | undefined;
@@ -68,6 +130,8 @@ export type FenceCoverageDeps = {
   /** The profiles to check; the active process profiles by default. */
   profiles?: string[];
   witness?: typeof witnessFenceAccess;
+  /** Builds a profile's launch; its real `buildSpawn` by default. */
+  launch?: FenceCoverageLaunch;
 };
 
 /** The active profiles that start a process on this machine: a remote one has no fence. */
@@ -90,11 +154,12 @@ export async function fenceCoverage(deps: FenceCoverageDeps = {}): Promise<Fence
     };
   }
   const witness = deps.witness ?? witnessFenceAccess;
+  const launch = deps.launch ?? buildProfileLaunch;
   const runtime = daemonRuntimePaths(nodeRuntime(cfg));
   const profiles: FenceCoverageProfile[] = [];
   let exceptions: FenceCoverageReport['exceptions'] = [];
   for (const profile of deps.profiles ?? processProfiles()) {
-    const result = await profileCoverage(profile, { cfg, fence, timonHome, home, runtime, witness });
+    const result = await profileCoverage(profile, { cfg, fence, timonHome, home, runtime, witness, launch });
     profiles.push(result.coverage);
     if (exceptions.length === 0) exceptions = result.exceptions;
   }
@@ -103,6 +168,7 @@ export async function fenceCoverage(deps: FenceCoverageDeps = {}): Promise<Fence
 
 async function profileCoverage(profile: string, ctx: {
   cfg: TimonConfig; fence: HostFence; timonHome: string; home: string; runtime: string[]; witness: typeof witnessFenceAccess;
+  launch: FenceCoverageLaunch;
 }): Promise<{ coverage: FenceCoverageProfile; exceptions: FenceCoverageReport['exceptions'] }> {
   const { timonHome, home } = ctx;
   const missionId = randomUUID();
@@ -113,6 +179,10 @@ async function profileCoverage(profile: string, ctx: {
   const account = credentialAccountOf(profile) ?? undefined;
   const instance = splitBackendInstance(profile);
   const providerProfile = plugin && !account && !instance.accountId ? instance.backend : undefined;
+  const sharedRoot = plugin ? join(timonHome, 'provider-cache', plugin) : null;
+  /** The plugin's shared folders, and `provider-cache` itself on a home that never had one. */
+  const sharedFolders = (): string[] => (sharedRoot ? [...foldersBelow(dirname(sharedRoot), 0), ...foldersBelow(sharedRoot)] : []);
+  const sharedBefore = sharedFolders();
   const makeDir = (dir: string): void => {
     if (existsSync(dir)) return;
     mkdirSync(dir, { recursive: true, mode: 0o700 });
@@ -131,6 +201,14 @@ async function profileCoverage(profile: string, ctx: {
       ...(plugin ? [{ dir: join(timonHome, 'provider-runs', plugin, missionId), why: `the CLI's per-mission home (${plugin})` }] : []),
     ];
     for (const { dir } of own) makeDir(dir);
+    // Built before the policy, as a launch does: the folders the build makes are then there to grant.
+    let spec: SpawnResult | null = null;
+    let launchError: string | null = null;
+    try {
+      spec = await ctx.launch(profile, missionId, own[0]!.dir);
+    } catch (err) {
+      launchError = (err as Error).message;
+    }
     const target: FenceTarget = {
       timonHome, home, missionId, backend: profile, runtime: ctx.runtime,
       ...(account ? { account } : {}), ...(plugin ? { providerPlugin: plugin } : {}), ...(providerProfile ? { providerProfile } : {}),
@@ -140,8 +218,9 @@ async function profileCoverage(profile: string, ctx: {
       target,
     );
     const planned: Planned[] = [];
-    const plan = (path: string, access: 'read' | 'write', expect: 'allowed' | 'refused', why: string): void => {
-      planned.push({ path, display: displayOf(path, home), access, expect, why });
+    const plan = (path: string, access: 'read' | 'write', expect: 'allowed' | 'refused', why: string, witness = true): void => {
+      if (planned.some((entry) => entry.path === path && entry.access === access)) return;
+      planned.push({ path, display: displayOf(path, home), access, expect, why, witness });
     };
     for (const { dir, why } of own) {
       plan(dir, 'read', 'allowed', why);
@@ -162,15 +241,29 @@ async function profileCoverage(profile: string, ctx: {
     for (const path of ctx.runtime) {
       if (within(timonHome, path) && existsSync(path)) plan(path, 'read', 'allowed', 'the daemon release the Timon MCP servers run from');
     }
+    // What the real launch names: its arguments, its environment, its working folder.
+    const needs = spec ? launchFenceNeeds({ ...spec, workspace: 'rw' }, timonHome) : [];
+    for (const need of needs) {
+      const real = realPathOf(need.path);
+      // A path the launch names but did not make: the policy alone can answer for it.
+      if (!existsSync(real)) {
+        plan(need.path, need.access, 'allowed', need.why, false);
+        continue;
+      }
+      plan(need.path, 'read', 'allowed', need.why);
+      if (need.access === 'write') plan(isDir(real) ? probeIn(real) : need.path, 'write', 'allowed', need.why);
+    }
     for (const path of privateFiles(timonHome)) plan(path, 'read', 'refused', 'a private file of Timon');
     const policyOf = (path: string, access: 'read' | 'write'): 'allowed' | 'refused' => {
       const granted = fenceAccess(policy, realPathOf(path));
       return (access === 'read' ? granted.read : granted.write) ? 'allowed' : 'refused';
     };
     mkdirSync(dirname(policyFile), { recursive: true, mode: 0o700 });
-    const kernel: FenceAccessWitness[] = await ctx.witness(ctx.fence, policy, planned.map(({ path, access }) => ({ path, access })), policyFile);
-    const checks: FenceCoverageCheck[] = planned.map(({ path: _path, ...check }, i) => {
-      const seen = kernel[i] ?? { state: 'error' as const, reason: 'no answer' };
+    const witnessed = planned.filter((entry) => entry.witness);
+    const kernel: FenceAccessWitness[] = await ctx.witness(ctx.fence, policy, witnessed.map(({ path, access }) => ({ path, access })), policyFile);
+    const checks: FenceCoverageCheck[] = planned.map(({ path: _path, witness: asked, ...check }) => {
+      const index = asked ? witnessed.findIndex((entry) => entry.path === _path && entry.access === check.access) : -1;
+      const seen = asked ? kernel[index] ?? { state: 'error' as const, reason: 'no answer' } : { state: 'skipped' as const };
       return {
         ...check,
         policy: policyOf(_path, check.access),
@@ -178,14 +271,20 @@ async function profileCoverage(profile: string, ctx: {
         ...(seen.state === 'error' ? { reason: seen.reason } : {}),
       };
     });
-    const ok = checks.every((check) => check.policy === check.expect && check.kernel === check.expect);
+    const ok = checks.every((check) => !failedCheck(check));
     const exceptions = policy.ignored.filter((entry) => entry.config).map(({ path, reason }) => ({ path: displayOf(path, home), reason }));
-    return { coverage: { profile, ok, checks }, exceptions };
+    return {
+      coverage: { profile, ok, checks, launch: launchError ? { built: false, error: launchError } : { built: true, paths: needs.length } },
+      exceptions,
+    };
   } catch (err) {
     return { coverage: { profile, ok: false, checks: [], error: (err as Error).message }, exceptions: [] };
   } finally {
     for (const probe of probes) rmSync(probe, { force: true });
+    // What the build wrote for this throwaway mission, its links to the shared caches first.
+    if (timonHome === TIMON_HOME) disposeProviderScratch(missionId);
     for (const dir of made.reverse()) rmSync(dir, { recursive: true, force: true });
+    removeNewEmptyFolders(sharedBefore, sharedFolders());
     rmSync(policyFile, { force: true });
   }
 }

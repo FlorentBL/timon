@@ -42,12 +42,39 @@ function agentExists(name: string): boolean {
 
 /** Pole a project tag belongs to: by slug, or by the pole's current name —
  *  a renamed pole keeps its slug, and a project tagged with the new name must
- *  join it rather than spawn a second pole. */
+ *  join it rather than spawn a second pole. Last, a tag that only spells a
+ *  pole's name differently ("Produit!" for "Produit") joins that pole: minting
+ *  a pole for it would take the slug the name already designates, and with it
+ *  every project carrying the name. */
 function poleOfTag(tag: string, rows: readonly WorkspaceRow[]): string | null {
   const slug = workspaceSlug(tag);
   if (rows.some((r) => r.slug === slug)) return slug;
   const name = tag.trim().toLowerCase();
-  return rows.find((r) => r.name.toLowerCase() === name)?.slug ?? null;
+  return rows.find((r) => r.name.toLowerCase() === name)?.slug
+    ?? (slug ? rows.find((r) => workspaceSlug(r.name) === slug)?.slug ?? null : null);
+}
+
+/** Why a pole `slug` named `name` would take projects from another pole, or
+ *  null. Projects carry a pole's NAME as their tag and a tag resolves by slug
+ *  first (`poleOfTag`), so a pole whose slug is another pole's name in slug
+ *  form captures that pole's projects, and one whose name slugifies to another
+ *  pole's slug hands its own projects over. Tags are never rewritten to avoid
+ *  this: they are free text the UI shows, plugins read and older installs
+ *  already store, so refusing the colliding pole is the one fix that moves no
+ *  existing project. `withSlug` is false on a rename: the slug does not change,
+ *  and an install that already holds such a pair must stay editable. */
+function tagClash(slug: string, name: string, rows: readonly WorkspaceRow[], withSlug: boolean): string | null {
+  const nameSlug = workspaceSlug(name);
+  const lower = name.toLowerCase();
+  for (const r of rows) {
+    if (r.slug === slug) continue;
+    if (r.name.toLowerCase() === lower) return `a workspace is already named "${r.name}" (${r.slug})`;
+    if (r.slug === nameSlug) return `the name "${name}" already designates the workspace "${r.name}" (${r.slug})`;
+    if (withSlug && workspaceSlug(r.name) === slug) {
+      return `the slug "${slug}" would take the projects of the workspace "${r.name}" (${r.slug}); pick another name`;
+    }
+  }
+  return null;
 }
 
 /** Creates a row for every project tag that has none yet. Idempotent: it runs
@@ -113,6 +140,8 @@ export function createWorkspace(input: { name: string; slug?: string; color?: st
   if (!name || !SLUG_RE.test(slug)) throw new Error(`invalid workspace name: "${input.name}"`);
   syncWorkspaceTags();
   if (dbApi.getWorkspaceRow(slug)) throw new Error(`workspace already exists: "${slug}"`);
+  const clash = tagClash(slug, name, dbApi.listWorkspaceRows(), true);
+  if (clash) throw new Error(clash);
   checkLead(input.lead_agent);
   dbApi.insertWorkspace({ slug, name, color: input.color ?? null, lead_agent: input.lead_agent ?? null });
   return getWorkspace(slug)!;
@@ -123,6 +152,8 @@ export function updateWorkspace(slug: string, patch: { name?: string; color?: st
   checkLead(patch.lead_agent);
   const name = patch.name?.trim();
   if (patch.name !== undefined && !name) throw new Error('name must not be empty');
+  const clash = name ? tagClash(slug, name, dbApi.listWorkspaceRows(), false) : null;
+  if (clash) throw new Error(clash);
   dbApi.updateWorkspace(slug, { name, color: patch.color, lead_agent: patch.lead_agent });
   return getWorkspace(slug)!;
 }

@@ -37,7 +37,7 @@ import { join } from 'node:path';
 import { dbApi } from '../db.js';
 import { getHost } from '../host/index.js';
 import { killProcessTree } from '../host/kill-tree.js';
-import { withLaunchPath } from '../host/launch-path.js';
+import { daemonNode, withLaunchPath } from '../host/launch-path.js';
 import { ensurePrivateDir } from '../host/private-dir.js';
 import { systemEnv } from '../secrets/env.js';
 import { clearBackendCooldown } from '../backend-fallback.js';
@@ -247,6 +247,7 @@ function launchEnv(cmd: string, env: Record<string, string>): Record<string, str
     platform: options.platform,
     binary: options.resolveBin(cmd),
     findNode: () => options.resolveBin('node'),
+    runtimeNode: daemonNode(),
     // Only Electron's binary is no `node`: a daemon run from sources IS on the right one.
     selfExecutable: process.versions.electron ? process.execPath : undefined,
   });

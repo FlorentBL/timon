@@ -23,7 +23,7 @@ import { createGenericHost } from './generic.js';
 import { builtinBinaries } from '../backends/builtin-declarations.js';
 import { packagedRuntime } from './bundled-node.js';
 import { blockingFactsOf, blockingFindings, localBlockingFacts, resolveConfiguredBinary, type BlockingFacts, type Finding } from './blocking-facts.js';
-import { nodelessBackends, nodelessBackendText, type NodelessBackend } from './launch-path.js';
+import { daemonNode, nodelessBackends, nodelessBackendText, type NodelessBackend } from './launch-path.js';
 import { inspectListenPort, type ListenPortState } from './listen-port.js';
 import { linuxRelease, readOsRelease, windowsJoin, type WindowsJoin } from './machine.js';
 import { orphanServices, orphanServiceText, type OrphanService } from './orphan-services.js';
@@ -404,6 +404,7 @@ function nodelessHere(cfg: TimonConfig): NodelessBackend[] {
     return nodelessBackends(builtinBinaries().map((binary) => binary.names[0]!), {
       platform: process.platform,
       resolve: (name) => resolveConfiguredBinary(name, pins),
+      runtimeNode: daemonNode(),
     });
   } catch { return []; }
 }
