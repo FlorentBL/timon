@@ -503,7 +503,7 @@
   "binariesSettings": {
     "brokenPin": "Le chemin épinglé ne peut pas être lancé : {path}",
     "pathLabel": "Chemin du binaire {name}",
-    "placeholder": "Chemin complet, par exemple /usr/local/bin/claude ou C:\\Users\\vous\\AppData\\Roaming\\npm\\claude.cmd",
+    "placeholder": "Chemin complet, par exemple {example}",
     "browse": "Parcourir…",
     "save": "Enregistrer le chemin",
     "clear": "Retirer l'épingle",
@@ -516,6 +516,7 @@
       "path_missing": "Rien n'existe à ce chemin.",
       "path_not_file": "C'est un dossier. Choisissez le fichier du programme lui-même.",
       "path_not_executable": "Ce fichier ne peut pas être lancé : il n'est pas exécutable.",
+      "wrong_program": "Ce fichier n'est pas le CLI {name}.",
       "no_config": "Terminez d'abord la configuration initiale.",
       "config_unreadable": "timon.config.json est illisible. Corrigez-le ou restaurez-le, puis vérifiez à nouveau.",
       "invalid_body": "Ce chemin ne peut pas être enregistré.",
@@ -618,8 +619,8 @@
         "unsupported": "La version {version} n'est pas prise en charge"
       },
       "pin": {
-        "title": "Chemin imposé",
-        "description": "Si le programme se trouve là où Timon ne cherche pas, donnez son chemin complet. Il s'applique dès la prochaine mission, sans redémarrer Timon."
+        "title": "Chemin du CLI {name}",
+        "description": "Si le CLI {name} se trouve là où Timon ne cherche pas, donnez son chemin complet. Il s'applique dès la prochaine mission, sans redémarrer Timon."
       },
       "authorization": {
         "title": "Autorisation de sécurité",

@@ -437,7 +437,7 @@
   "binariesSettings": {
     "brokenPin": "Der angeheftete Pfad lässt sich nicht ausführen: {path}",
     "pathLabel": "Pfad zum Programm {name}",
-    "placeholder": "Vollständiger Pfad, zum Beispiel /usr/local/bin/claude oder C:\\Users\\du\\AppData\\Roaming\\npm\\claude.cmd",
+    "placeholder": "Vollständiger Pfad, zum Beispiel {example}",
     "browse": "Durchsuchen…",
     "save": "Pfad speichern",
     "clear": "Anheftung entfernen",
@@ -450,6 +450,7 @@
       "path_missing": "Unter diesem Pfad existiert nichts.",
       "path_not_file": "Das ist ein Ordner. Wähle die Programmdatei selbst.",
       "path_not_executable": "Diese Datei kann nicht ausgeführt werden: Sie ist nicht ausführbar.",
+      "wrong_program": "Diese Datei ist nicht die {name}-CLI.",
       "no_config": "Schließe zuerst die Einrichtung ab.",
       "config_unreadable": "timon.config.json kann nicht gelesen werden. Repariere oder stelle sie wieder her und prüfe dann erneut.",
       "invalid_body": "Dieser Pfad kann nicht gespeichert werden.",
