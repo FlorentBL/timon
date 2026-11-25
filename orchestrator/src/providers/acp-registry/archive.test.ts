@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readlinkSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, readlinkSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { ArchiveError, extractTarGz, extractZip, installRaw, type IdentityProbe } from './archive.js';
@@ -334,6 +334,34 @@ test('zip: Windows separators are read as folders, traversal and links are refus
   await rejects(() => extractZip(archiveFile(buildZip([{ path: 'e', data: 'x', encrypted: true }]), 'e.zip'), join(base, 'e')), 'unsupported');
   await rejects(() => extractZip(archiveFile(Buffer.from('not a zip at all, long enough to scan for a directory'), 'f.zip'), join(base, 'f')), 'corrupt');
   assert.equal(existsSync(join(base, 'evil')), false);
+});
+
+test('zip: two spellings of one name are refused on every system, before anything is written', async () => {
+  const nfc = 'caf\u00e9';
+  const nfd = 'cafe\u0301';
+  const cases: Array<[string, Parameters<typeof buildZip>[0]]> = [
+    ['case, files', [{ path: 'Readme', data: 'x' }, { path: 'README', data: 'y' }]],
+    ['unicode form, files', [{ path: `${nfc}.txt`, data: 'x' }, { path: `${nfd}.txt`, data: 'y' }]],
+    ['case, folder then file', [{ path: 'a/', data: '' }, { path: 'A/f', data: 'x' }]],
+    // Folders no entry names: `a/B` and `A/b` would merge on a folding disk.
+    ['case, implicit folders', [{ path: 'a/B/x', data: 'x' }, { path: 'A/b/y', data: 'y' }]],
+    ['unicode form, implicit folders', [{ path: `${nfc}/x`, data: 'x' }, { path: `${nfd}/y`, data: 'y' }]],
+    ['backslash spelling', [{ path: 'dist\\agent', data: 'x' }, { path: 'DIST/other', data: 'y' }]],
+  ];
+  for (const [label, files] of cases) {
+    const dest = join(scratch(), 'o');
+    await rejects(() => extractZip(archiveFile(buildZip(files), 'x.zip'), dest), 'unsafe-path');
+    assert.deepEqual(readdirSync(dest), [], `${label}: nothing written`);
+  }
+  // Same spelling twice is no collision, and one name spelled two ways in two folders is two paths.
+  const dest = join(scratch(), 'o');
+  await extractZip(archiveFile(buildZip([
+    { path: 'lib/', data: '' }, { path: 'lib/', data: '' }, { path: 'lib/f', data: 'x' },
+    { path: 'a/Readme', data: 'r' }, { path: 'b/README', data: 'R' },
+  ]), 'same.zip'), dest);
+  assert.equal(readFileSync(join(dest, 'lib', 'f'), 'utf8'), 'x');
+  assert.equal(readFileSync(join(dest, 'a', 'Readme'), 'utf8'), 'r');
+  assert.equal(readFileSync(join(dest, 'b', 'README'), 'utf8'), 'R');
 });
 
 test('zip: an entry cannot inflate past its declared size, nor the archive past the limit', async () => {
