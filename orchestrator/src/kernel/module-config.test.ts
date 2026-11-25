@@ -35,6 +35,7 @@ const CATALOG = [
   { id: '@timon/grepai', name: './grepai.js', tier: 'dev', requires: ['grepai'] },
   // `std`, as in the real catalogue: its lock does not come from the tier.
   { id: '@timon/ui-theme', name: './ui-theme/client.js', tier: 'std', clientOnly: true },
+  { id: '@timon/ui-layout', name: './ui-layout/client.js', tier: 'std', clientOnly: true },
 ] as const;
 
 let n = 0;
@@ -120,6 +121,26 @@ test('the product theme cannot be disabled: it carries all the tokens', () => {
   assert.deepEqual(JSON.parse(readFileSync(file, 'utf8')), {});
   setModuleEnabled('@timon/ui-theme', true, file, CATALOG);
   assert.equal(JSON.parse(readFileSync(file, 'utf8')).modules['@timon/ui-theme'], true);
+});
+
+test('the product layout cannot be disabled: it is the whole interface', () => {
+  // `std`, not `core`: the daemon does not need it. The browser is what
+  // would end up on a blank page, with no Settings to switch it back on.
+  const file = cfgFile();
+  assert.throws(() => setModuleEnabled('@timon/ui-layout', false, file, CATALOG), CoreModuleError);
+  assert.deepEqual(JSON.parse(readFileSync(file, 'utf8')), {});
+  setModuleEnabled('@timon/ui-layout', true, file, CATALOG);
+  assert.equal(JSON.parse(readFileSync(file, 'utf8')).modules['@timon/ui-layout'], true);
+});
+
+test('a false already written for the layout or the theme is ignored', () => {
+  // An older release accepted the switch: the interface must come back on
+  // upgrade, not stay blank until someone edits the file by hand.
+  const file = cfgFile({ modules: { '@timon/ui-layout': false, '@timon/ui-theme': { enabled: false } } });
+  const rows = listModules({ file, catalog: CATALOG, capabilities: [] });
+  const by = Object.fromEntries(rows.map((r) => [r.id, r]));
+  assert.equal(by['@timon/ui-layout']?.active, true);
+  assert.equal(by['@timon/ui-theme']?.active, true);
 });
 
 test('list tells what the config asks for from what would run', () => {
