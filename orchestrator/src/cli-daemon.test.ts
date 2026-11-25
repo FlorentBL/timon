@@ -531,7 +531,7 @@ test('MCP: Bearer from TIMON_API_TOKEN, otherwise daemon-token', async () => {
     envTok.TIMON_ORCH_URL = mock.url;
     envTok.TIMON_API_TOKEN = 'mcp-env';
     await callMcp(envTok);
-    assert.equal(mock.seen[0]?.url, '/api/tasks?full=1');
+    assert.equal(mock.seen[0]?.url, '/api/tasks?limit=100');
     assert.equal(mock.seen[0]?.auth, 'Bearer mcp-env');
 
     const envFile = baseEnv(home);
