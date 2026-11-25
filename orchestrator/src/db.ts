@@ -3512,11 +3512,6 @@ const TASK_WATCHED_COLUMNS = [
 ] as const satisfies readonly (keyof TaskRow)[];
 
 /**
- * Publishes `task_updated` (and `task_assigned`) for what a write changed,
- * comparing the row read BEFORE the write with the row now. Synchronous, so the
- * origin store of the writer (`task-origin.ts`) is still the current one.
- */
-/**
  * Publishes `integration_changed` for a write that moved the row `id`. The
  * callers publish only when their statement changed something: a job's
  * screens reload on it, and a write that changes nothing must not wake them.
@@ -3544,6 +3539,11 @@ function checksSignature(checks: string | null): string | null {
   }
 }
 
+/**
+ * Publishes `task_updated` (and `task_assigned`) for what a write changed,
+ * comparing the row read BEFORE the write with the row now. Synchronous, so the
+ * origin store of the writer (`task-origin.ts`) is still the current one.
+ */
 function publishTaskDiff(prev: TaskRow | undefined): void {
   if (!prev) return;
   const next = getTaskStmt.get(prev.id) as TaskRow | undefined;
