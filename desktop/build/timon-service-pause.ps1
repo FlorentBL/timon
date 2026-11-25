@@ -143,115 +143,6 @@ try {
   $null = Disable-ScheduledTask -TaskName $task -TaskPath '\' -ErrorAction Stop
   & $note 'pause: task disabled'
 } catch { & $note "pause: task not disabled: $($_.Exception.Message)" }
-# The daemon's port: this home's configuration, else the packaged default.
-$port = 3010
-$portSource = 'the packaged default'
-if ($TimonHome) {
-  try {
-    $config = Get-Content -LiteralPath (Join-Path $TimonHome 'timon.config.json') -Raw -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop
-    $configured = [int]$config.daemon.listen.port
-    if ($configured -gt 0) { $port = $configured; $portSource = 'timon.config.json' }
-  } catch { $portSource = "the packaged default, timon.config.json could not be read ($($_.Exception.Message))" }
-}
-
-# Asked first, ended by force only when it does not go: taskkill /F runs no
-# handler, so the next start read the previous run as `unknown`. The same
-# request as `timon service stop` (host/cooperative-stop.ts), with the same
-# wait: TIMON_COOPERATIVE_STOP_MS, 10 s by default, 120 s at most, 0 to skip
-# it (desktop/src/packaging.test.ts holds the three values to that file).
-# The daemon token is read into this process only: it never reaches the
-# journal or a command line, and goes to the loopback listener alone, with no
-# proxy and no redirect. Only a service's daemon is asked, after its task was
-# disabled: the launcher ends once its daemon exits 0, while a desktop
-# without a service restarts the daemon it embeds.
-$stopWaitMs = 10000
-$stopWaitMaxMs = 120000
-$stopWaitRaw = "$env:TIMON_COOPERATIVE_STOP_MS".Trim()
-if ($stopWaitRaw -match '^[0-9]+$') { $stopWaitMs = [int][Math]::Min([double]$stopWaitRaw, $stopWaitMaxMs) }
-$loopback = "http://127.0.0.1:$port"
-$localRequest = {
-  param([string]$method, [string]$path, [int]$timeoutMs, [string]$bearer)
-  $request = [Net.HttpWebRequest]::Create("$loopback$path")
-  $request.Method = $method
-  $request.Proxy = $null
-  $request.AllowAutoRedirect = $false
-  $request.Timeout = $timeoutMs
-  $request.ReadWriteTimeout = $timeoutMs
-  if ($bearer) { $request.Headers.Add('Authorization', "Bearer $bearer") }
-  if ($method -eq 'POST') { $request.ContentLength = 0 }
-  $request
-}
-# The HTTP answer an error carries, if any: a status other than 2xx is thrown
-# as a WebException, which a method call wraps once more.
-$httpAnswer = {
-  param($failure)
-  while ($failure -and -not ($failure -is [Net.WebException])) { $failure = $failure.InnerException }
-  if ($failure) { $failure.Response } else { $null }
-}
-# Any HTTP answer means a listener; only a failed connection or a timeout means none.
-$answers = {
-  try {
-    $response = (& $localRequest 'GET' '/api/health' 1000 '').GetResponse()
-    $response.Close()
-    $true
-  } catch {
-    $answer = & $httpAnswer $_.Exception
-    if ($answer) { $answer.Close(); $true } else { $false }
-  }
-}
-$stopOutcome = 'skipped'
-if ((& $taskState) -eq 'not registered') {
-  & $note 'pause: no service task, its daemon is not asked to stop'
-} elseif ($stopWaitMs -le 0) {
-  & $note 'pause: daemon not asked to stop (TIMON_COOPERATIVE_STOP_MS=0)'
-} else {
-  $token = $null
-  if ($TimonHome) {
-    try { $token = "$(Get-Content -LiteralPath (Join-Path $TimonHome 'daemon-token') -Raw -ErrorAction Stop)".Trim() } catch { }
-  }
-  if (-not $token) {
-    & $note 'pause: daemon not asked to stop: no daemon token'
-  } else {
-    $daemonPid = 0
-    $status = 0
-    try {
-      $response = (& $localRequest 'POST' '/api/daemon/shutdown' 3000 $token).GetResponse()
-      $status = [int]$response.StatusCode
-      try {
-        $reader = New-Object IO.StreamReader($response.GetResponseStream())
-        $body = $reader.ReadToEnd() | ConvertFrom-Json -ErrorAction Stop
-        if ([int]$body.pid -gt 0) { $daemonPid = [int]$body.pid }
-      } catch { }
-      $response.Close()
-    } catch {
-      $answer = & $httpAnswer $_.Exception
-      if ($answer) { $status = [int]$answer.StatusCode; $answer.Close() }
-    }
-    $token = $null
-    if ($status -eq 0) {
-      $stopOutcome = 'unreachable'
-      & $note ("pause: no daemon answered the stop request on port {0}" -f $port)
-    } elseif ($status -ne 202) {
-      $stopOutcome = 'refused'
-      & $note ("pause: the daemon did not accept to stop (HTTP {0}): ending it" -f $status)
-    } else {
-      $stopOutcome = 'timeout'
-      $deadline = (Get-Date).AddMilliseconds($stopWaitMs)
-      while ($true) {
-        $alive = $daemonPid -gt 0 -and [bool](Get-Process -Id $daemonPid -ErrorAction Ignore)
-        if (-not $alive -and -not (& $answers)) { $stopOutcome = 'stopped'; break }
-        if ((Get-Date) -ge $deadline) { break }
-        Start-Sleep -Milliseconds 250
-      }
-      if ($stopOutcome -eq 'stopped') {
-        & $note ("pause: the daemon (pid {0}) stopped on request" -f $daemonPid)
-      } else {
-        & $note ("pause: the daemon (pid {0}) still runs {1} s after the stop request: ending it" -f $daemonPid, [Math]::Round($stopWaitMs / 1000))
-      }
-    }
-  }
-}
-
 try {
   Stop-ScheduledTask -TaskName $task -TaskPath '\' -ErrorAction Stop
   & $note 'pause: task stopped'
@@ -396,6 +287,15 @@ if ($waiting.Count -gt 0) {
 # Windows renames a running executable without complaint, so a daemon left
 # alive keeps serving the old version from memory, holds the port and the data
 # directory, and the new one never starts (0.1.7 to 0.1.8 update).
+$port = 3010
+$portSource = 'the packaged default'
+if ($TimonHome) {
+  try {
+    $config = Get-Content -LiteralPath (Join-Path $TimonHome 'timon.config.json') -Raw -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop
+    $configured = [int]$config.daemon.listen.port
+    if ($configured -gt 0) { $port = $configured; $portSource = 'timon.config.json' }
+  } catch { $portSource = "the packaged default, timon.config.json could not be read ($($_.Exception.Message))" }
+}
 $remaining = {
   $left = @(& $ofInstallation)
   $owners = @()

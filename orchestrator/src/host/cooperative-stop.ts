@@ -23,7 +23,7 @@ import { statusService, WINDOWS_TASK, type ServiceOpts, type ServiceResult } fro
 export const COOPERATIVE_STOP_WAIT_MS = 10_000;
 /** Overrides that wait, in milliseconds; `0` skips the request and kills at once, as before. */
 export const COOPERATIVE_STOP_ENV = 'TIMON_COOPERATIVE_STOP_MS';
-/** The longest wait that variable may ask for. `desktop/src/embedded.ts` and the installer's `timon-service-pause.ps1` read the same three values (`embedded.test.ts`, `packaging.test.ts`). */
+/** The longest wait that variable may ask for. `desktop/src/embedded.ts` reads the same three values (`embedded.test.ts`). */
 export const COOPERATIVE_STOP_MAX_WAIT_MS = 120_000;
 const POLL_MS = 250;
 
