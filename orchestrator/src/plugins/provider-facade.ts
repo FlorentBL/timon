@@ -30,6 +30,7 @@ import {
 } from '../backends/registry.js';
 import { envCredentialRoots, missionScratchPath, openMissionScratch, openProfileScratch } from '../backends/provider-scratch.js';
 import { accountConfigDir } from '../backends/accounts.js';
+import { credentialAccountOf } from '../backends/host-sign-in.js';
 import { adoptGeneratedMedia, allowShowFrom } from '../backends/provider-media.js';
 import { gitWritableRoots } from '../backends/provider-git.js';
 import { readOsCredential, readOsCredentialNow, removeOsCredentialIf, resetOsCredentialMisses } from '../host/os-credentials.js';
@@ -170,10 +171,15 @@ export function providerServicesFor(scope: ProviderFacadeScope): ProviderService
       async mission(spawn) {
         gate('scratch.mission');
         const seal = launchOf(spawn.missionId);
-        // A subscription account signs in in a folder of its own (`~/.timon/backend-accounts/<id>`), and an operator may have
-        // pointed the host's sign-in elsewhere (`CODEX_AUTH_DIR`): the places a mission links its credentials from.
-        const accountFolders = activeProfiles().flatMap(({ profile, account }) =>
-          account && ownsBackend(scope.pluginId, profile.id) ? [accountConfigDir(account.id)] : []);
+        // A subscription account signs in in a folder of its own (`~/.timon/backend-accounts/<id>`), so does the host's
+        // sign-in once Timon keeps it (`backend-accounts/host<backend>`), and an operator may have pointed the host's
+        // sign-in elsewhere (`CODEX_AUTH_DIR`): the places a mission links its credentials from. A CLI whose refresh
+        // token rotates needs the link, a copy would go stale at the first refresh.
+        const accountFolders = activeProfiles().flatMap(({ profile, account }) => {
+          if (!ownsBackend(scope.pluginId, profile.id)) return [];
+          const id = account?.id ?? credentialAccountOf(profile.id);
+          return id ? [accountConfigDir(id)] : [];
+        });
         const operatorFolders = scope.trusted ? envCredentialRoots(ownerCredentialDirEnv(scope.pluginId)) : [];
         return openMissionScratch({
           pluginId: scope.pluginId, missionId: spawn.missionId, seal, credentialDirs: ownerCredentialDirs(scope.pluginId),
