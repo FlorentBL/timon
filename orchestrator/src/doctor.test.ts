@@ -212,7 +212,8 @@ test('an empty main seat names the command that fills it', () => {
  * `ollama exec`. A pin whose program does not describe itself as its provider declared is ✗, says so in a
  * fixed sentence, and counts as no backend.
  */
-test('a pin on another program is not ok, and the report says so without quoting it', async () => {
+// Windows starts only a `.exe` or a known npm shim to check it, and these stubs are batch files.
+test('a pin on another program is not ok, and the report says so without quoting it', { skip: process.platform === 'win32' }, async () => {
   const { mkdtempSync, writeFileSync, rmSync } = await import('node:fs');
   const { tmpdir } = await import('node:os');
   const { join } = await import('node:path');

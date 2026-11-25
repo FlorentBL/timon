@@ -15,20 +15,27 @@
  * The answer is kept per file (path, size, modification time), so a mission start costs one run of the
  * program only after it was installed or replaced.
  *
+ * The program runs as a stranger would be run: in an empty folder of its own, with an environment reduced to
+ * a few named variables (`PROBE_ENV_KEYS`), and on Windows only as a `.exe` or an npm shim this daemon can
+ * read line for line — never through `cmd.exe`, which would run whatever a batch file says. What it starts
+ * ends with it, Windows included (`execTree`, `sweepOrphans`).
+ *
  * The pattern comes from a manifest and is tested before the plugin's code is loaded, on up to 128 KB the
  * program printed, in the daemon's thread: V8's backtracking engine has no timeout of its own, so a pattern
  * like `^(a+)+$` would freeze every mission. It runs in a `vm` script whose timeout interrupts the match.
  * The linear engine of trigger filters (`triggers/safe-regex.ts`) was not used: it has no `m` flag and
  * refuses lookarounds and backreferences, which the SDK contract allows.
  */
-import { statSync } from 'node:fs';
-import { basename } from 'node:path';
+import { mkdtempSync, rmSync, statSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join, win32 } from 'node:path';
 import { Script } from 'node:vm';
 import { declaredBinaries, declaredBinary } from '../host/declared-binaries.js';
 import { getHost } from '../host/index.js';
 import { execTree } from '../host/kill-tree.js';
+import { daemonNode } from '../host/launch-path.js';
+import { windowsDirectLaunch } from '../host/windows-shell.js';
 import { resolveExecutable } from '../plugins/policy.js';
-import { systemEnv } from '../secrets/env.js';
 import type { ProviderBinaryIdentity } from './provider-declarations.js';
 import { profileDeclarations } from './registry.js';
 
@@ -43,9 +50,11 @@ export const DEFAULT_IDENTITY_ARGS: readonly string[] = ['--version'];
  * Why a program is refused, never with what it printed:
  * - `mismatch`: it answered, and the answer is not the declared one;
  * - `no_answer`: it printed nothing usable, or was stopped at the time limit;
- * - `slow_pattern`: the provider's pattern ran past its time limit, so the answer could not be read at all.
+ * - `slow_pattern`: the provider's pattern ran past its time limit, so the answer could not be read at all;
+ * - `unsupported`: a file this daemon does not start to ask it anything (on Windows: neither a `.exe` nor an
+ *   npm shim it can read).
  */
-export type BinaryIdentityFailure = 'mismatch' | 'no_answer' | 'slow_pattern';
+export type BinaryIdentityFailure = 'mismatch' | 'no_answer' | 'slow_pattern' | 'unsupported';
 export type BinaryIdentityResult = { readonly ok: true } | { readonly ok: false; readonly reason: BinaryIdentityFailure };
 
 /** Limits of one check; tests shorten them. */
@@ -84,6 +93,74 @@ function cacheKey(program: string, args: readonly string[], identity: ProviderBi
 }
 
 /**
+ * Every variable a probed program sees, matched exactly (case aside on Windows, where `Path` is `PATH`):
+ * enough to start a program and find its own install, none of the daemon's settings. No family such as
+ * `NODE_*` or `npm_config_*`, which `systemEnv` lets through for missions and which may carry a token.
+ */
+export const PROBE_ENV_KEYS: readonly string[] = Object.freeze(['PATH', 'HOME', 'USERPROFILE', 'SystemRoot', 'TEMP', 'TMP', 'LANG']);
+
+export function probeEnv(source: NodeJS.ProcessEnv = process.env, platform: NodeJS.Platform = process.platform): NodeJS.ProcessEnv {
+  const wanted = new Set(platform === 'win32' ? PROBE_ENV_KEYS.map((key) => key.toUpperCase()) : PROBE_ENV_KEYS);
+  const out: NodeJS.ProcessEnv = {};
+  for (const [key, value] of Object.entries(source)) {
+    if (value !== undefined && wanted.has(platform === 'win32' ? key.toUpperCase() : key)) out[key] = value;
+  }
+  return out;
+}
+
+/** The runtime an npm shim names, found the way the host adapter finds it for a launch. */
+function findRuntime(name: 'node' | 'bun'): string | null {
+  try { return getHost().bin(name); } catch {
+    return name === 'node' ? daemonNode() : null;
+  }
+}
+
+/**
+ * What is started to ask `program`, or `null` for a file this daemon does not start to ask it anything. On
+ * Windows: a `.exe` as it is, an npm `.cmd` shim as the `.exe` it runs (`windowsDirectLaunch`), nothing else
+ * — a `.bat`, a `.com`, a shim it cannot read would go through `cmd.exe`.
+ */
+export function probeLaunch(
+  program: string, args: readonly string[], platform: NodeJS.Platform = process.platform,
+  runtime: (name: 'node' | 'bun') => string | null = findRuntime,
+): { file: string; args: string[] } | null {
+  if (platform !== 'win32') return { file: program, args: [...args] };
+  const ext = win32.extname(program).toLowerCase();
+  if (ext === '.exe') return { file: program, args: [...args] };
+  if (ext !== '.cmd') return null;
+  const direct = windowsDirectLaunch(program, args, { findRuntime: runtime, platform });
+  return direct && win32.extname(direct.file).toLowerCase() === '.exe' ? direct : null;
+}
+
+/** An empty folder of its own for one run, so the program reads and leaves nothing in the daemon's. */
+function withProbeFolder<T>(run: (cwd: string) => T): T {
+  const cwd = mkdtempSync(join(tmpdir(), 'timon-identity-'));
+  let async = false;
+  try {
+    const out = run(cwd);
+    if (out instanceof Promise) {
+      async = true;
+      return out.finally(() => rmSync(cwd, { recursive: true, force: true })) as T;
+    }
+    return out;
+  } finally {
+    if (!async) rmSync(cwd, { recursive: true, force: true });
+  }
+}
+
+/** Kept like any answer about the file: it depends on nothing but the file. */
+function unsupported(key: string): BinaryIdentityResult {
+  const result: BinaryIdentityResult = { ok: false, reason: 'unsupported' };
+  if (key) remember(key, result);
+  return result;
+}
+
+function remember(key: string, result: BinaryIdentityResult): void {
+  if (cache.size >= CACHE_MAX) cache.delete(cache.keys().next().value!);
+  cache.set(key, result);
+}
+
+/**
  * How one run ended, as the verdict reads it. `answered`: the program exited by itself with code 0, before
  * the time limit and under the output cap. Anything else is no answer, whatever it printed first: a program
  * that prints the expected version and then fails, hangs or floods is not the program a mission can run.
@@ -98,10 +175,7 @@ function verdict(key: string, identity: ProviderBinaryIdentity, run: ProbeRun, l
   // Not cached: under a heavy load a sane pattern could run past the limit once.
   if (matched === null) return { ok: false, reason: 'slow_pattern' };
   const result: BinaryIdentityResult = matched ? { ok: true } : { ok: false, reason: run.output.trim() ? 'mismatch' : 'no_answer' };
-  if (key) {
-    if (cache.size >= CACHE_MAX) cache.delete(cache.keys().next().value!);
-    cache.set(key, result);
-  }
+  if (key) remember(key, result);
   return result;
 }
 
@@ -113,11 +187,13 @@ export async function checkBinaryIdentity(
   const key = cacheKey(program, args, identity);
   const known = key ? cache.get(key) : undefined;
   if (known) return known;
+  const launch = probeLaunch(program, args);
+  if (!launch) return unsupported(key);
   // `execTree`: a program that leaves a child on its stdout would otherwise cost the whole limit at
   // every mission start, and leave that child running after each check. Its `code` is 1 past the output cap.
-  const run = await execTree(program, args, {
-    timeout: limits.runTimeoutMs, maxBuffer: IDENTITY_MAX_OUTPUT, env: systemEnv(),
-  });
+  const run = await withProbeFolder((cwd) => execTree(launch.file, launch.args, {
+    timeout: limits.runTimeoutMs, maxBuffer: IDENTITY_MAX_OUTPUT, env: probeEnv(), cwd, sweepOrphans: true,
+  }));
   return verdict(key, identity, {
     answered: run.code === 0 && run.timedOut !== true, output: `${run.stdout}\n${run.stderr}`,
   }, limits);
@@ -134,9 +210,11 @@ export function checkBinaryIdentitySync(
   const key = cacheKey(program, args, identity);
   const known = key ? cache.get(key) : undefined;
   if (known) return known;
-  const run = getHost().exec(program, args, {
-    timeout: limits.runTimeoutMs, maxBuffer: IDENTITY_MAX_OUTPUT, env: systemEnv(), windowsHide: true,
-  });
+  const launch = probeLaunch(program, args);
+  if (!launch) return unsupported(key);
+  const run = withProbeFolder((cwd) => getHost().exec(launch.file, launch.args, {
+    timeout: limits.runTimeoutMs, maxBuffer: IDENTITY_MAX_OUTPUT, env: probeEnv(), cwd, windowsHide: true,
+  }));
   return verdict(key, identity, { answered: run.code === 0, output: `${run.stdout}\n${run.stderr}` }, limits);
 }
 
@@ -149,10 +227,15 @@ export function binaryIdentityRefusal(
   who: string, program: string, identity: ProviderBinaryIdentity, reason: BinaryIdentityFailure, where = 'declares.binary.identity',
 ): string {
   const args = (identity.args ?? DEFAULT_IDENTITY_ARGS).join(' ');
-  const file = `\`${basename(program)}\``;
+  // `win32.basename` cuts at both separators: a Windows path reported by a Linux daemon is named all the same.
+  const file = `\`${win32.basename(program)}\``;
   if (reason === 'slow_pattern') {
     return `${file} could not be checked as the program ${who} runs: its \`${where}.pattern\` `
       + `ran past ${PATTERN_TIMEOUT_MS} ms on what \`${args}\` printed. The provider must declare a simpler pattern.`;
+  }
+  if (reason === 'unsupported') {
+    return `${file} cannot be checked as the program ${who} runs: on Windows, only a \`.exe\` program or an npm \`.cmd\` shim `
+      + 'is started to be checked. Pin the program\'s `.exe`, or the shim npm installed for it.';
   }
   const fix = 'Install the right program, or pin its path in `host.binaries` (timon.config.json).';
   if (reason === 'no_answer') return `${file}, the program ${who} runs, did not answer \`${args}\`. ${fix}`;

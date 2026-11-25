@@ -6,11 +6,14 @@
 import '../test-home.js';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-const { assertDeclaredIdentity, binaryIdentityRefusal, BinaryIdentityError, checkBinaryIdentity, resetBinaryIdentityCache, testIdentityPattern } = await import('./binary-identity.js');
+const {
+  assertDeclaredIdentity, binaryIdentityRefusal, BinaryIdentityError, checkBinaryIdentity, probeEnv, probeLaunch, resetBinaryIdentityCache,
+  testIdentityPattern,
+} = await import('./binary-identity.js');
 const { setDeclaredBinariesSource } = await import('../host/declared-binaries.js');
 const { binaryIdentityProblem, declarationProblems } = await import('./provider-declarations.js');
 
@@ -256,4 +259,75 @@ test('unverified claims: a closed list of subjects, once each, one short sentenc
   assert.match(problems[2]!, /\[3\]`: `note` must be one sentence/);
   assert.match(problems[3]!, /\[4\]`: must be/);
   assert.deepEqual(declarationProblems({ unverified: 'all' }), ['`declares.unverified` must be a list of `{ subject, note }`']);
+});
+
+/**
+ * The probe runs a file nobody vetted yet: none of the daemon's variables, none of its folder. `npm_config_*`
+ * and `NODE_*` pass for missions (`systemEnv`) and can hold a registry token: not for this.
+ */
+test('the probe sees an exact list of variables, never npm_config_* nor NODE_*', () => {
+  const source = {
+    PATH: '/usr/bin', HOME: '/home/u', LANG: 'C.UTF-8', TEMP: '/tmp', TMP: '/tmp',
+    npm_config__authToken: 'npm-secret', npm_config_registry: 'https://r.example', NODE_OPTIONS: '--require /x.js', NODE_AUTH_TOKEN: 'node-secret',
+    TIMON_DAEMON_TOKEN: 'daemon-secret', TIMON_HOME: '/home/u/.timon', LC_ALL: 'C', XDG_CONFIG_HOME: '/home/u/.config', SSH_AUTH_SOCK: '/run/agent',
+    path: '/lower-case-is-another-variable-here',
+  };
+  assert.deepEqual(probeEnv(source, 'linux'), { PATH: '/usr/bin', HOME: '/home/u', LANG: 'C.UTF-8', TEMP: '/tmp', TMP: '/tmp' });
+  assert.deepEqual(
+    probeEnv({ Path: 'C:\\Windows', USERPROFILE: 'C:\\Users\\u', SYSTEMROOT: 'C:\\Windows', Temp: 'C:\\T', NPM_CONFIG__AUTHTOKEN: 'x', ComSpec: 'cmd.exe' }, 'win32'),
+    { Path: 'C:\\Windows', USERPROFILE: 'C:\\Users\\u', SYSTEMROOT: 'C:\\Windows', Temp: 'C:\\T' },
+    'Windows matches names whatever their case, and keeps the spelling it read',
+  );
+});
+
+test('the probe runs in an empty folder of its own, removed afterwards, and without the daemon\'s npm token', { skip: !posix }, async (t) => {
+  resetBinaryIdentityCache();
+  const saved = { npm: process.env.npm_config__authToken, node: process.env.NODE_OPTIONS };
+  t.after(() => {
+    for (const [key, value] of [['npm_config__authToken', saved.npm], ['NODE_OPTIONS', saved.node]] as const) {
+      if (value === undefined) delete process.env[key]; else process.env[key] = value;
+    }
+  });
+  process.env.npm_config__authToken = 'npm-secret-token';
+  process.env.NODE_OPTIONS = '--max-old-space-size=64';
+  const seen = join(dir, 'probe-seen');
+  const file = stub('nosy', [
+    `{ pwd; ls -A | wc -l; env | cut -d= -f1 | sort | tr '\\n' ' '; } > "${seen}"`,
+    '[ -z "$npm_config__authToken" ] && [ -z "$NODE_OPTIONS" ] && echo "2026.10.16"',
+  ].join('\n'));
+  assert.deepEqual(await checkBinaryIdentity(file, CURSOR), { ok: true }, 'neither variable reached the program');
+  const [cwd, entries, names] = readFileSync(seen, 'utf8').split('\n');
+  assert.notEqual(cwd, process.cwd(), 'not the daemon\'s folder');
+  assert.match(cwd!, /timon-identity-/);
+  assert.equal(entries!.trim(), '0', 'an empty folder');
+  assert.equal(existsSync(cwd!), false, 'removed once the program is done');
+  const allowed = new Set(['PATH', 'HOME', 'USERPROFILE', 'SystemRoot', 'TEMP', 'TMP', 'LANG', 'PWD', 'SHLVL', '_', 'OLDPWD']);
+  assert.deepEqual(names!.trim().split(' ').filter((name) => name && !allowed.has(name)), [], 'only the listed variables, and what sh adds');
+});
+
+/** On Windows the probe never goes through `cmd.exe`: a `.exe`, or an npm shim it reads line for line. */
+test('Windows: only a .exe or a known npm shim is started, anything else is refused without a shell', () => {
+  assert.deepEqual(probeLaunch('C:\\x\\codex.exe', ['--version'], 'win32', () => null), { file: 'C:\\x\\codex.exe', args: ['--version'] });
+  assert.deepEqual(probeLaunch('/usr/bin/codex', ['--version'], 'linux', () => null), { file: '/usr/bin/codex', args: ['--version'] });
+  for (const refused of ['C:\\x\\run.bat', 'C:\\x\\tool.com', 'C:\\x\\codex', 'C:\\x\\codex.ps1', 'C:\\x\\unreadable.cmd']) {
+    assert.equal(probeLaunch(refused, ['--version'], 'win32', () => 'C:\\node\\node.exe'), null, refused);
+  }
+
+  const npm = mkdtempSync(join(tmpdir(), 'timon-identity-npm-'));
+  try {
+    const target = 'node_modules\\@openai\\codex\\bin\\codex.js';
+    mkdirSync(join(npm, 'node_modules', '@openai', 'codex', 'bin'), { recursive: true });
+    writeFileSync(join(npm, 'node_modules', '@openai', 'codex', 'bin', 'codex.js'), '');
+    const shim = join(npm, 'codex.cmd');
+    writeFileSync(shim, ['@ECHO off', 'GOTO start', ':find_dp0', 'SET dp0=%~dp0', 'EXIT /b', ':start', 'SETLOCAL', 'CALL :find_dp0', '',
+      'IF EXIST "%dp0%\\node.exe" (', '  SET "_prog=%dp0%\\node.exe"', ') ELSE (', '  SET "_prog=node"', '  SET PATHEXT=%PATHEXT:;.JS;=;%', ')', '',
+      `endLocal & goto #_undefined_# 2>NUL || title %COMSPEC% & "%_prog%"  "%dp0%\\${target}" %*`, ''].join('\r\n'));
+    const launch = probeLaunch(shim, ['--version'], 'win32', () => 'C:\\node\\node.exe');
+    assert.deepEqual(launch, { file: 'C:\\node\\node.exe', args: [join(npm, 'node_modules', '@openai', 'codex', 'bin', 'codex.js'), '--version'] });
+    assert.equal(probeLaunch(shim, ['--version'], 'win32', () => null), null, 'no runtime to start it directly: refused, not cmd.exe');
+    assert.equal(probeLaunch(shim, ['--version'], 'win32', () => 'C:\\nvm\\node.cmd'), null, 'a runtime that is one more shim: refused');
+  } finally {
+    rmSync(npm, { recursive: true, force: true });
+  }
+  assert.match(binaryIdentityRefusal('the `codex` pin', 'C:\\x\\run.bat', CURSOR, 'unsupported'), /^`run\.bat` cannot be checked/);
 });

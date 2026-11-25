@@ -264,7 +264,9 @@ test('no config file yet: the pin is refused rather than ending the first run', 
  * #1101: a tester pinned `/usr/local/bin/ollama` for Ollama Cloud, which runs on the Codex CLI, and every
  * mission ran `ollama exec …`. The Codex provider declares how its CLI describes itself: the pin asks first.
  */
-test('a pin on another program is refused, naming the CLI expected; the right one is saved', async () => {
+// Windows starts only a `.exe` or a known npm shim to check it, and these stubs are batch files: the format
+// itself is tested in `binary-identity.test.ts`.
+test('a pin on another program is refused, naming the CLI expected; the right one is saved', { skip: process.platform === 'win32' }, async () => {
   const stubOf = (name: string, line: string): string => {
     const file = join(BIN_DIR, `${name}${RUNNABLE}`);
     writeFileSync(file, process.platform === 'win32' ? `@echo ${line}\r\n` : `#!/bin/sh\necho "${line}"\n`, { mode: 0o755 });
