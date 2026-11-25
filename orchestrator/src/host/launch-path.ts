@@ -317,6 +317,39 @@ export function runsOnNode(file: string, platform: NodeJS.Platform, read: (file:
   return false;
 }
 
+/** A program run through its interpreter: `file` with `args`, then the script and its own arguments. */
+export type LaunchInterpreter = { file: string; args: string[] };
+
+/**
+ * How to start `file` with the `node` the host chose (`chooseLaunchNode`)
+ * rather than the one its `#!/usr/bin/env node` line would look up on the
+ * PATH the mission sets (#1102, security review): the interpreter, then the
+ * options `env -S` passes it. The process is the same as the shebang's
+ * (`node <script> …`), only the lookup goes. `null` keeps the file's own
+ * line: on Windows (the host starts an npm shim's script itself), with no
+ * chosen node, or when the line names no `node` through `env` (an absolute
+ * interpreter never looked at PATH, and options `env` would get as one word
+ * are left to it).
+ */
+export function nodeInterpreter(
+  file: string,
+  node: string | null | undefined,
+  platform: NodeJS.Platform,
+  read: (file: string) => string = readHead,
+): LaunchInterpreter | null {
+  if (platform === 'win32' || !node || !pathModule(platform).isAbsolute(file)) return null;
+  let head: string;
+  try { head = read(file); } catch { return null; }
+  if (!head.startsWith('#!')) return null;
+  const words = (head.split(/\r?\n/, 1)[0] ?? '').slice(2).trim().split(/[ \t]+/);
+  if (posix.basename(words[0] ?? '') !== 'env') return null;
+  let rest = words.slice(1);
+  const split = rest[0] === '-S';
+  if (split) rest = rest.slice(1);
+  if (rest[0] !== 'node' || (!split && rest.length > 1)) return null;
+  return { file: node, args: rest.slice(1) };
+}
+
 function readHead(file: string): string {
   const fd = openSync(file, 'r');
   try {

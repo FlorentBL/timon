@@ -4,8 +4,8 @@ import { accessSync, chmodSync, constants, mkdirSync, mkdtempSync, rmSync, statS
 import { tmpdir } from 'node:os';
 import { join, posix, sep, win32 } from 'node:path';
 import {
-  checkDaemonNode, chooseLaunchNode, daemonNode, designatesDaemonRuntime, launchPath, nodeInDir, nodelessBackends, nodelessBackendText,
-  pathKeyOf, runsOnNode, withLaunchPath,
+  checkDaemonNode, chooseLaunchNode, daemonNode, designatesDaemonRuntime, launchPath, nodeInDir, nodeInterpreter, nodelessBackends,
+  nodelessBackendText, pathKeyOf, runsOnNode, withLaunchPath,
 } from './launch-path.js';
 import { binaryCandidates } from './binary-path.js';
 
@@ -91,6 +91,26 @@ test('runsOnNode reads the shebang, and the npm shim on Windows', () => {
   assert.equal(runsOnNode('codex.cmd', 'win32', read('@ECHO off\r\nSET _prog=node\r\n')), true);
   assert.equal(runsOnNode('codex.exe', 'win32', read('MZ node')), false);
   assert.equal(runsOnNode('missing', 'linux', () => { throw new Error('ENOENT'); }), false);
+});
+
+test('#1102 review: an `env node` script is started with the node the host chose, never looked up on PATH', () => {
+  const node = posix.join('/usr', 'local', 'bin', 'node');
+  const script = posix.join('/usr', 'lib', 'node_modules', '@openai', 'codex', 'bin', 'codex.js');
+  const read = (text: string) => () => text;
+  assert.deepEqual(nodeInterpreter(script, node, 'linux', read('#!/usr/bin/env node\nrequire("x");')), { file: node, args: [] });
+  assert.deepEqual(nodeInterpreter(script, node, 'darwin', read('#!/usr/bin/env -S node --no-warnings=ExperimentalWarning\r\n')),
+    { file: node, args: ['--no-warnings=ExperimentalWarning'] });
+  // Left to the file's own line: no node chosen, a native binary, an absolute interpreter, another one, or Windows (the host runs a shim's script).
+  assert.equal(nodeInterpreter(script, null, 'linux', read('#!/usr/bin/env node\n')), null);
+  assert.equal(nodeInterpreter(script, node, 'linux', read('\u007fELF\u0002')), null);
+  assert.equal(nodeInterpreter(script, node, 'linux', read('#!/opt/node/bin/node\n')), null);
+  assert.equal(nodeInterpreter(script, node, 'linux', read('#!/usr/bin/env bun\n')), null);
+  assert.equal(nodeInterpreter(script, node, 'linux', read('#!/usr/bin/env nodejs\n')), null);
+  // Without `-S`, Linux hands `env` its options as one word: the line keeps its own behaviour.
+  assert.equal(nodeInterpreter(script, node, 'linux', read('#!/usr/bin/env node --flag\n')), null);
+  assert.equal(nodeInterpreter('codex', node, 'linux', read('#!/usr/bin/env node\n')), null, 'an unresolved name');
+  assert.equal(nodeInterpreter('C:\\npm\\codex.cmd', 'C:\\nodejs\\node.exe', 'win32', read('@ECHO off\r\nnode x')), null);
+  assert.equal(nodeInterpreter(script, node, 'linux', () => { throw new Error('EACCES'); }), null);
 });
 
 test('nodeInDir finds an executable node on disk', { skip: process.platform === 'win32' }, () => {
