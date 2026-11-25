@@ -18,7 +18,7 @@ import { pathToFileURL } from 'node:url';
 import type { ComponentType, ReactElement } from 'react';
 import { waitUntil } from './test-wait';
 import {
-  errorKey, labelProblem, parseIssueInput, shouldRead, sortCandidates, type Candidate,
+  errorKey, isEnabled, issuesSignal, labelProblem, parseIssueInput, shouldRead, sortCandidates, type Candidate,
 } from '../../../plugins/github-issues/src/issues-model';
 
 const PLUGIN = 'github-issues';
@@ -138,12 +138,20 @@ async function loadClient(): Promise<{ apply: (ctx: unknown) => () => void; clea
 const q = (selector: string) => document.querySelector<HTMLElement>(selector);
 const writes = (calls: Call[]) => calls.filter((c) => c.method !== 'GET');
 
-async function withWidget(reply: Reply, body: (m: Awaited<ReturnType<typeof mount>>) => Promise<void>) {
+/** The SSE topics the plugin subscribed to, to play a signal of the host half. */
+type Streams = Map<string, (event: { data: string }) => void>;
+
+async function withWidget(reply: Reply, body: (m: Awaited<ReturnType<typeof mount>>, streams: Streams) => Promise<void>) {
   const m = await mount(reply);
   const client = await loadClient();
   const { clientContext } = await import('@/lib/plugin-host/loader');
   const { pickStackProject } = await import('@/plugins-client/kanban/git-stack-project');
-  const dispose = client.apply(clientContext(manifest.timon.id, manifest.timon.client.slots));
+  const streams: Streams = new Map();
+  const sse = ((name: string, handler: (event: { data: string }) => void) => {
+    streams.set(name, handler);
+    return () => { streams.delete(name); };
+  }) as unknown as Parameters<typeof clientContext>[2];
+  const dispose = client.apply(clientContext(manifest.timon.id, manifest.timon.client.slots, sse));
   try {
     pickStackProject('acme');
     const entry = m.slots.slotEntries('cockpit.widget').find((e) => e.pluginId === PLUGIN && e.key === 'issues');
@@ -151,7 +159,7 @@ async function withWidget(reply: Reply, body: (m: Awaited<ReturnType<typeof moun
     assert.equal(entry.widget?.frame, 'none');
     const Widget = entry.Component as ComponentType<{ handle?: unknown }>;
     await m.render(m.React.createElement(Widget, { handle: null }));
-    await body(m);
+    await body(m, streams);
   } finally {
     await m.React.act(async () => { dispose(); });
     pickStackProject(null);
@@ -247,6 +255,91 @@ test('"+" reads a typed number first, refuses another repository, and imports fr
   });
 });
 
+test('"Import and plan" imports the issue, then opens its idea, whose form sends it to the orchestrator', async () => {
+  const reply: Reply = ({ method, url }) => {
+    if (url === `${BASE}issue?project=acme&issue=7`) {
+      return Response.json({
+        project: 'acme', repo: REPO, number: 7, title: 'Export CSV', author: 'carol', url: `https://github.com/${REPO}/issues/7`,
+        state: 'open', labels: [], body: 'text', truncated: false, todo: null,
+      });
+    }
+    if (method === 'POST' && url === `${BASE}import`) return Response.json({ created: true, todo: { id: 44, status: 'open' } });
+    return undefined;
+  };
+  await withWidget(reply, async (m) => {
+    await m.until(() => !!q('[data-issues-add]'), 'the + button');
+    await m.click(q('[data-issues-add]'));
+    await m.until(() => !!q('#github-issues-lookup'), 'the number field');
+    await m.type(q('#github-issues-lookup'), '7');
+    await m.click(Array.from(document.querySelectorAll('[data-issue-dialog] button')).find((b) => b.textContent === 'Read'));
+    await m.until(() => !!q('[data-issue-dialog-plan]'), 'the plan button');
+    assert.equal(q('[data-issue-dialog-plan]')?.textContent, 'Import and plan…');
+    await m.click(q('[data-issue-dialog-plan]')?.closest('button'));
+    await m.until(() => m.calls.some((c) => c.url.startsWith('/api/ui/project-todo?') && c.url.includes('ids=44')), 'the idea opened');
+    assert.deepEqual(writes(m.calls).map((c) => [c.url, c.body]), [[`${BASE}import`, { project: 'acme', issue: 7 }]], 'no promotion behind the person\'s back');
+    await m.until(() => !q('[data-issue-dialog]'), 'the Issue window gives way to the idea');
+  });
+});
+
+test('a project switched off reads nothing on GitHub and is switched on from the widget', async () => {
+  let on = false;
+  const reply: Reply = ({ method, url }) => {
+    if (method === 'PUT' && url === `${BASE}project`) { on = true; return Response.json({ project: 'acme', label: 'accepted', enabled: true }); }
+    if (url === `${BASE}candidates?project=acme` && !on) return Response.json({ ...CANDIDATES, enabled: false, issues: [] });
+    return undefined;
+  };
+  await withWidget(reply, async (m) => {
+    await m.until(() => !!q('[data-issues-off]'), 'the switched-off state');
+    assert.match(q('[data-issues-off]')?.textContent ?? '', /Issues are off for this project/);
+    assert.equal(q('[data-issues-add]'), null, 'nothing to import while off');
+    assert.doesNotMatch(document.querySelector('header')?.textContent ?? '', /Issues\d/, 'no count while off');
+    await m.click(q('[data-issues-switch-on]')?.closest('button'));
+    await m.until(() => document.querySelectorAll('[data-issue-row]').length === 3, 'the list once on');
+    assert.deepEqual(writes(m.calls).map((c) => [c.url, c.body]), [[`${BASE}project`, { project: 'acme', enabled: true }]]);
+  });
+});
+
+test('the hidden issues are reviewed from the list and shown again one by one', async () => {
+  let shown = false;
+  const reply: Reply = ({ method, url }) => {
+    if (url === `${BASE}candidates?project=acme`) return Response.json({ ...CANDIDATES, hidden: shown ? 1 : 2 });
+    if (url === `${BASE}hidden?project=acme`) {
+      return Response.json({ project: 'acme', repo: REPO, issues: [
+        { number: 12, title: HOSTILE, url: `https://github.com/${REPO}/issues/12` },
+        { number: 11, title: null, url: `https://github.com/${REPO}/issues/11` },
+      ] });
+    }
+    if (method === 'POST' && url === `${BASE}dismiss`) { shown = true; return Response.json({ project: 'acme', issue: 12, hidden: false }); }
+    return undefined;
+  };
+  await withWidget(reply, async (m) => {
+    await m.until(() => q('[data-issues-hidden]')?.textContent?.includes('2 hidden issues') === true, 'the hidden count');
+    await m.click(q('[data-issues-review]'));
+    await m.until(() => document.querySelectorAll('[data-hidden-row]').length === 2, 'the hidden issues');
+    assert.ok((q('[data-hidden-row="12"]')?.textContent ?? '').includes(HOSTILE), 'a title stays text');
+    assert.equal(document.querySelectorAll('[data-issues-hidden-dialog] img').length, 0);
+    assert.match(q('[data-hidden-row="11"]')?.textContent ?? '', /Issue #11/);
+    await m.click(q('[data-hidden-show="12"]'));
+    await m.until(() => document.querySelectorAll('[data-hidden-row]').length === 1, 'shown again');
+    assert.deepEqual(writes(m.calls).map((c) => [c.url, c.body]), [[`${BASE}dismiss`, { project: 'acme', issue: 12, hidden: false }]]);
+    await m.until(() => q('[data-issues-hidden]')?.textContent?.includes('1 hidden issue') === true, 'the list read again');
+  });
+});
+
+test('an imported idea that moves elsewhere makes the widget read its list again', async () => {
+  await withWidget(() => undefined, async (m, streams) => {
+    await m.until(() => document.querySelectorAll('[data-issue-row]').length === 3, 'three rows');
+    const reads = () => m.calls.filter((c) => c.url === `${BASE}candidates?project=acme`).length;
+    const before = reads();
+    const signal = streams.get('plugin:github-issues:issues');
+    assert.ok(signal, 'the widget listens on the plugin\'s own topic');
+    await m.React.act(async () => { signal({ data: JSON.stringify({ payload: { project: 'other', todo: 1 } }) }); });
+    assert.equal(reads(), before, 'another project\'s idea changes nothing');
+    await m.React.act(async () => { signal({ data: JSON.stringify({ payload: { project: 'acme', todo: 41 } }) }); });
+    await m.until(() => reads() === before + 1, 'read again');
+  });
+});
+
 test('stacked, the count goes to the tab, the reload to the menu, and a hidden tab reads GitHub only past a minute', async () => {
   const m = await mount();
   const client = await loadClient();
@@ -306,6 +399,57 @@ test('stacked, the count goes to the tab, the reload to the menu, and a hidden t
   }
 });
 
+test('a hidden Issues tab reads its list again once it has aged, without being brought forward', async (t) => {
+  const m = await mount();
+  const client = await loadClient();
+  const { clientContext } = await import('@/lib/plugin-host/loader');
+  const { pickStackProject } = await import('@/plugins-client/kanban/git-stack-project');
+  const { WidgetSelfProvider } = await import('@/components/widget-host/widget-self');
+  const dispose = client.apply(clientContext(manifest.timon.id, manifest.timon.client.slots));
+  const realNow = Date.now;
+  t.mock.timers.enable({ apis: ['setInterval'] });
+  try {
+    pickStackProject('acme');
+    const entry = m.slots.slotEntries('cockpit.widget').find((e) => e.pluginId === PLUGIN && e.key === 'issues');
+    const Widget = entry!.Component as ComponentType<{ handle?: unknown }>;
+    const counts: Array<number | null> = [];
+    const stacked = (selected: boolean) => m.React.createElement(WidgetSelfProvider, { value: {
+      id: 'plugin:github-issues:issues', tabbed: true, selected,
+      publishCount: (_id: string, count: number | null) => { counts.push(count); },
+      publishMenu: () => {}, publishAttention: () => {},
+    } }, m.React.createElement(Widget, { handle: null }));
+    const reads = () => m.calls.filter((c) => c.url === `${BASE}candidates?project=acme`).length;
+    // One check of the hidden tab (`HIDDEN_LIST_CHECK_MS`).
+    const check = async () => { await m.React.act(async () => { t.mock.timers.tick(15_000); }); };
+
+    await m.render(stacked(false));
+    await m.until(() => counts.includes(2), 'the count read for the tab');
+    assert.equal(reads(), 1);
+    await check();
+    await m.until(() => true, 'a check');
+    assert.equal(reads(), 1, 'a fresh list is not read again');
+
+    // A minute later, still behind: the next check reads it.
+    Date.now = () => realNow() + 61_000;
+    await check();
+    await m.until(() => reads() === 2, 'a stale count read again by the timer');
+
+    // In front, the timer stops.
+    await m.render(stacked(true));
+    await m.until(() => reads() === 3, 'read when its tab comes forward');
+    Date.now = () => realNow() + 122_000;
+    await check();
+    await m.until(() => true, 'a check');
+    assert.equal(reads(), 3);
+  } finally {
+    Date.now = realNow;
+    await m.React.act(async () => { dispose(); });
+    pickStackProject(null);
+    client.cleanup();
+    await m.unmount();
+  }
+});
+
 test('the project settings row shows the label and what is left, and changes the label in a dialog', async () => {
   const m = await mount(({ method, url }) => (method === 'PUT' && url === `${BASE}project` ? Response.json({ project: 'acme', label: 'triage' }) : undefined));
   const client = await loadClient();
@@ -324,6 +468,25 @@ test('the project settings row shows the label and what is left, and changes the
     await m.click(q('[data-issues-label-save]')?.closest('button'));
     await m.until(() => !q('[data-issues-label-dialog]'), 'the dialog closes once saved');
     assert.deepEqual(writes(m.calls).map((c) => [c.url, c.body]), [[`${BASE}project`, { project: 'acme', label: 'triage' }]]);
+  } finally {
+    await m.React.act(async () => { dispose(); });
+    client.cleanup();
+    await m.unmount();
+  }
+});
+
+test('a project switched off says so in its settings row and asks GitHub nothing', async () => {
+  const m = await mount(({ url }) => (url === `${BASE}project?project=acme`
+    ? Response.json({ project: 'acme', repo: REPO, label: 'accepted', custom: false, hidden: 3, enabled: false }) : undefined));
+  const client = await loadClient();
+  const { clientContext } = await import('@/lib/plugin-host/loader');
+  const dispose = client.apply(clientContext(manifest.timon.id, manifest.timon.client.slots));
+  try {
+    const { ProjectSettingsSlot } = await import('@/components/project-settings-slot');
+    await m.render(m.React.createElement(ProjectSettingsSlot, { project: 'acme' }));
+    await m.until(() => q('[data-issues-settings-status]')?.textContent === 'Off · label accepted', 'the switched-off status');
+    assert.ok(!m.calls.some((c) => c.url.includes('candidates')), 'no count asked of GitHub');
+    assert.ok(q('[data-issues-settings-more]'), 'the rest in the menu');
   } finally {
     await m.React.act(async () => { dispose(); });
     client.cleanup();
@@ -366,6 +529,12 @@ test('a typed reference reads as the issue\'s number, in this repository only', 
   assert.equal(labelProblem(' triage '), null);
   assert.equal(errorKey('not_configured'), 'error.notConfigured');
   assert.equal(errorKey('weird'), 'error.generic');
+  assert.equal(errorKey('disabled'), 'error.disabled');
+  assert.deepEqual(issuesSignal({ project: 'acme', todo: 4 }), { project: 'acme', todo: 4 });
+  assert.equal(issuesSignal({ project: 'acme' }), null);
+  assert.equal(issuesSignal('acme'), null);
+  assert.equal(isEnabled({}), true, 'an older host never switches a project off');
+  assert.equal(isEnabled({ enabled: false }), false);
 });
 
 test('a hidden tab reads its list only when none was read, or one over a minute ago', () => {

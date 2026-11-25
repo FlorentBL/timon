@@ -43,7 +43,7 @@ import { useWidgetAttention, useWidgetCount, useWidgetInFront } from '@/componen
 import { sharedGet } from '@/lib/shared-read';
 import {
   anyReviewRunning, branchChip, branchLock, filterByAuthor, keepPullList, lastPullList, pullAuthors, pullMenuActions, pullRequestActions,
-  reviewBadge, shouldReadPulls, type PullActionId, type PullBranchWork, type PullRequestItem, type PullRequestList, type PullWork,
+  reviewBadge, shouldReadPulls, HIDDEN_PULLS_CHECK_MS, type PullActionId, type PullBranchWork, type PullRequestItem, type PullRequestList, type PullWork,
   type ReviewBadge,
 } from './pull-requests-model';
 import { diffLineKind, getLanding, type Landing } from './landing-api';
@@ -161,6 +161,15 @@ export function PullRequestsWidget({ handle, className }: WidgetProps) {
     if (front && !wasFront.current) void reload(true);
     wasFront.current = front;
   }, [front, reload]);
+  // Left behind, its count is kept no older than the freshness above: the
+  // list is read again once the last one, this tab's or another's, has aged.
+  useEffect(() => {
+    if (front || !slug) return;
+    const timer = setInterval(() => {
+      if (shouldReadPulls(false, lastPullList(slug)?.at ?? null, Date.now())) void reload(true);
+    }, HIDDEN_PULLS_CHECK_MS);
+    return () => clearInterval(timer);
+  }, [front, slug, reload]);
 
   // Its checks and its landing do not change the list of open pull requests.
   useLandingChanges(() => { void reload(true); }, useCallback(

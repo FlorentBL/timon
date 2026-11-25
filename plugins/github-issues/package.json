@@ -24,7 +24,7 @@
     "label": "GitHub issues",
     "description": "Lists the open issues of a project's GitHub repository that carry a label, in the Issues widget of the Git stack, and turns the one you pick into an idea of the TO DO notebook. Nothing is imported on its own, and nothing is written on GitHub.",
     "author": "Timon",
-    "permissions": ["forge:read", "todos:read", "todos:write", "storage", "settings"],
+    "permissions": ["forge:read", "todos:read", "todos:write", "storage", "settings", "events:subscribe", "realtime:publish"],
     "settings": [
       { "key": "label", "type": "string", "label": "Label of the issues to list, unless a project sets its own", "default": "accepted" }
     ],

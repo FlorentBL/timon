@@ -16,8 +16,9 @@ export type ForgeProposalState = 'draft' | 'publishing' | 'published' | 'failed'
 export type ForgeProposalTrigger = 'person' | 'landing' | 'todo_resolved' | 'plugin';
 export type ForgeTargetType = 'issue' | 'pull';
 /** A comment; GitHub merging the base into a pull request's branch; our
- *  resolution of a contributor's conflict pushed to their branch, then a comment. */
-export type ForgeProposalKind = 'comment' | 'update_branch' | 'conflict_push';
+ *  resolution of a contributor's conflict pushed to their branch, then a comment;
+ *  the closing of an issue declined or duplicated. */
+export type ForgeProposalKind = 'comment' | 'update_branch' | 'conflict_push' | 'close_issue';
 
 export type ForgeProposal = {
   id: string;
@@ -83,6 +84,15 @@ export function branchUpdateDetails(p: ForgeProposal): BranchUpdateDetails | nul
     expected_head_sha: d.expected_head_sha, base_ref: d.base_ref, head_ref: d.head_ref,
     head_repository: text(d.head_repository) ? d.head_repository : null,
   };
+}
+
+/** Why an issue closes: GitHub's own reasons. */
+export type IssueCloseDetails = { reason: 'not_planned' | 'duplicate' };
+
+/** The details of an issue's closing, or null when the daemon wrote none. */
+export function issueCloseDetails(p: ForgeProposal): IssueCloseDetails | null {
+  const d = p.kind === 'close_issue' ? p.details : null;
+  return d && (d.reason === 'not_planned' || d.reason === 'duplicate') ? { reason: d.reason } : null;
 }
 
 /** The details of a conflict push, or null when the daemon wrote none. */
