@@ -25,16 +25,22 @@
  *     → desktop/build-resources/<tree>/…   (rebuilt for the shipped Node's ABI)
  *
  * and `electron-builder.yml` ships that copy instead of the live tree.
+ *
+ * On Linux the rebuild, and the load that proves it, run in a manylinux_2_28
+ * container (`native-linux.mjs`, TIM-0162): a module compiled on the build
+ * machine needs that machine's glibc, newer than the one the package promises.
+ * Docker is therefore a prerequisite of a Linux package.
  */
 import { execFileSync } from 'node:child_process';
 import { makeHelpersExecutable, missingConptyFiles } from './pty-helper.mjs';
-import { cpSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readlinkSync, renameSync, rmSync, statSync } from 'node:fs';
+import { cpSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readlinkSync, realpathSync, renameSync, rmSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { delimiter, dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { assertEntriesResolve } from './entry-resolve.mjs';
 import { bundledNodeExecutable, fetchNode, nodeRuntimeSpec } from './fetch-node.mjs';
 import { SHELL_LOCALES_BUILD, copyShellLocales } from './shell-locales.mjs';
+import { GLIBC_FLOOR, assertGlibcFloor, containerBuildEnv, containerCommand, elfFilesUnder, nativeBuildImage, pruneLinuxBuild } from './native-linux.mjs';
 
 const desktopDir = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const repoRoot = resolve(desktopDir, '..');
@@ -93,7 +99,8 @@ function nativeFilesIn(dir) {
  * MSVC libraries, and `--build-from-source` DELETES `prebuilds/` before
  * compiling, so a failed build leaves the live tree with no artefact at all
  * (observed 12/09/2026 on Windows). Linux has no node-pty prebuild: the tree
- * holds `build/Release` and the rebuild happens exactly as before.
+ * holds `build/Release` and the rebuild happens exactly as before, in the
+ * container, from source.
  */
 function artefactsOf(treeDir, moduleName) {
   const moduleDir = join(treeDir, 'node_modules', moduleName);
@@ -149,11 +156,50 @@ function copyFilter(src) {
   return !(st.isSymbolicLink() && isAbsolute(readlinkSync(src)));
 }
 
-/** Loads an artefact exactly as the packaged runtime will. Exit code 0 from
- *  the rebuild is not proof; only the shipped Node can tell the ABI. */
-function loadUnderRuntime(artefact) {
+const LINUX = process.platform === 'linux';
+
+/**
+ * Runs the shipped Node with `args`. On Linux, in the native build image, as
+ * the calling user, with `stage` (where every path of `args` lives) mounted
+ * read-write and `readonly` beside the Node's own folder.
+ */
+function runOnRuntime(args, { stage, cwd = stage, readonly = [], build = false }) {
   const node = bundledNodeExecutable();
-  execFileSync(node, ['-e', `require(${JSON.stringify(artefact)})`], { stdio: 'inherit', env: runtimeEnv(node) });
+  if (!LINUX) {
+    execFileSync(node, args, { stdio: 'inherit', cwd, env: runtimeEnv(node) });
+    return;
+  }
+  const home = join(stage, '.native-build-home');
+  mkdirSync(home, { recursive: true });
+  const [command, argv] = containerCommand({
+    image: nativeBuildImage(),
+    uid: process.getuid(),
+    gid: process.getgid(),
+    workdir: cwd,
+    writable: stage,
+    readonly: [dirname(node), ...readonly],
+    env: build ? containerBuildEnv(home) : { HOME: home },
+    nodeDir: dirname(node),
+    args: [node, ...args],
+  });
+  execFileSync(command, argv, { stdio: 'inherit' });
+}
+
+/** Loads an artefact exactly as the packaged runtime will. Exit code 0 from
+ *  the rebuild is not proof; only the shipped Node can tell the ABI, and on
+ *  Linux only the floor glibc can tell the glibc. */
+function loadUnderRuntime(artefact, stage) {
+  runOnRuntime(['-e', `require(${JSON.stringify(artefact)})`], { stage });
+}
+
+/** A Linux package cannot be built without the container its natives are compiled in. */
+function assertContainerEngine() {
+  try {
+    execFileSync('docker', ['version', '--format', '{{.Server.Version}}'], { stdio: ['ignore', 'pipe', 'pipe'] });
+  } catch (error) {
+    throw new Error(`a Linux package rebuilds its native modules in ${nativeBuildImage()} (glibc ${GLIBC_FLOOR}): `
+      + `Docker must be installed and its daemon reachable (${error.message.split('\n')[0]})`);
+  }
 }
 
 /**
@@ -162,7 +208,7 @@ function loadUnderRuntime(artefact) {
  * carries the host's `.node` (compiled for the host Node, maybe another ABI), and
  * none of the sources a rebuild would need.
  */
-function assembleStandalone(name, source, standalone, staged, modules, into) {
+function assembleStandalone(name, source, standalone, staged, modules, into, stage) {
   cpSync(join(source, standalone.dir), into, { recursive: true, verbatimSymlinks: true, filter: copyFilter });
   for (const moduleName of modules) {
     const rebuilt = artefactsOf(staged, moduleName).dir;
@@ -172,7 +218,7 @@ function assembleStandalone(name, source, standalone, staged, modules, into) {
     }
     rmSync(shipped, { recursive: true, force: true });
     cpSync(rebuilt, shipped, { recursive: true });
-    for (const artefact of nativeFilesIn(shipped)) loadUnderRuntime(artefact);
+    for (const artefact of nativeFilesIn(shipped)) loadUnderRuntime(artefact, stage);
   }
   assertEntriesResolve(into, standalone.entries.map((entry) => join(into, entry)));
   for (const file of standalone.runtime) {
@@ -223,7 +269,7 @@ function prepareTree({ name, modules, standalone }, version) {
         // against the shipped Node itself before this copy is allowed to ship.
         console.log(`[prepare] ${name}: ${moduleName} ships an N-API prebuild — verifying it under Node ${version}`);
         const keep = artefactsOf(staged, moduleName).dir;
-        for (const artefact of nativeFilesIn(keep)) loadUnderRuntime(artefact);
+        for (const artefact of nativeFilesIn(keep)) loadUnderRuntime(artefact, stage);
         for (const path of makeHelpersExecutable(keep)) console.log(`[prepare] ${name}: made ${path} executable`);
         if (moduleName === 'node-pty' && process.platform === 'win32') {
           const missing = missingConptyFiles(keep);
@@ -243,13 +289,18 @@ function prepareTree({ name, modules, standalone }, version) {
       // so a silent no-op cannot pass for a rebuild.
       rmSync(join(staged, 'node_modules', moduleName, 'build'), { recursive: true, force: true });
       // `npm rebuild` run BY the shipped Node: the module's install script
-      // (prebuild-install, else node-gyp) targets the Node that runs it.
-      console.log(`[prepare] ${name}: rebuilding ${moduleName} for Node ${version}`);
-      const node = bundledNodeExecutable();
-      execFileSync(node, [npmCli(), 'rebuild', moduleName, '--foreground-scripts'], { stdio: 'inherit', cwd: staged, env: runtimeEnv(node) });
+      // (prebuild-install, else node-gyp) targets the Node that runs it. On
+      // Linux, from source in the image: a prebuild carries its own glibc.
+      console.log(`[prepare] ${name}: rebuilding ${moduleName} for Node ${version}${LINUX ? ` in ${nativeBuildImage()}` : ''}`);
+      const cli = npmCli();
+      runOnRuntime([cli, 'rebuild', moduleName, '--foreground-scripts'], {
+        stage, cwd: staged, build: true, readonly: [dirname(dirname(realpathSync(cli)))],
+      });
+      // A source build leaves objects and test addons beside the one that ships.
+      if (LINUX) pruneLinuxBuild(join(staged, 'node_modules', moduleName), moduleName);
       const rebuilt = artefactsOf(staged, moduleName);
       if (rebuilt.kind !== 'built') throw new Error(`rebuild produced no artefact under ${join(staged, 'node_modules', moduleName, 'build', 'Release')}`);
-      for (const artefact of nativeFilesIn(rebuilt.dir)) loadUnderRuntime(artefact);
+      for (const artefact of nativeFilesIn(rebuilt.dir)) loadUnderRuntime(artefact, stage);
     }
 
     // The prohibition, checked rather than trusted: if a live artefact moved,
@@ -265,7 +316,7 @@ function prepareTree({ name, modules, standalone }, version) {
     let ship = staged;
     if (standalone) {
       ship = join(stage, `${name}-standalone`);
-      assembleStandalone(name, source, standalone, staged, modules, ship);
+      assembleStandalone(name, source, standalone, staged, modules, ship, stage);
     }
 
     rmSync(target, { recursive: true, force: true });
@@ -283,9 +334,14 @@ function prepareTree({ name, modules, standalone }, version) {
 }
 
 async function main() {
+  if (LINUX) assertContainerEngine();
   await fetchNode();
   const { version } = nodeRuntimeSpec();
   for (const tree of TREES) prepareTree(tree, version);
+  if (LINUX) {
+    const binaries = [dirname(bundledNodeExecutable()), ...TREES.map(({ name }) => join(BUILD_RESOURCES, name))].flatMap(elfFilesUnder);
+    console.log(`[prepare] glibc ${GLIBC_FLOOR} floor: ${assertGlibcFloor(binaries)} binaries checked`);
+  }
   // The shell's menus and dialogs, in every language of the app.
   console.log(`[prepare] shell languages: ${copyShellLocales().length} files → ${SHELL_LOCALES_BUILD}`);
   console.log(`[prepare] done — ${BUILD_RESOURCES} is ready for electron-builder`);
