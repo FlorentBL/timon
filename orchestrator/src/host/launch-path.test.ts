@@ -4,8 +4,8 @@ import { accessSync, chmodSync, constants, mkdirSync, mkdtempSync, rmSync, statS
 import { tmpdir } from 'node:os';
 import { join, posix, sep, win32 } from 'node:path';
 import {
-  checkDaemonNode, chooseLaunchNode, daemonNode, designatesDaemonRuntime, launchPath, nodeInDir, nodeInterpreter, nodelessBackends,
-  nodelessBackendText, pathKeyOf, runsOnNode, withLaunchPath,
+  checkDaemonNode, chooseLaunchNode, daemonNode, designatesDaemonRuntime, launchInterpreter, launchPath, nodeInDir, nodeInterpreter,
+  nodelessBackends, nodelessBackendText, NoTrustedNodeError, pathKeyOf, runsOnNode, withLaunchPath,
 } from './launch-path.js';
 import { untrustedPathProblem, type TrustStat } from './trusted-tree.js';
 import { binaryCandidates } from './binary-path.js';
@@ -112,6 +112,28 @@ test('#1102 review: an `env node` script is started with the node the host chose
   assert.equal(nodeInterpreter('codex', node, 'linux', read('#!/usr/bin/env node\n')), null, 'an unresolved name');
   assert.equal(nodeInterpreter('C:\\npm\\codex.cmd', 'C:\\nodejs\\node.exe', 'win32', read('@ECHO off\r\nnode x')), null);
   assert.equal(nodeInterpreter(script, node, 'linux', () => { throw new Error('EACCES'); }), null);
+});
+
+test('#1102 review, iteration 4: with no node chosen, an `env node` CLI is refused, never left to the mission\'s PATH', () => {
+  const node = posix.join('/usr', 'local', 'bin', 'node');
+  const script = posix.join('/home', 'sam', '.npm-global', 'lib', 'node_modules', '@openai', 'codex', 'bin', 'codex.js');
+  const read = (text: string) => () => text;
+  for (const line of ['#!/usr/bin/env node\n', '#!/usr/bin/env -S node --no-warnings\n', '#!/bin/env node --flag\n']) {
+    for (const platform of ['linux', 'darwin'] as const) {
+      assert.throws(() => launchInterpreter(script, null, platform, 'codex', read(line)), (err: unknown) =>
+        err instanceof NoTrustedNodeError && err.cli === 'codex' && /^no trusted Node\.js to run codex/.test(err.message)
+        && !err.message.includes(script) && !err.message.includes('/home'), `${platform}: ${line.trim()}`);
+    }
+  }
+  // A chosen node: the same interpreter as before.
+  assert.deepEqual(launchInterpreter(script, node, 'linux', 'codex', read('#!/usr/bin/env node\n')), { file: node, args: [] });
+  // Native, an absolute interpreter, another runtime, an unreadable file: unchanged, nothing looks `node` up.
+  assert.equal(launchInterpreter(script, null, 'linux', 'codex', read('\u007fELF\u0002')), null);
+  assert.equal(launchInterpreter(script, null, 'linux', 'codex', read('#!/opt/node/bin/node\n')), null);
+  assert.equal(launchInterpreter(script, null, 'linux', 'codex', read('#!/usr/bin/env bun\n')), null);
+  assert.equal(launchInterpreter(script, null, 'linux', 'codex', () => { throw new Error('EACCES'); }), null);
+  // Windows: the host adapter starts an npm shim's script itself.
+  assert.equal(launchInterpreter('C:\\npm\\codex.cmd', null, 'win32', 'codex', read('@ECHO off\r\nnode x')), null);
 });
 
 test('nodeInDir finds an executable node on disk', { skip: process.platform === 'win32' }, () => {
