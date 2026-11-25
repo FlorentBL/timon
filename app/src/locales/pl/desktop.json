@@ -10,6 +10,12 @@
       "daemon": "Demon: {state, select, running {działa} other {nieosiągalny}} ({origin})",
       "quit": "Zakończ"
     },
+    "contextMenu": {
+      "cut": "Wytnij",
+      "copy": "Kopiuj",
+      "paste": "Wklej",
+      "selectAll": "Zaznacz wszystko"
+    },
     "tray": {
       "iconMissing": "Nie udało się wczytać ikony obszaru powiadomień.",
       "iconMissingDetail": "Zainstaluj ponownie Timon, aby przywrócić ikonę. Możesz dalej używać tego okna; zamknięcie go zakończy Timon."
