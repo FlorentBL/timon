@@ -12,7 +12,7 @@ You can add a language-model provider yourself — no plugin, no restart. It wor
 
 If your provider speaks neither, there are three ways forward:
 
-- **It is an agent of the [ACP registry](../plugins/providers.md#agents-from-the-acp-registry)** (opencode, Hermes, Cursor… as listed there): open **Settings → AI models → Providers**, choose **Add a provider**, then **From the catalog**, pick it, and Timon downloads, checks and runs it for you. No plugin to write.
+- **It is an agent of the [ACP registry](../plugins/providers.md#agents-from-the-acp-registry)** (opencode, Hermes, Cursor, [Mistral Vibe](mistral-vibe.md)… as listed there): open **Settings → AI models → Providers**, choose **Add a provider**, then **From the catalog**, pick it, and Timon downloads, checks and runs it for you. No plugin to write.
 - **Someone already wrote a provider plugin for it**: install it from the Plugins gallery. The install sheet shows the program it will launch, with the path Timon found on your machine, and one tick allows exactly that program.
 - **You want to share your endpoint, or write a provider yourself**: [Write a provider](../plugins/providers.md) covers sharing a declarative pack with no code, and writing a provider for a CLI, an ACP agent or a remote service.
 
