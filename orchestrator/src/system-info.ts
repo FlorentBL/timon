@@ -16,7 +16,7 @@ import { buildInfo } from './build-info.js';
 import { CONFIG_FILE, config } from './config/load.js';
 import { compareVersions, packagedDaemon, readDataVersion, timonVersion } from './data-version.js';
 import { diagnose, systemdPresent } from './doctor.js';
-import { buildDiagnosticReport, doctorSummary, type Finding } from './host/diagnostic-report.js';
+import { buildDiagnosticReport, doctorOutcome, type Finding } from './host/diagnostic-report.js';
 import { packagedRuntime } from './host/bundled-node.js';
 import { getHost } from './host/index.js';
 import { logDir } from './log-file.js';
@@ -325,6 +325,6 @@ export async function daemonDiagnosticReport(appVersion: string | null): Promise
         `licence   ${license.edition}, plan ${license.plan ?? '—'}, ${license.status}, channel ${license.channel}`,
       ],
     }],
-    doctor: async () => doctorSummary(diagnose()),
+    doctor: async () => doctorOutcome(diagnose()),
   });
 }
