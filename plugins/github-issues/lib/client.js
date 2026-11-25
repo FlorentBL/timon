@@ -208,6 +208,7 @@ var HIDDEN_LIST_FRESH_MS = 6e4;
 function shouldRead(front, readAt, now) {
   return front || readAt === null || now - readAt >= HIDDEN_LIST_FRESH_MS;
 }
+var HIDDEN_LIST_CHECK_MS = HIDDEN_LIST_FRESH_MS / 4;
 
 // ../plugins/github-issues/src/client.tsx
 var t = ui.createTranslator(messages_default);
@@ -337,6 +338,13 @@ function IssuesWidget({ api, handle, className }) {
     if (front && !wasFront.current) void reload(true);
     wasFront.current = front;
   }, [front, reload]);
+  useEffect(() => {
+    if (front || !project) return;
+    const timer = setInterval(() => {
+      if (shouldRead(false, lastRead.get(project)?.at ?? null, Date.now())) void reload(true);
+    }, HIDDEN_LIST_CHECK_MS);
+    return () => clearInterval(timer);
+  }, [front, project, reload]);
   useEffect(() => {
     if (!notice) return;
     const timer = setTimeout(() => setNotice(null), 4e3);
