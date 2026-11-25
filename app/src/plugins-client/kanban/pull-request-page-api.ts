@@ -218,7 +218,8 @@ forgeMarked.use({
     link(this: { parser: { parseInline: (tokens: Tokens.Link['tokens']) => string } }, token: Tokens.Link): string {
       const label = this.parser.parseInline(token.tokens);
       if (!/^https?:\/\//i.test(token.href)) return label;
-      return `<a href="${escapeHtml(token.href)}" target="_blank" rel="noopener noreferrer">${label}</a>`;
+      // `target` and `rel` are set after the sanitizer, which drops the first.
+      return `<a href="${escapeHtml(token.href)}">${label}</a>`;
     },
   },
 });
@@ -227,9 +228,7 @@ forgeMarked.use({
 export function forgeMarkdownHtml(md: string): string {
   if (!md.trim()) return '';
   const raw = forgeMarked.parse(md, { async: false }) as string;
-  const html = sanitizeMarkdownHtml(raw);
-  // The sanitizer may drop `target`: every kept link is set apart again.
-  return html.replace(/<a (?![^>]*target=)/g, '<a target="_blank" rel="noopener noreferrer" ');
+  return sanitizeMarkdownHtml(raw, { linksApart: true });
 }
 
 /**
