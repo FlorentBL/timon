@@ -2746,6 +2746,15 @@ export type ActiveMissionRow = Pick<
   MissionRow,
   'id' | 'agent_name' | 'status' | 'started_at' | 'ended_at' | 'source_channel' | 'task_id'
 >;
+/**
+ * Narrowing of a mission list page. `before` is the position of the last row
+ * of the previous page: the list is ordered by (started_at, id) descending, so
+ * the pair is a stable cursor even when missions share a start time.
+ */
+export type MissionListPage = {
+  taskId?: string;
+  before?: { startedAt: number; id: string };
+};
 export type MissionListRow = MissionRow & {
   /** Who started it — `mission-origin.ts`. */
   origin: MissionOrigin;
@@ -3927,7 +3936,7 @@ function missionListSql(whereSql: string): string {
             SELECT m.*, ${MISSION_ORIGIN_SQL} AS origin FROM missions m
             LEFT JOIN tasks ot ON ot.id = m.task_id
             ${whereSql}
-            ORDER BY m.started_at DESC
+            ORDER BY m.started_at DESC, m.id DESC
             LIMIT ?
           )
           SELECT p.*,
@@ -3957,7 +3966,7 @@ function missionListSql(whereSql: string): string {
             LEFT JOIN users ou ON ou.id = p.owner_user_id
             LEFT JOIN mission_stats st ON st.mission_id = p.id
             LEFT JOIN mission_span_totals pt ON pt.mission_id = p.id
-           ORDER BY p.started_at DESC`;
+           ORDER BY p.started_at DESC, p.id DESC`;
 }
 const listMissionsStmt = db.prepare(missionListSql(''));
 const missionOriginStmt = db.prepare(
@@ -7097,10 +7106,14 @@ export const dbApi = {
     status?: string,
     viewer?: DbViewer | null,
     origin?: MissionOriginFilter,
+    page: MissionListPage = {},
   ): MissionListRow[] {
     const owner = ownerSql(viewer, 'missions', 'm.owner_user_id');
     const scoped = owner.sql !== '1=1';
-    if (!agentNames && !status && !scoped && !origin) return listMissionsStmt.all(limit) as MissionListRow[];
+    const { taskId, before } = page;
+    if (!agentNames && !status && !scoped && !origin && taskId === undefined && !before) {
+      return listMissionsStmt.all(limit) as MissionListRow[];
+    }
     if (agentNames && agentNames.length === 0) return [];
     // missing: `/api/missions?status=running` returned the N latest missions of ALL
     // statuses, in silence. An agent diagnosing
@@ -7122,6 +7135,16 @@ export const dbApi = {
     } else if (origin) {
       where.push(`(${MISSION_ORIGIN_SQL}) = ?`);
       params.push(origin);
+    }
+    if (taskId !== undefined) {
+      where.push('m.task_id = ?');
+      params.push(taskId);
+    }
+    if (before) {
+      // The redundant `<=` lets the started_at index bound the range; the
+      // OR then drops the cursor row and the ties already served.
+      where.push('m.started_at <= ? AND (m.started_at < ? OR m.id < ?)');
+      params.push(before.startedAt, before.startedAt, before.id);
     }
     if (scoped) {
       where.push(owner.sql);
