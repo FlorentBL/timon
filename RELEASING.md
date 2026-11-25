@@ -243,6 +243,22 @@ GitHub token; the attestation token never shares a job with npm or the built
 code; the jobs that hold the list-signing keys install nothing. A fork or a
 pull request reaches none of it.
 
+## Required checks on `main`
+
+The protection of `main` requires these checks: `ubuntu-latest · daemon 1/2`,
+`ubuntu-latest · daemon 2/2`, `ubuntu-latest · app` (from `ci.yml`) and
+**`protected paths`**. The last one must stay required. `ci.yml` runs as the
+pull request has it, and its `changes` job may let the daemon and app suites
+stand down when a pull request only changes documentation pages, changelog
+fragments or Markdown at the root (`scripts/ci-changes.mjs`). That job runs
+the classifier as the base holds it, and a pull request touching the
+classifier or `.github/` always runs every suite; but a pull request could
+still rewrite `ci.yml` to skip them. `protected paths` runs from `main`
+(`pull_request_target`) and fails any pull request from outside the project
+that changes `.github/**` or `scripts/ci-changes.mjs` until a maintainer
+approves it: without it required, nothing stops such a pull request from
+reaching `main` with its suites skipped.
+
 ## Verify a package
 
 Every installer built by these workflows carries a
