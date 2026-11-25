@@ -32,6 +32,7 @@
  * (`registerForgeProposalExecutor`); the account check above is the same.
  */
 import { randomUUID } from 'node:crypto';
+import { bus } from './bus.js';
 import { db } from './db.js';
 import { daemonMessage } from './daemon-message.js';
 import { projectRepository, type ExternalPrRefusal } from './external-pr-review.js';
@@ -312,10 +313,15 @@ const publishedStmt = db.prepare(`
       published_at = ?, updated_at = ?
   WHERE id = ? AND state = 'publishing'
 `);
-const publishingStmt = db.prepare(`SELECT id FROM forge_proposals WHERE state = 'publishing'`);
+const publishingStmt = db.prepare(`SELECT id, project FROM forge_proposals WHERE state = 'publishing'`);
 const interruptedStmt = db.prepare(`
   UPDATE forge_proposals SET state = 'failed', error_code = 'interrupted', error = NULL, updated_at = ? WHERE id = ? AND state = 'publishing'
 `);
+
+/** The screens that list proposals read them again (`forge_proposals_changed`). */
+function announce(project: string, id: string): void {
+  bus.publish({ kind: 'forge_proposals_changed', project, proposalId: id });
+}
 
 function get(id: string): ForgeProposalRow | undefined {
   return getStmt.get(id) as ForgeProposalRow | undefined;
@@ -415,6 +421,7 @@ export function proposeForgeWrite(input: ProposeInput, deps: ForgeProposalDeps =
   const row = get(id)!;
   const target = `${repo}#${input.target.number}`;
   createNotification({ type: 'action_required', anchor: proposalAnchor(input.project, id), ...pendingNotice(input.kind, target) });
+  announce(input.project, id);
   console.log(`[forge-proposals] ${input.kind} proposed on ${target} (${id.slice(0, 8)}, ${input.trigger})`);
   return { ok: true, proposal: row, created: true };
 }
@@ -494,6 +501,7 @@ export function editForgeProposal(project: string, id: string, body: string, by:
   const bad = bodyProblem(body);
   if (bad) return refuse(400, 'forge_proposal_invalid', bad);
   if (editStmt.run(body, by, (deps.now ?? Date.now)(), id).changes === 0) return closedRefusal(get(id)!);
+  announce(row.project, id);
   return { ok: true, proposal: get(id)! };
 }
 
@@ -504,6 +512,7 @@ export function discardForgeProposal(project: string, id: string, by: string, de
   if (row.state === 'discarded') return { ok: true, proposal: row };
   if (discardStmt.run(by, (deps.now ?? Date.now)(), id).changes === 0) return closedRefusal(get(id)!);
   resolveAnchor(proposalAnchor(row.project, id));
+  announce(row.project, id);
   const discarded = get(id)!;
   try { executors.get(row.kind)?.discarded?.(discarded); } catch (err) {
     console.error('[forge-proposals] cleanup after a discard failed:', (err as Error).name);
@@ -543,6 +552,7 @@ export async function publishForgeProposal(
   }
   // From here the row is ours until it is released, published or failed.
   inFlight.add(id);
+  announce(row.project, id);
   const release = (code: ForgeProposalRefusalCode, reason: string, status: number): ForgeProposalRefusal => {
     releaseStmt.run(previous.state, code, reason, now(), id);
     console.warn(`[forge-proposals] publication of ${id.slice(0, 8)} refused: ${code}`);
@@ -620,6 +630,8 @@ export async function publishForgeProposal(
     return fail('an unexpected error stopped the publication');
   } finally {
     inFlight.delete(id);
+    // Published, failed or put back: whatever it became, the lists read it again.
+    announce(row.project, id);
   }
 }
 
@@ -630,8 +642,10 @@ export async function publishForgeProposal(
  */
 export function recoverInterruptedPublications(now = Date.now()): number {
   let changed = 0;
-  for (const { id } of publishingStmt.all() as { id: string }[]) {
-    if (!inFlight.has(id)) changed += interruptedStmt.run(now, id).changes;
+  for (const { id, project } of publishingStmt.all() as { id: string; project: string }[]) {
+    if (inFlight.has(id) || interruptedStmt.run(now, id).changes === 0) continue;
+    changed += 1;
+    announce(project, id);
   }
   if (changed > 0) console.log(`[forge-proposals] ${changed} interrupted publication(s) marked failed`);
   return changed;
