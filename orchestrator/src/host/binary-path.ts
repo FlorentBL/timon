@@ -5,7 +5,8 @@ import { isAbsolute, join, posix, win32 } from 'node:path';
 import { TIMON_HOME } from '../paths.js';
 import { installedByNpm } from './machine.js';
 import { windowsShimLaunch } from './windows-shell.js';
-import { missionWritableProblem } from './mission-writable.js';
+import { fencedSystemFolders, missionWritableProblem, pathWithin } from './mission-writable.js';
+import { untrustedTreeProblem } from './trusted-tree.js';
 import { declaredBinary } from './declared-binaries.js';
 import type { BuiltinDesktopBuild } from '../backends/builtin-declarations.js';
 import { expandDirectory, INSTALL_PLATFORMS, type InstallPlatform } from '../backends/provider-declarations.js';
@@ -257,6 +258,9 @@ function versionedDirectories(
     .map((entry) => pathJoin(versions, entry.folder, ...tail));
 }
 
+/** A version manager's root, and the folders `node` is looked for in beneath it. */
+type NodeManagerSource = { root: string; dirs: string[] };
+
 /**
  * Where `node` itself may sit beyond the folders every binary is searched in:
  * a moved Volta home, and the installs fnm, mise and asdf keep (the user's
@@ -267,28 +271,36 @@ function versionedDirectories(
  * the provider install lines that replay the daemon's search order for their
  * CLI (Copilot's) stay what they are.
  */
-function nodeManagerDirectories(
+function nodeManagerSources(
   platform: NodeJS.Platform,
   home: string,
   env: NodeJS.ProcessEnv,
   reader: DirectoryReader,
   pathJoin: (dir: string, ...parts: string[]) => string,
-): string[] {
+): NodeManagerSource[] {
   // On Windows fnm keeps `node.exe` in the installation folder itself, elsewhere in its `bin`.
   const fnmTail = platform === 'win32' ? ['installation'] : ['installation', 'bin'];
   const fnmDefault = platform === 'win32' ? [] : ['bin'];
-  const out: string[] = env.VOLTA_HOME ? [pathJoin(env.VOLTA_HOME, 'bin')] : [];
+  const out: NodeManagerSource[] = env.VOLTA_HOME ? [{ root: env.VOLTA_HOME, dirs: [pathJoin(env.VOLTA_HOME, 'bin')] }] : [];
   for (const root of fnmRoots(platform, home, env, pathJoin)) {
-    out.push(pathJoin(root, 'aliases', 'default', ...fnmDefault));
-    out.push(...versionedDirectories(pathJoin(root, 'node-versions'), fnmTail, reader, pathJoin));
+    out.push({ root, dirs: [
+      pathJoin(root, 'aliases', 'default', ...fnmDefault),
+      ...versionedDirectories(pathJoin(root, 'node-versions'), fnmTail, reader, pathJoin),
+    ] });
   }
   if (platform === 'win32') return out;
   const xdgData = env.XDG_DATA_HOME || (home ? pathJoin(home, '.local', 'share') : '');
   const mise = env.MISE_DATA_DIR || (xdgData ? pathJoin(xdgData, 'mise') : '');
-  if (mise) out.push(...versionedDirectories(pathJoin(mise, 'installs', 'node'), ['bin'], reader, pathJoin));
+  if (mise) out.push({ root: mise, dirs: versionedDirectories(pathJoin(mise, 'installs', 'node'), ['bin'], reader, pathJoin) });
   const asdf = env.ASDF_DATA_DIR || (home ? pathJoin(home, '.asdf') : '');
-  if (asdf) out.push(...versionedDirectories(pathJoin(asdf, 'installs', 'nodejs'), ['bin'], reader, pathJoin));
+  if (asdf) out.push({ root: asdf, dirs: versionedDirectories(pathJoin(asdf, 'installs', 'nodejs'), ['bin'], reader, pathJoin) });
   return out;
+}
+
+/** The roots alone, without listing their versions. */
+function nodeManagerRoots(platform: NodeJS.Platform, home: string, env: NodeJS.ProcessEnv): string[] {
+  const none: DirectoryReader = { subdirectories: () => [], fileMtimeMs: () => null };
+  return nodeManagerSources(platform, home, env, none, joinFor(platform)).map((source) => source.root);
 }
 
 /**
@@ -344,6 +356,12 @@ function managerDirectories(
   ];
 }
 
+/** A Windows path on a Windows host's drive joins as one; anything else as the host joins. */
+function joinFor(platform: NodeJS.Platform): (dir: string, ...parts: string[]) => string {
+  return (dir, ...parts) => platform === 'win32' && win32.isAbsolute(dir) && !isAbsolute(dir)
+    ? win32.join(dir, ...parts) : join(dir, ...parts);
+}
+
 /**
  * Candidate paths for a user-installed executable.
  *
@@ -358,8 +376,7 @@ export function binaryCandidates(name: string, options: BinarySearchOptions = {}
   const home = options.homeDir ?? homedir();
   const env = options.env ?? process.env;
   const path = options.path ?? env.PATH ?? env.Path ?? '';
-  const pathJoin = (dir: string, ...parts: string[]) => platform === 'win32' && win32.isAbsolute(dir) && !isAbsolute(dir)
-    ? win32.join(dir, ...parts) : join(dir, ...parts);
+  const pathJoin = joinFor(platform);
   const directories = unique([
     ...path.split(platform === 'win32' ? ';' : ':'),
     home ? pathJoin(home, '.local', 'bin') : '',
@@ -372,7 +389,9 @@ export function binaryCandidates(name: string, options: BinarySearchOptions = {}
       env.ProgramFiles ? pathJoin(env.ProgramFiles, 'Git', 'cmd') : '',
     ] : []),
     ...managerDirectories(platform, home, env, options.directoryReader ?? diskReader, pathJoin),
-    ...(name === 'node' ? nodeManagerDirectories(platform, home, env, options.directoryReader ?? diskReader, pathJoin) : []),
+    ...(name === 'node'
+      ? nodeManagerSources(platform, home, env, options.directoryReader ?? diskReader, pathJoin).flatMap((source) => source.dirs)
+      : []),
     // Last: a copy reachable through PATH, npm or Homebrew stays the one the
     // user chose to maintain.
     ...installerDirectories(name, platform, env, pathJoin),
@@ -465,11 +484,18 @@ export function npmPrefixCandidates(name: string, options: BinarySearchOptions =
  * A candidate in a folder a mission can write is never chosen, pinned or not:
  * the daemon would run it outside any fence, and so would every mission that
  * launches it (GHSA-f58g). The next known location is tried instead, so a
- * `git` planted ahead of the real one on PATH loses to it.
+ * `git` planted ahead of the real one on PATH loses to it. `refused` adds the
+ * checks a caller needs for some of them.
  */
-function firstExecutable(candidates: string[], platform: NodeJS.Platform, timonHome?: string): string | null {
+function firstExecutable(
+  candidates: string[],
+  platform: NodeJS.Platform,
+  timonHome?: string,
+  refused: (candidate: string) => boolean = () => false,
+): string | null {
   for (const candidate of candidates) {
     if (missionWritableProblem(candidate, { platform, ...(timonHome ? { timonHome } : {}) })) continue;
+    if (refused(candidate)) continue;
     try {
       if (!statSync(candidate).isFile()) continue;
       accessSync(candidate, platform === 'win32' ? constants.F_OK : constants.X_OK);
@@ -482,11 +508,34 @@ function firstExecutable(candidates: string[], platform: NodeJS.Platform, timonH
   return null;
 }
 
+/**
+ * Whether a `node` under a version manager's root must be passed over: its
+ * root comes from the daemon's environment (`FNM_DIR`, `VOLTA_HOME`…), which
+ * may name a shared folder, so a copy another account or a fenced mission
+ * could have written is refused (#1102, security review). Only checked on the
+ * machine itself: a caller simulating another OS has no files to look at.
+ */
+function untrustedManagedNode(candidate: string, roots: readonly string[], platform: NodeJS.Platform, home: string, timonHome?: string): boolean {
+  const root = roots.find((dir) => pathWithin(platform, dir, candidate));
+  if (!root) return false;
+  // The system temporary folders a fence leaves writable hold no PATH entry, a version manager root may.
+  if (missionWritableProblem(candidate, { platform, alsoRoots: fencedSystemFolders(), ...(timonHome ? { timonHome } : {}) })) return true;
+  // portability: Windows has no owner or mode bits to read, so only a root inside the user's profile is used: a folder made at a drive's root is writable by every account by default.
+  if (platform === 'win32') return !home || !pathWithin(platform, home, root);
+  if (platform !== process.platform) return false;
+  return untrustedTreeProblem(candidate, root, { platform }) !== null;
+}
+
 export function findExecutableBinary(name: string, options: BinarySearchOptions = {}): string | null {
   const platform = options.platform ?? process.platform;
+  const home = options.homeDir ?? homedir();
+  const roots = name === 'node' ? nodeManagerRoots(platform, home, options.env ?? process.env) : [];
+  const refused = roots.length
+    ? (candidate: string) => untrustedManagedNode(candidate, roots, platform, home, options.timonHome)
+    : undefined;
   // npm is asked only once every known location has failed: it costs a process.
-  return firstExecutable(binaryCandidates(name, options), platform, options.timonHome)
-    ?? firstExecutable(npmPrefixCandidates(name, options), platform, options.timonHome);
+  return firstExecutable(binaryCandidates(name, options), platform, options.timonHome, refused)
+    ?? firstExecutable(npmPrefixCandidates(name, options), platform, options.timonHome, refused);
 }
 
 /**
