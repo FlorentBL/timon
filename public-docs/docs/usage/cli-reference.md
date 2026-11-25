@@ -212,9 +212,11 @@ Projects (agent roles per project):
                                              --check asks gh which account the configured folder signs in as
   timon project set-integration <slug> [--mode local|pr] [--remote NAME] [--target BRANCH] [--forge github]
                        [--account LOGIN] [--gh-config-dir ABSOLUTE_PATH] [--branch-prefix PREFIX/]
-                       [--remote-url PUSH_URL] | --reset
+                       [--remote-url PUSH_URL] [--delete-remote-branch on|off] | --reset
                                              changes what you pass (needs projects:manage); an empty
-                                             --account, --gh-config-dir or --remote-url clears it
+                                             --account, --gh-config-dir or --remote-url clears it;
+                                             --delete-remote-branch on deletes a job's branch on the
+                                             remote once its pull request is merged
   timon project create <slug> [--name TEXT] [--cwd PATH] [--workspace NAME] [--create-workspace]
                        [--color #RRGGBB] [--icon TEXT] [--speech TEXT] [--kind TEXT] [--status TEXT]
                                              registers a project; the cwd must already exist on the host

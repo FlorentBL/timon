@@ -19,7 +19,8 @@ import { sseOn } from '@/lib/sse-stream';
 
 export const LANDING_EVENT = 'integration_changed';
 
-export type LandingChangeKind = 'created' | 'state' | 'pull_request' | 'checks' | 'landed';
+/** `scope`: a project or series filled in on a job recorded without it. */
+export type LandingChangeKind = 'created' | 'state' | 'pull_request' | 'checks' | 'landed' | 'scope';
 
 export type LandingChange = {
   integrationId: string;
@@ -36,7 +37,7 @@ export const LANDING_MAX_WAIT_MS = 2_000;
 /** The slow poll behind the stream. */
 export const LANDING_FALLBACK_POLL_MS = 5 * 60_000;
 
-const KINDS: ReadonlySet<string> = new Set(['created', 'state', 'pull_request', 'checks', 'landed']);
+const KINDS: ReadonlySet<string> = new Set(['created', 'state', 'pull_request', 'checks', 'landed', 'scope']);
 
 /** The event's body, or null for anything that is not one. */
 export function parseLandingChange(data: unknown): LandingChange | null {

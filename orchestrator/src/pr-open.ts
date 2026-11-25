@@ -29,6 +29,7 @@ import { nodeRuntime } from './host/node-runtime.js';
 import type { ExecResult } from './host/types.js';
 import { readProjectIntegration, type ProjectIntegration } from './project-integration.js';
 import { issueLines, jobIssueClosings, pullRequestBody } from './issue-closing.js';
+import { notifyIntegrationOutcome } from './wake.js';
 
 export const PR_CHECKS = [
   'branch_name',
@@ -94,6 +95,13 @@ export type PrOpenDeps = {
   /** Stand-in for the repository's own public tree check. */
   publicTree?: (repo: string, branch: string) => Promise<PublicTreeOutcome>;
   agentCwd?: (agentName: string) => string | null;
+  /** Tells the job's pilot and the person that the pull request is open
+   *  (`notifyIntegrationOutcome`); `recap` false keeps only the card. */
+  notifyOpened?: (integrationId: string, recap: boolean) => void;
+};
+
+const defaultNotifyOpened = (id: string, recap: boolean): void => {
+  notifyIntegrationOutcome(id, 'open', [], undefined, { recap });
 };
 
 // ─── Text rules ─────────────────────────────────────────────────────────────
@@ -200,7 +208,8 @@ function resolveFromIntegration(id: string): Resolved | Refusal {
 
 // ─── Checks ─────────────────────────────────────────────────────────────────
 
-async function checkAccount(forge: Forge, account: string): Promise<PrCheck> {
+/** Shared with the deletion of a merged job's remote branch (`integration-cleanup.ts`). */
+export async function checkAccount(forge: Pick<Forge, 'login'>, account: string): Promise<PrCheck> {
   const out = await forge.login();
   if (!out.ok) return { name: 'account', ok: false, detail: `cannot tell which account gh signs in as: ${out.reason}` };
   // GitHub logins ignore case.
@@ -209,7 +218,7 @@ async function checkAccount(forge: Forge, account: string): Promise<PrCheck> {
     : { name: 'account', ok: false, detail: `gh signs in as ${out.login}, the project expects ${account}` };
 }
 
-async function checkRemoteUrl(repo: string, remote: string, expected: string): Promise<PrCheck> {
+export async function checkRemoteUrl(repo: string, remote: string, expected: string): Promise<PrCheck> {
   const r = await gitRead(repo, ['remote', 'get-url', '--push', '--', remote]);
   if (r.code !== 0) return { name: 'remote_url', ok: false, detail: `the repository has no remote ${remote}` };
   return sameUrl(r.stdout, expected)
@@ -549,7 +558,15 @@ export async function openPullRequest(request: PrOpenRequest, deps: PrOpenDeps =
     if (!created.ok) {
       return refuse(502, 'pr_create_failed', `${branch} was pushed, the pull request was not created: ${created.reason}. Run the command again to retry.`, checks);
     }
-    dbApi.markIntegrationOpen(row.id, { number: created.pr.number, url: created.pr.url, headSha: head });
+    if (dbApi.markIntegrationOpen(row.id, { number: created.pr.number, url: created.pr.url, headSha: head })) {
+      // A task that opens it reports it to the pilot with its own return: the
+      // pilot is woken for a gesture it did not make (the board's, a person's).
+      try {
+        (deps.notifyOpened ?? defaultNotifyOpened)(row.id, request.target !== 'task');
+      } catch (err) {
+        console.error(`[pr-open] notice of the pull request of ${branch} failed: ${(err as Error).message}`);
+      }
+    }
     return {
       ok: true,
       pr: created.pr,

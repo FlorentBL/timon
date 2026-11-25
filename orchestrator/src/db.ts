@@ -1682,6 +1682,9 @@ if (!projectCols.includes('created_by')) db.exec(`ALTER TABLE projects ADD COLUM
 // `integration` = how the project's Kanban jobs land (`project-integration.ts`):
 // JSON validated by zod on every read and write; NULL = today's local merge.
 if (!projectCols.includes('integration')) db.exec(`ALTER TABLE projects ADD COLUMN integration TEXT`);
+// `extra_dirs` = the folders outside their working directories every mission of
+// the project may read, or read and write (`project-extra-dirs.ts`): JSON, NULL = none.
+if (!projectCols.includes('extra_dirs')) db.exec(`ALTER TABLE projects ADD COLUMN extra_dirs TEXT`);
 
 // the UI shows them as "unknown author"
 // rather than wrongly attributing them. Web Push:
@@ -2052,6 +2055,12 @@ if (!integrationCols.includes('notified_state')) {
   db.exec(`ALTER TABLE integrations ADD COLUMN notified_state TEXT`);
   db.exec(`UPDATE integrations SET notified_state = state WHERE state IN ('merged', 'closed')`);
 }
+// When what a concluded integration left behind was removed
+// (`integration-cleanup.ts`): once merged, its local branch, its tasks' and
+// pilot's worktrees, its remote branch when the project allows it; once its
+// pull request is closed, only the pilot's worktree. Rows concluded before the
+// column count as not cleaned: the same guards decide for them. NULL = not yet.
+if (!integrationCols.includes('cleaned_at')) db.exec(`ALTER TABLE integrations ADD COLUMN cleaned_at INTEGER`);
 // The relecture of a contributor's pull request (`external-pr-review.ts`): one
 // row per pull request, the latest one. 'draft' holds the brief the person
 // reads before sending it; 'running' names the reviewer's mission; 'done' or
@@ -2529,6 +2538,10 @@ export type TaskRow = {
   landing?: string | null;
 };
 
+/** What a job's pilot is told of its integration: its pull request opened,
+ *  then merged or closed. */
+export type IntegrationNotice = 'open' | 'merged' | 'closed';
+
 /** One integration branch (see the `integrations` migration). */
 export type IntegrationRow = {
   id: string;
@@ -2551,6 +2564,8 @@ export type IntegrationRow = {
   landed_at: number | null;
   /** Outcome the series pilot was told about (see the `notified_state` migration). */
   notified_state?: string | null;
+  /** Leftovers removed after the landing (see the `cleaned_at` migration). */
+  cleaned_at?: number | null;
   created_at: number;
   updated_at: number;
 };
@@ -3309,6 +3324,14 @@ const failLandingRepairAttemptStmt = db.prepare(
 const listLocalIntegrationsToLandStmt = db.prepare(
   `SELECT * FROM integrations WHERE state = 'branch' AND remote = '' ORDER BY repo ASC, created_at ASC`,
 );
+const listIntegrationsToCleanStmt = db.prepare(
+  `SELECT * FROM integrations
+    WHERE cleaned_at IS NULL AND ((state = 'merged' AND landed_at IS NOT NULL) OR state = 'closed')
+    ORDER BY repo ASC, updated_at ASC`,
+);
+const markIntegrationCleanedStmt = db.prepare(
+  `UPDATE integrations SET cleaned_at = ? WHERE id = ? AND state IN ('merged', 'closed') AND cleaned_at IS NULL`,
+);
 const listOpenIntegrationsStmt = db.prepare(
   `SELECT * FROM integrations WHERE state = 'open' ORDER BY repo ASC, created_at ASC`,
 );
@@ -3512,11 +3535,6 @@ const TASK_WATCHED_COLUMNS = [
 ] as const satisfies readonly (keyof TaskRow)[];
 
 /**
- * Publishes `task_updated` (and `task_assigned`) for what a write changed,
- * comparing the row read BEFORE the write with the row now. Synchronous, so the
- * origin store of the writer (`task-origin.ts`) is still the current one.
- */
-/**
  * Publishes `integration_changed` for a write that moved the row `id`. The
  * callers publish only when their statement changed something: a job's
  * screens reload on it, and a write that changes nothing must not wake them.
@@ -3544,6 +3562,11 @@ function checksSignature(checks: string | null): string | null {
   }
 }
 
+/**
+ * Publishes `task_updated` (and `task_assigned`) for what a write changed,
+ * comparing the row read BEFORE the write with the row now. Synchronous, so the
+ * origin store of the writer (`task-origin.ts`) is still the current one.
+ */
 function publishTaskDiff(prev: TaskRow | undefined): void {
   if (!prev) return;
   const next = getTaskStmt.get(prev.id) as TaskRow | undefined;
@@ -4393,6 +4416,7 @@ export type ProjectRow = {
   grepai_watch: string | null; // conversation restarts empty without saying so. ── Memory & project types (DB
   created_by: string | null; // `plugin:<id>` for a project a plugin registered
   integration: string | null; // JSON of `project-integration.ts`; NULL = local merge
+  extra_dirs: string | null; // JSON of `project-extra-dirs.ts`; NULL = none
   created_at: number;
   updated_at: number;
 };
@@ -5909,13 +5933,19 @@ export const dbApi = {
   }): IntegrationRow {
     const now = Date.now();
     const id = randomUUID();
+    const before = getIntegrationStmt.get(row.repo, row.branch) as IntegrationRow | undefined;
     upsertIntegrationStmt.run(
       id, row.repo, row.branch, row.remote, row.target, row.mode,
       row.project ?? null, row.seriesId ?? null, row.baseSha ?? null, now, now,
     );
     const recorded = getIntegrationStmt.get(row.repo, row.branch) as IntegrationRow;
-    // Recording an existing branch again moves nothing a screen shows.
     if (recorded.id === id) publishIntegrationChange(id, ['created']);
+    // Recording an existing branch again only fills what it lacked. A filled
+    // project or series puts the job in front of a screen filtered on it,
+    // which would otherwise wait for its slow poll; the base sha shows nowhere.
+    else if (before && (before.project !== recorded.project || before.series_id !== recorded.series_id)) {
+      publishIntegrationChange(recorded.id, ['scope']);
+    }
     return recorded;
   },
   getIntegration(repo: string, branch: string): IntegrationRow | undefined {
@@ -6073,6 +6103,14 @@ export const dbApi = {
   listOpenIntegrations(): IntegrationRow[] {
     return listOpenIntegrationsStmt.all() as IntegrationRow[];
   },
+  /** Landed (or closed) integrations whose leftovers were not removed yet. */
+  listIntegrationsToClean(): IntegrationRow[] {
+    return listIntegrationsToCleanStmt.all() as IntegrationRow[];
+  },
+  /** Records that the leftovers of a concluded integration were dealt with. */
+  markIntegrationCleaned(id: string): boolean {
+    return markIntegrationCleanedStmt.run(Date.now(), id).changes > 0;
+  },
   /** Local integration branches (no remote) that have not landed yet. */
   listLocalIntegrationsToLand(): IntegrationRow[] {
     return listLocalIntegrationsToLandStmt.all() as IntegrationRow[];
@@ -6086,13 +6124,13 @@ export const dbApi = {
   touchIntegrationPolled(id: string): void {
     touchIntegrationPolledStmt.run(Date.now(), id);
   },
-  /** Claims the notice of `state` ('merged' | 'closed'): true for one caller
-   *  only, and only while the row is in that state. */
-  claimIntegrationNotice(id: string, state: 'merged' | 'closed'): boolean {
+  /** Claims the notice of `state` ('open' | 'merged' | 'closed'): true for one
+   *  caller only, and only while the row is in that state. */
+  claimIntegrationNotice(id: string, state: IntegrationNotice): boolean {
     return claimIntegrationNoticeStmt.run(state, Date.now(), id, state, state).changes === 1;
   },
   /** Hands back a notice that could not be sent. */
-  releaseIntegrationNotice(id: string, state: 'merged' | 'closed'): void {
+  releaseIntegrationNotice(id: string, state: IntegrationNotice): void {
     releaseIntegrationNoticeStmt.run(Date.now(), id, state);
   },
   /** Concluded integrations whose pilot was not told yet. */
@@ -8558,13 +8596,19 @@ export const dbApi = {
     return db.prepare(`UPDATE projects SET integration = ?, updated_at = ? WHERE slug = ?`)
       .run(json, Date.now(), slug).changes > 0;
   },
+  /** The one door for `extra_dirs`: `upsertProject` never writes it, so a meta
+   *  edit cannot open a folder. False = no such project. */
+  setProjectExtraDirs(slug: string, json: string | null): boolean {
+    return db.prepare(`UPDATE projects SET extra_dirs = ?, updated_at = ? WHERE slug = ?`)
+      .run(json, Date.now(), slug).changes > 0;
+  },
   listProjectRows(): ProjectRow[] {
     return db.prepare(`SELECT * FROM projects ORDER BY slug`).all() as ProjectRow[];
   },
   /** Partial upsert: only defined fields are written (merge with the existing). */
   upsertProject(
     slug: string,
-    fields: Partial<Omit<ProjectRow, 'slug' | 'created_at' | 'updated_at' | 'created_by' | 'integration'>> = {},
+    fields: Partial<Omit<ProjectRow, 'slug' | 'created_at' | 'updated_at' | 'created_by' | 'integration' | 'extra_dirs'>> = {},
   ): void {
     const now = Date.now();
     const cur = this.getProjectRow(slug);

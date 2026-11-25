@@ -1,9 +1,9 @@
 'use client';
 
 /**
- * "Allow for this agent" (TODO #1162): a path the mission fence refused, as a
- * card in the mission's conversation, with the folder the daemon offers to
- * open and the two answers.
+ * "Allow for this agent" (TODO #1162) and "Allow for the project" (#1168): a
+ * path the mission fence refused, as a card in the mission's conversation,
+ * with the folder the daemon offers to open and the answers.
  *
  * The thread paints the SLOT `chat.fence`, not this card: the product
  * occupies it by default (`fallback`, client half of `@timon/missions`) and a
@@ -12,15 +12,22 @@
  * occupant reads them with `useFenceGrant()` and only draws. A replacement
  * changes the dressing, never what an accord does: the answer goes from the
  * person's session to the daemon, which checks the folder again, adds it to
- * the agent's extra folders and relaunches the mission.
+ * the agent's extra folders and relaunches the mission (or puts back the
+ * Kanban task the refusal blocked).
+ *
+ * "Allow for the project" is the product's alone for now: the `chat.fence`
+ * contract of the SDK (API 19, published) carries `allow` and `refuse` only.
+ * Its gesture lives in a context of its own (`useFenceGrantProject`), not
+ * exported to plugins, until a contract version declares it; a plugin that
+ * redraws the card keeps the agent's accord.
  */
 
 import { createContext, useCallback, useContext, useMemo, useState, type ReactElement } from 'react';
-import { Check, FolderLock, X } from 'lucide-react';
+import { Check, FolderLock, FolderTree, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { apiErrorMessage } from '@/lib/api-error';
-import { answerFenceGrant, type FenceGrantView } from '@/lib/fence-grant';
+import { answerFenceGrant, type FenceGrantScope, type FenceGrantView } from '@/lib/fence-grant';
 import { t } from '@/lib/i18n';
 import { SlotSingle } from '@/lib/plugin-host/render';
 import { CHAT_FENCE_GRANT_SLOT } from '@/lib/plugin-host/slots';
@@ -39,6 +46,15 @@ export type FenceGrantValue = {
 
 const FenceGrantContext = createContext<FenceGrantValue | null>(null);
 
+/** The product's "Allow for the project", beside the contract's two gestures; null when the card offers no project. */
+type FenceGrantProjectValue = { project: string; allowProject: () => Promise<boolean> };
+const FenceGrantProjectContext = createContext<FenceGrantProjectValue | null>(null);
+
+/** Not in `@timon/ui`: read by the product's own card only (see the header). */
+export function useFenceGrantProject(): FenceGrantProjectValue | null {
+  return useContext(FenceGrantProjectContext);
+}
+
 /** Readable by a plugin that takes the slot. `null` outside a fence card. */
 export function useFenceGrant(): FenceGrantValue | null {
   return useContext(FenceGrantContext);
@@ -50,17 +66,17 @@ export function ChatFenceGrantSlot({ grant, highlighted = false }: { grant: Fenc
   const [busy, setBusy] = useState(false);
   const shown = fresh && fresh.id === grant.id && grant.status === 'pending' ? fresh : grant;
 
-  const answer = useCallback(async (decision: 'allow' | 'refuse'): Promise<boolean> => {
+  const answer = useCallback(async (decision: 'allow' | 'refuse', scope: FenceGrantScope = 'agent'): Promise<boolean> => {
     if (busy || shown.status !== 'pending') return false;
     setBusy(true);
     try {
-      const outcome = await answerFenceGrant(shown, decision);
+      const outcome = await answerFenceGrant(shown, decision, scope);
       if (!outcome.ok) {
         toast.error(outcome.status === 0 ? t('fenceGrant.failed') : apiErrorMessage(outcome.body, t('fenceGrant.failed')));
         return false;
       }
       setFresh(outcome.view);
-      if (decision === 'allow' && outcome.view.status === 'allowed' && outcome.view.relaunched === false) {
+      if (decision === 'allow' && outcome.view.status === 'allowed' && outcome.view.relaunched === false && outcome.view.requeued !== true) {
         toast.warning(t('fenceGrant.relaunchFailed'));
       }
       return true;
@@ -71,13 +87,21 @@ export function ChatFenceGrantSlot({ grant, highlighted = false }: { grant: Fenc
 
   const allow = useCallback(() => answer('allow'), [answer]);
   const refuse = useCallback(() => answer('refuse'), [answer]);
+  const allowProject = useCallback(() => answer('allow', 'project'), [answer]);
   const value = useMemo<FenceGrantValue>(
     () => ({ grant: shown, busy, highlighted, allow, refuse }),
     [shown, busy, highlighted, allow, refuse],
   );
+  const project = shown.project;
+  const projectValue = useMemo<FenceGrantProjectValue | null>(
+    () => (project ? { project, allowProject } : null),
+    [project, allowProject],
+  );
   return (
     <FenceGrantContext.Provider value={value}>
-      <SlotSingle name={CHAT_FENCE_GRANT_SLOT} />
+      <FenceGrantProjectContext.Provider value={projectValue}>
+        <SlotSingle name={CHAT_FENCE_GRANT_SLOT} />
+      </FenceGrantProjectContext.Provider>
     </FenceGrantContext.Provider>
   );
 }
@@ -85,9 +109,11 @@ export function ChatFenceGrantSlot({ grant, highlighted = false }: { grant: Fenc
 /** The product's occupant of `chat.fence`. Takes no props: everything comes from `useFenceGrant()`. */
 export function FenceGrantCard(): ReactElement | null {
   const ctx = useFenceGrant();
+  const forProject = useFenceGrantProject();
   if (!ctx) return null;
   const { grant, busy, highlighted, allow, refuse } = ctx;
   const open = grant.status === 'pending';
+  const toProject = grant.scope === 'project' && grant.project ? grant.project : null;
   return (
     <div
       className={cn(
@@ -108,12 +134,24 @@ export function FenceGrantCard(): ReactElement | null {
           <p className="font-medium [overflow-wrap:anywhere]">
             {t('fenceGrant.question', { agent: grant.agent, mode: grant.folder.mode, folder: grant.folder.display })}
           </p>
-          <p className="text-[11.5px] text-muted-foreground">{t('fenceGrant.detail')}</p>
+          <p className="text-[11.5px] text-muted-foreground">
+            {forProject ? t('fenceGrant.detailProject', { project: forProject.project }) : t('fenceGrant.detail')}
+          </p>
           <div className="flex flex-wrap items-center gap-2">
             <Button type="button" size="sm" className="h-7 gap-1.5" disabled={busy} onClick={() => void allow()} data-decision="allow">
               <Check className="size-3" />
               {t('fenceGrant.allow')}
             </Button>
+            {forProject && (
+              <Button
+                type="button" size="sm" variant="outline" className="h-7 gap-1.5" disabled={busy}
+                onClick={() => void forProject.allowProject()} data-decision="allow-project"
+                title={t('fenceGrant.allowProjectTitle', { project: forProject.project })}
+              >
+                <FolderTree className="size-3" />
+                {t('fenceGrant.allowProject')}
+              </Button>
+            )}
             <Button type="button" size="sm" variant="outline" className="h-7 gap-1.5 text-muted-foreground" disabled={busy} onClick={() => void refuse()} data-decision="refuse">
               <X className="size-3" />
               {t('fenceGrant.refuse')}
@@ -130,9 +168,14 @@ export function FenceGrantCard(): ReactElement | null {
         >
           {grant.status === 'allowed' ? <Check className="size-3 shrink-0" /> : <X className="size-3 shrink-0" />}
           {grant.status === 'allowed'
-            ? t('fenceGrant.state.allowed', { folder: grant.folder.display, agent: grant.agent })
+            ? toProject
+              ? t('fenceGrant.state.allowedProject', { folder: grant.folder.display, project: toProject })
+              : t('fenceGrant.state.allowed', { folder: grant.folder.display, agent: grant.agent })
             : t('fenceGrant.state.refused')}
         </span>
+      )}
+      {grant.status === 'allowed' && grant.requeued === true && (
+        <span className="text-[11.5px] text-muted-foreground" data-fence-grant-requeued="">{t('fenceGrant.requeued')}</span>
       )}
     </div>
   );

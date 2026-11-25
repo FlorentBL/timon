@@ -390,8 +390,9 @@ published checksum · verified 1.5.0 available to replace it*.
 - **Safe unpacking.** An archive that tries to write outside its folder, holds
   a hard link or a device, or a symbolic link that points outside the agent's
   folder (or through another link) or to a folder above it is refused with
-  nothing installed. On macOS and Windows, whose disks ignore case, so is an
-  archive holding two names that differ only by case or accent form. Symbolic
+  nothing installed. So is, on every system, an archive holding two names for
+  the same path that differ only by case or accent form (many disks treat them
+  as one), or a link whose target the disk cannot identify. Symbolic
   links that stay inside the agent's folder, such as those of a macOS framework,
   are kept; on Windows, where creating one needs a privilege, Timon copies what
   the link points to instead. A `.zip` holding a link is refused.

@@ -140,13 +140,29 @@ A branch under embargo (`sec/<topic>`, for a security fix) is never pushed by th
 
 If the push succeeds but the pull request cannot be created, run the command again: the branch is already there and only the pull request is opened.
 
+Once the pull request is open, a card in your notifications gives its link, and the conversation that planned the job gets a message with it, unless the job's own final task opened it: that task's report already says so.
+
 ## Once the pull request is merged
 
 Timon checks every few minutes whether the pull request was merged, by looking for its branch in the remote's target branch. Once it was, the job's TO DO ideas close, its documentation task is created, a card in your notifications says the pull request was merged, and the conversation that planned the job gets a message listing what closed. A pull request closed without a merge closes nothing and keeps the branches: the card is an alert, and the job's conversation is asked what comes next. Without access to the forge, `timon task mark-merged <task> --sha <merge commit>` on a task of the job does the same by hand. If the conversation that planned the job no longer exists, the card is the only notice.
 
+### What the job leaves behind
+
+Once the job has landed and none of its tasks still waits or runs, Timon removes, a few minutes later, what was only there to build it: the working folders of its tasks, the working folder of the agent that ran a sequential job, and the integration branch on your machine, once the target branch contains it. Nothing that did not land is removed: a branch with commits the target branch does not have (a pull request merged by squash, a commit added after the merge) stays, and so does a working folder holding changes never committed. A branch checked out in one of your folders waits until you leave it.
+
+The branch on the remote stays unless you ask:
+
+```bash
+timon project set-integration my-app --delete-remote-branch on
+```
+
+Timon then deletes it once the pull request is merged, after the same account and push URL checks as for the push, and only while it still ends on the commit that was merged: a branch someone pushed to since is kept. If GitHub already deleted it, nothing more happens.
+
+A pull request closed without a merge keeps its branch: only the sequential agent's working folder goes, once its commits are in the branch.
+
 ## Follow the job and review contributors
 
-The [Git stack](git.md) of an agent's chat follows what happens next. **Jobs** groups the project's jobs by what they wait for (a failing check or a conflict first) and previews what each pull request carries; **Pull requests** lists the pull requests open on the repository, contributors' ones included, and prepares their review without running their code. On a TO DO idea, the badge of its job opens the same preview. All three follow the job as it moves: a branch recorded, a pull request opened, merged or closed, or new check results show up without a reload. See [Pull requests](git.md#pull-requests), [Jobs](git.md#jobs) and [From the TO DO notebook](git.md#from-the-to-do-notebook).
+The [Git stack](git.md) of an agent's chat follows what happens next. **Jobs** groups the project's jobs by what they wait for (a failing check or a conflict first) and previews what each pull request carries; **Pull requests** lists the pull requests open on the repository, contributors' ones included, and prepares their review without running their code. On a TO DO idea, the badge of its job opens the same preview. All three follow the job as it moves: a branch recorded, a pull request opened, merged or closed, or new check results show up without a reload, in a preview left open too, and the idea tags on the Kanban's task cards change once the job lands. See [Pull requests](git.md#pull-requests), [Jobs](git.md#jobs) and [From the TO DO notebook](git.md#from-the-to-do-notebook).
 
 ### Read a pull request in the app
 

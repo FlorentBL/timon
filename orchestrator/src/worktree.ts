@@ -18,10 +18,12 @@
  *   5. The merger calls disposeWorktree → the local branch is deleted,
  *      the worktree dir is unmounted. The DB events and the sha remain the audit.
  */
-import { existsSync, lstatSync, mkdirSync, readFileSync, realpathSync, statSync } from 'node:fs';
+import { existsSync, lstatSync, mkdirSync, readFileSync, realpathSync, rmSync, statSync } from 'node:fs';
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { TIMON_HOME } from './paths.js';
 import { execFileHost, linkDirectory } from './host/index.js';
+import { execTree } from './host/kill-tree.js';
+import { settingNum } from './settings.js';
 import { purgeShell, unlinkWorktreeLinks } from './worktree-shell.js';
 
 const exec = execFileHost;
@@ -229,12 +231,28 @@ export async function createWorktree(
   // instead of operating in the main repo — see `refreshWorktreeBase`
   // and the incident of 2026-08-20.
   const branch = branchName ?? `timon/task/${taskId}`;
+  const stallMs = worktreeAddStallMs();
   // If the dir already exists AND is a valid worktree, we assume we
-  // are in a re-spawn: idempotent return.
+  // are in a re-spawn: idempotent return. Only once its checkout is known to be
+  // complete: `.git` exists from the first second of `git worktree add`, and a
+  // task started on a checkout cut short would see half of its files missing (TIM-0164).
   if (existsSync(path) && (await isGitRepo(path))) {
-    const existingBase = base ?? (await currentBranch(repoCwd)) ?? 'HEAD';
-    await prepareWorktreeDependencies(repoCwd, path);
-    return { taskId, path, branch, base: existingBase, sourceRepo: repoCwd };
+    const state = await checkoutState(path, stallMs);
+    if (state === 'complete') {
+      const existingBase = base ?? (await currentBranch(repoCwd)) ?? 'HEAD';
+      await prepareWorktreeDependencies(repoCwd, path);
+      return { taskId, path, branch, base: existingBase, sourceRepo: repoCwd };
+    }
+    if (state === 'writing') {
+      throw worktreeError(`the worktree ${path} is still being written: git holds its index.lock. Wait for git to finish, or delete that lock if no git runs any more, then move the task back to Pending.`);
+    }
+    if (state === 'unreadable') {
+      throw worktreeError(`git status does not answer in the worktree ${path}. Check the folder, or detach the task's worktree, then move the task back to Pending.`);
+    }
+    // No index and nobody writing one: a checkout that never finished. Nothing
+    // was ever committed from it; its branch is kept and the folder made again.
+    console.warn(`[worktree] ${path} holds a checkout that never finished: making it again`);
+    await discardHalfMadeWorktree(repoCwd, path);
   }
   mkdirSync(WORKTREES_ROOT, { recursive: true });
   const baseRef = base ?? (await currentBranch(repoCwd)) ?? 'HEAD';
@@ -245,9 +263,119 @@ export async function createWorktree(
   const addArgs = (await branchExists(repoCwd, branch))
     ? ['worktree', 'add', path, branch]
     : ['worktree', 'add', '-b', branch, path, baseRef];
-  await exec('git', ['-C', repoCwd, ...addArgs], { timeout: 30_000 });
+  await addWorktree(repoCwd, path, addArgs, stallMs);
   await prepareWorktreeDependencies(repoCwd, path);
   return { taskId, path, branch, base: baseRef, sourceRepo: repoCwd };
+}
+
+const WORKTREE_ADD_STALL_DEFAULT_MS = 120_000;
+/** Against a git that loops while printing, not a delay a real checkout reaches. */
+const WORKTREE_ADD_CEILING_MS = 6 * 60 * 60_000;
+
+/** `TIMON_WORKTREE_ADD_STALL_MS`, resolved env > config > settings > default. */
+function worktreeAddStallMs(): number {
+  try {
+    const value = settingNum('TIMON_WORKTREE_ADD_STALL_MS');
+    if (Number.isFinite(value) && value > 0) return value;
+  } catch { /* registry unreadable: the default */ }
+  return WORKTREE_ADD_STALL_DEFAULT_MS;
+}
+
+type WorktreeError = Error & { stderr: string; stdout: string; code: number; timedOut?: boolean };
+
+/** Shaped like an `execFileHost` failure: the dispatcher shows `stderr` as the task's reason. */
+function worktreeError(reason: string, extra: { stdout?: string; code?: number; timedOut?: boolean } = {}): WorktreeError {
+  const err = new Error(`git worktree add failed: ${reason}`) as WorktreeError;
+  err.stderr = reason;
+  err.stdout = extra.stdout ?? '';
+  err.code = extra.code ?? 1;
+  if (extra.timedOut) err.timedOut = true;
+  return err;
+}
+
+/** Git's last words, its progress (`\r`-separated) included, without the hundreds of updates before them. */
+function lastLines(output: string, count: number): string {
+  return output.split(/[\r\n]+/).map((line) => line.trim()).filter(Boolean).slice(-count).join('\n');
+}
+
+/**
+ * `git worktree add`, waited on for as long as it reports progress. Git prints
+ * `Updating files: N% (x/y)` on its stderr, pipe included, on a checkout that
+ * lasts: each new line pushes the deadline back. A fixed 30 s gave up on a
+ * large repository behind an antivirus (TIM-0164) and only stopped git itself:
+ * on Windows the checkout it had started went on alone, after the task was
+ * blocked. Here a git silent for `stallMs` is stopped with every process it
+ * started, and the half-made worktree goes with it.
+ */
+async function addWorktree(repoCwd: string, path: string, addArgs: string[], stallMs: number): Promise<void> {
+  const existedBefore = existsSync(path);
+  const r = await execTree('git', ['-C', repoCwd, ...addArgs], {
+    timeout: WORKTREE_ADD_CEILING_MS,
+    stallTimeout: stallMs,
+    maxBuffer: 16 * 1024 * 1024,
+  });
+  if (r.code === 0 && !r.timedOut) return;
+  // A folder that was there before is not ours to remove: git refused it, nothing was written in it.
+  if (!existedBefore) await discardHalfMadeWorktree(repoCwd, path);
+  const said = lastLines(r.stderr, 4);
+  if (r.timedOut) {
+    throw worktreeError(
+      `git reported no progress for ${Math.round(stallMs / 1000)} s and was stopped${said ? ` (last: ${said.split('\n').pop()})` : ''}. `
+      + `The half-made worktree was removed and its branch kept. Raise TIMON_WORKTREE_ADD_STALL_MS for a repository this slow to check out, then move the task back to Pending.`,
+      { stdout: r.stdout, code: r.code, timedOut: true },
+    );
+  }
+  throw worktreeError(said || `git exited with code ${r.code}`, { stdout: r.stdout, code: r.code });
+}
+
+/**
+ * Removes a worktree whose checkout did not finish, and KEEPS its branch.
+ * `-f -f`: `git worktree add` locks the worktree ("initializing") until it is
+ * done, and a stopped one leaves that lock, which a single `--force` respects.
+ * The folder goes even when git could not take it, so that the next attempt
+ * starts from nothing rather than reusing it.
+ */
+async function discardHalfMadeWorktree(repoCwd: string, path: string): Promise<void> {
+  const inside = relative(WORKTREES_ROOT, path);
+  if (!inside || isAbsolute(inside) || inside === '..' || inside.startsWith(`..${sep}`)) return;
+  try {
+    await exec('git', ['-C', repoCwd, 'worktree', 'remove', '--force', '--force', path], { timeout: 120_000 });
+  } catch (error) {
+    console.warn(`[worktree] git could not remove the half-made worktree ${path}: ${(error as Error).message}`);
+    try { await exec('git', ['-C', repoCwd, 'worktree', 'unlock', path], { timeout: 10_000 }); } catch { /* not locked, or unknown */ }
+  }
+  try {
+    // Retries: on Windows a process that was just stopped, or the antivirus, can still hold a file.
+    rmSync(path, { recursive: true, force: true, maxRetries: 10, retryDelay: 500 });
+  } catch (error) {
+    console.warn(`[worktree] could not delete the half-made worktree ${path}: ${(error as Error).message}`);
+  }
+  try { await exec('git', ['-C', repoCwd, 'worktree', 'prune'], { timeout: 30_000 }); } catch { /* the next prune will do */ }
+}
+
+/**
+ * Whether an existing worktree folder can be handed to a task as it is.
+ * `writing`: git holds the index lock (a checkout still running, or a git
+ * that died holding it). `unfinished`: no index at all, the checkout never
+ * completed. `unreadable`: `git status` fails or does not answer in time.
+ */
+async function checkoutState(path: string, stallMs: number): Promise<'complete' | 'writing' | 'unfinished' | 'unreadable'> {
+  let gitDir: string;
+  try {
+    const r = await exec('git', ['-C', path, 'rev-parse', '--path-format=absolute', '--git-dir'], { timeout: 10_000 });
+    gitDir = r.stdout.trim();
+  } catch {
+    return 'unreadable';
+  }
+  if (!gitDir) return 'unreadable';
+  if (existsSync(join(gitDir, 'index.lock'))) return 'writing';
+  if (!existsSync(join(gitDir, 'index'))) return 'unfinished';
+  try {
+    await exec('git', ['-C', path, 'status', '--porcelain', '--untracked-files=no'], { timeout: stallMs, maxBuffer: 64 * 1024 * 1024 });
+  } catch {
+    return 'unreadable';
+  }
+  return 'complete';
 }
 
 /**
@@ -404,9 +532,11 @@ async function unlinkBeforeRemoval(worktreePath: string): Promise<void> {
  *
  * The removal itself runs from the repository's common dir, never from inside
  * the folder: Windows locks a process's current directory, and a git that
- * stands in the folder it deletes fails with "Permission denied".
+ * stands in the folder it deletes fails with "Permission denied". `root` is
+ * the folder its leftovers may be purged from (a pilot's worktree lives in
+ * another one than the tasks').
  */
-export async function releaseWorktreeFolder(path: string): Promise<void> {
+export async function releaseWorktreeFolder(path: string, root: string = WORKTREES_ROOT): Promise<void> {
   const r = await exec(
     'git',
     ['-C', path, 'rev-parse', '--path-format=absolute', '--git-common-dir'],
@@ -415,7 +545,7 @@ export async function releaseWorktreeFolder(path: string): Promise<void> {
   const commonDir = r.stdout.trim();
   await unlinkBeforeRemoval(path);
   await exec('git', ['-C', commonDir || path, 'worktree', 'remove', path], { timeout: 15_000 });
-  purgeShell(WORKTREES_ROOT, path, 0, Date.now());
+  purgeShell(root, path, 0, Date.now());
 }
 
 /**

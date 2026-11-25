@@ -124,3 +124,39 @@ test('a plugin that takes the slot reads the same card and answers through the h
   await w.until(() => w.calls.length === 1, 'the replacement to answer');
   assert.deepEqual(w.calls[0]!.body, { decision: 'refuse' });
 });
+
+const projectView = (): FenceGrantView => view({ grant: { path: '/home/u/.cache/tool', display: '~/.cache/tool', mode: 'write', project: 'lib' } });
+
+test('a card offers the project only when the daemon names a well-formed one', () => {
+  assert.equal(view().project, null);
+  assert.equal(projectView().project, 'lib');
+  assert.equal(view({ grant: { path: '/x', display: '/x', mode: 'read', project: '../etc' } })!.project, null);
+  const allowed = applyFenceGrantResolution(projectView(), parseFenceGrantResolution({ id: 'refusal-1', status: 'allowed', scope: 'project', project: 'lib' })!);
+  assert.equal(allowed.scope, 'project');
+  assert.equal(applyFenceGrantResolution(view(), parseFenceGrantResolution({ id: 'refusal-1', status: 'allowed' })!).scope, 'agent');
+});
+
+test('no project in the offer: no "Allow for the project"', async (t) => {
+  const w = await mount(t);
+  await w.render(view());
+  assert.ok(!document.querySelector('[data-decision="allow-project"]'));
+});
+
+test('"Allow for the project" posts the scope, then says the project\'s agents get the folder', async (t) => {
+  const w = await mount(t, { body: { ok: true, resolution: { id: 'refusal-1', status: 'allowed', scope: 'project', project: 'lib' }, relaunched: true, requeued: false } });
+  await w.render(projectView());
+  assert.match(document.body.textContent ?? '', /every agent of lib gets it/);
+  await w.click('[data-decision="allow-project"]');
+  await w.until(() => Boolean(document.querySelector('[data-fence-grant-state="allowed"]')), 'the card to show the accord');
+  assert.deepEqual(w.calls, [{ method: 'POST', url: '/api/ui/missions/m1/fence-grants/refusal-1', body: { decision: 'allow', scope: 'project' } }]);
+  assert.match(document.body.textContent ?? '', /~\/\.cache\/tool is open to the agents of lib/);
+  assert.doesNotMatch(document.body.textContent ?? '', /fenceGrant\./, 'unresolved i18n key');
+});
+
+test('an accord that put a blocked Kanban task back in the queue says so', async (t) => {
+  const w = await mount(t, { body: { ok: true, resolution: { id: 'refusal-1', status: 'allowed', scope: 'agent' }, relaunched: false, requeued: true, taskId: 't1' } });
+  await w.render(view());
+  await w.click('[data-decision="allow"]');
+  await w.until(() => Boolean(document.querySelector('[data-fence-grant-requeued]')), 'the requeue to show');
+  assert.match(document.body.textContent ?? '', /The task is back in the queue/);
+});
