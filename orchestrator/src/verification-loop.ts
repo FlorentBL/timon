@@ -632,6 +632,12 @@ export async function reconcileMissingReviews(): Promise<void> {
     if (task.updated_at < cutoff) continue;
     if (isCodeOnlyPipeline(task.pipeline)) continue;
     if (hasChildTask(task.id, 'review')) continue;
+    // Already integrated by its coder (merge by reference into a series
+    // branch): `handleCodeDone` skips it by design, so selecting it only
+    // replayed the same no-op catch-up every 120 s for the whole 6 h window
+    // (TODO #1215: task 1e9dbabe, 60 passes in 2 h). The sha is terminal for
+    // this invariant: a merged branch is never reviewed afterwards.
+    if (task.merged_commit_sha) continue;
     console.warn(`[verification] reconcile: code ${task.id} DONE with no review → catch-up`);
     try {
       // Go back through the nominal path: same guards, same logs, no duplicated
