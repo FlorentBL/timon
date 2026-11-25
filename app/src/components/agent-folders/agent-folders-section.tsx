@@ -8,21 +8,23 @@
  * project's own folders (TODO #1168) reach every agent of the project.
  *
  * A short label with "Add a folder" at its right, then a card of rows: the
- * folder's name, its access and full path below, and every other gesture in
- * the row's "…" menu. A folder is added through a dialog; no field stays on
+ * folder's name, and its access below. The full path is never painted on the
+ * row: it shows in a hover title and at the top of the row's "…" menu, beside
+ * every other gesture. A folder is added through a dialog; no field stays on
  * the page. A change applies from the agent's next mission: the fence is set
  * when a mission's process starts.
  */
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactElement } from 'react';
-import { AlertTriangle, Plus } from 'lucide-react';
+import { AlertTriangle, Copy, Lock, PenLine, Plus, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
-import { DropdownMenuItem } from '@/components/ui/dropdown-menu';
+import { DropdownMenuItem, DropdownMenuLabel } from '@/components/ui/dropdown-menu';
 import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { ProviderSection, ProviderSettingRow } from '@/components/provider-page/provider-section';
 import { reportDirectoryPick, useDirectoryPicker } from '@/components/directory-browser';
+import { copyToClipboard } from '@/lib/clipboard';
 import { t } from '@/lib/i18n';
 import {
   addFolder, AgentFoldersError, fetchFolders, folderName, folderOwnerKey, isAbsoluteFolder, removeFolder,
@@ -137,28 +139,41 @@ export function AgentFoldersSection({ agents, project = null, showAgent = false,
         <ProviderSettingRow title={t('agentFolders.emptyTitle')} status={emptyStatus ?? t('agentFolders.emptyStatus')} data-agent-folders-empty="" />
       ) : rows.map(({ owner, folder, dropped }) => {
         const access = t(folder.mode === 'write' ? 'agentFolders.mode.write' : 'agentFolders.mode.read');
+        const name = folderName(folder.path);
         return (
           <ProviderSettingRow
             key={`${folderOwnerKey(owner)}\n${folder.path}`}
             data-agent-folder={folder.path}
-            title={<span className="truncate" title={folder.path}>{folderName(folder.path)}</span>}
+            title={<span className="truncate" title={folder.path}>{name}</span>}
             status={dropped ? (
-              <span className="flex min-w-0 items-center gap-1 text-amber-700 dark:text-amber-400" title={dropped}>
+              <span className="flex min-w-0 items-center gap-1 text-amber-700 dark:text-amber-400" title={`${folder.path}\n${dropped}`}>
                 <AlertTriangle aria-hidden className="size-3 shrink-0" />
-                <span className="truncate">{t('agentFolders.dropped', { path: folder.path })}</span>
+                <span className="truncate">{t('agentFolders.dropped')}</span>
               </span>
             ) : (
               <span className="block truncate" title={folder.path}>
-                {[...(showAgent || owner.kind === 'project' ? [ownerLabel(owner)] : []), access, folder.path].join(' · ')}
+                {[...(showAgent || owner.kind === 'project' ? [ownerLabel(owner)] : []), access].join(' · ')}
               </span>
             )}
-            menuLabel={t('agentFolders.more', { name: folderName(folder.path) })}
+            menuLabel={t('agentFolders.more', { name })}
             menu={<>
+              <DropdownMenuLabel className="max-w-72 break-all text-xs font-normal text-muted-foreground" data-agent-folder-path="">
+                {folder.path}
+              </DropdownMenuLabel>
+              <DropdownMenuItem onSelect={() => {
+                void copyToClipboard(folder.path).then((copied) => {
+                  if (copied) toast.success(t('agentFolders.pathCopied'));
+                  else toast.error(t('agentFolders.copyFailed'));
+                });
+              }}>
+                <Copy aria-hidden />{t('agentFolders.copyPath')}
+              </DropdownMenuItem>
               <DropdownMenuItem disabled={busy} onSelect={() => void run(() => addFolder(owner, { path: folder.path, mode: folder.mode === 'write' ? 'read' : 'write' }))}>
+                {folder.mode === 'write' ? <Lock aria-hidden /> : <PenLine aria-hidden />}
                 {t(folder.mode === 'write' ? 'agentFolders.makeRead' : 'agentFolders.makeWrite')}
               </DropdownMenuItem>
               <DropdownMenuItem disabled={busy} className="text-destructive focus:text-destructive" onSelect={() => void run(() => removeFolder(owner, folder.path))}>
-                {t('agentFolders.remove')}
+                <Trash2 aria-hidden />{t('agentFolders.remove')}
               </DropdownMenuItem>
             </>}
           />
