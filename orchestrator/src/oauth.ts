@@ -9,10 +9,12 @@
  *   - Authorization code flow with PKCE S256 (RFC 7636).
  *   - Refresh tokens.
  *
- * Pending PKCE state (code_verifier) lives in memory — the round-trip is
- * ~10s while the user clicks "Authorize" in their browser, so persisting
- * to disk would be over-engineering. If the orchestrator restarts mid-flow
- * the user just retries.
+ * Pending PKCE state (code_verifier) lives in memory: it is a secret, and
+ * the round-trip lasts the few seconds the user takes to click "Authorize".
+ * A restart mid-flow loses it, and the callback page then says to start again.
+ * A state that was used is remembered a while longer, so a callback the
+ * browser replays (a double navigation on the consent page) is told what
+ * already happened instead of "unknown state".
  */
 import { createHash, randomBytes } from 'node:crypto';
 import type { OAuthClient, OAuthMetadata, OAuthTokens } from './plugins/contract/mcp-servers.js';
@@ -60,24 +62,94 @@ export function oauthRedirectUri(publicApiUrl: string | null | undefined, port: 
 const PENDING = new Map<string, PendingAuth>();
 const PENDING_TTL_MS = 10 * 60 * 1000;
 
+/** What became of a state once its callback arrived. */
+export type UsedStateOutcome = 'in_progress' | 'ok' | 'failed';
+export type UsedState = OAuthReturn & { mcp_id: string; outcome: UsedStateOutcome; used_at: number };
+/** Where the browser goes back after a callback: the app origin and page. */
+export type OAuthReturn = { return_to?: string; return_path?: OAuthReturnPath };
+
+const USED = new Map<string, UsedState>();
+/** How long a consumed state still answers a replayed callback. */
+export const USED_STATE_TTL_MS = 10 * 60 * 1000;
+
+/** The last return target of each MCP server, for a callback whose pending entry is gone. */
+const RETURNS = new Map<string, OAuthReturn>();
+
 function reapPending(): void {
   const now = Date.now();
   for (const [k, v] of PENDING) {
     if (now - v.created_at > PENDING_TTL_MS) PENDING.delete(k);
+  }
+  for (const [k, v] of USED) {
+    if (now - v.used_at > USED_STATE_TTL_MS) USED.delete(k);
   }
 }
 
 export function putPending(state: string, p: PendingAuth): void {
   reapPending();
   PENDING.set(state, p);
+  RETURNS.set(p.mcp_id, {
+    ...(p.return_to ? { return_to: p.return_to } : {}),
+    ...(p.return_path ? { return_path: p.return_path } : {}),
+  });
 }
 
+/** The pending flow of `state`, once: the state is then kept as used (`usedState`). */
 export function takePending(state: string): PendingAuth | null {
   reapPending();
   const v = PENDING.get(state);
   if (!v) return null;
   PENDING.delete(state);
+  USED.set(state, {
+    mcp_id: v.mcp_id, outcome: 'in_progress', used_at: Date.now(),
+    ...(v.return_to ? { return_to: v.return_to } : {}),
+    ...(v.return_path ? { return_path: v.return_path } : {}),
+  });
   return v;
+}
+
+/** Record how the exchange of a used state ended, for a replayed callback. */
+export function settleState(state: string, outcome: Exclude<UsedStateOutcome, 'in_progress'>): void {
+  const used = USED.get(state);
+  if (used) USED.set(state, { ...used, outcome });
+}
+
+/** A state whose callback already arrived, within `USED_STATE_TTL_MS`. */
+export function usedState(state: string): UsedState | null {
+  reapPending();
+  return USED.get(state) ?? null;
+}
+
+/** Where the last authorization of this MCP server started from. */
+export function rememberedReturn(mcpId: string): OAuthReturn | null {
+  return RETURNS.get(mcpId) ?? null;
+}
+
+/**
+ * Separates the random part of a state from the MCP id it carries. The id is
+ * not a secret (the publisher sees the server it authorizes) and is only used
+ * to pick where the callback page links back to when the flow is gone.
+ */
+const STATE_ID_SEPARATOR = '~';
+
+/** A fresh state for an authorization of `mcpId`. */
+export function oauthState(mcpId: string): string {
+  return `${randomState()}${STATE_ID_SEPARATOR}${mcpId}`;
+}
+
+/** The MCP id a state names, or null for a state of another shape. */
+export function mcpIdOfState(state: string): string | null {
+  const at = state.indexOf(STATE_ID_SEPARATOR);
+  if (at < 0) return null;
+  const id = state.slice(at + 1);
+  return /^[a-z0-9._-]{1,128}$/.test(id) ? id : null;
+}
+
+/** Test hook: forget every flow, as a restart of the daemon does. */
+export function resetOAuthFlowsForTests(): void {
+  PENDING.clear();
+  USED.clear();
+  RETURNS.clear();
 }
 
 function b64url(buf: Buffer): string {
@@ -276,10 +348,17 @@ export async function exchangeCode(
     body: body.toString(),
   });
   if (!r.ok) {
-    const txt = await r.text().catch(() => '');
-    throw new Error(`token exchange failed: ${r.status} ${txt.slice(0, 200)}`);
+    // The status and the OAuth error code only: the provider's body may echo
+    // the code it refuses, and this message reaches the callback page and the log.
+    const errorCode = await r.json().then((j: unknown) => oauthErrorCode((j as { error?: unknown } | null)?.error)).catch(() => null);
+    throw new Error(`token exchange failed: HTTP ${r.status}${errorCode ? ` (${errorCode})` : ''}`);
   }
   return parseTokenResponse(await r.json());
+}
+
+/** An RFC 6749 error code (`invalid_grant`, `access_denied`…), or null for free text. */
+export function oauthErrorCode(value: unknown): string | null {
+  return typeof value === 'string' && /^[a-z0-9_.-]{1,64}$/i.test(value) ? value : null;
 }
 
 /**
