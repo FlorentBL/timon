@@ -13,6 +13,9 @@ import { randomUUID } from 'node:crypto';
 import { once } from 'node:events';
 import type { AddressInfo } from 'node:net';
 import express from 'express';
+import type { RequestAuth } from './users/identity.js';
+
+const ROOT_AUTH: RequestAuth = { kind: 'api-token', user: null, isSuperadmin: true, permissions: ['*'] };
 
 process.env.TIMON_HOME = mkdtempSync(join(tmpdir(), 'timon-liveness-test-'));
 
@@ -57,6 +60,8 @@ type Listed = { id: string; liveness?: string; turn_complete?: boolean; interrup
 
 async function get<T>(path: string): Promise<T> {
   const app = express();
+  // `GET /api/missions` refuses an anonymous caller.
+  app.use((req, _res, next) => { req.auth = ROOT_AUTH; next(); });
   app.use(express.json());
   registerRoutes(app);
   const server = app.listen(0);

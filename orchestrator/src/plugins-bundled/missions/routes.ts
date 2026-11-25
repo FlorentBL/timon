@@ -175,6 +175,29 @@ const SpansQuerySchema = z.object({
   ids: z.string().max(6_500).transform((value) => value.split(',').filter(Boolean))
     .pipe(z.array(z.string().max(128)).max(50)).optional(),
 }).refine((query) => !(query.before && query.from), { message: 'before and from are exclusive' });
+/**
+ * `GET /api/missions`: the page size is bounded, and refused beyond rather
+ * than clamped — a silent cap at 1000 read as "there are 1000 missions"
+ * (TIM-0161). `before` is the `next_cursor` of the previous page.
+ */
+export const MISSION_LIST_MAX = 1000;
+const MISSION_LIST_CURSOR = /^(\d{1,15}),([A-Za-z0-9._:-]{1,128})$/;
+const MissionListQuerySchema = z.object({
+  limit: z.coerce.number().int().min(1).max(MISSION_LIST_MAX).default(100),
+  task_id: z.string().min(1).max(128).optional(),
+  before: z.string().regex(MISSION_LIST_CURSOR, 'expected <started_at>,<mission id>')
+    .transform((cursor) => {
+      const [, startedAt, id] = MISSION_LIST_CURSOR.exec(cursor) as RegExpExecArray;
+      return { startedAt: Number(startedAt), id: id as string };
+    })
+    .optional(),
+});
+
+/** The cursor of the page after the one ending on `row`. */
+export function missionListCursor(row: { started_at: number; id: string }): string {
+  return `${row.started_at},${row.id}`;
+}
+
 const TraceQuerySchema = z.object({
   span_limit: z.coerce.number().int().min(1).max(2000).default(500),
   payload: z.enum(['0', '1']).default('1').transform((value) => value === '1'),
@@ -583,7 +606,18 @@ export function registerRoutes(
   app.post('/api/missions/delegate', delegate);
 
   app.get('/api/missions', (req, res) => {
-    const limit = Math.min(Number(req.query.limit ?? 100), 1000);
+    if (!requireAuth(req, res)) return;
+    const query = MissionListQuerySchema.safeParse({
+      limit: req.query.limit,
+      task_id: req.query.task_id,
+      before: req.query.before,
+    });
+    if (!query.success) {
+      res.status(400).json({ ...apiError('invalid_query', 'invalid query'), issues: query.error.issues.map((issue) => `${issue.path.join('.')}: ${issue.message}`) });
+      return;
+    }
+    const { limit, task_id: taskFilter, before } = query.data;
+    const page = { taskId: taskFilter, before };
     const projectFilter = typeof req.query.project === 'string' ? req.query.project : null;
     const agentFilter = typeof req.query.agent === 'string' ? req.query.agent : null;
     // Statuses actually represented by the `missions.status` column. REJECT an
@@ -605,18 +639,17 @@ export function registerRoutes(
     const originFilter = originParam;
     const timing = new ServerTiming();
     const scope = scopedDb(viewerFromRequest(req));
-    let rows: ReturnType<typeof scope.listMissions>;
-    if (agentFilter) {
-      // Exact agent filter — single agent name, highest precision.
-      rows = scope.listMissions(limit, [agentFilter], statusFilter ?? undefined, originFilter);
-    } else if (projectFilter) {
-      const projectAgentNames = listAgents()
-        .filter((a) => a.project === projectFilter)
-        .map((a) => a.name);
-      rows = scope.listMissions(limit, projectAgentNames, statusFilter ?? undefined, originFilter);
-    } else {
-      rows = scope.listMissions(limit, undefined, statusFilter ?? undefined, originFilter);
-    }
+    // One row past the page tells whether another page exists.
+    const agentNames = agentFilter
+      ? [agentFilter]
+      : projectFilter
+        ? listAgents().filter((a) => a.project === projectFilter).map((a) => a.name)
+        : undefined;
+    const fetched = scope.listMissions(limit + 1, agentNames, statusFilter ?? undefined, originFilter, page);
+    const hasMore = fetched.length > limit;
+    const rows = hasMore ? fetched.slice(0, limit) : fetched;
+    const last = rows[rows.length - 1];
+    const nextCursor = hasMore && last ? missionListCursor(last) : null;
     timing.mark('db');
     // Group pending permission requests by mission so each card can flag
     // "action required" and deep-link to the earliest unresolved request.
@@ -708,7 +741,8 @@ export function registerRoutes(
     });
     // Per-row reads (liveness, pending work, event count, agent config).
     timing.mark('enrich');
-    sendTimedJson(res, timing, { missions });
+    // Fields next to `missions`: existing clients read only that key.
+    sendTimedJson(res, timing, { missions, has_more: hasMore, next_cursor: nextCursor });
   });
 
   /**
