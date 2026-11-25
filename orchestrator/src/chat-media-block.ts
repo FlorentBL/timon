@@ -109,6 +109,8 @@ export type AddMediaContext = {
   fetch?: FetchDeps;
   /** The mission's media ceiling, all calls together; `MAX_MISSION_MEDIA_BYTES` by default. */
   missionLimitBytes?: number;
+  /** The caller is the mission's own agent: a refused path says why instead of "not found". */
+  explain?: boolean;
 };
 
 /**
@@ -143,7 +145,7 @@ export async function addMissionMedia(missionId: string, request: MediaRequest, 
     throw new MediaError(400, 'only https:// addresses, raster data: images and absolute paths are accepted', 'scheme_refused');
   }
 
-  const opened = openMissionMedia(src, ctx.roots);
+  const opened = openMissionMedia(src, ctx.roots, ctx.explain === true);
   try {
     const file = await storeOpened(missionId, opened, ctx.missionLimitBytes);
     return block(file, opened.media, 'file', request.caption);

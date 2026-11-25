@@ -174,9 +174,25 @@ test.describe('ui documents', { concurrency: false }, () => {
     dbApi.setMissionCwdOverride('m-path', root);
     const ok = await send('POST', '', agentOf('m-path'), { title: 'From a file', path: join(root, 'page.html') });
     assert.equal(ok.status, 201);
-    assert.equal((await send('POST', '', agentOf('m-path'), { title: 't', path: join(outside, 'page.html') })).status, 404);
-    assert.equal((await send('POST', '', agentOf('m-path'), { title: 't', path: join(root, '.hidden', 'page.html') })).status, 404);
-    assert.equal((await send('POST', '', agentOf('m-path'), { title: 't', path: join(root, 'missing.html') })).status, 404);
+    // The mission's own agent reads why (TODO #1160); none of these says the module is off.
+    const refusals: Array<[string, number, string]> = [
+      [join(outside, 'page.html'), 403, 'path_outside_roots'],
+      [join(root, '.hidden', 'page.html'), 403, 'path_hidden_segment'],
+      [join(root, 'missing.html'), 404, 'not_found'],
+    ];
+    for (const [path, status, code] of refusals) {
+      const res = await send('POST', '', agentOf('m-path'), { title: 't', path });
+      assert.equal(res.status, status, path);
+      const body = await res.json() as { error: string; message?: string };
+      assert.equal(body.error, code, path);
+      assert.ok(body.message && body.message.length > 0, path);
+    }
+    // The owner's browser session: one 404 for all three, as before.
+    for (const [path] of refusals) {
+      const res = await send('POST', '', ownerSession, { title: 't', path, mission_id: 'm-path' });
+      assert.equal(res.status, 404, path);
+      assert.deepEqual(await res.json(), { error: 'not_found' }, path);
+    }
     assert.equal((await send('POST', '', agentOf('m-path'), { title: 't', path: join(root, 'bin.html') })).status, 415);
     assert.equal((await send('POST', '', agentOf('m-path'), { title: 't', path: 'page.html' })).status, 400, 'a relative path');
     writeFileSync(join(root, 'big.html'), 'x'.repeat(MAX_HTML_BYTES + 1));

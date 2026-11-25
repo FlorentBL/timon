@@ -201,7 +201,9 @@ function stopActor(auth: RequestAuth, viewer: DbViewer): string {
  * reaches the browser. Who may ask is the caller's to decide (`mayShowMedia`
  * for a request, the owner check of the plugin facade).
  */
-export async function showMissionMedia(mission: MissionRow, rawBody: unknown): Promise<{ status: number; body: unknown }> {
+export async function showMissionMedia(
+  mission: MissionRow, rawBody: unknown, opts: { explain?: boolean } = {},
+): Promise<{ status: number; body: unknown }> {
   const parsed = MediaRequestSchema.safeParse(rawBody);
   if (!parsed.success) {
     return { status: 400, body: { error: 'invalid_request', message: 'expected { src: string, caption?: string }' } };
@@ -214,7 +216,7 @@ export async function showMissionMedia(mission: MissionRow, rawBody: unknown): P
     ...providerMediaRoots(mission.id),
   ].filter((root): root is string => typeof root === 'string' && root.length > 0);
   try {
-    const block = await addMissionMedia(mission.id, parsed.data, { roots });
+    const block = await addMissionMedia(mission.id, parsed.data, { roots, explain: opts.explain === true });
     const row = dbApi.insertEvent(mission.id, 'media', block);
     bus.publish({ kind: 'event', missionId: mission.id, type: 'media', timestamp: row.timestamp, payload: block });
     return { status: 201, body: { block } };
@@ -1095,7 +1097,9 @@ export function registerRoutes(
       forbidden(req, res, { kind: 'scope', reason: 'only this mission\'s agent or its owner can show media in it' });
       return;
     }
-    const reply = await showMissionMedia(mission, req.body);
+    // Only the mission's own agent learns why a path was refused (TODO #1160).
+    const explain = req.auth?.kind === 'api-token' && req.auth.missionId === mission.id;
+    const reply = await showMissionMedia(mission, req.body, { explain });
     res.status(reply.status).json(reply.body);
   });
 
