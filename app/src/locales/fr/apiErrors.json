@@ -8,6 +8,7 @@
     "fence_grant_invalid": "Cette réponse n’est pas valide : autoriser ou refuser.",
     "fence_refusal_not_found": "Cette carte ne propose plus de dossier à ouvrir.",
     "fence_grant_settled": "Cette carte a déjà reçu une réponse.",
+    "fence_grant_no_project": "Cette carte ne propose aucun projet auquel ouvrir le dossier : autorisez-le pour l’agent.",
     "fence_coverage_failed": "Le contrôle de couverture de la clôture a échoué : voir le journal du daemon.",
     "cwd_unusable": "Timon n'a pas pu lancer cette mission : son dossier de travail {path} est introuvable ou ne peut pas être ouvert. Restaurez le dossier, ou changez celui de l'agent ou de son projet.",
     "unknown": "Une erreur est survenue.",
