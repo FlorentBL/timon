@@ -67,6 +67,7 @@ function refusalBody(out: ExternalPrRefusal) {
     case 'integration_not_pr': return apiError('integration_not_pr', out.reason);
     case 'pr_repository_unknown': return apiError('pr_repository_unknown', out.reason);
     case 'forge_read_failed': return apiError('forge_read_failed', out.reason, params);
+    case 'forge_account_mismatch': return apiError('forge_account_mismatch', out.reason, params);
     case 'pr_review_running': return apiError('pr_review_running', out.reason);
   }
 }
