@@ -32,7 +32,7 @@ import { fileURLToPath } from 'node:url';
 const USER_HOME = realpathSync.native(mkdtempSync(join(tmpdir(), 'timon-fence-user-home-')));
 process.env.HOME = USER_HOME;
 process.env.USERPROFILE = USER_HOME;
-for (const dir of ['.claude', '.codex', '.grok', '.copilot', '.pi', '.kimi', '.ollama']) mkdirSync(join(USER_HOME, dir), { recursive: true });
+for (const dir of ['.claude', '.codex', '.grok', '.copilot', '.pi', '.qwen', '.kimi', '.ollama']) mkdirSync(join(USER_HOME, dir), { recursive: true });
 process.on('exit', () => rmSync(USER_HOME, { recursive: true, force: true }));
 process.env.TIMON_RESOURCE_GUARD_ENABLED = '0';
 // Placeholders that make the API-key profiles active; nothing here sends a request.
@@ -97,16 +97,17 @@ registerPackProfile('acme-pack', { id: 'pack-codex', dialect: 'codex', label: 'P
  * is off until the user switches it on (`disabled` in its profile), so it is not among them.
  */
 const EXPECTED = [
-  'claude', 'codex', 'grok', 'copilot', 'pi', 'kimi', 'ollama-cloud', 'opencode', 'hermes',
+  'claude', 'codex', 'grok', 'copilot', 'pi', 'kimi', 'ollama-cloud', 'opencode', 'hermes', 'qwen',
   'pack-codex', 'user-claude-key', ...PROCESS_DIALECTS.map((d) => `user-${d}`),
 ];
 /**
- * Dialects whose launch names no folder of the Timon home: Hermes gets its instructions and MCP
- * servers over the protocol and keeps its state in its own folder of the user's home. opencode is
+ * Dialects whose launch names no folder of the Timon home: Hermes and Qwen Code get their
+ * instructions and MCP servers over the protocol and keep their state in their own folder of the
+ * user's home. opencode is
  * not here: its cache and state live in the profile folder, which the fence must open.
  * Their missions are still checked for what they must not reach.
  */
-const NO_TIMON_FOLDER = new Set(['hermes']);
+const NO_TIMON_FOLDER = new Set(['hermes', 'qwen']);
 
 const PROJECT = realpathSync.native(mkdtempSync(join(tmpdir(), 'timon-fence-project-')));
 process.on('exit', () => rmSync(PROJECT, { recursive: true, force: true }));

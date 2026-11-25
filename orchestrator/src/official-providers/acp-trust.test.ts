@@ -23,7 +23,7 @@ process.env.TIMON_RESOURCE_GUARD_ENABLED = '0';
 const FAKE = join(dirname(fileURLToPath(import.meta.url)), '..', 'backends', 'acp', '__fixtures__', 'fake-acp-agent.mjs');
 
 const { mountOfficialProviders, stubCliBinaries } = await import('../../tests/helpers/official-providers.js');
-await stubCliBinaries('opencode', 'hermes-acp', 'agy');
+await stubCliBinaries('opencode', 'hermes-acp', 'agy', 'qwen');
 const { getHost } = await import('../host/index.js');
 const { spawnAgent, upsertAgent, killAgent } = await import('../agent.js');
 const { config } = await import('../config/load.js');
@@ -46,7 +46,10 @@ const VAULT_VALUE = 'vault-value-acp-witness';
 createTestAccount(dbApi, { email: 'acp-witness@example.test', name: 'Witness', passwordHash: 'unused' });
 
 assert.deepEqual(config().pluginPolicy.exec.allow, [], 'the witness runs under the default policy: nothing on the operator\'s allowlist');
-assert.ok((await mountOfficialProviders()).includes('provider-acp'));
+{
+  const mounted = await mountOfficialProviders();
+  assert.ok(mounted.includes('provider-acp') && mounted.includes('provider-qwen'));
+}
 // Antigravity ships off (Google's terms): these tests switch it on, as a person does from its provider page.
 (await import('../backends/overlays.js')).saveBackendOverlay('antigravity', { disabled: false });
 
@@ -54,6 +57,8 @@ const AGENTS = [
   { backend: 'opencode', args: ['acp'] },
   { backend: 'hermes', args: [] as string[] },
   { backend: 'antigravity', args: ['acp'] },
+  // Its own plugin (`provider-qwen`), on the same ACP runtime.
+  { backend: 'qwen', args: ['--acp', '--approval-mode', 'default'] },
 ] as const;
 
 for (const { backend } of AGENTS) {
