@@ -28,7 +28,7 @@ await stubCliBinaries('opencode', 'hermes-acp', 'pi', 'agy');
 assert.ok((await mountOfficialProviders()).includes('provider-acp'));
 // Antigravity ships off (Google's terms): these tests switch it on, as a person does from its provider page.
 (await import('../backends/overlays.js')).saveBackendOverlay('antigravity', { disabled: false });
-const { getDialect, installedProfiles, profileDeclarations, registeredBackendOwners } = await import('../backends/registry.js');
+const { backendTakesHttpMcp, getDialect, installedProfiles, profileDeclarations, registeredBackendOwners } = await import('../backends/registry.js');
 const { getBackend } = await import('../backends/index.js');
 const { BUILTIN_DECLARATIONS } = await import('../backends/builtin-declarations.js');
 const { openLaunchSeal, closeLaunchSeal } = await import('../backends/launch-seal.js');
@@ -62,6 +62,12 @@ test('one provider per agent, registered under the product\'s own ids by the one
   for (const id of IDS) assert.equal(owners[id], 'provider-acp', id);
   assert.equal(getDialect('acp'), undefined, 'no shared `acp` dialect is left: a declaration is kept by dialect, and two agents share none');
   assert.equal(owners.pi, 'provider-pi', 'Pi runs over its own RPC mode, without the pi-acp adapter');
+});
+
+test('no HTTP MCP server for an ACP agent: the daemon leaves its stdio servers to it (TODO #1071)', () => {
+  // opencode's and Antigravity's definitions are spread to add a member: the mark rides on the codec.
+  for (const id of IDS) assert.equal(backendTakesHttpMcp(id), false, id);
+  assert.equal(backendTakesHttpMcp('pi'), true, 'Pi runs over its own RPC mode, not the ACP driver');
 });
 
 test('each provider declares a session-driven, resumable, protocol-arbitrated agent', () => {

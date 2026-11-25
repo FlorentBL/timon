@@ -20,11 +20,12 @@ import { settingBool, settingStr } from '../settings.js';
 import { nodeRuntime, type NodeRuntime } from '../host/node-runtime.js';
 import { ASK_MCP_FORMS_ONLY_ENV, ASK_MCP_SERVER, CLAUDE_PERMISSION_PROMPT_TOOL, claudeAskToolNames } from '../ask-mcp.js';
 import { CHROME_DEVTOOLS_MCP_KEY, chromeDevtoolsMcpEntry, noteBrowserSessionSpawned } from '../browser-mcp.js';
-import { getMcp, grepaiMcpEntry, resolveLaunchServers, listMcp, isDiscoveredMcp } from '../mcp.js';
+import { getMcp, grepaiMcpEntry, resolveLaunchServers, listMcp, isDiscoveredMcp, isBridgedStdioMcp } from '../mcp.js';
 import { isInjectedMcpServer } from '../injected-mcp.js';
 import { mcpRelayLaunchTarget } from '../mcp-relay.js';
 import { startStdioBridge } from '../mcp-stdio-bridges.js';
 import { COMMAND_POLICY } from './command-policy.js';
+import { backendTakesHttpMcp } from './registry.js';
 import type { LaunchSeal } from './launch-seal.js';
 import { PRE_APPROVED_MCP_TOOLS, configuredPreApprovedMcpTools } from './mcp-preapproved.js';
 import type { McpLaunchServer } from './mcp-serialize.js';
@@ -119,7 +120,11 @@ export async function providerMcpPlan(input: {
       mcpRelayLaunchTarget(server, { agent: spawn.agentName, missionId: spawn.missionId });
     // A stdio server with variables is run by the daemon and reached through the same relay:
     // its variables stay in the daemon. One that cannot start is left out, never written in clear.
-    const bridge = settingBool('TIMON_MCP_STDIO_BRIDGE')
+    // Only for an agent that can be handed an HTTP server: an ACP agent is declared the stdio
+    // servers alone, so it keeps starting the server itself, as when the setting is off.
+    const bridgeOn = settingBool('TIMON_MCP_STDIO_BRIDGE');
+    const takesHttp = backendTakesHttpMcp(seal.backend);
+    const bridge = bridgeOn && takesHttp
       ? async (server: { id: string; target: string }) => {
         const target = relay({ id: server.id, url: server.target });
         if (!target) {
@@ -129,7 +134,10 @@ export async function providerMcpPlan(input: {
         return await startStdioBridge(spawn.missionId, spawn.agentName, server, cfg.cwd ?? null) ? target : null;
       }
       : undefined;
-    if (!bridge) console.warn('[timon] mcp: TIMON_MCP_STDIO_BRIDGE is off, the variables of stdio servers are written into the agent\'s configuration');
+    if (!bridgeOn) console.warn('[timon] mcp: TIMON_MCP_STDIO_BRIDGE is off, the variables of stdio servers are written into the agent\'s configuration');
+    else if (!takesHttp && ids.some(isBridgedStdioMcp)) {
+      console.warn(`[timon] mcp: backend ${seal.backend} takes no HTTP MCP server, the variables of its stdio servers are written into the agent's configuration`);
+    }
     for (const server of await resolveLaunchServers(ids, relay, bridge)) {
       servers.push({ ...withoutSecrets(server, seal), role: 'user' });
     }
