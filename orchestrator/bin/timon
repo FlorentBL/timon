@@ -650,6 +650,29 @@ async function cmdStatus(argv) {
   }
   const j = await http('GET', `/api/missions/${encodeURIComponent(id)}`);
   process.stdout.write(JSON.stringify(j, null, 2) + '\n');
+  notePendingPermission(j.pending_permission);
+}
+
+/** Minutes, or hours and minutes, of a duration in ms. */
+function shortDuration(ms) {
+  const minutes = Math.max(0, Math.floor(ms / 60_000));
+  if (minutes < 1) return 'less than a minute';
+  if (minutes < 60) return `${minutes} min`;
+  return `${Math.floor(minutes / 60)} h ${String(minutes % 60).padStart(2, '0')}`;
+}
+
+/**
+ * One readable line on stderr when the mission waits on a card (TODO #1094):
+ * stdout stays the JSON a script pipes into jq. Tool and clock only — the
+ * command is on the card, in the chat.
+ */
+function notePendingPermission(p) {
+  if (!p || typeof p.since !== 'number') return;
+  const what = p.kind === 'question' ? 'an answer' : `a permission (${p.tool_name})`;
+  const parts = [`waiting for ${what} for ${shortDuration(Date.now() - p.since)}`];
+  if (typeof p.remaining_ms === 'number') parts.push(`auto-deny in ${shortDuration(p.remaining_ms)}`);
+  if (p.count > 1) parts.push(`${p.count} cards open`);
+  process.stderr.write(`${parts.join(', ')} — answer it in the chat\n`);
 }
 
 async function cmdKill(argv) {
@@ -2091,6 +2114,7 @@ async function cmdTaskGet(argv) {
   if (!id) { process.stderr.write('usage: timon task get <id>\n'); process.exit(64); }
   const j = await http('GET', `/api/tasks/${id}`);
   process.stdout.write(JSON.stringify(j.task, null, 2) + '\n');
+  notePendingPermission(j.task?.pending_permission);
 }
 
 async function cmdTaskCreate(argv) {

@@ -1840,7 +1840,12 @@
       "openMission": "Abrir a missão",
       "stop": "Parar a missão",
       "stopConfirm": "Parar a missão desta tarefa?",
-      "stopFailed": "Não foi possível parar a missão (HTTP {status})."
+      "stopFailed": "Não foi possível parar a missão (HTTP {status}).",
+      "underMinute": "< 1 min",
+      "pendingPermission": "Aguardando uma permissão ({tool}) há {age}",
+      "pendingQuestion": "Aguardando uma resposta há {age}",
+      "pendingDeadline": "recusa automática em {left}",
+      "pendingOthers": "{count, plural, one {mais # cartão aguardando} other {mais # cartões aguardando}}"
     }
   },
   "agentsPage": {

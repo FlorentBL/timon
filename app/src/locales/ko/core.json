@@ -1840,7 +1840,12 @@
       "openMission": "미션 열기",
       "stop": "미션 중지",
       "stopConfirm": "이 작업의 미션을 중지하시겠습니까?",
-      "stopFailed": "미션을 중지할 수 없습니다 (HTTP {status})."
+      "stopFailed": "미션을 중지할 수 없습니다 (HTTP {status}).",
+      "underMinute": "1분 미만",
+      "pendingPermission": "{age} 전부터 권한 ({tool})을 기다리는 중",
+      "pendingQuestion": "{age} 전부터 답변을 기다리는 중",
+      "pendingDeadline": "{left} 후 자동 거부",
+      "pendingOthers": "{count, plural, other {대기 중인 카드 #개 더}}"
     }
   },
   "agentsPage": {

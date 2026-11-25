@@ -1,6 +1,6 @@
 'use client';
 
-import { Clock, GitMerge, Network, Paperclip, Square, SquareArrowOutUpRight } from 'lucide-react';
+import { Clock, GitMerge, Network, Paperclip, ShieldAlert, Square, SquareArrowOutUpRight } from 'lucide-react';
 import { BoardCard } from '@/components/board-card';
 import { ChatLink } from '@/components/chat/chat-link';
 import { RoleBadge } from '@/components/role-badge';
@@ -14,6 +14,7 @@ import {
   formatRunningFor,
   formatScheduled,
   parseDeps,
+  pendingPermissionLine,
   priorityTone,
   unblocksCount,
   waitingOnCount,
@@ -94,12 +95,16 @@ export function KanbanTaskCard({
   // The mission is reached from its button; a click anywhere else opens the task.
   const showsMission = !!t.mission_id && (running || t.status === 'DONE');
 
+  // The daemon's summary says what the mission waits on and for how long; the
+  // agent state alone only knows that it waits.
+  const waiting = running && t.pending_permission ? pendingPermissionLine(t.pending_permission, now) : null;
+
   const identity = (
     <>
       {running ? (
         <ActiveAgentAvatar
           identity={agent}
-          state={needsAction ? 'needs_action' : 'thinking'}
+          state={needsAction || waiting ? 'needs_action' : 'thinking'}
           label={i18n('kanbanPage.card.running')}
         />
       ) : (
@@ -132,9 +137,23 @@ export function KanbanTaskCard({
     </>
   );
 
-  const validation = running && needsAction;
-  const context = (validation || t.interrupted_reason || t.blocked_reason) ? (
+  const validation = running && needsAction && !waiting;
+  const context = (waiting || validation || t.interrupted_reason || t.blocked_reason) ? (
     <>
+      {waiting && (
+        <div
+          data-pending-permission={t.pending_permission?.tool_name}
+          title={waiting.title}
+          className="flex min-w-0 items-start gap-1 rounded-md bg-warning/10 px-1.5 py-0.5 text-[11px] text-warning"
+        >
+          <ShieldAlert className="mt-px size-3.5 flex-none animate-pulse" aria-hidden />
+          {/* Wraps rather than truncates: in a narrow column the tool name is the point. */}
+          <span className="min-w-0 tabular-nums">
+            <span className="font-semibold">{waiting.label}</span>
+            {waiting.deadline && <span className="whitespace-nowrap text-muted-foreground"> · {waiting.deadline}</span>}
+          </span>
+        </div>
+      )}
       {validation && (
         <div className="flex animate-pulse items-center gap-1 rounded-md bg-warning/10 px-1.5 py-0.5 text-[11px] font-semibold text-warning">
           <span aria-hidden>⚠</span>

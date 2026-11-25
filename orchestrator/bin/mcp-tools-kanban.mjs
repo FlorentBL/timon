@@ -32,7 +32,8 @@ export const tools = [
   {
     name: 'kanban_get',
     title: 'Read a Kanban task',
-    description: 'Reads one task with all its fields, its attached files included (id, name, size, type; CLI `timon task get`).',
+    description: 'Reads one task with all its fields, its attached files included (id, name, size, type; CLI `timon task get`). ' +
+      'A running task whose mission waits on an Allow / Deny card or a question carries `pending_permission` (tool, since, time left).',
     inputSchema: { type: 'object', properties: { id: id('Task') }, required: ['id'] },
   },
   {

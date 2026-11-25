@@ -164,6 +164,35 @@ test('a running task shows its validation banner as context and its gestures as 
   }
 });
 
+test('a running task whose mission waits on a card says on what, since when and until when (TODO #1094)', async () => {
+  const m = await mount();
+  try {
+    const running = { status: 'IN_PROGRESS' as const, mission_id: 'm-1', started_at: NOW - 600_000 };
+    await m.render(task({ ...running, pending_permission: {
+      kind: 'permission', tool_name: 'Bash', since: NOW - 3 * 60_000, expires_at: NOW + 2 * 60_000, remaining_ms: 2 * 60_000, count: 2,
+    } }), { needsAction: true });
+    const line = m.zone('context')?.querySelector<HTMLElement>('[data-pending-permission="Bash"]');
+    assert.ok(line, 'the waiting line');
+    assert.match(line.textContent ?? '', /Waiting for a permission \(Bash\) for 3\smin/);
+    assert.match(line.textContent ?? '', /auto-deny in 2\smin/);
+    assert.match(line.title, /1 more card waiting/, 'the other cards in the tooltip');
+    assert.doesNotMatch(m.text('context'), /Validation required/, 'one banner, not two');
+
+    await m.render(task({ ...running, pending_permission: {
+      kind: 'question', tool_name: 'ask_user', since: NOW - 20_000, expires_at: null, remaining_ms: null, count: 1,
+    } }));
+    assert.match(m.text('context'), /Waiting for an answer for <\s1\smin/);
+    assert.doesNotMatch(m.text('context'), /auto-deny/, 'a chat mission never times out');
+
+    await m.render(task({ ...running, status: 'BLOCKED', pending_permission: {
+      kind: 'permission', tool_name: 'Bash', since: NOW, expires_at: null, remaining_ms: null, count: 1,
+    } }));
+    assert.ok(!m.card().querySelector('[data-pending-permission]'), 'only a running task says it');
+  } finally {
+    await m.unmount();
+  }
+});
+
 test('a blocked or interrupted task says why in the context zone, and a finished one offers mark-merged', async () => {
   const m = await mount();
   try {

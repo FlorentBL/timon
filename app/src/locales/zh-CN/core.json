@@ -1870,7 +1870,12 @@
       "openMission": "打开任务会话",
       "stop": "停止任务会话",
       "stopConfirm": "停止此任务的会话吗？",
-      "stopFailed": "无法停止任务会话（HTTP {status}）。"
+      "stopFailed": "无法停止任务会话（HTTP {status}）。",
+      "underMinute": "< 1 分钟",
+      "pendingPermission": "已等待权限 ({tool}) {age}",
+      "pendingQuestion": "已等待回答 {age}",
+      "pendingDeadline": "{left}后自动拒绝",
+      "pendingOthers": "{count, plural, other {另有 # 张卡片在等待}}"
     }
   },
   "agentsPage": {

@@ -1840,7 +1840,12 @@
       "openMission": "ミッションを開く",
       "stop": "ミッションを停止",
       "stopConfirm": "このタスクのミッションを停止しますか？",
-      "stopFailed": "ミッションを停止できません (HTTP {status})。"
+      "stopFailed": "ミッションを停止できません (HTTP {status})。",
+      "underMinute": "1分未満",
+      "pendingPermission": "{age}前から権限 ({tool}) を待っています",
+      "pendingQuestion": "{age}前から回答を待っています",
+      "pendingDeadline": "{left}後に自動拒否",
+      "pendingOthers": "{count, plural, other {ほかに#件のカードが待機中}}"
     }
   },
   "agentsPage": {

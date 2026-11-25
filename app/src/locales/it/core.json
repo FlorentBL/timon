@@ -1840,7 +1840,12 @@
       "openMission": "Apri la missione",
       "stop": "Ferma la missione",
       "stopConfirm": "Fermare la missione di questa attività?",
-      "stopFailed": "Impossibile fermare la missione (HTTP {status})."
+      "stopFailed": "Impossibile fermare la missione (HTTP {status}).",
+      "underMinute": "< 1 min",
+      "pendingPermission": "In attesa di un permesso ({tool}) da {age}",
+      "pendingQuestion": "In attesa di una risposta da {age}",
+      "pendingDeadline": "rifiuto automatico tra {left}",
+      "pendingOthers": "{count, plural, one {# altra scheda in attesa} other {# altre schede in attesa}}"
     }
   },
   "agentsPage": {

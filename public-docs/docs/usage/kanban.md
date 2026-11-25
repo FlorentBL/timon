@@ -370,6 +370,12 @@ From a terminal, `timon task mark-merged TASK_ID --sha SHA [--comment TEXT]` doe
 
 Timon refuses a commit that your local copy of the repository has and that is not in the task's base branch. A commit it does not have yet (a pull request merged on GitHub and not fetched) is accepted and noted as not verified in the task's comment.
 
+## A task waiting on you
+
+When the agent of a running task asks for a permission or asks you a question, its card says **Waiting for a permission (Bash) for 3 min**, or **Waiting for an answer**, followed by the time left before the request is refused automatically (an unattended task does not wait forever). Hover the line to see whether other requests wait behind it. The card names the tool only: the command itself, and the Allow and Deny buttons, are in the task's mission, which the card's open-mission button reaches.
+
+`timon task get TASK_ID` and `timon status MISSION_ID` report the same wait: a `pending_permission` field in their JSON (`kind`, `tool_name`, `since`, `expires_at`, `remaining_ms`, `count`), and one readable line on stderr, so a script reading stdout is not disturbed. Agents read the same field with `kanban_get` and `mission_status`.
+
 ## Detach a task's worktree
 
 A pending or blocked task that has a worktree shows **Detach the worktree** in its editor. It removes the task's working folder and keeps its branch with its commits; when the task runs again, it gets a new folder on that same branch. Timon refuses it while the task is running, and Git refuses a folder that still has uncommitted changes: commit or discard them first. Once the task is done and its work merged, Timon deletes that branch, as it does for any finished task.

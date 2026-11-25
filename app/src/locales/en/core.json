@@ -1620,7 +1620,12 @@
       "openMission": "Open the mission",
       "stop": "Stop the mission",
       "stopConfirm": "Stop this task's mission?",
-      "stopFailed": "Unable to stop the mission (HTTP {status})."
+      "stopFailed": "Unable to stop the mission (HTTP {status}).",
+      "underMinute": "< 1 min",
+      "pendingPermission": "Waiting for a permission ({tool}) for {age}",
+      "pendingQuestion": "Waiting for an answer for {age}",
+      "pendingDeadline": "auto-deny in {left}",
+      "pendingOthers": "{count, plural, one {# more card waiting} other {# more cards waiting}}"
     }
   },
   "agentsPage": {

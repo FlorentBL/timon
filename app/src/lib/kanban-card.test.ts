@@ -3,6 +3,8 @@ import test from 'node:test';
 import type { BackendCatalog } from './backends';
 import {
   formatRunningFor,
+  formatWait,
+  pendingPermissionLine,
   parseDeps,
   priorityTone,
   taskModelMark,
@@ -45,6 +47,26 @@ test('the running time reads in minutes, then hours', () => {
   assert.equal(formatRunningFor(start, start + 26 * 60_000), '26 min');
   assert.equal(formatRunningFor(start, start + 65 * 60_000), '1 h 05');
   assert.equal(formatRunningFor(start, start - 5_000), 'just started', 'a clock skew never shows a negative time');
+});
+
+test('a waiting card reads as a line with its deadline, and the other cards in the tooltip', () => {
+  assert.equal(formatWait(20_000), '< 1 min');
+  assert.equal(formatWait(-5_000), '< 1 min', 'a clock skew never shows a negative time');
+  assert.equal(formatWait(65 * 60_000), '1 h 05');
+  const now = 1_000_000_000;
+  assert.deepEqual(pendingPermissionLine({
+    kind: 'permission', tool_name: 'Bash', since: now - 4 * 60_000, expires_at: now + 60_000, remaining_ms: 60_000, count: 3,
+  }, now), {
+    label: 'Waiting for a permission (Bash) for 4\u00a0min',
+    deadline: 'auto-deny in 1\u00a0min',
+    title: 'Waiting for a permission (Bash) for 4\u00a0min · auto-deny in 1\u00a0min · 2 more cards waiting',
+  }, 'a duration never breaks across lines');
+  const question = pendingPermissionLine({
+    kind: 'question', tool_name: 'ask_user', since: now, expires_at: null, remaining_ms: null, count: 1,
+  }, now);
+  assert.equal(question.label, 'Waiting for an answer for <\u00a01\u00a0min');
+  assert.equal(question.deadline, null);
+  assert.equal(question.title, question.label);
 });
 
 test('P4 stands out, P5 alarms, below P3 fades', () => {

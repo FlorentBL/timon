@@ -1840,7 +1840,12 @@
       "openMission": "Otwórz misję",
       "stop": "Zatrzymaj misję",
       "stopConfirm": "Zatrzymać misję tego zadania?",
-      "stopFailed": "Nie udało się zatrzymać misji (HTTP {status})."
+      "stopFailed": "Nie udało się zatrzymać misji (HTTP {status}).",
+      "underMinute": "< 1 min",
+      "pendingPermission": "Czeka na uprawnienie ({tool}) od {age}",
+      "pendingQuestion": "Czeka na odpowiedź od {age}",
+      "pendingDeadline": "automatyczna odmowa za {left}",
+      "pendingOthers": "{count, plural, one {jeszcze # karta czeka} few {jeszcze # karty czekają} many {jeszcze # kart czeka} other {jeszcze # karty czeka}}"
     }
   },
   "agentsPage": {

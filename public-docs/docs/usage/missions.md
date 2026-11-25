@@ -84,6 +84,8 @@ On the Agents graph, the ring still pulses for an agent at work; a small dot on 
 
 The same fields (`liveness`, `interrupted_reason`, `pending_messages`, `open_deliveries`) come back from `GET /api/missions` and `GET /api/missions/:id`, and `timon status` reads them from the mission.
 
+When the mission waits on a permission or a question, `GET /api/missions/:id` and `timon status` also carry `pending_permission`: the tool, when the request was raised, when it is refused automatically (`null` for a conversation, which waits for you), and how many requests wait. The command stays in the chat, on the request itself.
+
 A conversation left idle for a long time (an hour by default) has its process closed to free a slot; it stays in the list and keeps its session. Your next message, even one sent while that process is still shutting down, reopens the same mission with its context: the conversation never splits into a second mission on the same session.
 
 To interrupt work deliberately, use the mission's stop control or `timon kill MISSION_ID`. Interruption does not mean the requested work was completed: check files and task status before retrying.
