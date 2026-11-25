@@ -135,6 +135,8 @@
       "title": "Shell pre-allow not used: {named}",
       "body": "Task {task} names {named}, which pre-allows {rules}, but runs on {routed}, which does not ({why}). Its shell commands go to the classifier, and one it cannot judge waits for an approval. Give {routed} the same allowed tools, or let the task run on {named}."
     },
+    "agent_shell_preallow_inert": "{agent} pre-allows {rules} but runs in auto mode: the claude CLI ignores a rule that allows every shell command there, and a command its classifier cannot judge waits for an approval (an autonomous mission is denied after the delay). To keep the rule, run the agent in acceptEdits, and its project role too if it sets one; or pre-allow narrower patterns such as Bash(git:*).",
+    "agent_shell_preallow_mode_unset": "{agent} pre-allows {rules} but sets no permission mode: the claude CLI then starts in the default mode of its own settings (permissions.defaultMode), and where that is auto it ignores a rule that allows every shell command. To keep the rule, set the agent's mode to acceptEdits; or pre-allow narrower patterns such as Bash(git:*).",
     "backend_no_credit": {
       "title": "Backend {backend}: no credit left",
       "body": "`{backend}` answers with a payment error (HTTP 402 / balance exhausted): the account has no credit left.\n\nUnlike a usage limit, **this does not reopen on its own** — the account has to be topped up.\n\n- Backend sidelined until {until, date, medium} {until, time, short} (or until a turn succeeds on it again).\n- Missions and tasks that depend on it switch onto their fallback plan."

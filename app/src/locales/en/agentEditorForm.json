@@ -39,6 +39,8 @@
     "skillsEmpty": "No skills installed yet. Create some from",
     "docNameInvalid": "A doc name holds only letters, digits, dots, underscores and dashes, and ends in .md.",
     "docExists": "That doc already exists.",
-    "saved": "{name} saved"
+    "saved": "{name} saved",
+    "saveWarningsToast": "{name} saved, with {count, plural, one {a warning} other {# warnings}} about its permissions",
+    "saveWarningsOpen": "Show"
   }
 }
