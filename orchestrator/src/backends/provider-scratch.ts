@@ -40,6 +40,19 @@ function legacyMissionDir(pluginId: string, missionId: string): string | null {
   return name ? join(TIMON_HOME, name, missionId) : null;
 }
 
+/**
+ * Returns the existing per-mission scratch folder for `pluginId` / `missionId`
+ * (checking the legacy pre-plugin folder if the new one does not exist yet), or
+ * `undefined` when no scratch folder exists on disk. Read-only: never creates
+ * or mutates directories.
+ */
+export function existingMissionScratchPath(pluginId: string, missionId: string): string | undefined {
+  const current = missionScratchPath(pluginId, missionId);
+  if (existsSync(current)) return current;
+  const legacy = legacyMissionDir(pluginId, missionId);
+  return legacy && existsSync(legacy) ? legacy : undefined;
+}
+
 /** Moves the mission's old folder to the plugin's, if the plugin has none yet. Best effort: a failed move leaves the CLI a fresh folder, as before this existed. */
 function adoptLegacyMissionDir(pluginId: string, missionId: string): void {
   const from = legacyMissionDir(pluginId, missionId);

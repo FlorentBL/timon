@@ -95,11 +95,14 @@ export function dialectProblems(dialect: unknown): string[] {
   }
   if (d.nestedSandbox !== undefined) problems.push(...nestedSandboxProblems(d.nestedSandbox, 'nestedSandbox'));
   if (d.nativeCompact !== undefined) {
-    const command = typeof d.nativeCompact === 'object' && d.nativeCompact !== null
-      ? (d.nativeCompact as { command?: unknown }).command
+    const rec = typeof d.nativeCompact === 'object' && d.nativeCompact !== null
+      ? (d.nativeCompact as { command?: unknown; run?: unknown })
       : undefined;
-    if (typeof command !== 'string' || command.trim() === '') {
-      problems.push('`nativeCompact` must be `{ command: string }`: the non-empty message that makes the agent compact its own session');
+    const hasCommand = typeof rec?.command === 'string' && rec.command.trim() !== '';
+    const hasRun = isFunction(rec?.run);
+    const valid = (hasCommand && rec?.run === undefined) || (hasRun && rec?.command === undefined);
+    if (!valid) {
+      problems.push('`nativeCompact` must be `{ command: string }` or `{ run: Function }`: how the agent compacts its own session');
     }
   }
   if (d.maxPromptBytes !== undefined && !(Number.isInteger(d.maxPromptBytes) && (d.maxPromptBytes as number) > 0)) {

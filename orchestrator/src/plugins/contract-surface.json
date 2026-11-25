@@ -2210,7 +2210,7 @@
         "supportedPermissionModes?": "readonly string[] | undefined",
         "nestedSandbox?": "NestedSandboxDeclaration | undefined",
         "thinkingControls?": "readonly (\"levels\" | \"budget\" | \"toggle\")[] | undefined",
-        "nativeCompact?": "{ readonly command: string; } | undefined",
+        "nativeCompact?": "NativeCompact | undefined",
         "buildSpawn": "(opts: BuildSpawnOpts, profile: ProfileRuntime) => Promise<SpawnResult>",
         "writeUserInput": "(proc: ChildProcessWithoutNullStreams, text: string, images?: ImageAttachment[]) => void",
         "parseLine": "(line: string) => NormalizedEvent[]",
@@ -2434,7 +2434,7 @@
         "supportedPermissionModes?": "readonly string[] | undefined",
         "nestedSandbox?": "NestedSandboxDeclaration | undefined",
         "thinkingControls?": "readonly (\"levels\" | \"budget\" | \"toggle\")[] | undefined",
-        "nativeCompact?": "{ readonly command: string; } | undefined",
+        "nativeCompact?": "NativeCompact | undefined",
         "extractSessionId": "(ev: NormalizedEvent) => string | null",
         "spans?": "((ev: NormalizedEvent, state: SpanState, eventId: number) => SpanOp[]) | undefined",
         "dispose?": "((missionId: string) => void) | undefined",
@@ -3160,7 +3160,7 @@
         "isSessionNotFoundError?": "((stderr: string) => boolean) | undefined",
         "setModel?": "((proc: ChildProcessWithoutNullStreams, model: string) => Promise<boolean>) | undefined",
         "maxPromptBytes?": "number | undefined",
-        "nativeCompact?": "{ readonly command: string; } | undefined",
+        "nativeCompact?": "NativeCompact | undefined",
         "dispose?": "((missionId: string) => void) | undefined",
         "enrichEvent?": "((ev: NormalizedEvent, missionId: string) => NormalizedEvent) | undefined"
       }
@@ -3223,7 +3223,7 @@
         "notFound?": "((stderr: string) => boolean) | undefined",
         "maxPromptBytes?": "number | undefined",
         "setModel?": "((io: SessionStdio, model: string) => Promise<boolean>) | undefined",
-        "compact?": "{ readonly command: string; } | undefined"
+        "compact?": "NativeCompact | undefined"
       }
     },
     "PermissionStrategy": {

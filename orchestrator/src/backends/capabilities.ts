@@ -3,7 +3,7 @@
  * the one resolver the catalogue, the dispatcher and the chat routes read, so
  * they can never disagree on what a backend can do.
  */
-import { BACKEND_CAPABILITIES, DEFAULT_BACKEND_CAPABILITIES, type BackendCapabilities, type BackendProfile, type Dialect } from './types.js';
+import { BACKEND_CAPABILITIES, DEFAULT_BACKEND_CAPABILITIES, type BackendCapabilities, type BackendProfile, type Dialect, type NativeCompact } from './types.js';
 import { getDialect, installedProfiles } from './registry.js';
 import { baseBackendId } from './instance-id.js';
 import type { NestedSandboxDeclaration } from './permission-models.js';
@@ -34,18 +34,28 @@ export function backendCapabilities(id: string | null | undefined): BackendCapab
 }
 
 /**
- * The message that makes backend `id` compact its own session
- * (`SessionStrategy.compact`), or null when it cannot. Read off the dialect,
- * never off a name; an account instance (`claude@<id>`) is its backend's
- * dialect. Not one of the `BackendCapabilities` flags: those default to true
- * and only narrow, whereas compaction is something a provider has to declare.
+ * How backend `id` compacts its own session (`SessionStrategy.compact`), or
+ * null when it cannot. Read off the dialect, never off a name; an account
+ * instance (`claude@<id>`) is its backend's dialect. Not one of the
+ * `BackendCapabilities` flags: those default to true and only narrow, whereas
+ * compaction is something a provider has to declare.
  */
-export function nativeCompactCommand(id: string | null | undefined): string | null {
+export function nativeCompactOf(id: string | null | undefined): NativeCompact | null {
   if (!id) return null;
   const base = baseBackendId(id);
   const profile = installedProfiles().find((entry) => entry.id === base);
   const dialect = profile ? getDialect(profile.dialect) : undefined;
-  return dialect?.nativeCompact?.command ?? null;
+  return dialect?.nativeCompact ?? null;
+}
+
+/**
+ * The slash-command message that makes backend `id` compact its own session,
+ * or null when it does not declare a command-based native compaction (either
+ * no native compaction at all, or a programmatic `{ run }` hook).
+ */
+export function nativeCompactCommand(id: string | null | undefined): string | null {
+  const compact = nativeCompactOf(id);
+  return compact && 'command' in compact ? compact.command : null;
 }
 
 /**

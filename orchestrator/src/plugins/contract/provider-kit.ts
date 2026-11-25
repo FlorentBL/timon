@@ -16,7 +16,7 @@
  */
 export type {
   AccountUsage, ApprovalScope, BackendCapabilities, BackendCapability, BackendLaunchContext, BackendProfile, BuildSpawnOpts,
-  Dialect, DiscoveredModel, EnvResolver, ImageAttachment, LocalEnvPolicy, NormalizedEvent, PermissionDecision,
+  Dialect, DiscoveredModel, EnvResolver, ImageAttachment, LocalEnvPolicy, NativeCompact, NativeCompactContext, NativeCompactResult, NormalizedEvent, PermissionDecision,
   PermissionModel, PermissionRequest, PermissionWait, ProfileRuntime, ProviderConfig, RateLimitReporting, RegisteredProfile,
   RemoteDialect, RemoteResumeState, RemoteSessionHost, RemoteSessionOpenArgs, RemoteSessionResume, SecretRef,
   SessionAnswer, SessionAskOutcome, SessionAskRequest, SessionCapabilities, SessionDriver, SessionEnd, SessionHost, SessionInfo,

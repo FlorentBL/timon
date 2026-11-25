@@ -34,6 +34,7 @@ import { existsSync, lstatSync, mkdirSync, readFileSync, realpathSync } from 'no
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { codexApiKey, codexAuthPath, inspectCodexAuth } from './auth.js';
+import { compactCodexThread } from './compact.js';
 import { codexContextSnapshot } from './context.js';
 import { mapCodexEvent } from './events.js';
 import { codexAccountLevels, codexAccountSlugs } from './models-cache.js';
@@ -498,6 +499,11 @@ export function createCodexProvider(services, log) {
              *  `thread/resume failed: no rollout found for thread id <id> (code -32600)`. */
             notFound(stderr) {
                 return /no rollout found for thread id/i.test(stderr);
+            },
+            compact: {
+                run(ctx) {
+                    return compactCodexThread(services.binary, ctx, CODEX.binary.names[0]);
+                },
             },
         },
         // `codex exec` is one-way: no approval round trip during the turn. Rights are

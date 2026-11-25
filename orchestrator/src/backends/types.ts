@@ -226,6 +226,33 @@ export type PermissionModel = (typeof PERMISSION_MODELS)[number];
 export const RATE_LIMIT_REPORTINGS = ['structured', 'textual', 'none'] as const;
 export type RateLimitReporting = (typeof RATE_LIMIT_REPORTINGS)[number];
 
+/** Context passed to a provider's programmatic native compaction hook (`NativeCompact.run`). */
+export type NativeCompactContext = {
+  readonly missionId: string;
+  /** Resumable provider session / thread id (`mission.session_id`). */
+  readonly sessionId: string;
+  /** Agent working directory, when available. */
+  readonly cwd?: string;
+  /** Per-mission private scratch directory (e.g. `CODEX_HOME`), when present on disk. */
+  readonly scratch?: string;
+  /** Maximum time the compaction may run before timing out, in milliseconds. */
+  readonly timeoutMs: number;
+};
+
+/** Optional metadata returned by a provider's programmatic native compaction hook. */
+export type NativeCompactResult = {
+  readonly metadata?: Readonly<Record<string, unknown>>;
+};
+
+/**
+ * How a provider compacts its own session in place: either by sending a slash
+ * command as a normal turn (`{ command: '/compact' }`), or programmatically
+ * through its own protocol (`{ run }`, e.g. Codex App Server `thread/compact/start`).
+ */
+export type NativeCompact =
+  | { readonly command: string }
+  | { readonly run: (ctx: NativeCompactContext) => Promise<NativeCompactResult | void> };
+
 /**
  * Where a mission's session lives (cf. `Backend.sessionStore`).
  *   - `global`      : store internal to the CLI, shared by all missions
@@ -1039,9 +1066,9 @@ export interface Dialect {
    * not be offered for it.
    */
   readonly thinkingControls?: readonly ReasoningControl['type'][];
-  /** Cf. `SessionStrategy.compact`: the message that makes the agent compact
-   *  its own session. Absent = no native compaction. */
-  readonly nativeCompact?: { readonly command: string };
+  /** Cf. `SessionStrategy.compact`: how the agent compacts its own session
+   *  in place (slash command or programmatic hook). Absent = no native compaction. */
+  readonly nativeCompact?: NativeCompact;
   buildSpawn(opts: BuildSpawnOpts, profile: ProfileRuntime): Promise<SpawnResult>;
   writeUserInput(
     proc: ChildProcessWithoutNullStreams,
@@ -1272,7 +1299,7 @@ export interface Backend {
 
   /** Cf. `Dialect.nativeCompact`. Absent = the agent cannot compact its own
    *  session: a compaction summarizes and forks (`mission-compact.ts`). */
-  readonly nativeCompact?: { readonly command: string };
+  readonly nativeCompact?: NativeCompact;
 
   /** Cleanup of per-mission resources created by the backend (scratch dir,
    *  sockets…), called when the mission is explicitly killed. Optional:

@@ -26,8 +26,13 @@
  */
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
-import { getTurnState, respawnWithResume, sendToAgent } from './agent.js';
-import { catalogBackend, defaultBackendName, nativeCompactCommand } from './backends/index.js';
+import { getTurnState, loadConfig, respawnWithResume, sendToAgent } from './agent.js';
+import {
+  catalogBackend, defaultBackendName, nativeCompactCommand, nativeCompactOf,
+  type NativeCompact, type NativeCompactContext, type NativeCompactResult,
+} from './backends/index.js';
+import { existingMissionScratchPath } from './backends/provider-scratch.js';
+import { backendOwnerPlugin } from './backends/registry.js';
 import { bus, type BusEvent } from './bus.js';
 import { dbApi } from './db.js';
 import { settingNum } from './settings.js';
@@ -71,8 +76,17 @@ export type CompactDeps = {
   currentLlm(missionId: string): MissionLlm;
   /** The message that makes `backend` compact its own session, or null. */
   nativeCommand(backend: string): string | null;
+  /** Full native compaction declaration (slash command or programmatic hook), when available. */
+  nativeCompact?(backend: string): NativeCompact | null;
   turnActive(missionId: string): boolean;
   sendCommand(missionId: string, command: string): Promise<CommandOutcome>;
+  /** Executes a provider's programmatic native compaction hook (`NativeCompact.run`). */
+  runNativeCompact?(
+    missionId: string,
+    backend: string,
+    run: (ctx: NativeCompactContext) => Promise<NativeCompactResult | void>,
+    timeoutMs: number,
+  ): Promise<NativeCompactResult | 'not_resumable' | void>;
   /** Deliver the caller's message as an ordinary turn, after a native compaction. */
   sendMessage(missionId: string, text: string): Promise<boolean>;
   summarize(missionId: string): Promise<unknown>;
@@ -117,20 +131,29 @@ export function resetCompactOperations(): void {
   operations.clear();
 }
 
+export type CompactPlan =
+  | { mode: 'native'; command: string; backend: string; model: string | null }
+  | { mode: 'native'; run: (ctx: NativeCompactContext) => Promise<NativeCompactResult | void>; backend: string; model: string | null }
+  | { mode: 'fork'; backend: string; model: string | null; reasoningEffort: string | null };
+
 /** Native when the caller keeps the mission's LLM (or names none) and the
  *  backend declares it can; a fork everywhere else. */
 export function planCompaction(
   current: MissionLlm,
   body: CompactBody,
-  nativeCommand: (backend: string) => string | null,
-): { mode: 'native'; command: string; backend: string; model: string | null }
-  | { mode: 'fork'; backend: string; model: string | null; reasoningEffort: string | null } {
+  nativeOf: (backend: string) => NativeCompact | string | null,
+): CompactPlan {
   const backend = body.backend ?? current.backend;
   const sameBackend = backend === current.backend;
   const model = body.model ?? (sameBackend ? current.model : null);
   const sameLlm = sameBackend && (body.model === undefined || body.model === current.model);
-  const command = sameLlm ? nativeCommand(backend) : null;
-  if (command) return { mode: 'native', command, backend, model: current.model };
+  const resolved = sameLlm ? nativeOf(backend) : null;
+  if (typeof resolved === 'string') return { mode: 'native', command: resolved, backend, model: current.model };
+  if (resolved) {
+    return 'command' in resolved
+      ? { mode: 'native', command: resolved.command, backend, model: current.model }
+      : { mode: 'native', run: resolved.run, backend, model: current.model };
+  }
   // An effort level belongs to the provider it was set for.
   const reasoningEffort = body.reasoning_effort !== undefined
     ? body.reasoning_effort
@@ -193,7 +216,8 @@ export function startCompaction(missionId: string, body: CompactBody, deps: Comp
     return { status: 409, body: { error: 'a compaction of this conversation is already under way', code: 'compact_in_progress', operation: { ...current } } };
   }
   const llm = deps.currentLlm(missionId);
-  const plan = planCompaction(llm, body, deps.nativeCommand);
+  const nativeOf = deps.nativeCompact ?? ((backend: string) => deps.nativeCommand(backend));
+  const plan = planCompaction(llm, body, nativeOf);
   if (plan.mode === 'native' && deps.turnActive(missionId)) {
     return { status: 409, body: { error: 'the agent is answering: compact once its turn is over', code: 'turn_in_flight' } };
   }
@@ -213,7 +237,9 @@ export function startCompaction(missionId: string, body: CompactBody, deps: Comp
   operations.set(missionId, op);
   publish(op);
   const run = plan.mode === 'native'
-    ? runNative(op, plan.command, body.message, deps)
+    ? ('command' in plan
+      ? runNative(op, plan.command, body.message, deps)
+      : runNativeProgrammatic(op, plan.run, body.message, deps))
     : runFork(op, llm.agent, plan, body.message, deps);
   // `run` never rejects: every failure is turned into the `error` phase.
   void run;
@@ -291,20 +317,60 @@ async function runNative(op: CompactOperation, command: string, message: string 
       return;
     }
     conclude(op, deps, { targetMissionId: op.missionId }, seen.boundary ? { compact_metadata: seen.boundary } : {});
-    if (message?.trim()) {
-      try {
-        if (!(await deps.sendMessage(op.missionId, message))) {
-          console.warn(`[compact] ${op.missionId.slice(0, 8)}: compacted, but the follow-up message found no session`);
-        }
-      } catch (err) {
-        console.warn(`[compact] ${op.missionId.slice(0, 8)}: compacted, but the follow-up message failed: ${(err as Error).message}`);
-      }
-    }
+    await deliverFollowUpMessage(op, message, deps);
   } catch (err) {
     conclude(op, deps, { error: errorText(err, 'compaction') });
   } finally {
     clearTimeout(timer);
     bus.off(channel, listener);
+  }
+}
+
+async function deliverFollowUpMessage(op: CompactOperation, message: string | undefined, deps: CompactDeps): Promise<void> {
+  if (!message?.trim()) return;
+  try {
+    if (!(await deps.sendMessage(op.missionId, message))) {
+      console.warn(`[compact] ${op.missionId.slice(0, 8)}: compacted, but the follow-up message found no session`);
+    }
+  } catch (err) {
+    console.warn(`[compact] ${op.missionId.slice(0, 8)}: compacted, but the follow-up message failed: ${(err as Error).message}`);
+  }
+}
+
+/** Programmatic native compaction (e.g. Codex App Server `thread/compact/start`):
+ *  no turn runs on the mission stream, so the hook's promise settles the operation. */
+async function runNativeProgrammatic(
+  op: CompactOperation,
+  run: (ctx: NativeCompactContext) => Promise<NativeCompactResult | void>,
+  message: string | undefined,
+  deps: CompactDeps,
+): Promise<void> {
+  const limit = deps.timeoutMs();
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    advance(op, 'compacting');
+    if (!deps.runNativeCompact) {
+      conclude(op, deps, { error: 'compaction: programmatic native compaction is not configured' });
+      return;
+    }
+    const timed = new Promise<never>((_resolve, reject) => {
+      timer = setTimeout(() => reject(new Error(`no compaction after ${Math.round(limit / 1000)} s`)), limit);
+    });
+    const result = await Promise.race([
+      deps.runNativeCompact(op.missionId, op.backend, run, limit),
+      timed,
+    ]);
+    if (result === 'not_resumable') {
+      conclude(op, deps, { error: 'this conversation has no session left to compact' });
+      return;
+    }
+    const metadata = result && typeof result === 'object' && result.metadata ? result.metadata : undefined;
+    conclude(op, deps, { targetMissionId: op.missionId }, metadata ? { compact_metadata: metadata } : {});
+    await deliverFollowUpMessage(op, message, deps);
+  } catch (err) {
+    conclude(op, deps, { error: errorText(err, 'compaction') });
+  } finally {
+    if (timer) clearTimeout(timer);
   }
 }
 
@@ -337,7 +403,27 @@ export function defaultCompactDeps(): CompactDeps {
       };
     },
     nativeCommand: nativeCompactCommand,
+    nativeCompact: nativeCompactOf,
     turnActive: (missionId) => getTurnState(missionId)?.turnActive === true,
+    async runNativeCompact(missionId, backend, run, timeoutMs) {
+      const mission = dbApi.getMission(missionId);
+      if (!mission?.session_id) return 'not_resumable';
+      let cwd: string | undefined;
+      try {
+        cwd = loadConfig(mission.agent_name).cwd;
+      } catch {
+        cwd = undefined;
+      }
+      const pluginId = backendOwnerPlugin(backend);
+      const scratch = pluginId ? existingMissionScratchPath(pluginId, missionId) : undefined;
+      return run({
+        missionId,
+        sessionId: mission.session_id,
+        ...(cwd ? { cwd } : {}),
+        ...(scratch ? { scratch } : {}),
+        timeoutMs,
+      });
+    },
     async sendCommand(missionId, command) {
       const turn = { agentCommand: true };
       const sent = await sendToAgent(missionId, command, undefined, COMMAND_ORIGIN, null, undefined, turn);

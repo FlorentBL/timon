@@ -11,7 +11,7 @@
  */
 
 import type {
-  AccountUsage, BuildSpawnOpts, DiscoveredModel, NormalizedEvent, ImageAttachment, PermissionModel, ProfileRuntime,
+  AccountUsage, BuildSpawnOpts, DiscoveredModel, NormalizedEvent, ImageAttachment, NativeCompact, PermissionModel, ProfileRuntime,
   RateLimitReporting, RemoteSessionOpenArgs, SessionDriver, SessionOpenArgs, SessionStdio, SessionStore, SpanOp,
   SpanState, SpawnResult, UsageProbeOptions,
 } from '../types.js';
@@ -78,15 +78,17 @@ export type SessionStrategy = {
    */
   setModel?(io: SessionStdio, model: string): Promise<boolean>;
   /**
-   * The agent compacts its OWN session when it receives `command` as the
-   * message of a turn (Claude Code's `/compact`): the conversation goes on in
-   * the same mission and session, with a shorter context. Absent = no native
-   * compaction; Timon then summarizes the transcript and forks a new mission
-   * (docs/MISSION-COMPACT.md). A `process-per-turn` launch sees that turn with
+   * How the agent compacts its OWN session in place: either by receiving
+   * `command` as the message of a turn (Claude Code's `/compact`), or by
+   * running a provider-specific protocol hook (`run`, e.g. Codex App Server
+   * `thread/compact/start`). The conversation goes on in the same mission and
+   * session, with a shorter context. Absent = no native compaction; Timon then
+   * summarizes the transcript and forks a new mission (docs/MISSION-COMPACT.md).
+   * A `process-per-turn` launch sees a command turn with
    * `BuildSpawnOpts.agentCommand: true`, so a CLI that reads a leading `/` as
    * plain text by default (Grok's `--verbatim`) can let the command through.
    */
-  readonly compact?: { readonly command: string };
+  readonly compact?: NativeCompact;
 };
 
 /** How tool uses are arbitrated. */

@@ -20,7 +20,7 @@ import type { SecretTarget } from '../secrets/resolve.js';
 
 export type {
   AccountUsage, ApprovalScope, AssistantDeltaPayload, Backend, BackendCapabilities, BackendCapability, BackendName, BackendProfile, BuildSpawnOpts,
-  AnyDialect, BackendLaunchContext, Dialect, ImageAttachment,
+  AnyDialect, BackendLaunchContext, Dialect, ImageAttachment, NativeCompact, NativeCompactContext, NativeCompactResult,
   EnvResolver, EnvValue, NormalizedEvent, OpenSpan, PermissionDecision, PermissionModel, PermissionRequest, PermissionWait,
   ProfileRuntime, ProviderConfig, ProviderRetryKind, ProviderRetryPayload, RateLimitReporting, RemoteDialect, RemoteResumeState,
   RemoteSessionHost, RemoteSessionOpenArgs,
@@ -38,7 +38,7 @@ export {
   backendCatalog, primeModelDiscovery, catalogBackend, backendIdForModel,
   catalogClaimsModel,
 } from './catalog.js';
-export { backendCapabilities, canReadSkillOnDemand, nativeCompactCommand, resolveCapabilities } from './capabilities.js';
+export { backendCapabilities, canReadSkillOnDemand, nativeCompactCommand, nativeCompactOf, resolveCapabilities } from './capabilities.js';
 export { activeProfiles, getDialect, inactiveProfiles, onBackendsChanged, type ResolvedProfile } from './registry.js';
 export { ProfileEnvError } from './credentials.js';
 
