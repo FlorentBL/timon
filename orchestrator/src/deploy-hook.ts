@@ -140,9 +140,11 @@ async function handleMerge(missionId: string): Promise<void> {
 
   // 1. Docker containers → automatic rebuild (safe). Gated on the presence of a
   //    docker-compose.yml at the root of the repo (projects without compose are
-  //    ignored silently).
-  const hasCompose =
-    existsSync(join(repoDir, 'docker-compose.yml')) || existsSync(join(repoDir, 'compose.yml'));
+  //    ignored silently), and on the host's `containers` capability: a witness
+  //    daemon (temporary home, test runner, TIMON_NO_CONTAINERS) has none and
+  //    must not rebuild the real installation's containers (#1169).
+  const hasCompose = Boolean(getHost().containers) && (
+    existsSync(join(repoDir, 'docker-compose.yml')) || existsSync(join(repoDir, 'compose.yml')));
   if (hasCompose) {
     const services = [...new Set([...topDirs].filter((d) => DOCKER_DIRS[d]).map((d) => DOCKER_DIRS[d]!))];
     for (const svc of services) rebuildService(repoDir, svc, task, sha);

@@ -10,6 +10,7 @@ import type { TimonConfig } from '../config/schema.js';
 import { TIMON_HOME } from '../paths.js';
 import type { Capability, ExecOpts, ExecResult, Host, SpawnOpts } from './types.js';
 import { findExecutableBinary, resolvePinnedBinary, type BinarySearchOptions } from './binary-path.js';
+import { containersSuppression } from './containers-policy.js';
 import { spawnDetachedGeneric } from './detached.js';
 import { inspectListenPort } from './listen-port.js';
 import { detectDesktopSession, type DesktopSession } from './desktop-session.js';
@@ -224,6 +225,9 @@ export function createGenericHost(
 
   const docker = (() => {
     if (config.host.docker === 'disabled') return undefined;
+    // Before any probe: a witness daemon does not even ask Docker (#1169).
+    // Silent: the CLI builds this host too, and its stdout may be JSON.
+    if (containersSuppression({ env: process.env, home: TIMON_HOME })) return undefined;
     try {
       bin('docker');
       if (exec('docker', ['info'], { timeout: 5_000 }).code !== 0) return undefined;
