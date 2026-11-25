@@ -1,6 +1,7 @@
 /**
- * "Allow for this agent": the answer a person gives, from the mission's thread,
- * to a path the mission fence refused (TODO #1162).
+ * "Allow for this agent" / "Allow for the project": the answer a person gives,
+ * from the mission's thread, to a path the mission fence refused (TODO #1162,
+ * #1168).
  *
  * WHY. A refusal the fence is sure of (`fence-refusal.ts`) names a folder an
  * agent could be given (`extra_dirs`, `agent-extra-dirs.ts`). Sending the
@@ -22,24 +23,32 @@ import { existsSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { z } from 'zod';
+import { loadConfig } from './agent-config.js';
 import { agentExtraDirs, extraDirProblem, type AgentExtraDir, type ExtraDirMode } from './agent-extra-dirs.js';
 import { bus } from './bus.js';
 import { dbApi } from './db.js';
 import type { FenceRefusal } from './fence-refusal.js';
+import { projectExtraDirs } from './project-extra-dirs.js';
+import { listProjects } from './projects.js';
+import { projectFromCwd } from './task-project.js';
 
 /** The event that settles an offer; its `id` is the refusal's. */
 export const FENCE_GRANT_EVENT = 'fence_grant_resolved';
 
-/** What an accord would add to the agent's extra folders. */
+/** What an accord would add to the agent's, or its project's, extra folders. */
 export type FenceGrantOffer = {
   /** Absolute folder: the refused path when it is a folder, else its nearest existing parent folder. */
   path: string;
   /** The same folder with the user's home folded to `~`, for display. */
   display: string;
   mode: ExtraDirMode;
+  /** The agent's project, which "Allow for the project" adds the folder to; null (or absent, on a refusal recorded before #1168) offers the agent alone. */
+  project?: string | null;
 };
 
 export type FenceGrantStatus = 'allowed' | 'refused';
+/** Whose extra folders an accord adds the folder to. */
+export type FenceGrantScope = 'agent' | 'project';
 
 export type FenceGrantResolution = {
   /** The refusal this answers (`FenceRefusal.id`). */
@@ -48,8 +57,23 @@ export type FenceGrantResolution = {
   /** The folder added, when allowed. */
   path: string | null;
   mode: ExtraDirMode | null;
+  /** Whose list the folder joined, when allowed. */
+  scope?: FenceGrantScope | null;
+  /** The project it joined, when `scope` is `project`. */
+  project?: string | null;
   resolvedAt: number;
 };
+
+/** The project an agent belongs to, as its launches read it, when that project exists; null otherwise. */
+export function agentProjectOf(agent: string): string | null {
+  try {
+    const cfg = loadConfig(agent);
+    const slug = cfg.project ?? projectFromCwd(cfg.cwd);
+    return slug && listProjects().includes(slug) ? slug : null;
+  } catch {
+    return null;
+  }
+}
 
 function contains(parent: string, child: string): boolean {
   if (parent === child) return true;
@@ -80,7 +104,8 @@ export function grantFolderOf(path: string, folder: (p: string) => boolean = isF
   }
 }
 
-/** Whether `held` already gives `mode` on exactly `path`: then an accord would change nothing. */
+/** Whether `held` already gives `mode` on exactly `path`: then an accord would change nothing.
+ *  `held` is the agent's folders and its project's: a mission gets both. */
 function alreadyHeld(held: readonly AgentExtraDir[], path: string, mode: ExtraDirMode): boolean {
   return held.some((dir) => resolve(dir.path) === path && (dir.mode === 'write' || mode === 'read'));
 }
@@ -95,6 +120,8 @@ export function fenceGrantOffer(
   refusal: Pick<FenceRefusal, 'path' | 'access' | 'grantable' | 'timonHome' | 'agent'>,
   options: {
     held?: readonly AgentExtraDir[];
+    /** The agent's project; read from its config when absent. */
+    project?: string | null;
     home?: string;
     timonHome?: string;
     folder?: (p: string) => boolean;
@@ -111,11 +138,12 @@ export function fenceGrantOffer(
     }));
   if (problem(path)) return null;
   const mode: ExtraDirMode = refusal.access === 'write' ? 'write' : 'read';
-  const held = options.held ?? agentExtraDirs(refusal.agent);
+  const project = options.project === undefined ? agentProjectOf(refusal.agent) : options.project;
+  const held = options.held ?? [...agentExtraDirs(refusal.agent), ...projectExtraDirs(project)];
   if (alreadyHeld(held, path, mode)) return null;
   const userHome = resolve(options.home ?? homedir());
   const display = contains(userHome, path) && path !== userHome ? join('~', relative(userHome, path)) : path;
-  return { path, display, mode };
+  return { path, display, mode, project };
 }
 
 /**
@@ -143,7 +171,12 @@ const storedRefusalSchema = z.object({
   agent: z.string().min(1).nullable(),
   timonHome: z.boolean(),
   grantable: z.boolean(),
-  grant: z.object({ path: z.string().min(1), display: z.string(), mode: z.enum(['read', 'write']) }).nullable().optional(),
+  grant: z.object({
+    path: z.string().min(1),
+    display: z.string(),
+    mode: z.enum(['read', 'write']),
+    project: z.string().min(1).nullable().optional(),
+  }).nullable().optional(),
 }).passthrough();
 
 export type StoredFenceRefusal = z.infer<typeof storedRefusalSchema>;
@@ -153,6 +186,8 @@ const resolutionSchema = z.object({
   status: z.enum(['allowed', 'refused']),
   path: z.string().nullable(),
   mode: z.enum(['read', 'write']).nullable(),
+  scope: z.enum(['agent', 'project']).nullable().optional(),
+  project: z.string().nullable().optional(),
   resolvedAt: z.number(),
 }).passthrough();
 
@@ -192,8 +227,9 @@ export function recordFenceGrant(missionId: string, resolution: FenceGrantResolu
  * The turn that relaunches the mission once the folder is open, in English:
  * it is read by the agent. A person's click sent it, and the thread says so.
  */
-export function fenceGrantTurn(refusal: Pick<StoredFenceRefusal, 'display'>, offer: FenceGrantOffer): string {
+export function fenceGrantTurn(refusal: Pick<StoredFenceRefusal, 'display'>, offer: FenceGrantOffer, scope: FenceGrantScope = 'agent'): string {
   const access = offer.mode === 'write' ? 'read and write' : 'read';
-  return `Access granted: this agent's missions may now ${access} ${offer.display}. `
+  const whose = scope === 'project' && offer.project ? `the missions of project ${offer.project}` : 'this agent\'s missions';
+  return `Access granted: ${whose} may now ${access} ${offer.display}. `
     + `The mission fence refused ${refusal.display} before; try again what failed, then carry on.`;
 }

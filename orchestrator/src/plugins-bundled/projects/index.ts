@@ -8,6 +8,7 @@
 import type { Context } from '@deepseek-ai/cordis';
 import type { ModuleManifest } from '../../kernel/registry.js';
 import { registerRoutes } from './routes.js';
+import { registerProjectExtraDirsRoutes } from './extra-dirs-routes.js';
 import { bus } from '../../bus.js';
 import { dbApi } from '../../db.js';
 import { loadConfig } from '../../agent-config.js';
@@ -33,6 +34,7 @@ export function apply(ctx: Context): void {
   // Mounted at the root: the routes already carry their public prefix,
   // moving them would break the front proxy, the CLI and the agents.
   registerRoutes(ctx.http.router());
+  registerProjectExtraDirsRoutes(ctx.http.router());
 
   ctx.provide('@timon/projects', {});
 

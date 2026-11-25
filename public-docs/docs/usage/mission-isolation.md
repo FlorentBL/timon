@@ -92,12 +92,15 @@ What to do depends on the path:
 
 ### Allow a folder from the chat
 
-When the refused path is one an agent may be given, the chat shows a card instead of the notice: the path, whether it was a read or a write, and the folder Timon offers to open, with **Allow for this agent** and **Refuse**.
+When the refused path is one an agent may be given, the chat shows a card instead of the notice: the path, whether it was a read or a write, and the folder Timon offers to open, with **Allow for this agent**, **Allow for the project** when the agent belongs to a project, and **Refuse**.
 
 - **Allow for this agent** adds the folder to the agent's [extra folders](#an-agents-extra-folders), read-only or read-write as the refusal needed, then starts the mission again: since the fence of a running mission cannot change, Timon stops its process and sends it a message that resumes the same conversation with the folder open. The folder stays open for the agent's next missions; remove it from the **Workspace** tab of the agent's page.
+- **Allow for the project** adds the folder to the [project's extra folders](#a-projects-extra-folders) instead, so every agent of the project gets it, then starts the mission again the same way. Remove it from the project's settings, under **Agent folders**.
 - **Refuse** closes the card and changes nothing.
 
-The folder offered is the refused folder itself, or the folder of a refused file. Timon offers no card for its own data folder, a credential folder, a path of `host.isolation.deny`, a whole home folder or the root of a disk: those keep the notice above. Only a person signed in to the app can answer the card; an agent, a script or the `timon` command cannot. Allowing takes the same rights as changing the agent's extra folders on its page.
+When the refusal stopped a Kanban task before its mission started, allowing puts the task back in the queue: it starts again with the folder open, as if you had retried it from the board.
+
+The folder offered is the refused folder itself, or the folder of a refused file. Timon offers no card for its own data folder, a credential folder, a path of `host.isolation.deny`, a whole home folder or the root of a disk: those keep the notice above. Only a person signed in to the app can answer the card; an agent, a script or the `timon` command cannot. Allowing takes the same rights as changing the agent's extra folders on its page, or the project's in its settings.
 
 `timon doctor` checks each active backend against this computer's fence: for each one, it has the fence open the folders a mission of that backend uses, and the private files of Timon a mission must never read, under the policy such a mission gets. A line marked ✗ names the path and whether the policy or the kernel refused it.
 
@@ -106,6 +109,10 @@ The folder offered is the refused folder itself, or the folder of a refused file
 An agent can be given folders outside its working folder, in its **Workspace** tab under **Extra folders** (see [Agents](./agents.md#extra-folders)). The fence opens each one at the access you chose: **Read and write**, or **Read only**, which stays read-only even when the folder sits inside a folder the mission may write, so a mission cannot change it. The AI CLI is told as well: Claude Code gets the folders with `--add-dir` and refuses edits in a read-only one, Codex gets the writable ones in its sandbox.
 
 These folders never open what the fence protects: Timon's own folder, a folder that contains it, a whole home folder or disk, and folders of credentials are refused when you add them, and checked again at every mission, since the agent's file can be edited by hand; a folder that no longer passes is left out, and the agent's page says so. A mission cannot give its own agent a folder. The fence is set when a mission starts: a mission already running keeps the folders it started with.
+
+## A project's extra folders
+
+A folder several agents of one project need, a second repository or a shared data folder, can be given to the whole project instead of to each agent: in the project's settings, **Agent folders**, **Manage**, then **Add a folder** with **Whole project** chosen. Every mission of the project's agents gets it, beside its agent's own folders; when both name the same folder, the wider access wins. The same checks apply as for an agent's folders, and only a person signed in to the app can change the list: an agent, a script or the `timon` command cannot. Changing it takes the right to manage projects and the right to change privileged agent settings.
 
 Without a fence (Windows, or **Off**), a read-only folder is only a request to the AI CLI: Claude Code is not given it at all, so an edit there stays a question for you, and nothing stops a shell command from writing in it.
 
