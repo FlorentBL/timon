@@ -649,6 +649,17 @@ export const JOB_DIALOG_SLOT = 'kanban.job.dialog';
 export const PUBLISH_DIALOG_SLOT = 'forge.publish.dialog';
 
 /**
+ * Slot of the "Resolve the conflict" dialog of a contributor's pull request
+ * (`docs/FORGE-FLOW-PLAN.md` §6): the files in conflict, their resolution,
+ * the commit's preview, then its publication. The occupant reads
+ * `useConflictDialog()` and paints; the host (`kanban/conflict-dialog.tsx`)
+ * keeps every call to the daemon. Declared at boot with the product's dialog
+ * as its fallback, but not yet in the plugin contract: no API version names
+ * it and `@timon/ui` does not export its hook until API 20 publishes both.
+ */
+export const CONFLICT_DIALOG_SLOT = 'forge.conflict.dialog';
+
+/**
  * Slot of the rows plugins add to a project's settings (client API 19), in the
  * project's window under "Integrations": one row each, a title and a status on
  * the left, one action on the right, the rest in a "…" menu. The occupant reads
@@ -780,6 +791,7 @@ function declareBootSlots(): void {
   declareSlot(TODO_LANDING_SLOT, 'single');
   declareSlot(JOB_DIALOG_SLOT, 'single');
   declareSlot(PUBLISH_DIALOG_SLOT, 'single');
+  declareSlot(CONFLICT_DIALOG_SLOT, 'single');
   declareSlot(PAGE_TOC_SLOT, 'single');
   declareSlot(PROJECT_SETTINGS_SLOT, 'list');
   declareSlot(CHAT_SECRET_REQUEST_SLOT, 'single');

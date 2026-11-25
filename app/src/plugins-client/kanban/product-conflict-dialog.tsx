@@ -1,44 +1,32 @@
 'use client';
 
 /**
- * "Resolve the conflict" of a contributor's pull request
- * (`docs/FORGE-FLOW-PLAN.md` §3.3, §6): the daemon merges the pull request
- * here without a working tree (`forge-conflicts.ts`) and keeps what
- * conflicts; the person resolves each file, reads what the commit would
- * change on the contributor's branch, then proposes its publication, which
- * opens "Publish on GitHub". Nothing is pushed before that window.
+ * The product's "Resolve the conflict" dialog (`forge.conflict.dialog`, host
+ * `conflict-dialog.tsx`) of a contributor's pull request
+ * (`docs/FORGE-FLOW-PLAN.md` §3.3, §6): the person resolves each file, reads
+ * what the commit would change on the contributor's branch, then proposes its
+ * publication, which opens "Publish on GitHub". It reads
+ * `useConflictDialog()` and only paints; the host makes every call.
  *
  * Every text shown here comes from the contributor or from an agent: React
  * paints it as text, never as markup, and the agent's suggestion is only
  * shown until the person applies it.
  */
 
-import { useCallback, useEffect, useMemo, useState, type ReactElement, type ReactNode } from 'react';
+import { useMemo, useState, type ReactElement, type ReactNode } from 'react';
 import { Check, GitMerge, Loader2, Send } from 'lucide-react';
-import { toast } from 'sonner';
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/components/ui/dialog';
 import { Textarea } from '@/components/ui/textarea';
 import { WidgetButton } from '@/components/widget-toolbar';
 import { t } from '@/lib/i18n';
 import { cn } from '@/lib/utils';
-import {
-  discardConflict, getConflict, prepareConflict, proposeResolution, resolveFile, suggestResolution,
-  type ConflictFile, type ConflictView, type FileResolution, type ResolutionDiff,
-} from './forge-branch-api';
-import { projectAccount } from './forge-proposals-api';
+import type { ConflictFile, FileResolution, ResolutionDiff } from './forge-branch-api';
+import { useConflictDialog, type ConflictBusy } from './conflict-dialog-context';
 import {
   capLines, conflictBlocks, conflictHunks, hasConflictMarkers, shownDiff, type ShownLine,
 } from './conflict-model';
 import { diffLineKind } from './landing-api';
 import { DIFF_LINE_CLASS } from './landing-preview-dialog';
-
-export type ConflictDialogProps = {
-  project: string;
-  pull: { number: number; title: string };
-  onClose: () => void;
-  /** The resolution is proposed: open its publication (the dialog closes first). */
-  onPublish: (proposalId: string) => void;
-};
 
 const ISLAND = 'rounded-lg bg-foreground/[0.035]';
 const CHIP = 'inline-flex h-5 shrink-0 items-center rounded-md px-1.5 text-[10.5px] font-medium';
@@ -59,8 +47,7 @@ const LINE_CLASS: Record<Exclude<ShownLine['kind'], 'gap'>, string> = {
   theirs: DIFF_LINE_CLASS.context,
 };
 
-type Load = { kind: 'loading' } | { kind: 'error'; message: string } | { kind: 'ready' };
-type Busy = { what: 'file' | 'suggest' | 'propose' | 'discard'; path?: string } | null;
+type Busy = ConflictBusy;
 
 /** Lines of a file or a diff, as code. */
 function CodeLines({ lines, label }: { lines: readonly ShownLine[]; label: string }) {
@@ -249,42 +236,11 @@ function PreviewDiff({ diff }: { diff: ResolutionDiff | null }) {
   );
 }
 
-export function ConflictDialog({ project, pull, onClose, onPublish }: ConflictDialogProps): ReactElement {
-  const [load, setLoad] = useState<Load>({ kind: 'loading' });
-  const [conflict, setConflict] = useState<ConflictView | null>(null);
-  const [diff, setDiff] = useState<ResolutionDiff | null>(null);
-  const [account, setAccount] = useState<string | null>(null);
-  const [busy, setBusy] = useState<Busy>(null);
-  const [error, setError] = useState<string | null>(null);
+export function ProductConflictDialog(): ReactElement | null {
+  const host = useConflictDialog();
   const [editing, setEditing] = useState<Record<string, string>>({});
-  const [suggestions, setSuggestions] = useState<Record<string, string>>({});
-
-  useEffect(() => {
-    let alive = true;
-    void (async () => {
-      const [prepared, acc] = await Promise.all([prepareConflict(project, pull.number), projectAccount(project)]);
-      if (!alive) return;
-      setAccount(acc);
-      if (!prepared.ok) { setLoad({ kind: 'error', message: prepared.message }); return; }
-      setConflict(prepared.value);
-      if (prepared.value.state === 'proposed') {
-        const read = await getConflict(project, prepared.value.id);
-        if (!alive) return;
-        if (read.ok) { setConflict(read.value.conflict); setDiff(read.value.diff); }
-      }
-      setLoad({ kind: 'ready' });
-    })();
-    return () => { alive = false; };
-  }, [project, pull.number]);
-
-  const run = useCallback(async <T,>(what: Busy, step: () => Promise<{ ok: true; value: T } | { ok: false; message: string }>): Promise<T | null> => {
-    setBusy(what);
-    setError(null);
-    const out = await step();
-    setBusy(null);
-    if (!out.ok) { setError(out.message); return null; }
-    return out.value;
-  }, []);
+  if (!host) return null;
+  const { pull, load, conflict, diff, account, busy, error, suggestions, close: onClose } = host;
 
   const without = (map: Record<string, string>, path: string) => {
     const next = { ...map };
@@ -293,34 +249,7 @@ export function ConflictDialog({ project, pull, onClose, onPublish }: ConflictDi
   };
 
   const choose = async (path: string, resolution: FileResolution) => {
-    if (!conflict) return;
-    const view = await run({ what: 'file', path }, () => resolveFile(project, conflict.id, path, resolution));
-    if (!view) return;
-    setConflict(view);
-    setEditing((m) => without(m, path));
-    setSuggestions((m) => without(m, path));
-  };
-
-  const suggest = async (path: string) => {
-    if (!conflict) return;
-    const text = await run({ what: 'suggest', path }, () => suggestResolution(project, conflict.id, path));
-    if (text !== null) setSuggestions((m) => ({ ...m, [path]: text }));
-  };
-
-  const propose = async () => {
-    if (!conflict) return;
-    const out = await run({ what: 'propose' }, () => proposeResolution(project, conflict.id));
-    if (!out) return;
-    setConflict(out.conflict);
-    setDiff(out.diff);
-  };
-
-  const discard = async () => {
-    if (!conflict) { onClose(); return; }
-    const state = await run({ what: 'discard' }, () => discardConflict(project, conflict.id));
-    if (state === null) return;
-    toast.success(t('forgeConflict.discarded'));
-    onClose();
+    if (await host.resolve(path, resolution)) setEditing((m) => without(m, path));
   };
 
   const files = conflict?.files ?? [];
@@ -386,9 +315,9 @@ export function ConflictDialog({ project, pull, onClose, onPublish }: ConflictDi
                   onEditText={(text) => setEditing((m) => ({ ...m, [file.path]: text }))}
                   onCancelEdit={() => setEditing((m) => without(m, file.path))}
                   onSaveText={() => { void choose(file.path, { choice: 'text', text: editing[file.path] ?? '' }); }}
-                  onSuggest={() => { void suggest(file.path); }}
+                  onSuggest={() => { void host.suggest(file.path); }}
                   onApply={() => { void choose(file.path, { choice: 'text', text: suggestions[file.path] ?? '' }); }}
-                  onIgnore={() => setSuggestions((m) => without(m, file.path))}
+                  onIgnore={() => host.ignoreSuggestion(file.path)}
                 />
               )) : (
                 <section className={cn(ISLAND, 'flex min-w-0 flex-col gap-2 p-3')} aria-label={t('forgeConflict.preview.title')}>
@@ -408,7 +337,7 @@ export function ConflictDialog({ project, pull, onClose, onPublish }: ConflictDi
         <div className="flex flex-wrap items-center justify-end gap-2">
           <p className="mr-auto text-[11.5px] text-muted-foreground">{t('forgeConflict.note')}</p>
           {conflict && step < 4 && (
-            <WidgetButton data-conflict-discard="" onClick={() => { void discard(); }} disabled={working}
+            <WidgetButton data-conflict-discard="" onClick={() => { void host.discard(); }} disabled={working}
               label={busy?.what === 'discard' ? t('forgeConflict.discarding') : t('forgeConflict.discard')} />
           )}
           <WidgetButton data-conflict-close="" onClick={onClose} disabled={working} label={t('forgeConflict.close')} />
@@ -416,7 +345,7 @@ export function ConflictDialog({ project, pull, onClose, onPublish }: ConflictDi
             <WidgetButton
               primary
               data-conflict-next=""
-              onClick={() => { void propose(); }}
+              onClick={() => { void host.propose(); }}
               disabled={working || left > 0}
               title={left > 0 ? t('forgeConflict.left', { count: left }) : undefined}
               icon={busy?.what === 'propose' ? <Loader2 className="size-3.5 animate-spin" /> : undefined}
@@ -427,7 +356,7 @@ export function ConflictDialog({ project, pull, onClose, onPublish }: ConflictDi
             <WidgetButton
               primary
               data-conflict-publish=""
-              onClick={() => onPublish(conflict.proposal_id!)}
+              onClick={host.publish}
               icon={<Send className="size-3.5" />}
               label={t('forgeConflict.publish')}
             />

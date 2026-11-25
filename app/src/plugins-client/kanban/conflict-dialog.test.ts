@@ -342,3 +342,29 @@ test('the Conflict dialog resolves a file, shows the commit, and hands its publi
     await m.unmount();
   }
 });
+
+test('a plugin that takes forge.conflict.dialog paints it from the host\'s context; the host still makes the calls', async () => {
+  const m = await mount([pull({ mergeStateStatus: 'dirty', gestures: { update_branch: false, ask_contributor: true, resolve_conflict: true } })]);
+  const slots = await import('@/lib/plugin-host/slots');
+  const React = await import('react');
+  const { useConflictDialog } = await import('./conflict-dialog-context');
+  slots.resetSlotsForTests();
+  const Acme = () => {
+    const host = useConflictDialog();
+    return React.createElement('div', { 'data-acme-conflict': host?.pull.number }, host?.conflict?.files.map((f) => f.path).join(','));
+  };
+  const dispose = slots.register({ slot: 'forge.conflict.dialog', pluginId: 'acme-forge' }, Acme);
+  try {
+    await m.openMenu(58);
+    await m.click(document.querySelector('[data-menu-resolve-conflict]'));
+    await m.settle();
+    const painted = document.querySelector('[data-acme-conflict]');
+    assert.equal(painted?.getAttribute('data-acme-conflict'), '58');
+    assert.equal(painted?.textContent, 'app/src/tray.ts');
+    assert.ok(!document.querySelector('[data-conflict-dialog]'), 'the product\'s dialog gives way');
+    assert.deepEqual(posts(m.calls), ['POST /pull-requests/58/conflict']);
+  } finally {
+    dispose();
+    await m.unmount();
+  }
+});
