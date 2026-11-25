@@ -2893,6 +2893,7 @@
     "notInLicence": "不在你的许可证范围内",
     "coreLocked": "核心模块，守护进程必须依赖它才能运行。",
     "themeLocked": "此模块提供所有颜色变量，停用后应用将没有配色。请在「外观」中更换主题。",
+    "layoutLocked": "此模块绘制整个界面，停用后应用将一片空白。请在「外观」中更换布局。",
     "toggleFailed": "无法更改「{plugin}」",
     "toggleFailedStatus": "守护进程拒绝了更改（HTTP {status}）。",
     "toggleForbidden": "你的账户无权更改此插件。",

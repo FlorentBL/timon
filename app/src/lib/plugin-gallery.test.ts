@@ -191,6 +191,16 @@ test('the product theme is locked without being core: it carries the palette', (
   assert.equal(toCardData(bundled({ id: '@timon/vault', tier: 'std', state: 'active' })).locked, false);
 });
 
+test('the product layout is locked without being core: it is the whole interface', () => {
+  // Turning it off empties the `root` slot: a blank page reading "No layout
+  // mounted", with no Settings left to switch it back on. The daemon refuses (403).
+  const card = toCardData(bundled({ id: '@timon/ui-layout', tier: 'std', state: 'active' }));
+  assert.equal(card.locked, true);
+  assert.equal(card.note, 'Draws the whole interface — switching it off would leave the app blank. Change layout in Appearance.');
+  // A `false` from an older release is ignored by the daemon: the switch shows what runs.
+  assert.equal(toCardData(bundled({ id: '@timon/ui-layout', tier: 'std', state: 'active', wanted: false })).enabled, true);
+});
+
 test('two families: @timon (by the id scope) and Marketplace', () => {
   // The tier no longer makes a family: a `core` module is an @timon like
   // the others, it only differs by its switch taken away.

@@ -2831,6 +2831,7 @@
     "notInLicence": "라이선스에 포함되지 않음",
     "coreLocked": "핵심 모듈 — 이것 없이는 데몬이 실행되지 않습니다.",
     "themeLocked": "모든 색상 토큰을 담고 있습니다 — 끄면 앱에 팔레트가 없어집니다. 테마는 모양에서 바꾸세요.",
+    "layoutLocked": "인터페이스 전체를 그립니다 — 끄면 앱이 빈 화면이 됩니다. 레이아웃은 모양에서 바꾸세요.",
     "toggleFailed": "“{plugin}”을(를) 변경할 수 없습니다",
     "toggleFailedStatus": "데몬이 변경을 거부했습니다 (HTTP {status}).",
     "toggleForbidden": "계정으로 이 플러그인을 변경할 수 없습니다.",

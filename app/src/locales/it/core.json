@@ -2831,6 +2831,7 @@
     "notInLicence": "Non incluso nella tua licenza",
     "coreLocked": "Modulo di base: il daemon non funziona senza.",
     "themeLocked": "Contiene tutti i token di colore: disattivarlo lascerebbe l’app senza tavolozza. Cambia tema in Aspetto.",
+    "layoutLocked": "Disegna tutta l’interfaccia: disattivarlo lascerebbe l’app vuota. Cambia layout in Aspetto.",
     "toggleFailed": "Impossibile modificare “{plugin}”",
     "toggleFailedStatus": "Il daemon ha rifiutato la modifica (HTTP {status}).",
     "toggleForbidden": "Il tuo account non può modificare questo plugin.",

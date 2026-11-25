@@ -2831,6 +2831,7 @@
     "notInLicence": "Nie obejmuje tego twoja licencja",
     "coreLocked": "Moduł rdzenia — demon bez niego nie działa.",
     "themeLocked": "Zawiera wszystkie tokeny kolorów — wyłączenie go zostawiłoby aplikację bez palety. Zmień motyw w sekcji Wygląd.",
+    "layoutLocked": "Rysuje cały interfejs — wyłączenie go zostawiłoby pustą aplikację. Zmień układ w sekcji Wygląd.",
     "toggleFailed": "Nie udało się zmienić „{plugin}”",
     "toggleFailedStatus": "Demon odrzucił zmianę (HTTP {status}).",
     "toggleForbidden": "Twoje konto nie może zmieniać tej wtyczki.",

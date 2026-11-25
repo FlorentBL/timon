@@ -2831,6 +2831,7 @@
     "notInLicence": "Nicht in deiner Lizenz enthalten",
     "coreLocked": "Kernmodul — der Daemon läuft nicht ohne es.",
     "themeLocked": "Trägt alle Farbtokens — ohne es hätte die App keine Palette. Ändere das Design unter Darstellung.",
+    "layoutLocked": "Zeichnet die gesamte Oberfläche — ohne es bliebe die App leer. Ändere das Layout unter Darstellung.",
     "toggleFailed": "„{plugin}“ konnte nicht geändert werden",
     "toggleFailedStatus": "Der Daemon hat die Änderung abgelehnt (HTTP {status}).",
     "toggleForbidden": "Dein Konto darf dieses Plugin nicht ändern.",
