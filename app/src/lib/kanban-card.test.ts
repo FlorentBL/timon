@@ -57,14 +57,14 @@ test('a waiting card reads as a line with its deadline, and the other cards in t
   assert.deepEqual(pendingPermissionLine({
     kind: 'permission', tool_name: 'Bash', since: now - 4 * 60_000, expires_at: now + 60_000, remaining_ms: 60_000, count: 3,
   }, now), {
-    label: 'Waiting for a permission (Bash) for 4 min',
-    deadline: 'auto-deny in 1 min',
-    title: 'Waiting for a permission (Bash) for 4 min · auto-deny in 1 min · 2 more cards waiting',
-  });
+    label: 'Waiting for a permission (Bash) for 4\u00a0min',
+    deadline: 'auto-deny in 1\u00a0min',
+    title: 'Waiting for a permission (Bash) for 4\u00a0min · auto-deny in 1\u00a0min · 2 more cards waiting',
+  }, 'a duration never breaks across lines');
   const question = pendingPermissionLine({
     kind: 'question', tool_name: 'ask_user', since: now, expires_at: null, remaining_ms: null, count: 1,
   }, now);
-  assert.equal(question.label, 'Waiting for an answer for < 1 min');
+  assert.equal(question.label, 'Waiting for an answer for <\u00a01\u00a0min');
   assert.equal(question.deadline, null);
   assert.equal(question.title, question.label);
 });

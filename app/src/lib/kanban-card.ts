@@ -66,11 +66,13 @@ export function formatWait(ms: number): string {
  * and a tooltip that also counts the other cards.
  */
 export function pendingPermissionLine(p: PendingPermission, now: number): { label: string; deadline: string | null; title: string } {
-  const age = formatWait(now - p.since);
+  // A duration never breaks across lines ("3 / min") in a narrow column.
+  const keep = (text: string) => text.replace(/ /g, '\u00a0');
+  const age = keep(formatWait(now - p.since));
   const label = p.kind === 'question'
     ? t('kanbanPage.card.pendingQuestion', { age })
     : t('kanbanPage.card.pendingPermission', { tool: p.tool_name, age });
-  const deadline = p.expires_at === null ? null : t('kanbanPage.card.pendingDeadline', { left: formatWait(p.expires_at - now) });
+  const deadline = p.expires_at === null ? null : t('kanbanPage.card.pendingDeadline', { left: keep(formatWait(p.expires_at - now)) });
   const others = p.count > 1 ? t('kanbanPage.card.pendingOthers', { count: p.count - 1 }) : null;
   return { label, deadline, title: [label, deadline, others].filter(Boolean).join(' · ') };
 }

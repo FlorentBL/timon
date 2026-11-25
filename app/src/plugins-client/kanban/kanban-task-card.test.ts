@@ -173,15 +173,15 @@ test('a running task whose mission waits on a card says on what, since when and 
     } }), { needsAction: true });
     const line = m.zone('context')?.querySelector<HTMLElement>('[data-pending-permission="Bash"]');
     assert.ok(line, 'the waiting line');
-    assert.match(line.textContent ?? '', /Waiting for a permission \(Bash\) for 3 min/);
-    assert.match(line.textContent ?? '', /auto-deny in 2 min/);
+    assert.match(line.textContent ?? '', /Waiting for a permission \(Bash\) for 3\smin/);
+    assert.match(line.textContent ?? '', /auto-deny in 2\smin/);
     assert.match(line.title, /1 more card waiting/, 'the other cards in the tooltip');
     assert.doesNotMatch(m.text('context'), /Validation required/, 'one banner, not two');
 
     await m.render(task({ ...running, pending_permission: {
       kind: 'question', tool_name: 'ask_user', since: NOW - 20_000, expires_at: null, remaining_ms: null, count: 1,
     } }));
-    assert.match(m.text('context'), /Waiting for an answer for < 1 min/);
+    assert.match(m.text('context'), /Waiting for an answer for <\s1\smin/);
     assert.doesNotMatch(m.text('context'), /auto-deny/, 'a chat mission never times out');
 
     await m.render(task({ ...running, status: 'BLOCKED', pending_permission: {

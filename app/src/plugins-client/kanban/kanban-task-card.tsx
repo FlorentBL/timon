@@ -144,11 +144,14 @@ export function KanbanTaskCard({
         <div
           data-pending-permission={t.pending_permission?.tool_name}
           title={waiting.title}
-          className="flex min-w-0 items-center gap-1 rounded-md bg-warning/10 px-1.5 py-0.5 text-[11px] text-warning"
+          className="flex min-w-0 items-start gap-1 rounded-md bg-warning/10 px-1.5 py-0.5 text-[11px] text-warning"
         >
-          <ShieldAlert className="size-3.5 flex-none animate-pulse" aria-hidden />
-          <span className="truncate font-semibold">{waiting.label}</span>
-          {waiting.deadline && <span className="flex-none tabular-nums text-muted-foreground">· {waiting.deadline}</span>}
+          <ShieldAlert className="mt-px size-3.5 flex-none animate-pulse" aria-hidden />
+          {/* Wraps rather than truncates: in a narrow column the tool name is the point. */}
+          <span className="min-w-0 tabular-nums">
+            <span className="font-semibold">{waiting.label}</span>
+            {waiting.deadline && <span className="whitespace-nowrap text-muted-foreground"> · {waiting.deadline}</span>}
+          </span>
         </div>
       )}
       {validation && (
