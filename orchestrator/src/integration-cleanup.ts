@@ -14,27 +14,21 @@
  *   belongs to the job: same project, same series, same base branch, its
  *   integration this row. Another series on the same base is never touched.
  * - **Nothing a task still holds.** While any task on the branch is not DONE
- *   the row waits; so does it while the pilot's mission runs, and a row that
- *   waits stops its pass there: nothing after it is deleted. A task's
- *   worktree is detached from the tasks in the database first, only while all
- *   of them are DONE, and removed under the folder's lock
- *   (`withWorktreeLock`), which the dispatcher takes to reuse or make a
- *   task's folder: a task reopened and dispatched meanwhile waits for the
- *   removal, or finds its folder kept.
- * - **Nothing that did not land.** Before the first deletion, the head the
- *   job integrated must be in the target: a pull request merged by squash or
- *   rebase leaves everything in place, even a worktree whose HEAD is already
- *   there. Then a worktree goes only when it has nothing uncommitted and its
- *   real HEAD is in the target, read again right before `git worktree
- *   remove`; a branch only when its tip is, deleted with `update-ref -d` on
- *   that very commit. Deleted work does not come back, a leftover costs
- *   nothing.
- * - **Never a branch checked out** (read again at the deletion), never
- *   `main`, the target or (remote) the repository's default or a protected
- *   branch. A local branch git dates from the second the job concluded or
- *   later is not provably the job's, nor one whose creation git cannot date;
- *   a remote one whose pull request saw its head deleted or restored is not
- *   either. Both are kept.
+ *   the row waits; so does it while the pilot's mission runs. Each task is
+ *   read again right before its worktree goes, and the worktree is detached
+ *   from the tasks in the database first, only while all of them are DONE: the
+ *   dispatcher, which reuses a folder through that link, never starts a task
+ *   in a folder being removed.
+ * - **Nothing that did not land, proven before the deletion.** A worktree goes
+ *   only when it has nothing uncommitted and its real HEAD is in the target;
+ *   a branch only when its tip is. A pull request merged by squash or rebase
+ *   leaves everything in place: deleted work does not come back, a leftover
+ *   costs nothing. Git removes a worktree without `--force`; when it refuses,
+ *   the worktree keeps its link and its branch.
+ * - **Never a branch checked out**, never `main`, the target or (remote) the
+ *   repository's default or a protected branch; a branch created after the
+ *   job concluded is not the job's, and one whose creation git cannot date is
+ *   kept.
  * - **The remote copy only when asked** (`delete_remote_branch`), on the
  *   repository and URL the pull request was opened on (recorded then), after
  *   the account and push URL checks of the push, and leased on the commit that
@@ -66,7 +60,7 @@ import { checkAccount, checkRemoteUrl, pullRequestSetting, sameUrl } from './pr-
 import { readProjectIntegration } from './project-integration.js';
 import { SERIES_WORKTREES_ROOT } from './series-integration.js';
 import { settingBool, settingInt } from './settings.js';
-import { prepareWorktreeDependencies, releaseWorktreeFolder, withWorktreeLock, WORKTREES_ROOT } from './worktree.js';
+import { prepareWorktreeDependencies, releaseWorktreeFolder, WORKTREES_ROOT } from './worktree.js';
 
 /** How long a pass holds its reservation before another may take it over. */
 export const INTEGRATION_CLEANUP_LEASE_MS = 30 * 60_000;
@@ -162,26 +156,40 @@ async function checkedOut(repo: string, branch: string): Promise<boolean | null>
   return r.stdout.split('\n').some((line) => line.trim() === `branch refs/heads/${branch}`);
 }
 
-/** When git first recorded `branch` (its oldest reflog entry), in whole seconds; null when it cannot say. */
+/** When git first recorded `branch` (its oldest reflog entry), in ms; null when it cannot say. */
 async function branchCreatedAt(repo: string, branch: string): Promise<number | null> {
   const r = await gitRun(repo, ['reflog', 'show', '--date=unix', '--format=%gd', `refs/heads/${branch}`, '--']);
   if (r.code !== 0 || r.timedOut) return null;
   const stamps = [...r.stdout.matchAll(/@\{(\d+)\}/g)].map((m) => Number(m[1]));
-  return stamps.length > 0 ? Math.min(...stamps) : null;
-}
-
-/**
- * The reflog counts whole seconds, the conclusion milliseconds: a branch git
- * dates from the very second the job concluded may have been made after it,
- * and is not taken for the job's.
- */
-function createdBeforeConclusion(createdSec: number, row: IntegrationRow): boolean {
-  return createdSec < Math.floor(concludedAt(row) / 1000);
+  return stamps.length > 0 ? Math.min(...stamps) * 1000 : null;
 }
 
 /** Branch names never deleted here, whatever a row says. */
 function sacred(row: IntegrationRow, branch: string): boolean {
   return branch === 'main' || branch === 'master' || branch === row.target;
+}
+
+/**
+ * Deletes the local `branch` of `repo` while it still ends on `tip`, which the
+ * caller proved landed. `git branch -D` refuses a branch checked out in any
+ * worktree (the user's own checkout included) at the moment of the deletion;
+ * it names the commit it deleted, and a branch that moved since `tip` was read
+ * is put back on that commit at once.
+ */
+async function deleteBranch(repo: string, branch: string, tip: string): Promise<Step> {
+  // `core.abbrev=no`: git names the deleted commit in full, in any language.
+  const r = await gitRun(repo, ['-c', 'core.abbrev=no', 'branch', '-D', '--', branch]);
+  if (r.code !== 0) {
+    console.log(`[integration-cleanup] ${branch} kept: git refused to delete it (${(r.stderr || r.stdout).trim().split('\n')[0]})`);
+    return (await refSha(repo, `refs/heads/${branch}`)) ? 'waiting' : 'done';
+  }
+  const was = /\b([0-9a-f]{64}|[0-9a-f]{40})\b/.exec(r.stdout)?.[1] ?? null;
+  if (was === tip) return 'done';
+  // Moved between the read and the deletion, or unreadable: put it back.
+  const back = was ?? tip;
+  const restored = await gitRun(repo, ['update-ref', `refs/heads/${branch}`, back, '']);
+  console.warn(`[integration-cleanup] ${branch} put back on ${back.slice(0, 12)}: it moved while it was deleted${restored.code === 0 ? '' : ' (restoring it failed: run `git branch ' + branch + ' ' + back + '`)'}`);
+  return 'kept';
 }
 
 /** The checks a branch passes before `deleteBranch`. */
@@ -200,42 +208,11 @@ async function branchDeletable(repo: string, row: IntegrationRow, branch: string
     return 'kept';
   }
   const created = await branchCreatedAt(repo, branch);
-  if (created === null || !createdBeforeConclusion(created, row)) {
-    console.log(`[integration-cleanup] ${branch} kept: ${created === null ? 'git cannot tell when it was created' : 'git dates it from the job\'s conclusion or later'}`);
+  if (created === null || created > concludedAt(row)) {
+    console.log(`[integration-cleanup] ${branch} kept: ${created === null ? 'git cannot tell when it was created' : 'it was created after the job concluded'}`);
     return 'kept';
   }
   return 'go';
-}
-
-/**
- * Deletes the local `branch` of the row's repository while it still ends on
- * `tip`. Every check runs at the deletion: `update-ref -d` with the expected
- * commit fails when the branch moved, and since it does not look at
- * worktrees, the list of checkouts is read right before it and again after
- * it. A branch checked out in between is put back on `tip` at once.
- */
-async function deleteBranch(pass: Pass, branch: string, tip: string): Promise<Step> {
-  const { row } = pass;
-  const ready = await branchDeletable(row.repo, row, branch, tip);
-  if (ready !== 'go') return ready;
-  await pass.deps.beforeDeletion?.(`ref:${branch}`);
-  if ((await checkedOut(row.repo, branch)) !== false) return 'waiting';
-  const r = await gitRun(row.repo, ['update-ref', '-d', `refs/heads/${branch}`, tip]);
-  if (r.code !== 0) {
-    const now = await refSha(row.repo, `refs/heads/${branch}`);
-    if (now && now !== tip) {
-      console.log(`[integration-cleanup] ${branch} kept: it moved to ${now.slice(0, 12)} after its tip was proven landed`);
-      return 'kept';
-    }
-    // Gone meanwhile, or git could not lock it: the next pass reads it again.
-    return 'waiting';
-  }
-  if ((await checkedOut(row.repo, branch)) !== false) {
-    const back = await gitRun(row.repo, ['update-ref', `refs/heads/${branch}`, tip, '']);
-    console.warn(`[integration-cleanup] ${branch} put back on ${tip.slice(0, 12)}: it was checked out while it was deleted${back.code === 0 ? '' : ` (restoring it failed: run \`git branch ${branch} ${tip}\`)`}`);
-    return 'waiting';
-  }
-  return 'done';
 }
 
 // ─── The job's tasks ────────────────────────────────────────────────────────
@@ -255,62 +232,23 @@ function ofTheJob(row: IntegrationRow, task: TaskRow): boolean {
     && integrationOfTask(task, row.repo)?.id === row.id;
 }
 
-/** Is the worktree at `path` still clean, and its HEAD still in `holder`? Read at the removal. */
-async function stillContained(repo: string, path: string, holder: string): Promise<Step | 'go'> {
-  const tidy = await clean(path);
-  if (tidy !== true) return tidy === null ? 'waiting' : 'kept';
-  const head = await refSha(path, 'HEAD');
-  if (!head) return 'kept';
-  const contained = await ancestry(repo, head, holder);
-  return contained === 'yes' ? 'go' : contained === 'no' ? 'kept' : 'waiting';
-}
-
 /**
- * Removes a worktree folder after `guard` said yes, right before git removes
- * it. What the guard or git refused stays, and gets its links back.
- */
-async function removeGuarded(repo: string, path: string, root: string, guard: () => Promise<Step | 'go'>): Promise<{ step: Step; why: string }> {
-  const said: { verdict: Step | 'go' } = { verdict: 'kept' };
-  try {
-    await releaseWorktreeFolder(path, root, async () => {
-      said.verdict = await guard();
-      return said.verdict === 'go';
-    });
-  } catch (err) {
-    // Refused by the guard, or by git (uncommitted changes): the folder gets its links back.
-    await prepareWorktreeDependencies(repo, path).catch(() => undefined);
-    const why = (err as Error).message.split('\n')[0] ?? '';
-    return { step: said.verdict === 'waiting' ? 'waiting' : 'kept', why };
-  }
-  if (existsSync(join(path, '.git'))) return { step: 'kept', why: 'git left it in place' };
-  return { step: 'done', why: '' };
-}
-
-/**
- * One task's worktree, then its branch, under the folder's lock: the
- * dispatcher takes it to reuse or make the folder of a task reopened
- * meanwhile, and waits for the removal, which reads the task again last.
- * The worktree GC would dispose of them too, but only once its grace passed
- * and while the branch still exists to prove a task's work is in it: they go
- * before the branch does.
+ * One task's worktree, then its branch. The worktree GC would dispose of them
+ * too, but only once its grace passed and while the branch still exists to
+ * prove a task's work is in it: they go before the branch does.
  */
 async function disposeTaskWorktree(pass: Pass, task: TaskRow, repoDir: string): Promise<Step> {
-  return withWorktreeLock(task.worktree_path!, () => disposeTaskWorktreeLocked(pass, task, repoDir));
-}
-
-async function disposeTaskWorktreeLocked(pass: Pass, task: TaskRow, repoDir: string): Promise<Step> {
   const { row } = pass;
   const path = task.worktree_path!;
   const branch = task.branch_name!;
-  const name = `worktree of task ${task.id.slice(0, 8)}`;
   if (existsSync(path)) {
     if ((await commonDir(path)) !== repoDir) {
-      console.log(`[integration-cleanup] ${name} kept: not a worktree of ${row.repo}`);
+      console.log(`[integration-cleanup] worktree of task ${task.id.slice(0, 8)} kept: not a worktree of ${row.repo}`);
       return 'kept';
     }
     const tidy = await clean(path);
     if (tidy !== true) {
-      console.log(`[integration-cleanup] ${name} kept: ${tidy === null ? 'git cannot read its state' : 'it holds changes never committed'}`);
+      console.log(`[integration-cleanup] worktree of task ${task.id.slice(0, 8)} kept: ${tidy === null ? 'git cannot read its state' : 'it holds changes never committed'}`);
       return 'kept';
     }
     // Its real HEAD, never the sha recorded at the merge: a commit made since is work.
@@ -318,7 +256,7 @@ async function disposeTaskWorktreeLocked(pass: Pass, task: TaskRow, repoDir: str
     if (!head) return 'kept';
     const landed = await ancestry(row.repo, head, landedRef(row));
     if (landed !== 'yes') {
-      if (landed === 'no') console.log(`[integration-cleanup] ${name} kept: its HEAD is not in ${landedName(row)}`);
+      if (landed === 'no') console.log(`[integration-cleanup] worktree of task ${task.id.slice(0, 8)} kept: its HEAD is not in ${landedName(row)}`);
       return landed === 'no' ? 'kept' : 'waiting';
     }
     if (!(await stillOurs(pass, `worktree:${task.id}`))) return 'waiting';
@@ -327,17 +265,18 @@ async function disposeTaskWorktreeLocked(pass: Pass, task: TaskRow, repoDir: str
     if (!fresh || fresh.status !== 'DONE' || fresh.worktree_path !== path || !ofTheJob(row, fresh)) return 'waiting';
     const detached = dbApi.detachDoneTaskWorktree(task.id, path);
     if (!detached) return 'waiting';
-    const removed = await removeGuarded(row.repo, path, WORKTREES_ROOT, async () => {
-      await pass.deps.beforeDeletion?.(`remove:${task.id}`);
-      // A task reopened since the detachment: its folder stays its own.
-      if (detached.some((id) => dbApi.getTask(id)?.status !== 'DONE')) return 'waiting';
-      if (!dbApi.ownsIntegrationCleanup(row.id, pass.token)) return 'waiting';
-      return stillContained(row.repo, path, landedRef(row));
-    });
-    if (removed.step !== 'done') {
+    try {
+      await releaseWorktreeFolder(path, WORKTREES_ROOT);
+    } catch (err) {
+      // No `--force`: git refused, so the worktree, its link and its branch all stay.
       dbApi.restoreTaskWorktree(detached, path);
-      console.log(`[integration-cleanup] ${name} kept: ${removed.why}`);
-      return removed.step;
+      await prepareWorktreeDependencies(row.repo, path).catch(() => undefined);
+      console.log(`[integration-cleanup] worktree of task ${task.id.slice(0, 8)} kept: ${(err as Error).message.split('\n')[0]}`);
+      return 'kept';
+    }
+    if (existsSync(join(path, '.git'))) {
+      dbApi.restoreTaskWorktree(detached, path);
+      return 'kept';
     }
   } else if (!(await stillOurs(pass, `worktree:${task.id}`)) || !dbApi.detachDoneTaskWorktree(task.id, path)) {
     return 'waiting';
@@ -348,10 +287,12 @@ async function disposeTaskWorktreeLocked(pass: Pass, task: TaskRow, repoDir: str
     dbApi.forgetTaskBranch(task.id, branch);
     return 'done';
   }
+  const ready = await branchDeletable(row.repo, row, branch, tip);
+  if (ready !== 'go') return ready;
   if (!(await stillOurs(pass, `task-branch:${task.id}`))) return 'waiting';
   const again = dbApi.getTask(task.id);
   if (!again || again.status !== 'DONE' || again.worktree_path !== null) return 'waiting';
-  const step = await deleteBranch(pass, branch, tip);
+  const step = await deleteBranch(row.repo, branch, tip);
   if (step === 'done') dbApi.forgetTaskBranch(task.id, branch);
   return step;
 }
@@ -415,15 +356,13 @@ async function releasePilotWorktree(pass: Pass, root: string): Promise<Step> {
   }
   if (!(await stillOurs(pass, 'pilot'))) return 'waiting';
   if (pilotRunning(row.series_id)) return 'waiting';
-  const seriesId = row.series_id;
-  const removed = await removeGuarded(row.repo, path, root, async () => {
-    await pass.deps.beforeDeletion?.('remove:pilot');
-    if (pilotRunning(seriesId) || !dbApi.ownsIntegrationCleanup(row.id, pass.token)) return 'waiting';
-    return stillContained(row.repo, path, holder);
-  });
-  if (removed.step !== 'done') {
-    console.log(`[integration-cleanup] pilot worktree of series ${seriesId.slice(0, 8)} kept: ${removed.why}`);
-    return removed.step;
+  try {
+    await releaseWorktreeFolder(path, root);
+  } catch (err) {
+    // Uncommitted changes: git refuses, and the folder gets its links back.
+    await prepareWorktreeDependencies(row.repo, path).catch(() => undefined);
+    console.log(`[integration-cleanup] pilot worktree of series ${row.series_id.slice(0, 8)} kept: ${(err as Error).message.split('\n')[0]}`);
+    return 'kept';
   }
   console.log(`[integration-cleanup] pilot worktree of series ${row.series_id.slice(0, 8)} removed`);
   return 'done';
@@ -435,9 +374,11 @@ async function deleteLocalBranch(pass: Pass): Promise<Step> {
   const { row } = pass;
   const tip = await refSha(row.repo, `refs/heads/${row.branch}`);
   if (!tip) return 'done';
+  const ready = await branchDeletable(row.repo, row, row.branch, tip);
+  if (ready !== 'go') return ready;
   if (!(await stillOurs(pass, 'branch'))) return 'waiting';
   if (tasksOnBranch(row).some((t) => t.status !== 'DONE')) return 'waiting';
-  const step = await deleteBranch(pass, row.branch, tip);
+  const step = await deleteBranch(row.repo, row.branch, tip);
   if (step === 'done') console.log(`[integration-cleanup] ${row.branch} deleted: landed in ${landedName(row)}`);
   return step;
 }
@@ -498,14 +439,6 @@ async function deleteRemoteCopy(pass: Pass): Promise<Step> {
   // An earlier pass may have deleted it, and someone pushed it again at the
   // same commit: nothing tells the two apart.
   if (row.cleanup_remote_attempted_at) return keep('an earlier deletion was interrupted, and it is there again');
-  if (!row.pr_number) return keep('its pull request is not recorded, so nothing proves it is the same branch');
-  const history = await forge.headRefDeleted(repository, row.pr_number);
-  if (!history.ok) {
-    console.warn(`[integration-cleanup] remote ${row.branch} not deleted yet: ${history.reason}`);
-    return 'waiting';
-  }
-  // Deleted then pushed again, even at the same commit, it may be another branch.
-  if (history.deleted) return keep('its pull request saw it deleted or restored, so nothing proves it is the same branch');
   const standing = await forge.branchStanding(repository, row.branch);
   if (!standing.ok) {
     console.warn(`[integration-cleanup] remote ${row.branch} not deleted yet: ${standing.reason}`);
@@ -515,9 +448,6 @@ async function deleteRemoteCopy(pass: Pass): Promise<Step> {
   if (standing.standing.protected) return keep(`it is protected on ${repository}`);
 
   if (!(await stillOurs(pass, 'remote'))) return 'waiting';
-  // Read again right before the push: a task reopened or a pilot back at work stops it.
-  if (tasksOnBranch(row).some((t) => t.status !== 'DONE')) return 'waiting';
-  if (row.series_id && pilotRunning(row.series_id)) return 'waiting';
   if (!dbApi.setIntegrationRemoteAttempt(row.id, pass.token, Date.now())) return 'waiting';
   const deleted = await (deps.deleteRemote ?? ((repo, u, b, s) => deleteRemoteBranch(repo, u, b, s, deps.runners)))(
     row.repo, pushUrl, row.branch, row.head_sha,
@@ -544,36 +474,15 @@ async function cleanReserved(pass: Pass): Promise<CleanupResult> {
   if (tasksOnBranch(row).some((t) => t.status !== 'DONE')) return 'waiting';
   if (row.series_id && pilotRunning(row.series_id)) return 'waiting';
 
+  const steps: Step[] = [];
+  if (row.state === 'merged') steps.push(await disposeTaskWorktrees(pass));
+  steps.push(await releasePilotWorktree(pass, deps.seriesWorktreesRoot ?? SERIES_WORKTREES_ROOT));
   if (row.state === 'merged') {
-    const proof = await integrationLanded(row);
-    if (proof === 'unknown') return 'waiting';
-    if (proof === 'no') {
-      console.log(`[integration-cleanup] ${row.branch}: everything kept, the head it integrated is not in ${landedName(row)} (merged by squash or rebase?)`);
-      return 'cleaned';
-    }
+    // The worktrees first: a task's work is proven in the target, not after it.
+    if (!steps.includes('waiting')) steps.push(await deleteLocalBranch(pass));
+    steps.push(await deleteRemoteCopy(pass));
   }
-  // In order, and a step that waits ends the pass: what follows it is not
-  // proven any more. The worktrees first: a task's work is proven in the
-  // target, not after its branch is gone.
-  const steps: Array<() => Promise<Step>> = [];
-  if (row.state === 'merged') steps.push(() => disposeTaskWorktrees(pass));
-  steps.push(() => releasePilotWorktree(pass, deps.seriesWorktreesRoot ?? SERIES_WORKTREES_ROOT));
-  if (row.state === 'merged') steps.push(() => deleteLocalBranch(pass), () => deleteRemoteCopy(pass));
-  for (const step of steps) {
-    if ((await step()) === 'waiting') return 'waiting';
-  }
-  return 'cleaned';
-}
-
-/**
- * The head the job integrated, in the target: the pull request's head as it
- * was merged, or (a local landing) the branch's tip. Proven once, before the
- * first deletion; a squash or a rebase leaves it out, and nothing is deleted.
- */
-async function integrationLanded(row: IntegrationRow): Promise<'yes' | 'no' | 'unknown'> {
-  const head = row.head_sha ?? (await refSha(row.repo, `refs/heads/${row.branch}`));
-  if (!head || !SHA.test(head)) return 'no';
-  return ancestry(row.repo, head, landedRef(row));
+  return steps.includes('waiting') ? 'waiting' : 'cleaned';
 }
 
 /** Removes what the concluded integration `row` left behind, under a reservation. */

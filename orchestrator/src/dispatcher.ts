@@ -25,7 +25,7 @@ import {
 } from './backends/index.js';
 import { whenProvidersLoaded } from './backends/registry.js';
 import {
-  createWorktree, isGitRepo, currentBranch, refreshWorktreeBase, prepareWorktreeDependencies, withWorktreeLock,
+  createWorktree, isGitRepo, currentBranch, refreshWorktreeBase, prepareWorktreeDependencies,
   refreshMergeMessage, integrateMergeMessage, branchExists,
   type WorktreeInfo, type RefreshOutcome,
 } from './worktree.js';
@@ -645,19 +645,6 @@ export async function resolveWorktree(task: TaskRow): Promise<WorktreeInfo | nul
   // fall back to normal creation, which reattaches to the branch if it
   // survived and so doesn't lose already-committed work.
   if (task.type !== 'review' && task.worktree_path && task.branch_name && task.base_branch && existsSync(task.worktree_path)) {
-    // Under the folder's lock, read again: the cleanup after a landing detaches
-    // and removes a DONE task's folder under the same lock, and `task` may have
-    // been read before it did. Released before `createWorktree`, which takes it.
-    const reused = await withWorktreeLock(task.worktree_path, () => reuseWorktree(task.id));
-    if (reused) return reused;
-  }
-  return createTaskWorktree(task);
-}
-
-/** The worktree a task already has, refreshed onto its base; null when it has none any more. */
-async function reuseWorktree(taskId: string): Promise<WorktreeInfo | null> {
-  const task = dbApi.getTask(taskId);
-  if (task && task.type !== 'review' && task.worktree_path && task.branch_name && task.base_branch && existsSync(task.worktree_path)) {
     const cfg = loadConfig(task.agent_name);
     if (cfg.cwd) {
       // Refresh onto the base BEFORE handing control back to the agent.
@@ -681,10 +668,7 @@ async function reuseWorktree(taskId: string): Promise<WorktreeInfo | null> {
       };
     }
   }
-  return null;
-}
 
-async function createTaskWorktree(task: TaskRow): Promise<WorktreeInfo | null> {
   if (task.type === 'code') {
     const cfg = loadConfig(task.agent_name);
     if (!cfg.cwd || !(await isGitRepo(cfg.cwd))) return null;

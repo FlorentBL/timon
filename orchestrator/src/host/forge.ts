@@ -502,14 +502,7 @@ export type BranchStandingOutcome = { ok: true; standing: BranchStanding } | For
  */
 export interface ForgeBranchStanding {
   branchStanding(repo: string, branch: string): Promise<BranchStandingOutcome>;
-  /**
-   * Whether the head branch of pull request `number` was ever deleted or
-   * restored since it was opened (its timeline): a branch there now at the
-   * same commit may then be another one, pushed again under the same name.
-   */
-  headRefDeleted(repo: string, number: number): Promise<HeadRefDeletedOutcome>;
 }
-export type HeadRefDeletedOutcome = { ok: true; deleted: boolean } | ForgeReadFailure;
 
 /** Most issues a list asks for, the most recent first. */
 export const ISSUE_LIST_LIMIT = 50;
@@ -1371,21 +1364,6 @@ export function githubForge(
       if (rules.result.code !== 0) return failed(rules.result);
       const types = rules.result.stdout.trim().split(/\s+/).filter((t) => t.length > 0);
       return { ok: true, standing: { defaultBranch, protected: flag === 'true' || types.includes('deletion') } };
-    },
-    async headRefDeleted(repo, number) {
-      const bad = badTarget(repo, number);
-      if (bad) return bad;
-      const out = await read([
-        'api', '--paginate', `repos/${repo}/issues/${number}/timeline?per_page=100`, // portability: a GitHub API path, no file
-        '--jq=.[] | select(.event == "head_ref_deleted" or .event == "head_ref_restored") | .event',
-      ], 16 * 1024 * 1024);
-      if (!out.ok) return out;
-      if (out.result.code !== 0) return failed(out.result);
-      const events = out.result.stdout.split('\n').map((line) => line.trim()).filter((line) => line.length > 0);
-      if (events.some((e) => e !== 'head_ref_deleted' && e !== 'head_ref_restored')) {
-        return { ok: false, code: 'unexpected_answer', reason: 'gh did not answer the timeline of a pull request' };
-      }
-      return { ok: true, deleted: events.length > 0 };
     },
     async commitParents(repo, sha) {
       if (!plainRepo(repo) || !COMMIT_SHA.test(sha)) {

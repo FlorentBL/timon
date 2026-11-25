@@ -12,26 +12,11 @@ import { join } from 'node:path';
 import { after, test } from 'node:test';
 import { db, dbApi } from './db.js';
 import { cleanConcludedIntegrations, cleanIntegration } from './integration-cleanup.js';
-import { resolveWorktree } from './dispatcher.js';
 import {
-  commit, deleteOnForge, deps, git, has, land, landedJob, LONG_AGO, mergeOnForge, prJob, remoteHas, root, seen, taskKept,
-  type Job,
+  commit, deps, git, has, land, landedJob, LONG_AGO, mergeOnForge, prJob, remoteHas, root, seen, taskKept,
 } from './integration-cleanup-fixture.js';
 import { updateProjectIntegration } from './project-integration.js';
 import { createWorktree } from './worktree.js';
-
-/** What a pass that waited must have left: the pilot's worktree, the branch, its remote copy. */
-function restKept(job: Job): void {
-  assert.equal(existsSync(join(job.pilot, '.git')), true, 'the pilot worktree stays');
-  assert.equal(has(job.repo, `refs/heads/${job.branch}`), true, 'the job\'s branch stays');
-  assert.equal(remoteHas(job, job.branch), true, 'its remote copy stays');
-  assert.equal(seen.deletions.length, 0, 'no remote deletion');
-}
-
-/** A git commit on `ref` that no other ref holds, made without a working tree. */
-function danglingCommit(repo: string, ref: string, message: string): string {
-  return git(repo, 'commit-tree', `${ref}^{tree}`, '-p', ref, '-m', message);
-}
 
 after(() => rmSync(root, { recursive: true, force: true }));
 process.env.TIMON_INTEGRATION_CLEANUP_ENABLED = '1';
@@ -77,105 +62,22 @@ test('a task of another series posed on the same base is never touched', async (
   assert.equal(has(job.repo, `refs/heads/${info.branch}`), true);
 });
 
-const reopen = (id: string): void => { db.prepare(`UPDATE tasks SET status = 'PENDING' WHERE id = ?`).run(id); };
-
-test('a task reopened during the pass is spared, and the pass stops there', async () => {
+test('a task reopened during the pass is spared', async () => {
   const { job, row } = await landedJob();
   const out = await cleanIntegration(row, deps(job, {
-    beforeDeletion: (what) => { if (what === `worktree:${job.task.id}`) reopen(job.task.id); },
+    beforeDeletion: (what) => {
+      if (what === `worktree:${job.task.id}`) db.prepare(`UPDATE tasks SET status = 'PENDING' WHERE id = ?`).run(job.task.id);
+    },
   }));
   assert.equal(out, 'waiting');
   taskKept(job);
-  restKept(job);
+  assert.equal(has(job.repo, `refs/heads/${job.branch}`), true, 'the job\'s branch waits too');
   assert.equal(dbApi.getIntegrationById(job.row.id)?.cleaned_at ?? null, null);
   assert.equal(dbApi.getIntegrationById(job.row.id)?.cleanup_token ?? null, null, 'the reservation is handed back');
 });
 
-test('a task reopened and dispatched between its detachment and its removal keeps its worktree', async () => {
-  const { job, row } = await landedJob();
-  // Read before the pass: the dispatcher may hold a row that still names the folder.
-  const stale = dbApi.getTask(job.task.id)!;
-  const dispatched: Array<Promise<unknown>> = [];
-  const out = await cleanIntegration(row, deps(job, {
-    beforeDeletion: (what) => {
-      if (what !== `remove:${job.task.id}`) return;
-      assert.equal(dbApi.getTask(job.task.id)?.worktree_path, null, 'detached at this point');
-      reopen(job.task.id);
-      dispatched.push(resolveWorktree(stale), resolveWorktree(dbApi.getTask(job.task.id)!));
-    },
-  }));
-  assert.equal(out, 'waiting');
-  const infos = await Promise.all(dispatched) as Array<{ path: string } | null>;
-  for (const info of infos) assert.equal(info?.path, job.task.path, 'the dispatcher gets the very folder, kept');
-  taskKept(job);
-  assert.equal(existsSync(join(job.task.path, `t-${job.branch.slice('feat/job-'.length)}.txt`)), true, 'its files are there');
-  restKept(job);
-});
-
-test('a dispatch during the removal waits for it, and its fresh worktree survives the pass', async () => {
-  const { job, row } = await landedJob();
-  let dispatch: Promise<{ path: string } | null> | null = null;
-  const out = await cleanIntegration(row, deps(job, {
-    beforeDeletion: async (what) => {
-      // The task, still DONE, is detached: the dispatcher makes a folder again.
-      if (what === `remove:${job.task.id}`) dispatch = resolveWorktree(dbApi.getTask(job.task.id)!);
-      // Before the job's branch goes, which the new folder starts from.
-      if (what === `ref:${job.branch}`) await dispatch;
-    },
-  }));
-  assert.equal(out, 'cleaned');
-  const info = await dispatch!;
-  assert.equal(info?.path, job.task.path);
-  assert.equal(existsSync(join(job.task.path, '.git')), true, 'the fresh worktree is not removed');
-  assert.equal(dbApi.getTask(job.task.id)?.worktree_path, job.task.path);
-  assert.equal(has(job.repo, `refs/heads/${job.task.branch}`), true, 'its branch, made again, stays');
-});
-
-test('a commit made in a worktree between its proof and its removal keeps it', async () => {
-  const { job, row } = await landedJob();
-  let late = '';
-  const out = await cleanIntegration(row, deps(job, {
-    beforeDeletion: (what) => {
-      if (what === `remove:${job.task.id}`) late = commit(job.task.path, 'late.txt', 'feat: late work');
-      if (what === 'remove:pilot') commit(job.pilot, 'late-pilot.txt', 'feat: late pilot work');
-    },
-  }));
-  assert.equal(out, 'cleaned');
-  taskKept(job);
-  assert.equal(git(job.repo, 'rev-parse', job.task.branch), late, 'the task branch holds the late commit');
-  assert.equal(existsSync(join(job.pilot, '.git')), true, 'the pilot worktree, with its late commit, stays');
-  assert.equal(git(job.pilot, 'log', '-1', '--format=%s'), 'feat: late pilot work');
-});
-
-test('a branch moved between its proof and its deletion is kept, on its new commit', async () => {
-  const { job, row } = await landedJob();
-  const moved: Record<string, string> = {};
-  const out = await cleanIntegration(row, deps(job, {
-    beforeDeletion: (what) => {
-      for (const branch of [job.branch, job.task.branch]) {
-        if (what !== `ref:${branch}`) continue;
-        moved[branch] = danglingCommit(job.repo, branch, 'feat: moved meanwhile');
-        git(job.repo, 'update-ref', `refs/heads/${branch}`, moved[branch]!);
-      }
-    },
-  }));
-  assert.equal(out, 'cleaned');
-  assert.equal(git(job.repo, 'rev-parse', job.task.branch), moved[job.task.branch], 'the task branch stays, moved');
-  assert.equal(git(job.repo, 'rev-parse', job.branch), moved[job.branch], 'the job\'s branch stays, moved');
-});
-
-test('a pull request merged by squash deletes nothing, not even a worktree whose HEAD is in the target', async () => {
+test('a pull request merged by squash deletes nothing', async () => {
   const job = await prJob();
-  // A task of the job that never committed: its HEAD is the target's own commit.
-  const idle = randomUUID();
-  dbApi.createTask(idle, 'nothing to do', job.agent, {
-    type: 'code', project: job.slug, baseBranch: job.branch, integrationMode: 'pr', baseRef: 'origin/main',
-    seriesId: job.series, creatorMissionId: job.series,
-  });
-  const idleInfo = await createWorktree(idle, job.repo, 'main');
-  dbApi.setTaskWorktree(idle, idleInfo.path, idleInfo.branch, job.branch);
-  db.prepare(`UPDATE tasks SET status = 'DONE', merged_commit_sha = ?, updated_at = ? WHERE id = ?`)
-    .run(git(idleInfo.path, 'rev-parse', 'HEAD'), LONG_AGO, idle);
   git(job.forgeSide, 'fetch', '-q', 'origin');
   git(job.forgeSide, 'merge', '-q', '--squash', `origin/${job.branch}`);
   git(job.forgeSide, 'commit', '-q', '-m', 'feat: the job, squashed');
@@ -183,32 +85,23 @@ test('a pull request merged by squash deletes nothing, not even a worktree whose
   git(job.repo, 'fetch', '-q', job.remote, 'refs/heads/main:refs/remotes/origin/main');
   const row = land(job);
   dbApi.finishMission(job.series, 'completed', 0);
-  assert.equal(git(job.repo, 'merge-base', '--is-ancestor', git(idleInfo.path, 'rev-parse', 'HEAD'), 'origin/main'), '');
   assert.equal(await cleanIntegration(row, deps(job)), 'cleaned');
   taskKept(job);
-  assert.equal(existsSync(join(idleInfo.path, '.git')), true, 'the idle task\'s worktree stays');
-  assert.equal(dbApi.getTask(idle)?.worktree_path, idleInfo.path);
   assert.equal(existsSync(join(job.pilot, '.git')), true, 'the pilot worktree stays');
   assert.equal(has(job.repo, `refs/heads/${job.branch}`), true, 'the branch stays');
   assert.equal(remoteHas(job, job.branch), true, 'its remote copy stays');
   assert.equal(seen.deletions.length, 0);
 });
 
-test('a branch checked out in the main checkout at the moment of its deletion is kept, and so is its remote copy', async () => {
-  for (const moment of ['branch', 'ref:']) {
-    const { job, row } = await landedJob();
-    const out = await cleanIntegration(row, deps(job, {
-      beforeDeletion: (what) => {
-        if (what === moment || what === `${moment}${job.branch}`) git(job.repo, 'checkout', '-q', job.branch);
-      },
-    }));
-    assert.equal(out, 'waiting', moment);
-    assert.equal(has(job.repo, `refs/heads/${job.branch}`), true, 'a checked-out branch is never deleted');
-    assert.equal(git(job.repo, 'branch', '--show-current'), job.branch);
-    assert.equal(remoteHas(job, job.branch), true, 'the pass stops: the remote copy waits too');
-    assert.equal(seen.deletions.length, 0);
-    git(job.repo, 'checkout', '-q', 'main');
-  }
+test('a branch checked out in the main checkout at the moment of its deletion is kept', async () => {
+  const { job, row } = await landedJob();
+  const out = await cleanIntegration(row, deps(job, {
+    beforeDeletion: (what) => { if (what === 'branch') git(job.repo, 'checkout', '-q', job.branch); },
+  }));
+  assert.equal(out, 'waiting');
+  assert.equal(has(job.repo, `refs/heads/${job.branch}`), true, 'git refuses to delete a checked-out branch');
+  assert.equal(git(job.repo, 'branch', '--show-current'), job.branch);
+  git(job.repo, 'checkout', '-q', 'main');
 });
 
 test('origin pointed at a mirror: the remote branch is refused', async () => {
@@ -269,7 +162,6 @@ test('main, the target, the default branch and a protected branch are refused', 
       forge: () => ({
         login: async () => ({ ok: true, login: 'ai-bot' }),
         branchStanding: async () => ({ ok: true, standing: said }),
-        headRefDeleted: async () => ({ ok: true, deleted: false }),
       }),
     }));
     assert.equal(out, 'cleaned');
@@ -283,7 +175,6 @@ test('main, the target, the default branch and a protected branch are refused', 
     forge: () => ({
       login: async () => ({ ok: true, login: 'ai-bot' }),
       branchStanding: async () => ({ ok: false, code: 'gh_failed', reason: 'HTTP 502' }),
-      headRefDeleted: async () => ({ ok: true, deleted: false }),
     }),
   }));
   assert.equal(out, 'waiting');
@@ -322,47 +213,17 @@ test('a reservation a dead pass left is taken over once stale, never before', as
 });
 
 test('a branch created again after the job concluded is not taken for the old one', async () => {
-  // Right after the landing, in the same second or the next: the same commit.
   const { job, row } = await landedJob();
+  // The pass that deleted it died; the branch came back at the same commit.
   git(job.repo, 'branch', '-D', job.branch);
+  db.prepare(`UPDATE integrations SET landed_at = ? WHERE id = ?`).run(Date.now() - 60_000, row.id);
   git(job.repo, 'branch', job.branch, job.head);
-  assert.equal(await cleanIntegration(row, deps(job)), 'cleaned');
+  assert.equal(await cleanIntegration(dbApi.getIntegrationById(row.id)!, deps(job)), 'cleaned');
   assert.equal(has(job.repo, `refs/heads/${job.branch}`), true);
-
-  // On the remote: deleted on the forge, then pushed again at the same commit.
+  // On the remote, an interrupted deletion leaves nothing to tell the two apart.
   const remote = await landedJob();
-  deleteOnForge(remote.job);
-  git(remote.job.repo, 'push', '-q', remote.job.remote, `${remote.job.head}:refs/heads/${remote.job.branch}`);
-  assert.equal(await cleanIntegration(remote.row, deps(remote.job)), 'cleaned');
+  db.prepare(`UPDATE integrations SET cleanup_remote_attempted_at = ? WHERE id = ?`).run(Date.now(), remote.row.id);
+  assert.equal(await cleanIntegration(dbApi.getIntegrationById(remote.row.id)!, deps(remote.job)), 'cleaned');
   assert.equal(remoteHas(remote.job, remote.job.branch), true);
   assert.equal(seen.deletions.length, 0);
-
-  // A deletion that timed out after it happened, then the branch pushed again.
-  const cut = await landedJob();
-  const first = deps(cut.job);
-  const timedOut = await cleanIntegration(cut.row, {
-    ...first,
-    deleteRemote: async (repo, url, branch, sha) => {
-      await first.deleteRemote!(repo, url, branch, sha);
-      return { ok: false, code: 'timed_out', reason: 'git did not answer in time' };
-    },
-  });
-  assert.equal(timedOut, 'waiting');
-  assert.equal(remoteHas(cut.job, cut.job.branch), false);
-  git(cut.job.repo, 'push', '-q', cut.job.remote, `${cut.job.head}:refs/heads/${cut.job.branch}`);
-  assert.equal(await cleanIntegration(dbApi.getIntegrationById(cut.row.id)!, deps(cut.job)), 'cleaned');
-  assert.equal(remoteHas(cut.job, cut.job.branch), true);
-  assert.equal(seen.deletions.length, 0);
-
-  // A forge that cannot tell: the remote copy waits.
-  const unsure = await landedJob();
-  const out = await cleanIntegration(unsure.row, deps(unsure.job, {
-    forge: () => ({
-      login: async () => ({ ok: true, login: 'ai-bot' }),
-      branchStanding: async () => ({ ok: true, standing: { defaultBranch: 'main', protected: false } }),
-      headRefDeleted: async () => ({ ok: false, code: 'gh_failed', reason: 'HTTP 502' }),
-    }),
-  }));
-  assert.equal(out, 'waiting');
-  assert.equal(remoteHas(unsure.job, unsure.job.branch), true);
 });

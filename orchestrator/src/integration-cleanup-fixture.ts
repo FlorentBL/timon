@@ -67,19 +67,6 @@ let counter = 0;
  * sequential pilot's worktree detached on it, and its pull request open.
  */
 export async function prJob(opts: { local?: boolean } = {}): Promise<Job> {
-  // The job is built an hour before it lands, as it is for real: git dates a
-  // branch from its reflog, which takes the committer's date.
-  const before = process.env.GIT_COMMITTER_DATE;
-  process.env.GIT_COMMITTER_DATE = `@${Math.floor((Date.now() - 3600_000) / 1000)} +0000`;
-  try {
-    return await buildJob(opts);
-  } finally {
-    if (before === undefined) delete process.env.GIT_COMMITTER_DATE;
-    else process.env.GIT_COMMITTER_DATE = before;
-  }
-}
-
-async function buildJob(opts: { local?: boolean }): Promise<Job> {
   counter += 1;
   const remote = join(root, `remote-${counter}.git`);
   execFileSync('git', ['init', '-q', '--bare', '-b', 'main', remote]);
@@ -149,16 +136,6 @@ export function mergeOnForge(job: Job): void {
   git(job.repo, 'fetch', '-q', job.remote, 'refs/heads/main:refs/remotes/origin/main');
 }
 
-/**
- * The forge's side of a deletion: the branch goes from the remote, and the
- * pull request's timeline records it, as GitHub does for its head branch.
- */
-export const forgeTimeline = new Set<string>();
-export function deleteOnForge(job: Job): void {
-  git(job.forgeSide, 'push', '-q', 'origin', `:refs/heads/${job.branch}`);
-  forgeTimeline.add(job.branch);
-}
-
 export function land(job: Job, mergeSha: string | null = null): IntegrationRow {
   dbApi.markIntegrationMerged(job.row.id, mergeSha);
   assert.ok(dbApi.claimIntegrationLanding(job.row.id));
@@ -184,16 +161,12 @@ export function deps(job: Job, over: Partial<CleanupDeps> = {}): CleanupDeps {
     forge: () => ({
       login: async () => { seen.logins += 1; return { ok: true, login: 'AI-Bot' }; },
       branchStanding: async () => ({ ok: true, standing: { defaultBranch: 'main', protected: false } }),
-      headRefDeleted: async () => ({ ok: true, deleted: forgeTimeline.has(job.branch) }),
     }),
     transport,
     // The real deletion, leased, against the bare remote instead of the forge.
     deleteRemote: (repo, url, branch, sha) => {
       seen.deletions.push({ url, branch, sha });
-      return deleteRemoteBranch(repo, job.remote, branch, sha, { git: plainGit }).then((out) => {
-        if (out.ok) forgeTimeline.add(branch);
-        return out;
-      });
+      return deleteRemoteBranch(repo, job.remote, branch, sha, { git: plainGit });
     },
     seriesWorktreesRoot: pilots,
     graceMs: 0,
