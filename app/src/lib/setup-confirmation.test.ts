@@ -236,6 +236,26 @@ test('step 5 restarts the daemon, waits for a NEW one, and cannot be walked past
         }
       });
 
+      await suite.test('the desktop\'s embedded daemon, reached outside the app, says to reopen the app', async () => {
+        delete (window as { timonDesktop?: unknown }).timonDesktop;
+        globalThis.fetch = (async (_input: string, init?: RequestInit) => {
+          assert.notEqual(init?.method, 'POST', 'the daemon has nothing to restart');
+          return Response.json({ pending: true, supervisor: 'systemd-user', canSelfRestart: false, command: null });
+        }) as typeof globalThis.fetch;
+        const root = createRoot(document.getElementById('root')!);
+        try {
+          await React.act(async () => { root.render(React.createElement(RestartPage)); });
+          const reopen = document.querySelector('[data-restart-reopen]');
+          assert.ok(reopen, 'a step with no command still says what to do');
+          assert.match(reopen.textContent!, /Quit Timon and open it again/);
+          assert.equal(/systemctl/.test(document.body.textContent!), false);
+          assert.equal(Array.from(document.querySelectorAll('button')).some((b) => b.textContent?.includes('Continue without restarting')), false);
+          assert.ok(!document.querySelector('a[href="/"]'));
+        } finally {
+          await React.act(async () => { root.unmount(); });
+        }
+      });
+
       await suite.test('a machine with no supervisor may continue', async () => {
         delete (window as { timonDesktop?: unknown }).timonDesktop;
         let skipped = 0;

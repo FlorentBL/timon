@@ -23,7 +23,7 @@ import { writeRoles } from './projects.js';
 import { resolveRoleSpec, resolveTaskRouting } from './dispatcher.js';
 import { agentDir } from './paths.js';
 import {
-  agentConfigWarnings, inertShellPreallows, lostShellPreallows, reportInertShellPreallow, reportReroutedShellPreallow,
+  agentConfigNotices, agentConfigWarnings, inertShellPreallows, lostShellPreallows, reportInertShellPreallow, reportReroutedShellPreallow,
   resetInertShellPreallowReportsForTests, wholeShellPreallows,
 } from './auto-mode-preallow.js';
 
@@ -142,6 +142,38 @@ test('saving an agent in auto with Bash answers with a warning that names the wa
   assert.match(warning, /acceptEdits/);
   assert.deepEqual(agentConfigWarnings(CODER, { backend: 'claude', permission_mode: 'acceptEdits', allowed_tools: ['Bash'] }), []);
   assert.deepEqual(agentConfigWarnings(CODER, { backend: 'no-such-backend', permission_mode: 'auto', allowed_tools: ['Bash'] }), []);
+});
+
+test('an agent with no mode is warned that the CLI\'s own settings may run it in auto', () => {
+  // claude 2.1.322 starts in `default` without a setting, and in `auto` under a
+  // settings.json holding `"defaultMode": "auto"`, where it drops the rule.
+  const notices = agentConfigNotices(CODER, { backend: 'claude', allowed_tools: ['Bash', 'Read'] });
+  assert.equal(notices.warnings.length, 1);
+  assert.match(notices.warnings[0]!, /pre-allows Bash but sets no permission mode/);
+  assert.match(notices.warnings[0]!, /permissions\.defaultMode/);
+  assert.deepEqual(notices.warning_messages, [{ code: 'agent_shell_preallow_mode_unset', params: { agent: CODER, rules: 'Bash' } }]);
+  assert.deepEqual(agentConfigNotices(CODER, { backend: 'claude', permission_mode: '', allowed_tools: ['Bash(*)'] }).warning_messages[0]?.code,
+    'agent_shell_preallow_mode_unset');
+  assert.deepEqual(agentConfigWarnings(CODER, { backend: 'claude', allowed_tools: ['Bash(git:*)'] }), []);
+  assert.deepEqual(agentConfigWarnings(CODER, { backend: 'claude', permission_mode: 'default', allowed_tools: ['Bash'] }), []);
+});
+
+test('the explicit auto warning carries its translatable code beside the English', () => {
+  const notices = agentConfigNotices(CODER, { backend: 'claude', permission_mode: 'auto', allowed_tools: ['Bash', 'Bash(*)'] });
+  assert.deepEqual(notices.warning_messages, [{ code: 'agent_shell_preallow_inert', params: { agent: CODER, rules: 'Bash, Bash(*)' } }]);
+  assert.equal(notices.warnings.length, notices.warning_messages.length);
+});
+
+test('a launch with no mode is logged, never notified: the CLI may run it in default', () => {
+  resetInertShellPreallowReportsForTests();
+  const unset = 'preallowchain.unset';
+  const mission = randomUUID();
+  dbApi.createMission(mission, unset, 'witness', { channel: 'dispatcher' });
+  const before = notifications(unset).length;
+  assert.deepEqual(reportInertShellPreallow({
+    agent: unset, missionId: mission, mode: undefined, permissionModel: 'mcp-bridge', allowed: ['Bash'], modeSource: 'agent',
+  }), []);
+  assert.equal(notifications(unset).length, before);
 });
 
 /* ── The other road: the task does not run on the agent that holds Bash ──── */

@@ -63,3 +63,20 @@ test('Bash in acceptEdits is saved quietly; the switch to auto is saved with a w
   assert.equal(narrowed.status, 200);
   assert.equal(narrowed.json.warnings, undefined, 'a narrow pattern keeps working in auto mode');
 });
+
+test('the warning comes with its code, and an agent saved with no mode is warned too', async () => {
+  const patched = await call('PATCH', '/api/agents/preallow-witness/config', { permission_mode: 'auto', allowed_tools: ['Bash'] });
+  assert.equal(patched.status, 200);
+  assert.deepEqual(patched.json.warning_messages, [
+    { code: 'agent_shell_preallow_inert', params: { agent: 'preallow-witness', rules: 'Bash' } },
+  ]);
+
+  const unset = await call('POST', '/api/agents', {
+    name: 'preallow-unset', system_prompt: 'witness',
+    config: { backend: 'claude', cwd: process.env.TIMON_HOME, allowed_tools: ['Bash'] },
+  });
+  assert.equal(unset.status, 200, JSON.stringify(unset.json));
+  assert.match((unset.json.warnings as string[])[0]!, /sets no permission mode/);
+  assert.equal((unset.json.warning_messages as Array<{ code: string }>)[0]!.code, 'agent_shell_preallow_mode_unset');
+  assert.equal(loadConfig('preallow-unset').permission_mode, undefined, 'nothing is written for the person');
+});

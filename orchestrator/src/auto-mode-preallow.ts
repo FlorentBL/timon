@@ -18,9 +18,20 @@
  * project role launches it in `auto`). A task the dispatcher runs on another
  * agent than the one it names (a pinned role, its own creator) loses the named
  * agent's rule the same silent way, and is reported the same way.
+ *
+ * An agent with no permission mode gets no `--permission-mode`: the CLI then
+ * starts in the `permissions.defaultMode` of its own settings. Measured with
+ * claude 2.1.322 (`claude -p --input-format stream-json --output-format
+ * stream-json --allowedTools Bash --debug-file …`): with no such setting the
+ * init event says `default` and the rule holds; under a settings.json holding
+ * `"defaultMode": "auto"` it says `auto` and the debug file shows the same
+ * removal. Timon cannot see which settings the CLI will read (the account's
+ * folder, the project's, managed ones), so an unset mode is reported as a
+ * possibility, at save time only: a spawn-time alert would fire for every such
+ * agent, including the ones the CLI runs in `default`.
  */
 import { notifyUser } from './notify.js';
-import { daemonMessage } from './daemon-message.js';
+import { daemonMessage, type DaemonMessage } from './daemon-message.js';
 import { getBackend, type BackendName } from './backends/index.js';
 import type { PermissionModel } from './backends/types.js';
 
@@ -64,6 +75,20 @@ export function inertShellPreallows(
   return wholeShellPreallows(allowed);
 }
 
+/**
+ * The rules the CLI MAY drop because no mode is set: it then starts in the
+ * default mode of its own settings, which can be `auto`. Same backends as
+ * `inertShellPreallows`.
+ */
+export function unsetModeShellPreallows(
+  mode: string | null | undefined,
+  permissionModel: PermissionModel | null | undefined,
+  allowed: readonly string[] | null | undefined,
+): string[] {
+  if ((mode ?? '') !== '' || permissionModel !== 'mcp-bridge') return [];
+  return wholeShellPreallows(allowed);
+}
+
 /** What the person reads: the rule, why it does nothing, and the two ways out. */
 export function inertShellPreallowWarning(agent: string, rules: readonly string[]): string {
   return `${agent} pre-allows ${rules.join(', ')} but runs in auto mode: the claude CLI ignores a rule that allows `
@@ -72,19 +97,57 @@ export function inertShellPreallowWarning(agent: string, rules: readonly string[
     + "and its project role too if it sets one; or pre-allow narrower patterns such as Bash(git:*).";
 }
 
+/** The same advice for an agent that sets no mode at all. */
+export function unsetModeShellPreallowWarning(agent: string, rules: readonly string[]): string {
+  return `${agent} pre-allows ${rules.join(', ')} but sets no permission mode: the claude CLI then starts in the `
+    + 'default mode of its own settings (permissions.defaultMode), and where that is auto it ignores a rule that '
+    + "allows every shell command. To keep the rule, set the agent's mode to acceptEdits; or pre-allow narrower "
+    + 'patterns such as Bash(git:*).';
+}
+
 /**
- * The warnings the call that saves agent `name` answers with: empty unless its
- * config, as saved, pre-allows every shell command in a mode where the CLI drops
- * the rule. An unknown backend says nothing: the spawn refuses it anyway.
+ * What the call that saves an agent answers with: the English sentences every
+ * client prints (CLI, MCP), and the same ones as codes the webview translates,
+ * in the same order.
  */
+export type AgentConfigNotices = { warnings: string[]; warning_messages: DaemonMessage[] };
+
+/**
+ * The notices of the call that saves agent `name`: empty unless its config, as
+ * saved, pre-allows every shell command in a mode where the CLI drops the rule,
+ * or sets no mode at all. An unknown backend says nothing: the spawn refuses it
+ * anyway.
+ */
+export function agentConfigNotices(
+  name: string,
+  cfg: { backend?: string | null; permission_mode?: string | null; allowed_tools?: readonly string[] | null },
+): AgentConfigNotices {
+  const none: AgentConfigNotices = { warnings: [], warning_messages: [] };
+  let model: PermissionModel | null = null;
+  try { model = getBackend(cfg.backend as BackendName | undefined).permissionModel; } catch { return none; }
+  const inert = inertShellPreallows(cfg.permission_mode, model, cfg.allowed_tools);
+  if (inert.length) {
+    return {
+      warnings: [inertShellPreallowWarning(name, inert)],
+      warning_messages: [daemonMessage('agent_shell_preallow_inert', { agent: name, rules: inert.join(', ') })],
+    };
+  }
+  const unset = unsetModeShellPreallows(cfg.permission_mode, model, cfg.allowed_tools);
+  if (unset.length) {
+    return {
+      warnings: [unsetModeShellPreallowWarning(name, unset)],
+      warning_messages: [daemonMessage('agent_shell_preallow_mode_unset', { agent: name, rules: unset.join(', ') })],
+    };
+  }
+  return none;
+}
+
+/** The English sentences of `agentConfigNotices`. */
 export function agentConfigWarnings(
   name: string,
   cfg: { backend?: string | null; permission_mode?: string | null; allowed_tools?: readonly string[] | null },
 ): string[] {
-  let model: PermissionModel | null = null;
-  try { model = getBackend(cfg.backend as BackendName | undefined).permissionModel; } catch { return []; }
-  const rules = inertShellPreallows(cfg.permission_mode, model, cfg.allowed_tools);
-  return rules.length ? [inertShellPreallowWarning(name, rules)] : [];
+  return agentConfigNotices(name, cfg).warnings;
 }
 
 /** Agents already reported by this process: one notice per agent, not one per mission. */
@@ -105,7 +168,17 @@ export function reportInertShellPreallow(opts: {
   modeSource: 'mission' | 'agent';
 }): string[] {
   const rules = inertShellPreallows(opts.mode, opts.permissionModel, opts.allowed);
-  if (!rules.length) return rules;
+  if (!rules.length) {
+    // Logged, not notified: the CLI may well run this launch in `default`.
+    const maybe = unsetModeShellPreallows(opts.mode, opts.permissionModel, opts.allowed);
+    if (maybe.length) {
+      console.warn(
+        `[spawn] ${opts.agent} (mission ${opts.missionId.slice(0, 8)}): no permission mode, the CLI's settings choose it; `
+        + `auto there would drop the pre-allow ${maybe.join(', ')}`,
+      );
+    }
+    return rules;
+  }
   const by = opts.modeSource === 'mission' ? 'its task or project role' : 'its own config';
   console.warn(
     `[spawn] ${opts.agent} (mission ${opts.missionId.slice(0, 8)}): auto mode, set by ${by}, `
