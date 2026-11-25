@@ -143,6 +143,39 @@ async function github(path, token, accept = 'application/vnd.github+json', metho
   return accept.endsWith('raw+json') ? response.text() : response.json();
 }
 
+/** GitHub lists at most this many files of a pull request, then stops without saying so. */
+export const MAX_LISTED_FILES = 3000;
+const PAGE_SIZE = 100;
+
+/**
+ * Every changed file of the pull request, or an error. A missing file could be
+ * the protected one, so the list counts only once it matches the pull
+ * request's own `changed_files`; anything less fails the check.
+ * `get(path)` returns the parsed JSON, or null for a 404.
+ */
+export async function listPullFiles(get, repo, number) {
+  const pull = await get(`/repos/${repo}/pulls/${number}`);
+  const expected = pull?.changed_files;
+  if (!Number.isInteger(expected) || expected < 0) throw new Error('cannot read how many files the pull request changes');
+  if (expected > MAX_LISTED_FILES) {
+    throw new Error(`too many files to verify (${expected}; GitHub lists at most ${MAX_LISTED_FILES}): split the pull request`);
+  }
+  const files = [];
+  // One page past the last full one at most: an API that keeps answering cannot loop forever.
+  for (let page = 1; page <= MAX_LISTED_FILES / PAGE_SIZE + 1; page++) {
+    const batch = await get(`/repos/${repo}/pulls/${number}/files?per_page=${PAGE_SIZE}&page=${page}`);
+    if (!Array.isArray(batch) || batch.some((file) => typeof file?.filename !== 'string')) {
+      throw new Error(`page ${page} of the changed files is unreadable`);
+    }
+    files.push(...batch);
+    if (batch.length < PAGE_SIZE) break;
+  }
+  if (files.length !== expected) {
+    throw new Error(`listed ${files.length} changed files but the pull request changes ${expected}: the list is incomplete, run the check again`);
+  }
+  return files;
+}
+
 async function packageAt(repo, path, ref, token) {
   const text = await github(`/repos/${repo}/contents/${path.split('/').map(encodeURIComponent).join('/')}?ref=${ref}`, token, 'application/vnd.github.raw+json');
   if (text === null) return null;
@@ -153,13 +186,7 @@ async function main() {
   const { GH_TOKEN: token, REPO: repo, PR_NUMBER: number, PR_AUTHOR: author, BASE_SHA: base, HEAD_SHA: head } = process.env;
   if (!token || !repo || !number || !author || !base || !head) throw new Error('GH_TOKEN, REPO, PR_NUMBER, PR_AUTHOR, BASE_SHA and HEAD_SHA are required');
   const { patterns, allowed } = parseProtectedList(readFileSync(LIST, 'utf8'));
-  const files = [];
-  for (let page = 1; ; page++) {
-    const batch = await github(`/repos/${repo}/pulls/${number}/files?per_page=100&page=${page}`, token);
-    if (!batch || batch.length === 0) break;
-    files.push(...batch);
-    if (batch.length < 100) break;
-  }
+  const files = await listPullFiles((path) => github(path, token), repo, number);
   for (const file of files) {
     if (file.filename === 'package.json' || file.filename.endsWith('/package.json')) {
       file.base = file.status === 'added' ? null : await packageAt(repo, file.previous_filename ?? file.filename, base, token);
