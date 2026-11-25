@@ -387,4 +387,10 @@ test('the last task follows where the branch ends up', () => {
     "timon task create --type merge --landing local --base feat/topic --title 'Merge into main — Job' --description '<what the job carries>'",
   ]);
   assert.deepEqual(seriesPlanCommands({ mode: 'sequential-here', roles: {} }, [], { ...landing, last: 'none' }), ['timon pr branch feat/topic']);
+  // A project that merges locally gets the neutral name of the same command.
+  assert.deepEqual(
+    seriesPlanCommands({ mode: 'sequential-here', roles: {} }, [], { ...landing, last: 'none', projectMode: 'local' }),
+    ['timon job branch feat/topic'],
+  );
+  assert.equal(seriesPlanCommands({ mode: 'sequential-here', roles: {} }, [], { ...landing, projectMode: 'pr' })[0], 'timon pr branch feat/topic');
 });

@@ -197,10 +197,14 @@ Pull requests (projects whose jobs land through one, see set-integration):
   timon pr branch <branch> [--series ID]       sequential job: cuts its integration branch from the remote's
                                              target and gives the pilot a worktree on it (default: THIS
                                              mission's series)
+  timon job branch <branch> [--series ID]      the same, under a name for any project: in one that merges
+                                             locally, the branch is cut from the local target (or taken
+                                             as it is when the planner chose an existing one)
   timon pr land <job-id|series-id> [--title TEXT] [--body TEXT | --body-file PATH]
                                              lands a job kept on its branch: merged into the local target
                                              (fast-forward or merge commit, refused on a conflict or a dirty
-                                             checkout of the target), or its pull request opened (title needed)
+                                             checkout of the target), or its pull request opened (title needed;
+                                             a new one when the previous one was closed without a merge)
 
 Projects (agent roles per project):
   timon project list                           lists configured projects
@@ -856,10 +860,10 @@ usage: timon worktree dispose <task-id> [--force]
 usage: timon worktree <info|create|dispose> <task-id> …
 ```
 
-### timon pr branch branch [--series ID]
+### timon job branch branch [--series ID]
 
 ```text
-usage: timon pr branch <branch> [--series ID]
+usage: timon job branch <branch> [--series ID]
 ```
 
 ### timon pr open task-id|series-id --title TEXT [--body TEXT | --body-file PATH]
@@ -872,6 +876,12 @@ usage: timon pr open <task-id|series-id> --title TEXT [--body TEXT | --body-file
 
 ```text
 usage: timon pr land <job-id|series-id> [--title TEXT] [--body TEXT | --body-file PATH]
+```
+
+### timon pr branch branch [--series ID]
+
+```text
+usage: timon pr branch <branch> [--series ID]
 ```
 
 ### timon project roles slug
