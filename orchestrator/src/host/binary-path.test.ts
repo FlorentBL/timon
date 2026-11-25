@@ -19,7 +19,7 @@ test('the Codex CLI embedded in the ChatGPT app is a macOS candidate', { skip: P
   assert.ok(codex.includes('/Users/sam/Applications/ChatGPT.app/Contents/Resources/codex'));
 });
 
-import { chmodSync, mkdtempSync, mkdirSync, realpathSync, symlinkSync, writeFileSync, rmSync } from 'node:fs';
+import { chmodSync, existsSync, mkdtempSync, mkdirSync, realpathSync, symlinkSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { findExecutableBinary } from './binary-path.js';
@@ -713,32 +713,45 @@ test('SUG-0006: npm CLIs under nvm, Volta and npm-global are found without the l
 });
 
 test('#1102: node installed by fnm, mise or asdf is found without their shell hook', { skip: POSIX_HOST }, () => {
-  const home = mkdtempSync(join(tmpdir(), 'timon-fnm-'));
+  const homes: string[] = [];
+  const fresh = () => { const dir = mkdtempSync(join(tmpdir(), 'timon-fnm-')); homes.push(dir); return dir; };
+  // Only the fake home counts: a CI runner has its own node in /usr/local/bin.
+  const inHome = (home: string, options: Parameters<typeof binaryCandidates>[1]) => binaryCandidates('node', options)
+    .filter((file) => file.startsWith(home) && existsSync(file))[0] ?? null;
   try {
-    const options = { platform: 'linux' as const, path: '', homeDir: home, env: {} };
+    let home = fresh();
+    const options = (env: NodeJS.ProcessEnv = {}, platform: NodeJS.Platform = 'linux') => ({ platform, path: '', homeDir: home, env });
     const fnm = join(home, '.local', 'share', 'fnm', 'node-versions');
-    stubBinary(join(fnm, 'v18.20.0', 'installation', 'bin', 'timon-probe-fnm'));
-    const newest = stubBinary(join(fnm, 'v22.3.0', 'installation', 'bin', 'timon-probe-fnm'));
-    assert.equal(findExecutableBinary('timon-probe-fnm', options), newest);
+    stubBinary(join(fnm, 'v18.20.0', 'installation', 'bin', 'node'));
+    const newest = stubBinary(join(fnm, 'v22.3.0', 'installation', 'bin', 'node'));
+    assert.equal(inHome(home, options()), newest);
     // The user's default alias outranks the highest version.
-    const chosen = stubBinary(join(home, '.local', 'share', 'fnm', 'aliases', 'default', 'bin', 'timon-probe-fnm'));
-    assert.equal(findExecutableBinary('timon-probe-fnm', options), chosen);
-    // Older fnm releases kept `~/.fnm`; FNM_DIR moves the root.
-    const legacy = stubBinary(join(home, '.fnm', 'node-versions', 'v20.0.0', 'installation', 'bin', 'timon-probe-fnm-old'));
-    assert.equal(findExecutableBinary('timon-probe-fnm-old', options), legacy);
-    const moved = stubBinary(join(home, 'fnm-elsewhere', 'node-versions', 'v20.0.0', 'installation', 'bin', 'timon-probe-fnm-moved'));
-    assert.equal(findExecutableBinary('timon-probe-fnm-moved', { ...options, env: { FNM_DIR: join(home, 'fnm-elsewhere') } }), moved);
-    const mise = stubBinary(join(home, '.local', 'share', 'mise', 'installs', 'node', '22.3.0', 'bin', 'timon-probe-mise'));
-    assert.equal(findExecutableBinary('timon-probe-mise', options), mise);
-    const asdf = stubBinary(join(home, '.asdf', 'installs', 'nodejs', '22.3.0', 'bin', 'timon-probe-asdf'));
-    assert.equal(findExecutableBinary('timon-probe-asdf', options), asdf);
-    const volta = stubBinary(join(home, 'volta-home', 'bin', 'timon-probe-volta'));
-    assert.equal(findExecutableBinary('timon-probe-volta', { ...options, env: { VOLTA_HOME: join(home, 'volta-home') } }), volta);
-    // macOS: fnm's Apple data folder.
-    const mac = stubBinary(join(home, 'Library', 'Application Support', 'fnm', 'node-versions', 'v22.3.0', 'installation', 'bin', 'timon-probe-fnm-mac'));
-    assert.equal(findExecutableBinary('timon-probe-fnm-mac', { ...options, platform: 'darwin' }), mac);
+    const chosen = stubBinary(join(home, '.local', 'share', 'fnm', 'aliases', 'default', 'bin', 'node'));
+    assert.equal(inHome(home, options()), chosen);
+    // Only `node` is searched there: the other CLIs keep the daemon's common order.
+    stubBinary(join(fnm, 'v22.3.0', 'installation', 'bin', 'timon-probe-fnm'));
+    assert.equal(findExecutableBinary('timon-probe-fnm', options()), null);
+
+    home = fresh(); // older fnm releases kept `~/.fnm`
+    const legacy = stubBinary(join(home, '.fnm', 'node-versions', 'v20.0.0', 'installation', 'bin', 'node'));
+    assert.equal(inHome(home, options()), legacy);
+    home = fresh(); // FNM_DIR moves the root
+    const moved = stubBinary(join(home, 'fnm-elsewhere', 'node-versions', 'v20.0.0', 'installation', 'bin', 'node'));
+    assert.equal(inHome(home, options({ FNM_DIR: join(home, 'fnm-elsewhere') })), moved);
+    home = fresh();
+    const mise = stubBinary(join(home, '.local', 'share', 'mise', 'installs', 'node', '22.3.0', 'bin', 'node'));
+    assert.equal(inHome(home, options()), mise);
+    home = fresh();
+    const asdf = stubBinary(join(home, '.asdf', 'installs', 'nodejs', '22.3.0', 'bin', 'node'));
+    assert.equal(inHome(home, options()), asdf);
+    home = fresh();
+    const volta = stubBinary(join(home, 'volta-home', 'bin', 'node'));
+    assert.equal(inHome(home, options({ VOLTA_HOME: join(home, 'volta-home') })), volta);
+    home = fresh(); // macOS: fnm's Apple data folder
+    const mac = stubBinary(join(home, 'Library', 'Application Support', 'fnm', 'node-versions', 'v22.3.0', 'installation', 'bin', 'node'));
+    assert.equal(inHome(home, options({}, 'darwin')), mac);
   } finally {
-    rmSync(home, { recursive: true, force: true });
+    for (const dir of homes) rmSync(dir, { recursive: true, force: true });
   }
 });
 

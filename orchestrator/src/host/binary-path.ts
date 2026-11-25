@@ -258,13 +258,16 @@ function versionedDirectories(
 }
 
 /**
- * The Node installs fnm, mise and asdf keep, the user's default first, then
- * highest version first. Like nvm, they only reach PATH through a line the
- * login shell runs (`fnm env`, `mise activate`, asdf's shims), which a service
- * never sources: a CLI installed with their npm, or one that runs on their
- * `node`, otherwise fails with `env: node: No such file or directory` (#1102).
+ * Where `node` itself may sit beyond the folders every binary is searched in:
+ * a moved Volta home, and the installs fnm, mise and asdf keep (the user's
+ * default first, then highest version first). Like nvm, they only reach PATH
+ * through a line the login shell runs (`fnm env`, `mise activate`, asdf's
+ * shims), which a service never sources, and an npm CLI then fails with
+ * `env: node: No such file or directory` (#1102). Searched for `node` only:
+ * the provider install lines that replay the daemon's search order for their
+ * CLI (Copilot's) stay what they are.
  */
-function versionManagerDirectories(
+function nodeManagerDirectories(
   platform: NodeJS.Platform,
   home: string,
   env: NodeJS.ProcessEnv,
@@ -274,7 +277,7 @@ function versionManagerDirectories(
   // On Windows fnm keeps `node.exe` in the installation folder itself, elsewhere in its `bin`.
   const fnmTail = platform === 'win32' ? ['installation'] : ['installation', 'bin'];
   const fnmDefault = platform === 'win32' ? [] : ['bin'];
-  const out: string[] = [];
+  const out: string[] = env.VOLTA_HOME ? [pathJoin(env.VOLTA_HOME, 'bin')] : [];
   for (const root of fnmRoots(platform, home, env, pathJoin)) {
     out.push(pathJoin(root, 'aliases', 'default', ...fnmDefault));
     out.push(...versionedDirectories(pathJoin(root, 'node-versions'), fnmTail, reader, pathJoin));
@@ -326,9 +329,7 @@ function managerDirectories(
       // nvm-windows keeps the active node behind this link; its default
       // (`Program Files\nodejs`) is already listed.
       env.NVM_SYMLINK ?? '',
-      env.VOLTA_HOME ? pathJoin(env.VOLTA_HOME, 'bin') : '',
       env.LOCALAPPDATA ? pathJoin(env.LOCALAPPDATA, 'Volta', 'bin') : '',
-      ...versionManagerDirectories(platform, home, env, reader, pathJoin),
       // Scoop and Chocolatey stay per binary (a provider's `searchDirs`): a
       // shim there must not outrank the copy its own installer wrote.
     ];
@@ -337,11 +338,9 @@ function managerDirectories(
     ...(platform === 'darwin' ? ['/opt/homebrew/bin', '/usr/local/bin', '/usr/bin', '/bin'] : []),
     ...(platform === 'linux' ? ['/usr/local/bin', '/home/linuxbrew/.linuxbrew/bin'] : []),
     // Per-account npm prefixes a service never puts on PATH.
-    env.VOLTA_HOME ? pathJoin(env.VOLTA_HOME, 'bin') : '',
     home ? pathJoin(home, '.volta', 'bin') : '',
     home ? pathJoin(home, '.npm-global', 'bin') : '',
     ...nvmBinDirectories(home, env, reader, pathJoin),
-    ...versionManagerDirectories(platform, home, env, reader, pathJoin),
   ];
 }
 
@@ -373,6 +372,7 @@ export function binaryCandidates(name: string, options: BinarySearchOptions = {}
       env.ProgramFiles ? pathJoin(env.ProgramFiles, 'Git', 'cmd') : '',
     ] : []),
     ...managerDirectories(platform, home, env, options.directoryReader ?? diskReader, pathJoin),
+    ...(name === 'node' ? nodeManagerDirectories(platform, home, env, options.directoryReader ?? diskReader, pathJoin) : []),
     // Last: a copy reachable through PATH, npm or Homebrew stays the one the
     // user chose to maintain.
     ...installerDirectories(name, platform, env, pathJoin),
