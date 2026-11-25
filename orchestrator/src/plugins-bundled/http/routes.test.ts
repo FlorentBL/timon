@@ -149,3 +149,44 @@ test('onboarding: a privileged prerequisite returns the command to paste', { ski
     server.close();
   }
 });
+
+test('/api/doctor: the paths searched are for the operator, never for a member', async () => {
+  // A pin names the home folder: the report lists it among the paths searched.
+  const pinned = join(HOME, 'pinned bin', 'claude');
+  const { config, setConfig } = await import('../../config/load.js');
+  const saved = config();
+  setConfig({ ...saved, host: { ...saved.host, binaries: { ...saved.host.binaries, claude: pinned } } });
+  const app = express();
+  app.use((req, _res, next) => {
+    const role = req.headers['x-test-role'];
+    if (role === 'superadmin' || role === 'member') {
+      req.auth = { kind: 'session', user: null, isSuperadmin: role === 'superadmin' } as unknown as NonNullable<typeof req.auth>;
+    }
+    next();
+  });
+  registerRoutes(app as never);
+  const server = app.listen(0, '127.0.0.1');
+  await new Promise((r) => server.once('listening', r));
+  const addr = server.address();
+  if (addr === null || typeof addr === 'string') throw new Error('no address');
+  type Report = { binaries: { name: string; attemptedPaths?: string[] }[] };
+  const read = async (role: string) => {
+    const res = await fetch(`http://127.0.0.1:${addr.port}/api/doctor`, { headers: { 'x-test-role': role } });
+    assert.equal(res.status, 200);
+    const text = await res.text();
+    return { text, json: JSON.parse(text) as Report };
+  };
+  try {
+    const operator = await read('superadmin');
+    assert.ok(operator.json.binaries.find((b) => b.name === 'claude')?.attemptedPaths?.includes(pinned), operator.text);
+    for (const role of ['member', 'anonymous']) {
+      const viewer = await read(role);
+      assert.ok(viewer.json.binaries.length > 0);
+      for (const binary of viewer.json.binaries) assert.equal('attemptedPaths' in binary, false, `${role}: ${binary.name}`);
+      assert.equal(viewer.text.includes(pinned), false, `${role}: the pin leaked`);
+    }
+  } finally {
+    server.close();
+    setConfig(saved);
+  }
+});
