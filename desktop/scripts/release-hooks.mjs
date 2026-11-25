@@ -13,6 +13,7 @@ import { checkMacSignature, describeSignature } from './mac-signature.mjs';
 import { BUILD_INFO_FILE, assertPackagedBuildInfo, readBuildInfo } from './build-info.mjs';
 import { nodeRuntimeSpec } from './fetch-node.mjs';
 import { assertPackagedShellLocales } from './shell-locales.mjs';
+import { LINUX_PACKAGE_NATIVES, assertGlibcFloor, elfFilesUnder } from './native-linux.mjs';
 import { execFileSync } from 'node:child_process';
 
 // Also runs when electron-builder is invoked directly instead of npm run dist.
@@ -162,6 +163,24 @@ export function assertPackagedFence(resources, platform) {
   if (!version.startsWith('timon-fence ')) throw new Error(`${fence} is not the mission launcher (answered ${JSON.stringify(version)})`);
 }
 
+/**
+ * A Linux package carries the natives it cannot run without, and nothing in
+ * it needs a glibc above the floor the requirements promise (TIM-0162: the
+ * 0.1.9 terminal needed glibc 2.42 and loaded on no system older than the
+ * build machine). Every ELF under the unpacked app is read, the speech engine
+ * and Electron's own libraries included: whatever ships must load there.
+ */
+export function assertPackagedLinuxNatives(app, resources, platform) {
+  if (platform !== 'linux') return;
+  for (const native of LINUX_PACKAGE_NATIVES) {
+    if (!existsSync(join(resources, native))) {
+      throw new Error(`${join(resources, native)} is missing: prepare:deps rebuilds it in the native build image`);
+    }
+  }
+  const checked = assertGlibcFloor(elfFilesUnder(app));
+  console.log(`[release] ${checked} Linux binaries checked against the glibc floor`);
+}
+
 export async function afterPack(context) {
   const name = context.packager.appInfo.productFilename;
   const platform = context.electronPlatformName;
@@ -180,6 +199,7 @@ export async function afterPack(context) {
   assertPackagedReleaseCheck(resources);
   assertPackagedNode(resources, platform);
   assertPackagedFence(resources, platform);
+  assertPackagedLinuxNatives(app, resources, platform);
   assertPackagedThirdPartyNotices(resources, readFileSync(new URL(`../${THIRD_PARTY_NOTICES}`, import.meta.url)));
   assertPackagedShellLocales(resources);
   // Built by `npm run dist` before electron-builder runs: the shell's own table.

@@ -40,6 +40,8 @@ import { formatBytes, freeBytes, LOW_DISK_BYTES } from './storage-failure.js';
 import { CATALOG } from './kernel/catalog.js';
 import { degradation } from './kernel/degradation.js';
 import { nodelessBackends, nodelessBackendText } from './host/launch-path.js';
+import { missingRequiredBinaries, REQUIRED_BINARIES } from './host/blocking-facts.js';
+import { nodePtyStatus } from './terminal-host/pty.js';
 import { binaryCandidates, findExecutableBinary, npmPrefixCandidates, pinnedBinaryCandidates, resolvePinnedBinary, type BinarySearchOptions } from './host/binary-path.js';
 import { BUILTIN_API_KEY_PROVIDERS, BUILTIN_DECLARATIONS, builtinBinaries, builtinProviderIds } from './backends/builtin-declarations.js';
 import { activeProfiles, authStatusNow, installedProfiles } from './backends/registry.js';
@@ -60,7 +62,7 @@ export type DoctorBinary = { readonly name: string; readonly required?: true; re
 const PROVIDER_BINARIES: readonly DoctorBinary[] = builtinBinaries().map((binary) => ({ name: binary.names[0]!, backend: true as const }));
 
 export const BINARIES: readonly DoctorBinary[] = [
-  { name: 'node', required: true },
+  ...REQUIRED_BINARIES.map((name) => ({ name, required: true as const })),
   { name: 'git' },
   ...PROVIDER_BINARIES,
   { name: 'gh' },
@@ -198,9 +200,8 @@ export function diagnose(): DoctorReport {
 
   const backends = BINARIES.filter((b) => 'backend' in b && b.backend).map((b) => b.name);
   const blockers: string[] = [];
-  for (const b of BINARIES) {
-    if ('required' in b && b.required && !found(b.name)) blockers.push(`${b.name} not found`);
-  }
+  // The diagnostic report reads the same words (`host/blocking-facts.ts`, TIM-0162).
+  blockers.push(...missingRequiredBinaries(found));
   // An agent reached over the network needs no CLI on this machine.
   const remoteBackend = activeProfiles().some(({ dialect }) => isRemoteDialect(dialect));
   // A provider plugin's own CLI counts too: its name is in no fixed list.
@@ -235,6 +236,7 @@ export function diagnose(): DoctorReport {
     linux,
     docker,
     display,
+    terminal: nodePtyStatus(),
     missionIsolation,
     storage,
     mainSeat: doctorMainSeat(),
@@ -444,6 +446,7 @@ export function formatDoctor(r: DoctorReport): string {
     `distribution     ${r.linux ? `${r.linux.prettyName ?? r.linux.id ?? 'unknown'} (${r.linux.packageManager ?? 'no known package manager'})` : 'n/a'}`,
     `docker           ${r.docker.usable ? `usable — ${r.docker.detail}` : `unusable — ${r.docker.detail}`}`,
     `graphical session ${r.display ?? 'none (DISPLAY/WAYLAND_DISPLAY empty)'}`,
+    ...(r.terminal ? [`built-in terminal ${r.terminal.available ? 'available' : `UNAVAILABLE — ${r.terminal.reason ?? 'node-pty did not load'}`}`] : []),
     `mission isolation ${r.missionIsolation.message}`,
     ...r.missionIsolation.gaps.map((gap) => `  ${gap}`),
   );
@@ -462,6 +465,9 @@ export function formatDoctor(r: DoctorReport): string {
   // Not a blocker in `auto` or `off`, but never a line lost in the middle.
   if (!r.missionIsolation.enforced && r.missionIsolation.launch !== 'refused') {
     lines.push('', 'WARNING:', `  - mission isolation ${r.missionIsolation.message}`);
+  }
+  if (r.terminal && !r.terminal.available) {
+    lines.push('', 'WARNING:', `  - the built-in terminal cannot start: ${r.terminal.reason ?? 'node-pty did not load'}`);
   }
   if (r.blockers.length) {
     lines.push('', 'BLOCKING:');

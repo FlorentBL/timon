@@ -22,7 +22,7 @@ import { redactText } from '../secrets/redact.js';
 import { createGenericHost } from './generic.js';
 import { builtinBinaries } from '../backends/builtin-declarations.js';
 import { packagedRuntime } from './bundled-node.js';
-import { findExecutableBinary, resolvePinnedBinary } from './binary-path.js';
+import { blockingFactsOf, blockingFindings, localBlockingFacts, resolveConfiguredBinary, type BlockingFacts, type Finding } from './blocking-facts.js';
 import { nodelessBackends, nodelessBackendText, type NodelessBackend } from './launch-path.js';
 import { inspectListenPort, type ListenPortState } from './listen-port.js';
 import { linuxRelease, readOsRelease, windowsJoin, type WindowsJoin } from './machine.js';
@@ -47,7 +47,7 @@ export type Health =
   | { kind: 'foreign'; status: number }
   | { kind: 'none'; error: string };
 
-export type Finding = { id: string; text: string };
+export type { Finding } from './blocking-facts.js';
 
 export type DiagnosticFacts = {
   source: DiagnosticSource;
@@ -71,11 +71,14 @@ export type DiagnosticFacts = {
   nodelessBackends?: NodelessBackend[];
   /** Timon services of this account whose data directory is gone (#464). */
   orphanServices?: OrphanService[];
+  /** What the doctor calls blocking, and the terminal and fence it measured (TIM-0162). */
+  blocking?: BlockingFacts | null;
 };
 
 /** One line per known trap, in the tester's words; empty when none applies. */
 export function diagnosticFindings(facts: DiagnosticFacts): Finding[] {
-  const findings: Finding[] = [];
+  // The doctor's blockers first: the report must never say "none detected" under a BLOCKING line.
+  const findings: Finding[] = facts.blocking ? blockingFindings(facts.blocking) : [];
   const details = facts.service.details;
   if (facts.runningUnmarked || (facts.packagedRuntime && facts.service.installed && details?.marked === false)) {
     findings.push({
@@ -267,8 +270,8 @@ export type CollectOptions = {
   daemonVersion: string;
   /** What the daemon side knows that a file cannot say (mode, licence state). */
   sections?: { title: string; lines: string[] }[];
-  /** Lines of `timon doctor`, or `null` when it could not run. */
-  doctor?: () => Promise<string[] | null>;
+  /** `timon doctor`'s summary and the facts it concluded from; `null` when it could not run. */
+  doctor?: () => Promise<DoctorOutcome | null>;
   runningUnmarked?: boolean;
   /** Text shown to the user just before (the desktop's error box). */
   error?: string;
@@ -327,8 +330,13 @@ export async function buildDiagnosticReport(opts: CollectOptions): Promise<{ tex
     nodelessBackends: nodeless,
     orphanServices: orphans,
   };
+  const outcome = opts.doctor
+    ? await opts.doctor().catch((error: unknown): DoctorOutcome => ({ lines: [`doctor failed: ${(error as Error).message}`], facts: null }))
+    : null;
+  const doctor = outcome?.lines ?? null;
+  // No doctor answered: the same facts, measured here (the fence excepted).
+  facts.blocking = outcome?.facts ?? (platform === process.platform ? localBlockingFacts(opts.cfg.host.binaries) : null);
   const findings = diagnosticFindings(facts);
-  const doctor = opts.doctor ? await opts.doctor().catch((error: unknown) => [`doctor failed: ${(error as Error).message}`]) : null;
 
   let account = '';
   try { account = userInfo().username; } catch { /* unknown */ }
@@ -395,10 +403,7 @@ function nodelessHere(cfg: TimonConfig): NodelessBackend[] {
   try {
     return nodelessBackends(builtinBinaries().map((binary) => binary.names[0]!), {
       platform: process.platform,
-      resolve: (name) => {
-        const pin = pins[name];
-        return pin ? resolvePinnedBinary(name, pin) : findExecutableBinary(name);
-      },
+      resolve: (name) => resolveConfiguredBinary(name, pins),
     });
   } catch { return []; }
 }
@@ -416,10 +421,21 @@ function readServiceRefused(home: string): string | null {
   try { return readFileSync(windowsServiceFiles(home, join).refused, 'utf8').trim() || 'date unknown'; } catch { return null; }
 }
 
-/** `timon doctor`'s essentials in a few lines, from its JSON (local or `/api/doctor`). */
-export function doctorSummary(report: {
+/** What the report keeps of a doctor: its summary, and the facts its findings come from. */
+export type DoctorOutcome = { lines: string[]; facts: BlockingFacts | null };
+
+type DoctorJson = {
   ok?: unknown; blockers?: unknown; binaries?: unknown; supervisor?: unknown; docker?: { detail?: unknown; usable?: unknown };
-}): string[] {
+  terminal?: { available?: unknown; reason?: unknown };
+};
+
+/** A doctor report (`diagnose()` or the JSON of `/api/doctor`) as the support report shows and reads it. */
+export function doctorOutcome(report: DoctorJson): DoctorOutcome {
+  return { lines: doctorSummary(report), facts: blockingFactsOf(report) };
+}
+
+/** `timon doctor`'s essentials in a few lines, from its JSON (local or `/api/doctor`). */
+export function doctorSummary(report: DoctorJson): string[] {
   const lines = [`ok        ${report.ok === true ? 'yes' : 'no'}`];
   if (Array.isArray(report.binaries)) {
     const binaries = report.binaries as { name?: unknown; ok?: unknown; path?: unknown }[];
@@ -427,22 +443,26 @@ export function doctorSummary(report: {
   }
   lines.push(`supervisor ${report.supervisor === null ? 'none' : String(report.supervisor ?? 'unknown')}`);
   if (report.docker) lines.push(`docker    ${report.docker.usable ? 'usable' : 'unusable'} — ${String(report.docker.detail ?? '')}`);
+  if (report.terminal) {
+    lines.push(`terminal  ${report.terminal.available ? 'available' : `UNAVAILABLE — ${String(report.terminal.reason ?? '')}`}`);
+  }
   if (Array.isArray(report.blockers)) for (const blocker of report.blockers) lines.push(`BLOCKING  ${String(blocker)}`);
   return lines;
 }
 
 /** The daemon's own doctor, asked over the loopback with the daemon token; never the database. */
-export async function daemonDoctor(cfg: Pick<TimonConfig, 'daemon'>, home: string): Promise<string[]> {
+export async function daemonDoctor(cfg: Pick<TimonConfig, 'daemon'>, home: string): Promise<DoctorOutcome> {
+  const without = (line: string): DoctorOutcome => ({ lines: [line], facts: null });
   let token = '';
-  try { token = readFileSync(join(home, 'daemon-token'), 'utf8').trim(); } catch { return ['daemon token absent: doctor skipped']; }
+  try { token = readFileSync(join(home, 'daemon-token'), 'utf8').trim(); } catch { return without('daemon token absent: doctor skipped'); }
   try {
     const res = await fetch(`${daemonOrigin(cfg)}/api/doctor`, {
       headers: { authorization: `Bearer ${token}` }, signal: AbortSignal.timeout(8000),
     });
-    if (!res.ok) return [`the daemon's doctor answered HTTP ${res.status}`];
-    return doctorSummary(await res.json() as Parameters<typeof doctorSummary>[0]);
+    if (!res.ok) return without(`the daemon's doctor answered HTTP ${res.status}`);
+    return doctorOutcome(await res.json() as DoctorJson);
   } catch (e) {
-    return [`the daemon's doctor did not answer (${(e as Error).message})`];
+    return without(`the daemon's doctor did not answer (${(e as Error).message})`);
   }
 }
 

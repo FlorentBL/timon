@@ -104,8 +104,37 @@ test('the rebuild never touches the tree the local daemon runs on', () => {
   assert.match(script, /refusing to rebuild inside/);
   // The rebuild runs in the staged copy, BY the shipped Node, so the module's
   // install script targets that Node's ABI and not the build machine's.
-  assert.match(script, /execFileSync\(node, \[npmCli\(\), 'rebuild', moduleName/);
+  assert.match(script, /runOnRuntime\(\[cli, 'rebuild', moduleName/);
   assert.match(script, /cwd: staged/);
+  assert.match(script, /const node = bundledNodeExecutable\(\)/);
+});
+
+/**
+ * TIM-0162: the 0.1.9 Linux package carried a `pty.node` compiled on the
+ * build machine, which needed glibc 2.42: the terminal failed on Debian 13
+ * and older, with node-pty's message blaming a missing prebuild. A Linux x64
+ * package now rebuilds its natives in a glibc 2.28 image, refuses to pack
+ * without `pty.node`, and refuses any shipped binary above the floor the
+ * requirements page promises.
+ */
+test('TIM-0162: a Linux x64 package ships pty.node, built for the glibc it promises', async () => {
+  const script = readFileSync(join(root, 'scripts', 'prepare-daemon-deps.mjs'), 'utf8');
+  assert.match(script, /if \(LINUX\) assertContainerEngine\(\)/, 'no Linux package without the build image');
+  assert.match(script, /if \(LINUX\) pruneLinuxBuild\(/);
+  assert.match(script, /assertGlibcFloor\(binaries\)/, 'prepare:deps checks what it built');
+  const hooks = readFileSync(join(root, 'scripts', 'release-hooks.mjs'), 'utf8');
+  assert.match(hooks, /assertPackagedLinuxNatives\(app, resources, platform\)/, 'afterPack checks what electron-builder packed');
+
+  const native = await import(join(root, 'scripts', 'native-linux.mjs')) as {
+    GLIBC_FLOOR: string; LINUX_PACKAGE_NATIVES: readonly string[];
+  };
+  assert.ok(native.LINUX_PACKAGE_NATIVES.includes(join('orchestrator', 'node_modules', 'node-pty', 'build', 'Release', 'pty.node')));
+  const requirements = readFileSync(join(root, '..', 'public-docs', 'docs', 'installation', 'requirements.md'), 'utf8');
+  assert.ok(requirements.includes(`glibc ${native.GLIBC_FLOOR}`), 'the requirements page states the floor the build enforces');
+
+  // electron-builder must not filter the rebuilt `build/` out of the copy it ships.
+  assert.match(yml, /- from: build-resources\/orchestrator\/node_modules\n\s+to: orchestrator\/node_modules/);
+  assert.doesNotMatch(yml, /!\*\*\/build\b|!.*node-pty/);
 });
 
 /**

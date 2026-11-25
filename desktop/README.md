@@ -92,6 +92,26 @@ and only then moves it to `build-resources/<tree>/` — which is what
 skipped when copying (`node_modules/node_modules` points back at the repo and
 let a rebuild escape into it, observed 04/09/2026).
 
+### Linux: the natives are built for glibc 2.28
+
+A native module compiled on the build machine needs that machine's glibc: the
+0.1.9 terminal, built on Ubuntu 24.04, did not load on Debian 13 or older
+(TIM-0162), and better-sqlite3's downloaded prebuild needs glibc 2.29. On
+Linux, `prepare:deps` therefore rebuilds both modules **from source** in a
+`manylinux_2_28` image (AlmaLinux 8, glibc 2.28, the floor of the shipped
+Node), pinned by digest in `scripts/native-linux.mjs`, and loads them there.
+**Docker is a prerequisite of a Linux package**: the build stops at once
+without a reachable Docker daemon. `TIMON_NATIVE_BUILD_IMAGE` replaces the
+image (a local mirror, a newer pin under test).
+
+Then every ELF that ships is read for the glibc versions it requires, without
+binutils (what `objdump -T` prints as `GLIBC_2.x`): in `prepare:deps`, and
+again in `afterPack` over the whole unpacked app, Electron and the dictation
+engine included. One binary above 2.28, or a package without
+`node-pty/build/Release/pty.node`, stops the build. The floor is the one
+`public-docs/docs/installation/requirements.md` promises; `packaging.test.ts`
+holds both together.
+
 Installers land in `release/`. macOS builds carry no Developer ID signature in
 v1: the first launch needs a right-click → Open. They still need a **valid
 ad-hoc** signature, or Apple Silicon kills the app at launch (`SIGKILL (Code
