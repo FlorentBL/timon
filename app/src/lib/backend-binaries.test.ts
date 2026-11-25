@@ -12,6 +12,11 @@ test('daemon codes become sentences; an unknown one does not leak its message', 
   assert.match(binaryErrorMessage(500, 'whatever'), /error 500/);
 });
 
+test('a write or a check the daemon could not do reads as a sentence, not as an error number', () => {
+  assert.match(binaryErrorMessage(500, 'pin_write_failed'), /^timon\.config\.json could not be written/);
+  assert.match(binaryErrorMessage(500, 'probe_setup_failed'), /^This file could not be checked/);
+});
+
 test('a program pinned elsewhere is refused by name (#1101)', () => {
   assert.equal(binaryErrorMessage(400, 'wrong_program', 'codex'), 'This file is not the codex CLI.');
   assert.equal(binaryErrorMessage(400, 'no_answer', 'codex'), 'This program did not answer `--version`: it failed, took too long or printed too much.');

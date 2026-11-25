@@ -455,6 +455,8 @@
       "unsupported_program": "Kies op Windows het .exe-bestand van het programma, of het .cmd-bestand dat npm ervoor installeerde.",
       "no_config": "Rond eerst de configuratie af.",
       "config_unreadable": "timon.config.json kan niet worden gelezen. Herstel het bestand en controleer opnieuw.",
+      "pin_write_failed": "timon.config.json kon niet worden geschreven. Controleer of Timon in de map mag schrijven en probeer het opnieuw.",
+      "probe_setup_failed": "Dit bestand kon niet worden gecontroleerd: de map voor de controle kon niet worden voorbereid. Probeer het opnieuw.",
       "invalid_body": "Dit pad kan niet worden opgeslagen.",
       "browse": "De bestandskiezer kon niet worden geopend.",
       "generic": "De wijziging is mislukt (fout {status})."

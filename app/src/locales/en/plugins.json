@@ -531,6 +531,8 @@
       "unsupported_program": "On Windows, pick the program's .exe, or the .cmd file npm installed for it.",
       "no_config": "Finish the setup first.",
       "config_unreadable": "timon.config.json cannot be read. Fix or restore it, then check again.",
+      "pin_write_failed": "timon.config.json could not be written. Check that Timon may write to its folder, then try again.",
+      "probe_setup_failed": "This file could not be checked: the folder the check runs in could not be prepared. Try again.",
       "invalid_body": "This path cannot be saved.",
       "browse": "The file picker could not open.",
       "generic": "The change failed (error {status})."
