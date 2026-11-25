@@ -28,6 +28,6 @@
     "setupFailed": "Einrichtung abgelehnt",
     "clientUpgradeRequired": "Aktualisiere Timon auf eine unterstützte Version und versuche es dann erneut.",
     "transferPending": "Das Token des vorherigen Rechners ist noch nicht abgelaufen. Warte, bevor du diesen Rechner aktivierst.",
-    "freeIncompatible": "Diese Lizenz kann mit den aktuellen Konten oder Plugins nicht angewendet werden. Deine Daten wurden behalten."
+    "freeIncompatible": "Diese Lizenz kann mit den aktuellen Konten oder Plugins nicht angewendet werden. Deine Daten bleiben erhalten."
   }
 }
