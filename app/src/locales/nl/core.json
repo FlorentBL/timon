@@ -2831,6 +2831,7 @@
     "notInLicence": "Niet inbegrepen in je licentie",
     "coreLocked": "Kernmodule — de daemon draait niet zonder.",
     "themeLocked": "Bevat elk kleurtoken — uitzetten zou de app zonder palet laten. Wijzig het thema bij Weergave.",
+    "layoutLocked": "Tekent de hele interface — uitzetten zou de app leeg laten. Wijzig de indeling bij Weergave.",
     "toggleFailed": "Kan ‘{plugin}’ niet wijzigen",
     "toggleFailedStatus": "De daemon weigerde de wijziging (HTTP {status}).",
     "toggleForbidden": "Je account mag deze plug-in niet wijzigen.",

@@ -97,6 +97,10 @@ test('the refusals stay refusals, and each carries a message the gallery can sho
   assert.equal(theme.status, 403, 'the product theme carries every token');
   assert.ok((theme.body.error ?? '').length > 0);
 
+  const layout = await toggle('@timon/ui-layout', false);
+  assert.equal(layout.status, 403, 'the product layout is the whole interface');
+  assert.equal(wantedInFile('@timon/ui-layout'), undefined, 'and nothing is written for it');
+
   const unknown = await toggle('@timon/does-not-exist', false);
   assert.equal(unknown.status, 404);
   assert.ok((unknown.body.error ?? '').length > 0);

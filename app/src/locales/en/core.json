@@ -2655,6 +2655,7 @@
     "notInLicence": "Not included in your licence",
     "coreLocked": "Core module — the daemon does not run without it.",
     "themeLocked": "Carries every colour token — switching it off would leave the app with no palette. Change theme in Appearance.",
+    "layoutLocked": "Draws the whole interface — switching it off would leave the app blank. Change layout in Appearance.",
     "toggleFailed": "Could not change “{plugin}”",
     "toggleFailedStatus": "The daemon refused the change (HTTP {status}).",
     "toggleForbidden": "Your account is not allowed to change this plugin.",

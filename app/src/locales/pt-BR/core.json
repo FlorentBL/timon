@@ -2831,6 +2831,7 @@
     "notInLicence": "Não incluído na sua licença",
     "coreLocked": "Módulo central: o daemon não funciona sem ele.",
     "themeLocked": "Carrega todos os tokens de cor: desativá-lo deixaria o aplicativo sem paleta. Mude o tema em Aparência.",
+    "layoutLocked": "Desenha toda a interface: desativá-lo deixaria o aplicativo em branco. Mude o layout em Aparência.",
     "toggleFailed": "Não foi possível alterar “{plugin}”",
     "toggleFailedStatus": "O daemon recusou a alteração (HTTP {status}).",
     "toggleForbidden": "Sua conta não tem permissão para alterar este plugin.",

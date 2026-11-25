@@ -97,6 +97,18 @@ export type EntryDecision = {
   clientOnly?: boolean;
 };
 
+/**
+ * Browser modules the interface cannot stand without: `ui-layout` is the only
+ * occupant of the `root` slot, `ui-theme` carries every colour token. Neither
+ * is `core` (the daemon runs without them), but switching one off leaves the
+ * browser with a blank page or no palette, including the plugin gallery that
+ * would be needed to switch it back on. `setModuleEnabled` refuses to write
+ * `false` for them; a `false` already in the file (written by an older
+ * release, or by hand) is ignored here, so upgrading repairs a blank interface
+ * instead of keeping it.
+ */
+export const INTERFACE_FLOOR_MODULES: ReadonlySet<string> = new Set(['@timon/ui-layout', '@timon/ui-theme']);
+
 /** Entry as the Cordis loader expects it. */
 export type LoaderEntry = {
   id: string;
@@ -132,8 +144,8 @@ export function planEntries(
     const missing = (m.requires ?? []).filter((c) => !caps.has(c));
     const decide = (): string | null => {
       // The core is not negotiable: disabling it would not produce a
-      // lighter installation, but a dead one.
-      if (m.tier === 'core') return null;
+      // lighter installation, but a dead one. Same for the interface floor.
+      if (m.tier === 'core' || INTERFACE_FLOOR_MODULES.has(m.id)) return null;
       if (fixed) {
         // Host availability may make a bundled integration unavailable; user
         // configuration never changes which product modules the offer contains.

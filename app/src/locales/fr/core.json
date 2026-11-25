@@ -2655,6 +2655,7 @@
     "notInLicence": "Non inclus dans votre licence",
     "coreLocked": "Module noyau — le daemon ne tourne pas sans lui.",
     "themeLocked": "Porte tous les tokens de couleur — l’éteindre laisserait l’app sans palette. Changez de thème dans Apparence.",
+    "layoutLocked": "Dessine toute l’interface — l’éteindre laisserait l’app vide. Changez de disposition dans Apparence.",
     "toggleFailed": "Impossible de modifier « {plugin} »",
     "toggleFailedStatus": "Le daemon a refusé la modification (HTTP {status}).",
     "toggleForbidden": "Votre compte n’a pas le droit de modifier ce plugin.",

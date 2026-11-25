@@ -37,7 +37,7 @@ import { activationErrorMessage } from '@/lib/license';
 import { parseApiError } from '@/lib/api-error';
 import { compareText } from '@/lib/intl';
 import { moduleOffCause } from '@/lib/module-off-reason';
-import { PRODUCT_THEME_PLUGIN } from '@/lib/plugin-host/loader';
+import { PRODUCT_LAYOUT_PLUGIN, PRODUCT_THEME_PLUGIN } from '@/lib/plugin-host/loader';
 
 export type PluginPublic = {
   id: string;
@@ -184,9 +184,10 @@ export function toCardData(plugin: PluginPublic): PluginCardData {
     enabled: unlicensed ? false : bundled ? bundledEnabled(plugin, active) : (refused ? false : plugin.state !== 'disabled'),
     // A missing host capability explains why a bundled module is not running,
     // but the wish stays the user's to write. Only `core` — and the product
-    // theme, which is the floor under every palette — take the switch away;
+    // theme and layout, the floor under every palette and every screen — take
+    // the switch away;
     // a licence that does not include the module is a refusal (below).
-    locked: bundled && (plugin.tier === 'core' || plugin.id === PRODUCT_THEME_PLUGIN),
+    locked: bundled && (plugin.tier === 'core' || isInterfaceFloor(plugin.id)),
     note: bundled && !unlicensed ? bundledNote(plugin, active) : null,
     blockedReason: unlicensed ? t('pluginsPage.notInLicence') : !bundled && refused ? (plugin.error ?? plugin.reason) : null,
   };
@@ -207,8 +208,18 @@ function bundledEnabled(plugin: PluginPublic, active: boolean): boolean {
   // A `core` module ignores the config wish (`planEntries` does too), so a
   // hand-written `false` in the file must not show its switch off while the
   // module is in fact running. The API refuses to write it; a text editor does not.
-  if (plugin.tier === 'core') return active;
+  // The interface floor follows the same rule since `planEntries` ignores its `false` too.
+  if (plugin.tier === 'core' || isInterfaceFloor(plugin.id)) return active;
   return plugin.wanted === 'auto' || plugin.wanted === null ? active : plugin.wanted;
+}
+
+/**
+ * The product theme and layout: not `core`, but switching either off leaves
+ * the browser without a palette or without any screen, this gallery included.
+ * Mirror of `INTERFACE_FLOOR_MODULES` in `orchestrator/src/kernel/registry.ts`.
+ */
+function isInterfaceFloor(id: string): boolean {
+  return id === PRODUCT_THEME_PLUGIN || id === PRODUCT_LAYOUT_PLUGIN;
 }
 
 
@@ -223,6 +234,7 @@ function bundledEnabled(plugin: PluginPublic, active: boolean): boolean {
 function bundledNote(plugin: PluginPublic, active: boolean): string | null {
   if (plugin.tier === 'core') return t('pluginsPage.coreLocked');
   if (plugin.id === PRODUCT_THEME_PLUGIN) return t('pluginsPage.themeLocked');
+  if (plugin.id === PRODUCT_LAYOUT_PLUGIN) return t('pluginsPage.layoutLocked');
   if (!active && plugin.wanted !== false && plugin.reason) return plugin.reason;
   if (active && plugin.warning) return plugin.warning;
   return null;

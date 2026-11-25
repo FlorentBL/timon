@@ -104,6 +104,15 @@ export class CoreModuleError extends Error {}
 export const PRODUCT_THEME_MODULE = '@timon/ui-theme';
 
 /**
+ * The bundled half that occupies the `root` slot: the whole frame of the app,
+ * Settings and the plugin gallery included. Turning it off leaves the browser
+ * on "No layout mounted", with no way back from inside the app. A White Label
+ * layout takes `root` without switching this one off (`registerProductLayout`
+ * registers it as the fallback occupant), so no setup needs it off.
+ */
+export const PRODUCT_LAYOUT_MODULE = '@timon/ui-layout';
+
+/**
  * `timon module enable|disable <id>` — writes `modules[<id>]` into
  * `timon.config.json`.
  *
@@ -146,6 +155,12 @@ export function setModuleEnabled(
     throw new CoreModuleError(
       `${canonical} carries every colour token: turning it off leaves the \`theme\` slot empty.`
       + ' Change the theme in Appearance, or install a theme that claims the slot.',
+    );
+  }
+  if (canonical === PRODUCT_LAYOUT_MODULE && !enabled) {
+    throw new CoreModuleError(
+      `${canonical} draws the whole interface: turning it off leaves the \`root\` slot empty and the app blank.`
+      + ' Change the layout in Appearance instead.',
     );
   }
 
