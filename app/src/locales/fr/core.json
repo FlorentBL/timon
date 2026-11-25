@@ -1620,7 +1620,12 @@
       "openMission": "Ouvrir la mission",
       "stop": "Arrêter la mission",
       "stopConfirm": "Arrêter la mission de cette task ?",
-      "stopFailed": "Impossible d’arrêter la mission (HTTP {status})."
+      "stopFailed": "Impossible d’arrêter la mission (HTTP {status}).",
+      "underMinute": "< 1 min",
+      "pendingPermission": "Attend une permission ({tool}) depuis {age}",
+      "pendingQuestion": "Attend une réponse depuis {age}",
+      "pendingDeadline": "refus auto dans {left}",
+      "pendingOthers": "{count, plural, one {# autre carte en attente} other {# autres cartes en attente}}"
     }
   },
   "agentsPage": {

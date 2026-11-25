@@ -1840,7 +1840,12 @@
       "openMission": "Missie openen",
       "stop": "Missie stoppen",
       "stopConfirm": "De missie van deze taak stoppen?",
-      "stopFailed": "Kan de missie niet stoppen (HTTP {status})."
+      "stopFailed": "Kan de missie niet stoppen (HTTP {status}).",
+      "underMinute": "< 1 min",
+      "pendingPermission": "Wacht al {age} op een toestemming ({tool})",
+      "pendingQuestion": "Wacht al {age} op een antwoord",
+      "pendingDeadline": "automatisch geweigerd over {left}",
+      "pendingOthers": "{count, plural, one {nog # kaart wacht} other {nog # kaarten wachten}}"
     }
   },
   "agentsPage": {

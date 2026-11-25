@@ -1840,7 +1840,12 @@
       "openMission": "Abrir la misión",
       "stop": "Detener la misión",
       "stopConfirm": "¿Detener la misión de esta tarea?",
-      "stopFailed": "No se pudo detener la misión (HTTP {status})."
+      "stopFailed": "No se pudo detener la misión (HTTP {status}).",
+      "underMinute": "< 1 min",
+      "pendingPermission": "Espera un permiso ({tool}) desde hace {age}",
+      "pendingQuestion": "Espera una respuesta desde hace {age}",
+      "pendingDeadline": "rechazo automático en {left}",
+      "pendingOthers": "{count, plural, one {# tarjeta más en espera} other {# tarjetas más en espera}}"
     }
   },
   "agentsPage": {
