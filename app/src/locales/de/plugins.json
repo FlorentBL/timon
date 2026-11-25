@@ -306,6 +306,7 @@
         "broker": "Ruft APIs unter Tresor-Identitäten auf, ohne ihre Schlüssel zu sehen, nur jene, die ihm namentlich gewährt wurden.",
         "brokerNoHttp": "Es deklariert http:outbound nicht, daher werden seine API-Aufrufe über den Broker abgelehnt.",
         "network": "Sein Netzwerkzugriff ist auf die in timon.config.json geöffneten Hosts begrenzt, für alle Plugins (pluginPolicy.http.allow) oder nur für dieses (pluginPolicy.http.byPlugin), sowie auf die Adressen freigegebener Verbindungen.",
+        "publicImages": "Es kann Bilder von jedem öffentlichen Host abrufen, ohne Eintrag in timon.config.json: Zurück kommen nur geprüfte Bilder, nie aus Ihrem lokalen Netzwerk oder von diesem Rechner. pluginPolicy.publicImages schaltet das ab.",
         "secretsLead": "Geheimnisse, die es nennt. Ein angekreuztes Geheimnis wird nur diesem Plugin gewährt; das Abwählen widerruft nie eine Gewährung (das geschieht unter Geheimnisse).",
         "hostsLead": "Hosts, die es erreicht. Ein angekreuzter Host wird nur für dieses Plugin geöffnet.",
         "hostOwn": "Für dieses Plugin bereits geöffnet. Abwählen schließt ihn: Seine Hosts werden durch die hier angekreuzten ersetzt.",

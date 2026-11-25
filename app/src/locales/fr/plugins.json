@@ -336,6 +336,7 @@
         "broker": "Appelle des API sous des identités du coffre sans voir leurs clés, seulement celles qui lui sont accordées nommément.",
         "brokerNoHttp": "Il ne déclare pas http:outbound : ses appels d'API par le courtier seront refusés.",
         "network": "Son accès réseau se limite aux hôtes ouverts dans timon.config.json, à tous les plugins (pluginPolicy.http.allow) ou à lui seul (pluginPolicy.http.byPlugin), et aux adresses des connexions approuvées.",
+        "publicImages": "Il peut récupérer des images sur n'importe quel hôte public sans entrée dans timon.config.json : seules des images vérifiées reviennent, jamais depuis votre réseau local ni cette machine. pluginPolicy.publicImages permet de le couper.",
         "secretsLead": "Secrets qu'il nomme. Un secret coché est accordé à ce seul plugin ; décocher ne retire jamais un accord (cela se fait depuis Secrets).",
         "hostsLead": "Hôtes qu'il joint. Un hôte coché est ouvert à ce seul plugin.",
         "hostOwn": "Déjà ouvert à ce plugin. Décochez pour le fermer : ses hôtes sont remplacés par ceux cochés ici.",

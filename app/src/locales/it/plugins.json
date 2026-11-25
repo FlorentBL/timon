@@ -306,6 +306,7 @@
         "broker": "Chiama le API con identità del vault senza vederne le chiavi, solo quelle che gli sono concesse per nome.",
         "brokerNoHttp": "Non dichiara http:outbound, quindi le sue chiamate API tramite broker saranno rifiutate.",
         "network": "Il suo accesso alla rete è limitato agli host aperti in timon.config.json, a ogni plugin (pluginPolicy.http.allow) o solo a questo (pluginPolicy.http.byPlugin), e agli indirizzi delle connessioni approvate.",
+        "publicImages": "Può scaricare immagini da qualsiasi host pubblico senza una voce in timon.config.json: tornano solo immagini verificate, mai dalla rete locale o da questo computer. pluginPolicy.publicImages lo disattiva.",
         "secretsLead": "Segreti che nomina. Un segreto selezionato è concesso solo a questo plugin; deselezionarlo non revoca mai una concessione (si fa da Segreti).",
         "hostsLead": "Host che raggiunge. Un host selezionato è aperto solo a questo plugin.",
         "hostOwn": "Già aperto a questo plugin. Deseleziona per chiuderlo: i suoi host vengono sostituiti da quelli selezionati qui.",

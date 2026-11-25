@@ -70,6 +70,7 @@ Declare permissions in `timon.permissions`. Request only the capabilities your e
 | `dictation:engine` | **Sensitive.** Register a speech-to-text engine in the `dictation.engine` slot (`kind: dictation`): Timon opens the microphone and hands your engine the audio between the start and the end of a dictation. Mandatory for `kind: dictation`. Requires `apiVersion: 14` |
 | `forge:read` | **Sensitive.** Read the GitHub repository of a project whose integration opens pull requests: open issues carrying a label, one issue, open pull requests, one pull request and its checks (`ctx.forge`), with the project's account, which the plugin never sees ([The GitHub repository of a project](forge.md)). Requires `apiVersion: 19` |
 | `forge:propose` | **Sensitive.** Propose a comment on an issue or a pull request of such a project (`ctx.forge.propose`): a person reads it and publishes or discards it in **Publish on GitHub**; the plugin never publishes. Requires `apiVersion: 19` |
+| `http:public-images` | **Sensitive.** Fetch an image from any public host with `ctx.fetchPublicImage`, without an entry in `pluginPolicy.http` ([Images from public hosts](#images-from-public-hosts)). Does not open `ctx.fetch`. Requires `apiVersion: 20` |
 | `license:read` | The edition, `lite` or `expert`, and nothing of the licence itself (`ctx.license.edition`). Not sensitive. Requires `apiVersion: 10` |
 | `docs:read` | Search and read the local copy of the public documentation (`ctx.docs`). Not sensitive. Requires `apiVersion: 10` |
 
@@ -135,6 +136,7 @@ Some permissions act on other people's work, validate an action, hand out a secr
 | `dictation:engine` | Hears the user's voice and turns it into text, which may leave the window. |
 | `forge:read` | A project's issues and pull requests, read with the project's GitHub account, private repositories included. |
 | `forge:propose` | Puts a public comment, to be published under the project's GitHub account, before a person. |
+| `http:public-images` | Reaches any public host with no allowlist: the host sees the address the plugin asks for. |
 
 A plugin holding `browser:recordings:read` sees the steps of your recordings **as your review left them**: the plain values you typed into ordinary fields, values flagged as possible secrets that you have not masked yet, and the identifier of the saved login used on a site. Passwords, one-time codes and card details stay masked placeholders: they are never recorded. It reaches only the recordings of the person using it, inside that person's request. `browser:recordings:write` also edits (mask, parameter, delete steps) and deletes them; neither permission can press **Learn**.
 
@@ -146,10 +148,10 @@ A plugin holding `dictation:engine` receives the audio of every dictation that u
 
 Declare a sensitive permission only when the plugin cannot work without it. Every other permission is ordinary. `docs:read` reads the documentation that is public on docs.timon-ai.com, and `license:read` returns only the edition.
 
-The integration families require API 3; `realtime:publish` requires API 4; `todos:*` and `webhooks:receive` require API 6; `connections:register`, `connections:users:read`, `agents:*` and `mcp:issue` require API 7; a webhook `auth` other than `standard`, and a webhook handler's reply body, require API 8; `ui-documents:*` require API 9; `memory:*`, `missions:control`, `missions:transcript`, `questions:*`, `notifications:*`, `ctx.kanban.todos.list`, `promote` and `delete`, `projects:*`, `series:*`, `worktrees:*`, `agents:docs:*`, `messages:*`, `skills:*`, `mcp-servers:*`, `backends:read`, the agent rename, delete, picture and events, `layout:*`, `chat:*`, `onboarding:read` and the automation permissions (`routines:*`, `triggers:read|write|execute`, `pipelines:*`, `workflows:read|run`) require API 10. `dictation:engine` and `kind: dictation` require API 14. `forge:read` and `forge:propose` require API 19. See the generated SDK reference for exact method shapes.
+The integration families require API 3; `realtime:publish` requires API 4; `todos:*` and `webhooks:receive` require API 6; `connections:register`, `connections:users:read`, `agents:*` and `mcp:issue` require API 7; a webhook `auth` other than `standard`, and a webhook handler's reply body, require API 8; `ui-documents:*` require API 9; `memory:*`, `missions:control`, `missions:transcript`, `questions:*`, `notifications:*`, `ctx.kanban.todos.list`, `promote` and `delete`, `projects:*`, `series:*`, `worktrees:*`, `agents:docs:*`, `messages:*`, `skills:*`, `mcp-servers:*`, `backends:read`, the agent rename, delete, picture and events, `layout:*`, `chat:*`, `onboarding:read` and the automation permissions (`routines:*`, `triggers:read|write|execute`, `pipelines:*`, `workflows:read|run`) require API 10. `dictation:engine` and `kind: dictation` require API 14. `forge:read` and `forge:propose` require API 19. `http:public-images` requires API 20. See the generated SDK reference for exact method shapes.
 
 :::warning Operator policy is an additional ceiling
-`host:exec` and `http:outbound` are denied by default even when declared, and so is `missions:spawn` for an unsigned plugin. The operator must configure `pluginPolicy` in `timon.config.json`. A signed plugin that declares `missions:spawn` is approved by its signature and only held to the quota. An address a user registered in an approved [per-user connection](connections.md) is also reachable by `ctx.fetch`, through Timon's address checks.
+`host:exec` and `http:outbound` are denied by default even when declared, and so is `missions:spawn` for an unsigned plugin. The operator must configure `pluginPolicy` in `timon.config.json`. A signed plugin that declares `missions:spawn` is approved by its signature and only held to the quota. An address a user registered in an approved [per-user connection](connections.md) is also reachable by `ctx.fetch`, through Timon's address checks. `http:public-images` is on by default: see [Images from public hosts](#images-from-public-hosts).
 :::
 
 `ctx.host.exec` runs the program with the system variables it needs (`PATH`, the home folder, locale, proxies…), never with Timon's own environment: no secret of the vault, no token. Pass anything else as an argument or read it from your plugin's settings.
@@ -178,6 +180,40 @@ The host plugin loads once. Call **`ctx.user()` inside the route handler** to re
 Inside a plugin route, mission, task and TO DO operations are scoped to that caller. Outside a request, `ctx.user()` is `undefined`, and reads are limited to rows owned by `plugin:<id>`. A background job does not inherit an administrator's identity.
 
 `ctx.assertPermission(permission)` checks a declared capability when applicable and the caller's rights. User permissions are denied when there is no user. Declared UI surfaces also have server-side permission targets: a hidden plugin route can return **404**, not 403. Do not treat a client-side visibility check as authorization.
+
+## Images from public hosts
+
+A plugin that shows images whose hosts it cannot know in advance (the images of a mail, a sender's avatar or logo) declares `http:public-images` and calls `ctx.fetchPublicImage`. No `pluginPolicy.http` entry is needed, and the permission does not open `ctx.fetch`: the member is absent without it.
+
+```ts
+const image = await ctx.fetchPublicImage?.(url, {maxBytes: 1_000_000, signal});
+// image.contentType: 'image/png' | 'image/jpeg' | 'image/gif' | 'image/webp' | 'image/avif' | 'image/x-icon' | 'image/svg+xml'
+// image.body: Uint8Array; image.finalUrl: the address that answered, after redirects
+```
+
+Timon makes the request itself, and only this request:
+
+- a `GET` over `http` or `https`, with a fixed `User-Agent` and an `Accept` for images. Nothing else your plugin passes travels: no header, no cookie, no body. An address carrying a user name or password is refused;
+- towards public addresses only. Private, loopback, link-local, cloud metadata and reserved addresses are refused, in IPv4 and in their IPv6 forms; a name with one such address among its answers is refused. The connection goes to the address that was checked, never to a second DNS answer;
+- redirects are followed one by one, at most five, and each target is checked again;
+- the body is read up to `maxBytes` (at most the operator's `maxBytes`, 5 MB by default) and the fetch is cut after `timeoutMs`;
+- the bytes must be a PNG, JPEG, GIF, WebP, AVIF or ICO image. `contentType` is the format found in the bytes; the server's `Content-Type` is ignored.
+
+An SVG is refused unless you pass `svg: true`. It is then returned as `image/svg+xml`, as the server sent it: an SVG can carry scripts and links, so sanitise it before you insert it in a page, or show it only through an `<img>`, and never serve it from your own routes as `image/svg+xml`.
+
+The call rejects with an error whose `name` is `PluginPublicImageError` and whose `code` says why: `invalid` (malformed URL or option), `destination_refused` (scheme, credentials, an address that is not public, a name that does not resolve, too many redirects), `not_an_image`, `too_large`, `timeout`, `rate_limited` (the plugin's quota or more than eight fetches at once), `disabled` (turned off by the operator) or `unavailable` (the host answered an error, in `status`, or could not be reached). When your own `signal` aborts, the call rejects with its reason instead.
+
+The operator controls it in `pluginPolicy.publicImages`:
+
+```json
+{
+  "pluginPolicy": {
+    "publicImages": {"enabled": true, "denied": ["acme-mail"], "maxBytes": 5242880, "timeoutMs": 15000, "max": 120, "windowMs": 60000}
+  }
+}
+```
+
+It is on by default, unlike `http.allow`: the hosts cannot be listed in advance, and the sensitive permission shown at install is where it is agreed to. `"enabled": false` turns it off for every plugin, `denied` for the plugins it names. `max` fetches per `windowMs` is each plugin's quota. Each host still sees the address asked for, from your machine's address: a plugin can use it to tell a host something, as any address it loads can.
 
 ## TO DO ideas and external tickets
 

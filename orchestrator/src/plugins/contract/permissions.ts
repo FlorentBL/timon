@@ -107,4 +107,5 @@ export type PluginPermission =
   | 'onboarding:read'
   | 'dictation:engine'
   | 'forge:read'
-  | 'forge:propose';
+  | 'forge:propose'
+  | 'http:public-images';
