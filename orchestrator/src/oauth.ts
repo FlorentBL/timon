@@ -60,6 +60,8 @@ export function oauthRedirectUri(publicApiUrl: string | null | undefined, port: 
 
 const PENDING = new Map<string, PendingAuth>();
 const PENDING_TTL_MS = 10 * 60 * 1000;
+/** Flows started and not answered yet: a person clicks a handful of buttons, not hundreds. */
+export const PENDING_MAX = 64;
 
 /** What became of a state once its callback arrived, or of a flow left unanswered. */
 export type UsedStateOutcome = 'in_progress' | 'ok' | 'failed' | 'expired';
@@ -75,6 +77,21 @@ export type OAuthReturn = { return_to?: string; return_path?: OAuthReturnPath };
 const USED = new Map<string, UsedState>();
 /** How long a consumed state still answers a replayed callback. */
 export const USED_STATE_TTL_MS = 10 * 60 * 1000;
+export const USED_MAX = 256;
+
+/** Drop the oldest entries (a Map iterates in insertion order) beyond `max`. */
+function capOldest<V>(map: Map<string, V>, max: number): void {
+  for (const key of map.keys()) {
+    if (map.size <= max) return;
+    map.delete(key);
+  }
+}
+
+function remember(state: string, used: UsedState): void {
+  USED.delete(state);
+  USED.set(state, used);
+  capOldest(USED, USED_MAX);
+}
 
 function returnOf(p: OAuthReturn): OAuthReturn {
   return {
@@ -89,7 +106,7 @@ function reapPending(): void {
     if (now - v.created_at <= PENDING_TTL_MS) continue;
     PENDING.delete(k);
     // Kept a while as expired, so a late callback still links back to its app.
-    USED.set(k, { mcp_id: v.mcp_id, outcome: 'expired', used_at: v.created_at + PENDING_TTL_MS, ...returnOf(v) });
+    remember(k, { mcp_id: v.mcp_id, outcome: 'expired', used_at: v.created_at + PENDING_TTL_MS, ...returnOf(v) });
   }
   for (const [k, v] of USED) {
     if (now - v.used_at > USED_STATE_TTL_MS) USED.delete(k);
@@ -99,6 +116,7 @@ function reapPending(): void {
 export function putPending(state: string, p: PendingAuth): void {
   reapPending();
   PENDING.set(state, p);
+  capOldest(PENDING, PENDING_MAX);
 }
 
 /** The pending flow of `state`, once: the state is then kept as used (`usedState`). */
@@ -107,7 +125,7 @@ export function takePending(state: string): PendingAuth | null {
   const v = PENDING.get(state);
   if (!v) return null;
   PENDING.delete(state);
-  USED.set(state, { mcp_id: v.mcp_id, outcome: 'in_progress', used_at: Date.now(), ...returnOf(v) });
+  remember(state, { mcp_id: v.mcp_id, outcome: 'in_progress', used_at: Date.now(), ...returnOf(v) });
   return v;
 }
 
@@ -133,6 +151,17 @@ const STATE_ID_SEPARATOR = '~';
 /** A fresh state for an authorization of `mcpId`. */
 export function oauthState(mcpId: string): string {
   return `${randomState()}${STATE_ID_SEPARATOR}${mcpId}`;
+}
+
+/** Forget every flow of a deleted server: none of its states answers any more. */
+export function forgetOAuthFlows(mcpId: string): void {
+  for (const [k, v] of PENDING) if (v.mcp_id === mcpId) PENDING.delete(k);
+  for (const [k, v] of USED) if (v.mcp_id === mcpId) USED.delete(k);
+}
+
+/** Test hook: how many flows each table holds. */
+export function oauthFlowCountsForTests(): { pending: number; used: number } {
+  return { pending: PENDING.size, used: USED.size };
 }
 
 /** Test hook: forget every flow, as a restart of the daemon does. */

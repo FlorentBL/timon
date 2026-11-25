@@ -26,8 +26,10 @@ const { registerRoutes, trustedReturnOrigin } = await import('./plugins-bundled/
 const { invalidateSettingsCache } = await import('./settings.js');
 const { upsertMcp } = await import('./mcp.js');
 const {
-  OAUTH_CALLBACK_PATH, oauthRedirectUri, oauthState, putPending, resetOAuthFlowsForTests,
+  OAUTH_CALLBACK_PATH, PENDING_MAX, USED_MAX, oauthFlowCountsForTests, oauthRedirectUri, oauthState, putPending,
+  resetOAuthFlowsForTests, takePending, usedState,
 } = await import('./oauth.js');
+const { deleteMcp } = await import('./mcp.js');
 const { apiPort } = await import('./api-url.js');
 
 /** The configured public app URL (default `http://timon.localhost`): trusted, and distinct from the local app. */
@@ -273,3 +275,55 @@ test('a failure redirects only to an app URL configured on purpose', async () =>
     invalidateSettingsCache();
   }
 });
+
+test('the flow tables never grow past their cap, the oldest entry going first', () => {
+  resetOAuthFlowsForTests();
+  const states = Array.from({ length: PENDING_MAX + 10 }, (_, i) => startFlow(`flood-${i}`));
+  assert.equal(oauthFlowCountsForTests().pending, PENDING_MAX);
+  assert.equal(takePending(states[0]), null, 'the oldest pending flow was evicted');
+  assert.ok(takePending(states.at(-1)!), 'the newest is kept');
+
+  resetOAuthFlowsForTests();
+  const used: string[] = [];
+  for (let i = 0; i < USED_MAX + 10; i++) {
+    const state = startFlow(`used-${i}`);
+    takePending(state);
+    used.push(state);
+  }
+  assert.equal(oauthFlowCountsForTests().used, USED_MAX);
+  assert.equal(usedState(used[0]), null, 'the oldest used state was evicted');
+  assert.ok(usedState(used.at(-1)!));
+
+  resetOAuthFlowsForTests();
+  for (let i = 0; i < USED_MAX + 10; i++) startFlow(`expired-${i}`, {}, Date.now() - 11 * 60 * 1000);
+  startFlow('fresh');
+  const counts = oauthFlowCountsForTests();
+  assert.equal(counts.pending, 1, 'expired flows leave the pending table');
+  assert.ok(counts.used <= USED_MAX, `expired flows stay capped (${counts.used})`);
+});
+
+test('a state expires from the used table after its lifetime', () => {
+  resetOAuthFlowsForTests();
+  const state = startFlow('aged', {}, Date.now() - 21 * 60 * 1000);
+  assert.equal(takePending(state), null);
+  assert.equal(usedState(state), null, 'expired 11 minutes ago: past the used lifetime too');
+});
+
+test('deleting a server forgets its flows: its states no longer give back an origin', async () => {
+  resetOAuthFlowsForTests();
+  const id = 'deleted-server';
+  upsertMcp({ id, transport: { type: 'http', url: `${base}/mcp` } });
+  const pendingState = startFlow(id, { return_to: PUBLIC_APP, return_path: '/apps' });
+  const usedOne = startFlow(id, { return_to: PUBLIC_APP, return_path: '/apps' });
+  takePending(usedOne);
+  const other = startFlow('kept-server');
+  assert.equal(deleteMcp(id), true);
+  assert.equal(usedState(usedOne), null);
+  for (const state of [pendingState, usedOne]) {
+    const { status, html } = await callback({ state, code: SECRET_CODE });
+    assert.equal(status, 400);
+    assert.doesNotMatch(html, /timon\.localhost|deleted-server/);
+  }
+  assert.ok(takePending(other), 'another server keeps its flow');
+});
+
