@@ -9,6 +9,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { readWorkflow } from './workflow-text.mjs';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
 const text = readFileSync(join(ROOT, '.github', 'workflows', 'rc.yml'), 'utf8');
@@ -151,4 +152,19 @@ test('the throwaway keys stay outside the checkout and the output', () => {
   assert.match(code, /throwaway-keys\.mjs "\$RUNNER_TEMP"/);
   assert.doesNotMatch(code, /--key-dir/);
   assert.match(code, /--output \.\.\/rc-output/);
+});
+
+// rc.yml keeps its own build job: the check of build-packages.yml, used by
+// release.yml and nightly.yml, does not reach it.
+test('the Linux build tools are checked before the build, as in build-packages.yml', () => {
+  const rc = readWorkflow('rc.yml');
+  const step = rc.stepNamed('build', 'Check the Linux build tools');
+  assert.match(step, /if: matrix\.os == 'linux'/);
+  assert.match(step, /run: for tool in objdump gcc x86_64-linux-musl-gcc docker; do command -v "\$tool" >\/dev\/null \|\| \{ echo "::error::\$tool is missing on this runner"; exit 1; \}; done$/m);
+  assert.equal(step, readWorkflow('build-packages.yml').stepNamed('build', 'Check the Linux build tools'));
+  const order = rc.steps('build').map((s) => s.join('\n'));
+  const at = (name) => order.findIndex((s) => s.includes(`name: ${name}`));
+  assert.ok(at('Install a baseline C library') >= 0);
+  assert.ok(at('Install a baseline C library') < at('Check the Linux build tools'));
+  assert.ok(at('Check the Linux build tools') < at('Build the package'));
 });
