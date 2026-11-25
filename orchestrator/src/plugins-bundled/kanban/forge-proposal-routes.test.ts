@@ -22,6 +22,7 @@ import type { ExecOpts, ExecResult } from '../../host/types.js';
 import {
   proposalAnchor, proposalMarker, proposeForgeWrite, recoverInterruptedPublications,
 } from '../../forge-proposals.js';
+import { sessionHoldsPermission, type RequestAuth } from '../../users/identity.js';
 import { registerForgeProposalRoutes } from './forge-proposal-routes.js';
 
 const home = realpathSync(mkdtempSync(join(tmpdir(), 'timon-forge-proposals-')));
@@ -44,6 +45,12 @@ grantTestPermissions(dbApi, manager.id, ['projects:manage']);
 // Publishes, and nothing else.
 const publisher = createTestAccount(dbApi, { email: 'publisher@example.test', name: 'Publisher', passwordHash: 'x', isSuperadmin: false });
 grantTestPermissions(dbApi, publisher.id, ['forge:publish']);
+// A role an administrator wrote with a wildcard: `*` covers `forge:publish`.
+const wildcard = createTestAccount(dbApi, { email: 'wildcard@example.test', name: 'Wildcard', passwordHash: 'x', isSuperadmin: false });
+grantTestPermissions(dbApi, wildcard.id, ['*']);
+// The same wildcard with an explicit deny, which wins.
+const denied = createTestAccount(dbApi, { email: 'denied@example.test', name: 'Denied', passwordHash: 'x', isSuperadmin: false });
+grantTestPermissions(dbApi, denied.id, ['*', '-forge:publish']);
 
 const TOKEN = 'ghp_abcdefghijklmnopqrstuvwxyz0123456789';
 
@@ -82,17 +89,26 @@ for (const level of ['log', 'warn', 'error'] as const) {
 const app = express();
 app.use(express.json());
 // Stand-in for the daemon's auth middleware: no header = anonymous.
+function authOf(who: string | undefined): RequestAuth | undefined {
+  switch (who) {
+    case 'daemon': return { kind: 'daemon-token', user: null, isSuperadmin: true };
+    case 'mission': return { kind: 'api-token', user: admin, isSuperadmin: false, permissions: ['projects:manage', 'kanban:write'], missionId: 'm-1' };
+    // A mission launched by a superadmin whose snapshot still carries `*`.
+    case 'wide-mission': return { kind: 'api-token', user: admin, isSuperadmin: false, permissions: ['*'], missionId: 'm-2' };
+    case 'plugin': return { kind: 'api-token', user: null, isSuperadmin: false, actorId: 'plugin:x', permissions: ['projects:manage'] };
+    case 'person': return { kind: 'session', user: admin, isSuperadmin: true };
+    case 'device': return { kind: 'device', user: admin, isSuperadmin: true, deviceId: 'd-1' };
+    case 'guest': return { kind: 'session', user: guest, isSuperadmin: false };
+    case 'manager': return { kind: 'session', user: manager, isSuperadmin: false };
+    case 'publisher': return { kind: 'session', user: publisher, isSuperadmin: false };
+    case 'wildcard': return { kind: 'session', user: wildcard, isSuperadmin: false };
+    case 'denied': return { kind: 'session', user: denied, isSuperadmin: false };
+    default: return undefined;
+  }
+}
 app.use((req, _res, next) => {
-  const who = req.header('x-test-who');
-  if (who === 'daemon') req.auth = { kind: 'daemon-token', user: null, isSuperadmin: true };
-  else if (who === 'mission') {
-    req.auth = { kind: 'api-token', user: admin, isSuperadmin: false, permissions: ['projects:manage', 'kanban:write'], missionId: 'm-1' };
-  } else if (who === 'plugin') req.auth = { kind: 'api-token', user: null, isSuperadmin: false, actorId: 'plugin:x', permissions: ['projects:manage'] };
-  else if (who === 'person') req.auth = { kind: 'session', user: admin, isSuperadmin: true };
-  else if (who === 'device') req.auth = { kind: 'device', user: admin, isSuperadmin: true, deviceId: 'd-1' };
-  else if (who === 'guest') req.auth = { kind: 'session', user: guest, isSuperadmin: false };
-  else if (who === 'manager') req.auth = { kind: 'session', user: manager, isSuperadmin: false };
-  else if (who === 'publisher') req.auth = { kind: 'session', user: publisher, isSuperadmin: false };
+  const auth = authOf(req.header('x-test-who'));
+  if (auth) req.auth = auth;
   next();
 });
 registerForgeProposalRoutes(app);
@@ -101,7 +117,7 @@ await once(server, 'listening');
 after(() => { server.close(); });
 const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
 
-type Who = 'anonymous' | 'daemon' | 'mission' | 'plugin' | 'person' | 'device' | 'guest' | 'manager' | 'publisher';
+type Who = 'anonymous' | 'daemon' | 'mission' | 'wide-mission' | 'plugin' | 'person' | 'device' | 'guest' | 'manager' | 'publisher' | 'wildcard' | 'denied';
 function call(method: string, path: string, who: Who, body?: unknown) {
   const headers: Record<string, string> = { 'content-type': 'application/json' };
   if (who !== 'anonymous') headers['x-test-who'] = who;
@@ -181,6 +197,42 @@ test('publishing takes forge:publish: projects:manage proposes and discards, it 
   assert.equal(published.status, 200);
   assert.equal(((await published.json()) as { proposal: View }).proposal.state, 'published');
   assert.equal(posts().length, before + 1);
+});
+
+test('a paired device proposes for its superadmin but never publishes: 403, nothing reaches GitHub', async () => {
+  const proposal = await propose(306);
+  const before = calls.length;
+  const res = await call('POST', `/api/projects/acme/forge-proposals/${proposal.id}/publish`, 'device', {});
+  assert.equal(res.status, 403);
+  assert.equal(((await res.json()) as { code: string }).code, 'person_required');
+  assert.equal(calls.length, before, 'not even the account check reached gh');
+  const row = ((await (await call('GET', `/api/projects/acme/forge-proposals/${proposal.id}`, 'person')).json()) as { proposal: View }).proposal;
+  assert.equal(row.state, 'draft');
+});
+
+test('a wildcard role publishes; an explicit deny of forge:publish wins over it', async () => {
+  const before = posts().length;
+  const denyFirst = await propose(307);
+  const refused = await call('POST', `/api/projects/acme/forge-proposals/${denyFirst.id}/publish`, 'denied', {});
+  assert.equal(refused.status, 403);
+  assert.equal(((await refused.json()) as { permission?: unknown }).permission, 'forge:publish');
+  assert.equal(posts().length, before, 'the deny reached nothing');
+  const published = await call('POST', `/api/projects/acme/forge-proposals/${denyFirst.id}/publish`, 'wildcard', {});
+  assert.equal(published.status, 200);
+  assert.equal(posts().length, before + 1);
+});
+
+test('the route publishes for exactly the callers sessionHoldsPermission names, the rule /api/auth/me reads', async () => {
+  const everyone: Who[] = ['daemon', 'mission', 'wide-mission', 'plugin', 'person', 'device', 'guest', 'manager', 'publisher', 'wildcard', 'denied'];
+  let target = 400;
+  for (const who of everyone) {
+    const auth = authOf(who);
+    const holds = sessionHoldsPermission({ auth } as Parameters<typeof sessionHoldsPermission>[0], 'forge:publish');
+    const proposal = await propose(target++);
+    const res = await call('POST', `/api/projects/acme/forge-proposals/${proposal.id}/publish`, who, {});
+    assert.equal(res.status === 200, holds, `${who}: route ${res.status}, rule ${String(holds)}`);
+    if (!holds) assert.equal(res.status, 403, who);
+  }
 });
 
 test('a person proposes once per target; the card waits in the notification centre', async () => {

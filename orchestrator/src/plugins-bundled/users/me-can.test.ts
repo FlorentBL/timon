@@ -20,6 +20,7 @@ const { createDaemonAuthMiddleware } = await import('../http/auth.js');
 const { registerRoutes } = await import('./routes.js');
 const { dbApi } = await import('../../db.js');
 const { SESSION_COOKIE } = await import('../../users/session.js');
+const { issuePairingCode, redeemPairingCode } = await import('../../users/devices.js');
 
 const TOKEN = 'witness-daemon-token';
 
@@ -92,7 +93,8 @@ const canOf = async (opts: { cookie?: string; bearer?: string }) =>
 test('GET /api/auth/me says whether the caller holds projects:manage', async () => {
   assert.deepEqual(await canOf({ cookie: adaCookie }), NONE);
   assert.deepEqual(await canOf({ cookie: adminCookie }), ALL);
-  assert.deepEqual(await canOf({ bearer: TOKEN }), ALL);
+  // The daemon token never publishes on GitHub (a person's session only), and `can` says so.
+  assert.deepEqual(await canOf({ bearer: TOKEN }), { ...ALL, 'forge:publish': false });
 
   grantTestPermissions(dbApi, adaId, ['projects:manage']);
   try {
@@ -200,4 +202,32 @@ test('GET /api/auth/me says whether the caller holds forge:publish, which projec
   } finally {
     grantTestPermissions(dbApi, adaId, []);
   }
+});
+
+// The route (`forge-proposal-routes.ts`) and `can` read the same rule,
+// `sessionHoldsPermission`: a wildcard grants, an explicit deny wins, and only
+// a session of its own holds it.
+test('GET /api/auth/me follows the publish route: wildcards grant forge:publish, a deny wins, a device never holds it', async () => {
+  for (const [grants, expected] of [
+    [['*'], true],
+    [['forge:*'], true],
+    [['*', '-forge:publish'], false],
+    [['forge:*', '-forge:publish'], false],
+    [['*', '-forge'], false],
+  ] as const) {
+    grantTestPermissions(dbApi, adaId, grants);
+    try {
+      assert.equal((await canOf({ cookie: adaCookie }))['forge:publish'], expected, grants.join(' '));
+    } finally {
+      grantTestPermissions(dbApi, adaId, []);
+    }
+  }
+
+  const adminId = (setup.json as { user: { id: string } }).user.id;
+  const { code } = issuePairingCode(adminId);
+  const paired = redeemPairingCode({ code, name: 'Laptop', ip: '127.0.0.1', userAgent: null });
+  assert.equal(paired.kind, 'ok');
+  if (paired.kind !== 'ok') return;
+  // Every right of its superadmin, except the one that speaks for the project on GitHub.
+  assert.deepEqual(await canOf({ bearer: paired.token }), { ...ALL, 'forge:publish': false });
 });

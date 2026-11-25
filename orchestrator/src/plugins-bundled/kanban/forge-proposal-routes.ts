@@ -12,9 +12,12 @@
  * - reading needs `projects:manage`, whoever asks (the daemon token passes, as
  *   for every project setting);
  * - proposing, editing and discarding need a signed-in person (session or
- *   paired device) holding `projects:manage`; publishing needs a signed-in
- *   person holding `forge:publish`, the one right that writes on GitHub, so a
- *   role may manage projects without speaking for the project's account. The
+ *   paired device) holding `projects:manage`; publishing needs a session of
+ *   its own holding `forge:publish`, the one right that writes on GitHub, so a
+ *   role may manage projects without speaking for the project's account, and
+ *   a paired device, which holds its account's rights everywhere else, never
+ *   speaks for the project on GitHub (`sessionHoldsPermission`, the rule
+ *   `/api/auth/me` greys the button with). The
  *   daemon token, a mission's token and a plugin's are refused: an agent never
  *   proposes nor publishes on GitHub. The daemon proposes through
  *   `proposeForgeWrite`, in process, not through a route.
@@ -28,7 +31,7 @@ import {
   type ForgeProposalDeps, type ForgeProposalRefusal,
 } from '../../forge-proposals.js';
 import { auditRequest } from '../../users/audit-actor.js';
-import { isPersonAuth, rejectIfDenied, requireAuth } from '../../users/identity.js';
+import { isPersonAuth, isSessionAuth, rejectIfDenied, requireAuth } from '../../users/identity.js';
 
 const Params = z.object({
   slug: z.string().min(1).max(100).regex(/^[a-z0-9][a-z0-9._-]*$/i, 'a project slug'),
@@ -133,23 +136,40 @@ function reader(req: Request, res: Response): Parsed | null {
   return parseParams(req, res);
 }
 
-/** Writing: a person at a screen holding `permission`; returns their id. */
-export function personAt(req: Request, res: Response, permission: 'projects:manage' | 'forge:publish' = 'projects:manage'): { userId: string } | null {
+/** Writing: a person at a screen holding `projects:manage`; returns their id. */
+export function personAt(req: Request, res: Response): { userId: string } | null {
   const auth = requireAuth(req, res);
   if (!auth) return null;
   if (!isPersonAuth(auth) || !auth.user) {
     res.status(403).json(apiError('person_required', 'a publication on GitHub is proposed and validated by a signed-in person'));
     return null;
   }
-  if (rejectIfDenied(req, res, permission)) return null;
+  if (rejectIfDenied(req, res, 'projects:manage')) return null;
   return { userId: auth.user.id };
 }
 
-function person(req: Request, res: Response, permission?: 'forge:publish'): (Parsed & { userId: string }) | null {
-  const who = personAt(req, res, permission);
+function person(req: Request, res: Response): (Parsed & { userId: string }) | null {
+  const who = personAt(req, res);
   if (!who) return null;
   const params = parseParams(req, res);
   return params ? { ...params, userId: who.userId } : null;
+}
+
+/**
+ * Publishing: the person's own session holding `forge:publish`, never a device
+ * or a token. The two guards are `sessionHoldsPermission` split so each refusal
+ * keeps its own code; `/api/auth/me` reads that function itself.
+ */
+function publisher(req: Request, res: Response): (Parsed & { userId: string }) | null {
+  const auth = requireAuth(req, res);
+  if (!auth) return null;
+  if (!isSessionAuth(auth) || !auth.user) {
+    res.status(403).json(apiError('person_required', 'a publication on GitHub is validated from a signed-in session of this app, not from a paired device'));
+    return null;
+  }
+  if (rejectIfDenied(req, res, 'forge:publish')) return null;
+  const params = parseParams(req, res);
+  return params ? { ...params, userId: auth.user.id } : null;
 }
 
 function failed(res: Response, err: unknown): void {
@@ -209,7 +229,7 @@ export function registerForgeProposalRoutes(app: Router, deps: ForgeProposalDeps
   });
 
   app.post('/api/projects/:slug/forge-proposals/:id/publish', async (req, res) => {
-    const p = person(req, res, 'forge:publish');
+    const p = publisher(req, res);
     if (!p?.id) return;
     const body = parseBody(req, res, PublishBody);
     if (!body) return;
