@@ -27,9 +27,8 @@ import { apiError } from '../../api-error.js';
 import {
   ExtraDirError, extraDirProblem, extraDirSchema, extraDirsSchema, normalizeExtraDirs, type AgentExtraDir,
 } from '../../agent-extra-dirs.js';
-import { dbApi } from '../../db.js';
-import { projectExtraDirs, setProjectExtraDirs } from '../../project-extra-dirs.js';
-import { listProjects, readMetaFile, writeMeta } from '../../projects.js';
+import { ensureProjectRow, projectExtraDirs, setProjectExtraDirs } from '../../project-extra-dirs.js';
+import { listProjects } from '../../projects.js';
 import { auditRequest } from '../../users/audit-actor.js';
 import { isPersonAuth, rejectIfDenied, rejectUnlessAny, requestHasPermission } from '../../users/identity.js';
 import { PRIVILEGED_CONFIG_PERMISSION, rejectOverride } from '../../users/privileged-overrides.js';
@@ -73,12 +72,6 @@ export function rejectProjectFoldersWriter(req: Request, res: Response, project:
       `opening a folder to a project needs the ${PRIVILEGED_CONFIG_PERMISSION} permission`);
   }
   return false;
-}
-
-/** A project known only by its folder gets its row, where the list is stored. */
-export function ensureProjectRow(slug: string): void {
-  if (dbApi.getProjectRow(slug)) return;
-  writeMeta(slug, readMetaFile(slug) ?? {});
 }
 
 /** The stored folders that a launch would leave out now, with the reason. */

@@ -28,7 +28,7 @@ test('the folder of an accord: the folder itself, a file\'s folder, the first ex
 
 test('an offer names the folder, its display and the access the refusal lacked', () => {
   const offer = fenceGrantOffer({ ...base, path: join(cache, 'state.db') }, { held: [], home, problem: noProblem });
-  assert.deepEqual(offer, { path: cache, display: join('~', '.cache', 'tool'), mode: 'write' });
+  assert.deepEqual(offer, { path: cache, display: join('~', '.cache', 'tool'), mode: 'write', project: null });
   const read = fenceGrantOffer({ ...base, access: 'read', path: cache }, { held: [], home, problem: noProblem });
   assert.equal(read?.mode, 'read');
 });
@@ -51,6 +51,18 @@ test('no offer when the agent already holds the folder with that access; a read 
   assert.equal(fenceGrantOffer({ ...base, path: cache }, { held: [{ path: cache, mode: 'write' }], home, problem: noProblem }), null);
   assert.equal(fenceGrantOffer({ ...base, access: 'read', path: cache }, { held: [{ path: cache, mode: 'read' }], home, problem: noProblem }), null);
   assert.equal(fenceGrantOffer({ ...base, path: cache }, { held: [{ path: cache, mode: 'read' }], home, problem: noProblem })?.mode, 'write');
+});
+
+test('an offer names the agent\'s project, which "Allow for the project" adds to; held by the project, no offer', () => {
+  const offer = fenceGrantOffer({ ...base, path: cache }, { held: [], project: 'lib', home, problem: noProblem });
+  assert.equal(offer?.project, 'lib');
+  // A mission gets the agent's folders and its project's: either holding it, an accord changes nothing.
+  assert.equal(fenceGrantOffer({ ...base, path: cache }, { held: [{ path: cache, mode: 'write' }], project: 'lib', home, problem: noProblem }), null);
+});
+
+test('the relaunch turn of a project accord names the project', () => {
+  const text = fenceGrantTurn({ display: '~/x' }, { path: cache, display: '~/.cache/tool', mode: 'read', project: 'lib' }, 'project');
+  assert.match(text, /the missions of project lib may now read ~\/\.cache\/tool/);
 });
 
 test('a recorded refusal gets an id and its offer; a failing offer leaves the card out, never the notice', () => {
