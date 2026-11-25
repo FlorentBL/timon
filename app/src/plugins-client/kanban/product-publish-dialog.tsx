@@ -19,6 +19,7 @@ import { ExternalLink, Loader2, Send } from 'lucide-react';
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/components/ui/dialog';
 import { Textarea } from '@/components/ui/textarea';
 import { Button } from '@/components/ui/button';
+import { useAccess } from '@/hooks/use-me';
 import { t } from '@/lib/i18n';
 import { cn } from '@/lib/utils';
 import {
@@ -94,6 +95,8 @@ function WriteDetails({ proposal }: { proposal: ForgeProposal }) {
 export function ProductPublishDialog(): ReactElement | null {
   const host = usePublishDialog();
   const [editing, setEditing] = useState(false);
+  // Sending to GitHub takes its own right (`forge:publish`), not projects:manage.
+  const publishRight = useAccess('forge:publish');
   if (!host) return null;
   const { proposal, target, repo, account, body, problem, busy, error, loading, editable } = host;
   const fresh = proposal === null;
@@ -105,7 +108,7 @@ export function ProductPublishDialog(): ReactElement | null {
   const state: keyof typeof STATE_TONE = open || proposal.state === 'draft' || proposal.state === 'failed' ? 'pending' : proposal.state;
   const where = t(target.type === 'pull' ? 'forgePublish.onPull' : 'forgePublish.onIssue', { number: target.number });
   const href = safeHref(target.url);
-  const canPublish = open && !loading && !problem && account !== null && busy === null;
+  const canPublish = open && !loading && !problem && account !== null && busy === null && publishRight.allowed;
   const trigger = !proposal ? t('forgePublish.trigger.person')
     : proposal.trigger === 'plugin' ? t('forgePublish.trigger.plugin', { plugin: proposal.plugin ?? '?' })
       : t(`forgePublish.trigger.${proposal.trigger}`);
@@ -226,7 +229,7 @@ export function ProductPublishDialog(): ReactElement | null {
                 data-publish-send=""
                 onClick={() => void host.publish()}
                 disabled={!canPublish}
-                title={account === null && !loading ? t('forgePublish.noAccount') : undefined}
+                title={account === null && !loading ? t('forgePublish.noAccount') : publishRight.denied ?? undefined}
               >
                 {busy === 'publish' ? <Loader2 className="animate-spin" aria-hidden /> : <Send aria-hidden />}
                 {busy === 'publish' ? t('forgePublish.publishing') : t(`forgePublish.publishKind.${kind}`)}

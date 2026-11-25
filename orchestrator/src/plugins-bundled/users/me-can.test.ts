@@ -84,8 +84,8 @@ assert.ok(adaCookie);
 
 // TODO #560: the UI greys the Git buttons on `can`, so it must say no to an
 // account without the grant, and follow the grant both ways.
-const NONE = { 'projects:manage': false, 'agents:manage': false, 'agents:privileged-config': false, 'providers:manage': false, 'providers:accounts': false, 'settings:write': false };
-const ALL = { 'projects:manage': true, 'agents:manage': true, 'agents:privileged-config': true, 'providers:manage': true, 'providers:accounts': true, 'settings:write': true };
+const NONE = { 'projects:manage': false, 'agents:manage': false, 'agents:privileged-config': false, 'providers:manage': false, 'providers:accounts': false, 'settings:write': false, 'forge:publish': false };
+const ALL = { 'projects:manage': true, 'agents:manage': true, 'agents:privileged-config': true, 'providers:manage': true, 'providers:accounts': true, 'settings:write': true, 'forge:publish': true };
 const canOf = async (opts: { cookie?: string; bearer?: string }) =>
   ((await call('GET', '/api/auth/me', opts)).json as { can: Record<string, boolean> }).can;
 
@@ -180,6 +180,23 @@ test('GET /api/auth/me says whether the caller holds settings:write', async () =
   grantTestPermissions(dbApi, adaId, ['settings:write']);
   try {
     assert.deepEqual(await canOf({ cookie: adaCookie }), { ...NONE, 'settings:write': true });
+  } finally {
+    grantTestPermissions(dbApi, adaId, []);
+  }
+});
+
+// The Publish on GitHub window greys its button on it (POST …/forge-proposals/:id/publish).
+test('GET /api/auth/me says whether the caller holds forge:publish, which projects:manage does not imply', async () => {
+  assert.equal((await canOf({}))['forge:publish'], false);
+  grantTestPermissions(dbApi, adaId, ['projects:manage']);
+  try {
+    assert.equal((await canOf({ cookie: adaCookie }))['forge:publish'], false);
+  } finally {
+    grantTestPermissions(dbApi, adaId, []);
+  }
+  grantTestPermissions(dbApi, adaId, ['forge:publish']);
+  try {
+    assert.deepEqual(await canOf({ cookie: adaCookie }), { ...NONE, 'forge:publish': true });
   } finally {
     grantTestPermissions(dbApi, adaId, []);
   }

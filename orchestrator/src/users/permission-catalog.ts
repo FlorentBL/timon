@@ -124,6 +124,9 @@ export const PERMISSION_ACTIONS: readonly PermissionAction[] = [
   action('settings:write', 'Write settings'),
   action('plugins:manage', 'Install, enable and disable plugins'),
   action('projects:manage', 'Create, update and delete projects'),
+  // Sending a proposed write to GitHub (`forge-proposal-routes.ts`): a comment,
+  // a branch update, a conflict resolution. Still a signed-in person's click.
+  action('forge:publish', 'Publish proposed writes on GitHub (comments, branch updates, conflict resolutions)', '@timon/kanban'),
   action('agents:read', 'Read agent configuration, files and memory'),
   action('agents:manage', 'Create, update and delete agents'),
   action('agents:privileged-config', "Choose the backend, permission level, tools and MCP servers of agents, missions and tasks, up to the caller's own level"),

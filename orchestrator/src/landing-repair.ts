@@ -8,8 +8,9 @@
  *   refuses when there is nothing of that kind to repair, and creates one
  *   `code` task on the job's integration branch (full pipeline: review, then
  *   merge into the branch). Its brief carries what the forge reported (check
- *   names, the end of their logs, review threads, conflicted files) as data,
- *   in an `<untrusted-data>` block, bounded and escaped: CI output and
+ *   names, the end of their logs, review threads and reviews' own text,
+ *   conflicted files) as data, in an `<untrusted-data>` block, bounded and
+ *   escaped: CI output and
  *   reviewers' text are never instructions.
  * - **Pushing** (`advanceRepairs`, run by the landing poller) waits for that
  *   chain to converge, then pushes the branch forward to the pull request with
@@ -25,8 +26,8 @@ import { dbApi, type IntegrationRow, type LandingRepairRow, type TaskRow } from 
 import { fencedJson, untrustedExcerpt } from './external-pr-review.js';
 import {
   githubForge, gitTransport,
-  type ForgeCheckLogReader, type ForgeChecksReader, type ForgeRunners, type ForgeThreadsReader, type Forge,
-  type GitTransport, type PullRequestChecks, type ReviewThread,
+  type ForgeCheckLogReader, type ForgeChecksReader, type ForgeReviewsReader, type ForgeRunners, type ForgeThreadsReader, type Forge,
+  type GeneralReview, type GitTransport, type PullRequestChecks, type ReviewThread,
 } from './host/forge.js';
 import { readConflict, type IntegrationView } from './integration-preview.js';
 import { codeAwaitsMerge } from './merge-gate.js';
@@ -47,6 +48,8 @@ export const REPAIR_LOG_BUDGET = 24_000;
 /** Review threads the brief carries, and characters of each one's text. */
 export const REPAIR_THREAD_LIMIT = 10;
 export const REPAIR_THREAD_CHARS = 1_000;
+/** Submitted reviews whose own text the brief carries, the latest. */
+export const REPAIR_REVIEW_LIMIT = 5;
 export const REPAIR_CONFLICT_FILES = 50;
 /** Push attempts the remote may refuse before the repair gives up. */
 export const REPAIR_PUSH_ATTEMPTS = 3;
@@ -56,7 +59,7 @@ const CHAIN_SETTLE_MS = 60_000;
 export type RepairDeps = {
   /** Stand-ins for gh and git's network side: tests never reach a forge. */
   runners?: ForgeRunners;
-  forge?: (configDir: string | null) => Forge & ForgeChecksReader & ForgeThreadsReader & ForgeCheckLogReader;
+  forge?: (configDir: string | null) => Forge & ForgeChecksReader & ForgeThreadsReader & ForgeReviewsReader & ForgeCheckLogReader;
   transport?: (repo: string) => GitTransport;
   /** The agent that fixes when no task of the job names one (tests). */
   coder?: (slug: string, cwd: string | null, creator: string | null) => string | null;
@@ -205,8 +208,18 @@ function threadOf(t: ReviewThread): Record<string, unknown> {
   };
 }
 
+function reviewOf(r: GeneralReview): Record<string, unknown> {
+  return {
+    state: r.state,
+    author: untrustedExcerpt(r.author ?? '(deleted account)', 64),
+    body: untrustedExcerpt(r.body, REPAIR_THREAD_CHARS),
+    submitted_at: r.submittedAt,
+    url: r.url,
+  };
+}
+
 async function commentsData(
-  repository: string, number: number, view: PullRequestChecks, forge: ForgeThreadsReader,
+  repository: string, number: number, view: PullRequestChecks, forge: ForgeThreadsReader & ForgeReviewsReader,
 ): Promise<ForgeData | string | { unavailable: string }> {
   const read = await forge.pullRequestReviewThreads(repository, number);
   if (!read.ok) return { unavailable: read.reason };
@@ -214,6 +227,10 @@ async function commentsData(
     return 'the pull request has no unresolved review thread and no change requested';
   }
   const threads = read.threads.slice(0, REPAIR_THREAD_LIMIT);
+  // A change requested often lives in the review's own text, with no thread at
+  // all. Unreadable, the threads still make a brief: the reviews are a complement.
+  const reviews = await forge.pullRequestReviews(repository, number);
+  const kept = reviews.ok ? reviews.reviews.slice(-REPAIR_REVIEW_LIMIT) : [];
   return {
     kind: 'comments',
     title: 'Address the review comments',
@@ -223,6 +240,9 @@ async function commentsData(
       unresolved_threads_total: read.unresolved,
       threads_truncated: read.truncated || read.threads.length > threads.length,
       threads: threads.map(threadOf),
+      reviews: kept.map(reviewOf),
+      reviews_truncated: reviews.ok ? reviews.truncated || reviews.reviews.length > kept.length : false,
+      ...(reviews.ok ? {} : { reviews_unavailable: true }),
     },
   };
 }
@@ -251,7 +271,7 @@ const KIND_STEPS: Record<RepairKind, (row: IntegrationRow) => string[]> = {
     'Never disable, skip or weaken a test or a check to make it pass. A failure that does not come from the code (an outage of the CI, a missing secret, a check waiting for an approval): change nothing for it, and say so in your closing comment.',
   ],
   comments: () => [
-    'Read the unresolved review threads in the block below. Address each one in the code where it is right to.',
+    'Read the unresolved review threads and the text of the reviews (`reviews`) in the block below. Address each point in the code where it is right to.',
     'For a point you disagree with or cannot address, change nothing for it and say why in your closing comment. Never answer, resolve or react on the forge: a person does that.',
   ],
   conflict: (row) => {

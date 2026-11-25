@@ -1,12 +1,24 @@
 /**
  * The proposals store shared by the page: another account's proposals never
  * stay on screen once the account changes, and an answer still on its way
- * for the previous account lands nowhere.
+ * for the previous account lands nowhere. It reads again only the project a
+ * `forge_proposals_changed` frame names; a frame it cannot read names none
+ * (every project is read).
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { announceAccount } from '@/lib/account-change';
 import type { ForgeProposal } from './forge-proposals-api';
+import { changedProject } from './use-forge-proposals';
+
+const frame = (data: unknown) => ({ data }) as MessageEvent;
+
+test('the project of a forge_proposals_changed frame', () => {
+  assert.equal(changedProject(frame(JSON.stringify({ kind: 'forge_proposals_changed', project: 'acme', proposalId: 'p' }))), 'acme');
+  for (const data of [undefined, '', 'not json', '{"project":""}', '{"project":3}', 'null', '[]']) {
+    assert.equal(changedProject(frame(data)), null, String(data));
+  }
+});
 
 function proposal(id: string): ForgeProposal {
   return {
