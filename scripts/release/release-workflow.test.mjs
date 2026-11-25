@@ -244,9 +244,16 @@ test('the build: three systems, stable without expiry, stopped as a whole when o
   const build = packages.job('build').join('\n');
   assert.match(build, /fail-fast: \$\{\{ inputs\.fail-fast \}\}/);
   assert.doesNotMatch(build, /continue-on-error/);
-  for (const [os, runner] of [['linux', 'ubuntu-24\\.04'], ['mac', '\\[self-hosted, macOS, ARM64, timon-release\\]'], ['windows', 'windows-latest']]) {
+  for (const [os, runner] of [['linux', 'ubuntu-24\\.04'], ['windows', 'windows-latest']]) {
     assert.match(build, new RegExp(`\\{ os: ${os}, runner: ${runner} \\}`));
   }
+  // A release always builds macOS on the project's Mac (org runner group
+  // `release-mac`), never on the hosted runner the matrix names for a nightly.
+  assert.equal(
+    packages.keyOf('build', 'runs-on'),
+    `\${{ matrix.os == 'mac' && inputs.purpose == 'release' && fromJSON('["self-hosted", "macOS", "ARM64", "timon-release"]') || matrix.runner }}`,
+  );
+  assert.match(packages.blockOf('build', 'concurrency').join('\n'), /inputs\.purpose == 'release' && 'timon-mac-runner'/);
   const step = packages.stepNamed('build', 'Build the package');
   assert.match(step, /if \[ "\$PURPOSE" = release \]; then\n {12}node scripts\/release\/build-package\.mjs --version "\$VERSION" --channel stable --no-expiry --output \.\.\/release-output\n/);
   assert.match(build, /actions\/upload-artifact@/);

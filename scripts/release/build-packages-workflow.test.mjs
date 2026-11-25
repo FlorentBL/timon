@@ -41,11 +41,28 @@ test('a nightly signs with a pair made on the runner, and removes it whatever ha
   assert.ok(at('name: Remove the throwaway keys') < at('uses: actions/upload-artifact@'), 'the keys are gone before the upload');
 });
 
-test('the shared Mac: a release leg cancels a nightly leg, a nightly leg waits for a release leg', () => {
-  const concurrency = wf.blockOf('build', 'concurrency').map((line) => line.trim());
+test('the project\'s Mac builds releases only: a nightly builds on a hosted macOS runner', () => {
+  // The release Mac is named once, in runs-on, behind purpose release.
+  assert.equal(
+    wf.keyOf('build', 'runs-on'),
+    `\${{ matrix.os == 'mac' && inputs.purpose == 'release' && fromJSON('["self-hosted", "macOS", "ARM64", "timon-release"]') || matrix.runner }}`,
+  );
+  const selfHosted = wf.code.split('\n').filter((line) => /self-hosted"|timon-release/.test(line));
+  assert.deepEqual(selfHosted.map((line) => line.trim().split(':')[0]), ['runs-on'], 'the release Mac appears in runs-on only');
+  // What a nightly gets for macOS: hosted, arm64 like the release package.
+  assert.match(wf.job('build').join('\n'), /^ {10}- \{ os: mac, runner: macos-15 \}$/m);
+  assert.doesNotMatch(wf.job('build').join('\n'), /\{ os: mac, runner: \[self-hosted/);
+  // And a nightly that lands on a self-hosted runner anyway stops before any checkout or install.
+  const check = wf.stepNamed('build', 'Check the request');
+  assert.match(check, /RUNNER_KIND: \$\{\{ runner\.environment \}\}/);
+  assert.match(check, /nightly\)\n(?:.*\n){2}\s+\[ "\$RUNNER_KIND" = github-hosted \] \|\| \{ echo "::error::a nightly builds on hosted runners only, never on the release Mac"; exit 1; \}/);
+});
+
+test('a nightly never waits for nor evicts a release: only a release leg holds the Mac group', () => {
+  const concurrency = wf.blockOf('build', 'concurrency').map((line) => line.trim()).filter((line) => !line.startsWith('#'));
   assert.deepEqual(concurrency, [
-    "group: ${{ matrix.os == 'mac' && 'timon-mac-runner' || format('build-packages-{0}-{1}-{2}', github.run_id, github.run_attempt, matrix.os) }}",
-    "cancel-in-progress: ${{ inputs.purpose == 'release' }}",
+    "group: ${{ matrix.os == 'mac' && inputs.purpose == 'release' && 'timon-mac-runner' || format('build-packages-{0}-{1}-{2}', github.run_id, github.run_attempt, matrix.os) }}",
+    'cancel-in-progress: false',
   ]);
   // Not a group of a caller: GitHub cancels the caller when they share one.
   for (const caller of ['release.yml', 'nightly.yml']) {
@@ -63,10 +80,10 @@ test('the Linux build tools are checked before the build, in one line', () => {
   assert.ok(at('Check the Linux build tools') < at('Build the package'));
 });
 
-test('a self-hosted runner starts from a clean output, nightlies included', () => {
+test('a self-hosted runner starts from a clean output', () => {
   const step = wf.stepNamed('build', 'Clear what an earlier run left');
   assert.match(step, /if: runner\.environment == 'self-hosted'/);
-  assert.match(step, /run: rm -rf "release-output\/\$VERSION\/\$OS" "release-output\/\$VERSION\/\.work-\$OS" release-output\/\*-nightly\.\*$/m);
+  assert.match(step, /run: rm -rf "release-output\/\$VERSION\/\$OS" "release-output\/\$VERSION\/\.work-\$OS"$/m);
 });
 
 test('every action is pinned, every checkout drops its credential, every value reaches a script through env', () => {
