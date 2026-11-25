@@ -504,6 +504,32 @@ test('the parents of a commit: one read, every answer a commit', async () => {
   assert.equal((await githubForge(null, { gh: recorder({}).run }).commitParents('acme/app', 'HEAD')).ok, false);
 });
 
+test('the standing of a branch: its default branch, a classic protection or a ruleset against its deletion', async () => {
+  const answering = (byPath: Record<string, string>) => {
+    const calls: string[][] = [];
+    const run: GhRunner = async (args) => {
+      calls.push(args);
+      const path = args[1] ?? '';
+      return path in byPath ? { code: 0, stdout: byPath[path]!, stderr: '' } : { code: 1, stdout: '', stderr: 'HTTP 404: Not Found' };
+    };
+    return { run, calls };
+  };
+  const plain = answering({ 'repos/acme/app': 'main\n', 'repos/acme/app/branches/feat/x': 'false\n', 'repos/acme/app/rules/branches/feat/x': '\n' });
+  assert.deepEqual(await githubForge(null, { gh: plain.run }).branchStanding('acme/app', 'feat/x'),
+    { ok: true, standing: { defaultBranch: 'main', protected: false } });
+  assert.equal(plain.calls.length, 3);
+  const classic = answering({ 'repos/acme/app': 'trunk', 'repos/acme/app/branches/feat/x': 'true', 'repos/acme/app/rules/branches/feat/x': '' });
+  assert.deepEqual(await githubForge(null, { gh: classic.run }).branchStanding('acme/app', 'feat/x'),
+    { ok: true, standing: { defaultBranch: 'trunk', protected: true } });
+  const ruleset = answering({ 'repos/acme/app': 'main', 'repos/acme/app/branches/feat/x': 'false', 'repos/acme/app/rules/branches/feat/x': 'pull_request deletion' });
+  const out = await githubForge(null, { gh: ruleset.run }).branchStanding('acme/app', 'feat/x');
+  assert.ok(out.ok && out.standing.protected);
+  // Unknown is never read as unprotected.
+  assert.equal((await githubForge(null, { gh: answering({ 'repos/acme/app': 'main' }).run }).branchStanding('acme/app', 'feat/x')).ok, false);
+  assert.equal((await githubForge(null, { gh: answering({ 'repos/acme/app': 'main', 'repos/acme/app/branches/feat/x': 'maybe' }).run }).branchStanding('acme/app', 'feat/x')).ok, false);
+  assert.equal((await githubForge(null, { gh: plain.run }).branchStanding('acme/app', '-x')).ok, false);
+});
+
 test('a commit pushed to another repository is a plain refspec, never forced', () => {
   assert.deepEqual(pushCommitArguments('git@github.com:contrib/app.git', HEAD, 'fix/typo'),
     ['--', 'git@github.com:contrib/app.git', `${HEAD}:refs/heads/fix/typo`]);
