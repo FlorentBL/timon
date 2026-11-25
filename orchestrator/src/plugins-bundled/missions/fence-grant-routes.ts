@@ -36,6 +36,7 @@ import { apiError } from '../../api-error.js';
 import { publishAgentUpdated, restartMissionProcess } from '../../agent.js';
 import { agentExtraDirs, ExtraDirError, normalizeExtraDirs, setAgentExtraDirs, type AgentExtraDir } from '../../agent-extra-dirs.js';
 import { dbApi, type MissionRow, type TaskRow } from '../../db.js';
+import type { DbViewer } from '../../users/owned.js';
 import {
   fenceGrantTurn, findFenceRefusal, recordFenceGrant,
   type FenceGrantOffer, type FenceGrantResolution, type FenceGrantScope, type StoredFenceRefusal,
@@ -71,7 +72,7 @@ export async function relaunchAfterGrant(mission: MissionRow, text: string): Pro
 }
 
 /** The Kanban task `mission` was started for: linked once it ran, named in its source when its launch was refused first. */
-export function taskOfMission(mission: Pick<MissionRow, 'task_id' | 'source_meta'>): TaskRow | null {
+export function taskOfMission(mission: Pick<MissionRow, 'task_id' | 'source_meta'>, viewer: DbViewer | null): TaskRow | null {
   let id = mission.task_id;
   if (!id && mission.source_meta) {
     try {
@@ -79,15 +80,15 @@ export function taskOfMission(mission: Pick<MissionRow, 'task_id' | 'source_meta
       if (typeof meta.task_id === 'string') id = meta.task_id;
     } catch { /* a source with no task */ }
   }
-  return id ? dbApi.getTask(id) ?? null : null;
+  return id ? scopedDb(viewer).getTask(id) ?? null : null;
 }
 
 /**
  * What the accord does next for `mission`: put back the task it blocked,
  * leave a task that moved on to another mission, or relaunch the mission.
  */
-export function afterGrantStep(mission: Pick<MissionRow, 'id' | 'task_id' | 'source_meta'>): { kind: 'requeue'; task: TaskRow } | { kind: 'none' } | { kind: 'relaunch' } {
-  const task = taskOfMission(mission);
+export function afterGrantStep(mission: Pick<MissionRow, 'id' | 'task_id' | 'source_meta'>, viewer: DbViewer | null): { kind: 'requeue'; task: TaskRow } | { kind: 'none' } | { kind: 'relaunch' } {
+  const task = taskOfMission(mission, viewer);
   if (!task) return { kind: 'relaunch' };
   const ours = task.mission_id === null || task.mission_id === mission.id;
   if (task.status === 'BLOCKED' && ours) return { kind: 'requeue', task };
@@ -96,10 +97,10 @@ export function afterGrantStep(mission: Pick<MissionRow, 'id' | 'task_id' | 'sou
 }
 
 /** A person's requeue of a blocked task, as the board's: PENDING, its requeue budget reset. */
-function requeueTask(task: TaskRow): boolean {
+function requeueTask(task: TaskRow, viewer: DbViewer | null): boolean {
   dbApi.updateTaskStatus(task.id, 'PENDING');
   dbApi.resetTaskRequeues(task.id);
-  return dbApi.getTask(task.id)?.status === 'PENDING';
+  return scopedDb(viewer).getTask(task.id)?.status === 'PENDING';
 }
 
 /** The person answering, or null after the refusal was sent. */
@@ -203,9 +204,9 @@ export function registerFenceGrantRoutes(app: IRouter, deps: { relaunch?: FenceG
     };
     recordFenceGrant(mission.id, resolution);
     auditRequest(req, 'mission.fence_grant.allow', `${project ? `project:${project}` : `agent:${agent}`} ${offer.mode} ${offer.path}`);
-    const step = afterGrantStep(mission);
+    const step = afterGrantStep(mission, viewerFromRequest(req));
     if (step.kind === 'requeue') {
-      const requeued = requeueTask(step.task);
+      const requeued = requeueTask(step.task, viewerFromRequest(req));
       res.json({ ok: true, resolution, relaunched: false, requeued, taskId: step.task.id });
       return;
     }
