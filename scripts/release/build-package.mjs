@@ -4,7 +4,7 @@
  * and leaves in one directory what a publication needs: the installers, their
  * SHA-256 sums and a `build-summary.json`.
  *
- *   node scripts/release/build-package.mjs --version <x.y.z[-rc.N]> --channel <beta|stable>
+ *   node scripts/release/build-package.mjs --version <x.y.z[-rc.N|-nightly.YYYYMMDD]> --channel <beta|stable>
  *        [--expires <ISO date>] [--no-expiry] [--output <dir>] [--checkout <dir>]
  *        [--key-dir <dir>] [--keep-work] [--allow-local] [--dry-run]
  *
@@ -17,7 +17,8 @@
  *  1. checks the request: an rc must be strictly above the checkout's version
  *     (an installed base reads an equal or older version as no update, and the
  *     rollback path only fires on a difference); a final version must equal it
- *     (a final version is a version bump, merged before the build);
+ *     (a final version is a version bump, merged before the build); a nightly
+ *     build (nightly.yml, never published) follows the rc rule;
  *  2. writes the version into orchestrator/, app/ and desktop/package.json of
  *     the checkout, and `orchestrator/build-info.json` (channel, expiry). No
  *     commit, no tag: the checkout is a throwaway one;
@@ -79,8 +80,9 @@ export const KEY_FILES = { privateKey: 'dev-release.key.pem', publicKey: 'dev-re
 export const KEY_FILE_ENV = { privateKey: 'TIMON_RELEASE_PRIVATE_KEY_FILE', publicKey: 'TIMON_RELEASE_PUBLIC_KEY_FILE' };
 export const KEY_PEM_ENV = { privateKey: 'TIMON_RELEASE_PRIVATE_KEY', publicKey: 'TIMON_RELEASE_PUBLIC_KEY' };
 const STEP_TIMEOUT = 60 * 60_000;
-const VERSION = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-rc\.([1-9]\d*))?$/;
-const USAGE = `Usage: node scripts/release/build-package.mjs --version <x.y.z[-rc.N]> --channel <${PACKAGE_CHANNELS.join('|')}> [--expires <ISO date>] [--no-expiry] [--output <dir>] [--checkout <dir>] [--key-dir <dir>] [--keep-work] [--allow-local] [--dry-run]`;
+// A nightly build is numbered by its UTC date (YYYYMMDD), so it never starts with 0.
+const VERSION = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-(rc)\.([1-9]\d*)|-(nightly)\.([1-9]\d{7}))?$/;
+const USAGE = `Usage: node scripts/release/build-package.mjs --version <x.y.z[-rc.N|-nightly.YYYYMMDD]> --channel <${PACKAGE_CHANNELS.join('|')}> [--expires <ISO date>] [--no-expiry] [--output <dir>] [--checkout <dir>] [--key-dir <dir>] [--keep-work] [--allow-local] [--dry-run]`;
 
 export function parseArgs(argv) {
   const opts = { version: null, channel: null, expires: null, noExpiry: false, output: null, checkout: null, keyDir: null, keepWork: false, allowLocal: false, dryRun: false };
@@ -96,7 +98,7 @@ export function parseArgs(argv) {
     } else throw new Error(`unexpected argument ${arg}\n${USAGE}`);
   }
   if (!opts.version) throw new Error(`--version is required\n${USAGE}`);
-  if (!VERSION.test(opts.version)) throw new Error(`"${opts.version}" is not a release version (x.y.z or x.y.z-rc.N, N >= 1)`);
+  if (!VERSION.test(opts.version)) throw new Error(`"${opts.version}" is not a release version (x.y.z, x.y.z-rc.N with N >= 1, or x.y.z-nightly.YYYYMMDD)`);
   // Required rather than defaulted: a workflow states the channel it ships to.
   if (!opts.channel) throw new Error(`--channel is required\n${USAGE}`);
   if (!PACKAGE_CHANNELS.includes(opts.channel)) throw new Error(`--channel must be one of ${PACKAGE_CHANNELS.join(', ')} (got "${opts.channel}")`);
@@ -106,29 +108,42 @@ export function parseArgs(argv) {
 function versionParts(version) {
   const m = VERSION.exec(version);
   if (!m) throw new Error(`not a release version: ${version}`);
-  return { core: [Number(m[1]), Number(m[2]), Number(m[3])], rc: m[4] === undefined ? null : Number(m[4]) };
+  const pre = m[4] ? { tag: m[4], n: Number(m[5]) } : m[6] ? { tag: m[6], n: Number(m[7]) } : null;
+  return { core: [Number(m[1]), Number(m[2]), Number(m[3])], pre };
 }
 
-/** Sign of `a - b` for x.y.z and x.y.z-rc.N; an rc comes before its final version. */
+/** 'final', 'rc' or 'nightly': what a version is, before any comparison. */
+export function versionKind(version) {
+  return versionParts(version).pre?.tag ?? 'final';
+}
+
+/**
+ * Sign of `a - b` for x.y.z, x.y.z-rc.N and x.y.z-nightly.D, in SemVer order: a
+ * pre-release comes before its final version, and `nightly` before `rc`
+ * (identifiers compare in ASCII order).
+ */
 export function compareRelease(a, b) {
   const left = versionParts(a);
   const right = versionParts(b);
   for (let i = 0; i < 3; i++) if (left.core[i] !== right.core[i]) return left.core[i] < right.core[i] ? -1 : 1;
-  if (left.rc === right.rc) return 0;
-  if (left.rc === null) return 1;
-  if (right.rc === null) return -1;
-  return left.rc < right.rc ? -1 : 1;
+  if (!left.pre && !right.pre) return 0;
+  if (!left.pre) return 1;
+  if (!right.pre) return -1;
+  if (left.pre.tag !== right.pre.tag) return left.pre.tag < right.pre.tag ? -1 : 1;
+  if (left.pre.n === right.pre.n) return 0;
+  return left.pre.n < right.pre.n ? -1 : 1;
 }
 
 /**
- * 'rc' or 'final', or throws. An rc must sort strictly above the version the
- * checkout carries; a final version must be exactly that version, which only
- * a merged version bump puts there.
+ * 'rc', 'nightly' or 'final', or throws. A pre-release must sort strictly
+ * above the version the checkout carries; a final version must be exactly that
+ * version, which only a merged version bump puts there.
  */
 export function releaseKind(version, current) {
-  if (versionParts(version).rc !== null) {
+  const kind = versionKind(version);
+  if (kind !== 'final') {
     if (compareRelease(version, current) <= 0) throw new Error(`${version} is not above the checkout's version ${current}: an installed ${current} would not take it as an update`);
-    return 'rc';
+    return kind;
   }
   if (version !== current) throw new Error(`final version ${version} differs from the checkout's version ${current}: merge the version bump first, then build`);
   return 'final';
@@ -318,7 +333,7 @@ export function validateBuildSummary(value) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) fail('not a JSON object');
   if (value.schema !== SUMMARY_SCHEMA) fail(`unknown schema ${value.schema}`);
   if (typeof value.version !== 'string' || !VERSION.test(value.version)) fail('invalid version');
-  if (value.kind !== (versionParts(value.version).rc === null ? 'final' : 'rc')) fail('kind does not match the version');
+  if (value.kind !== versionKind(value.version)) fail('kind does not match the version');
   if (!PACKAGE_CHANNELS.includes(value.channel)) fail('invalid channel');
   if (!Object.values(OS_NAMES).includes(value.os)) fail('invalid os');
   if (typeof value.arch !== 'string' || !/^[a-z0-9]+$/.test(value.arch)) fail('invalid arch');

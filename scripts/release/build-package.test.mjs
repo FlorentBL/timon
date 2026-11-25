@@ -13,7 +13,7 @@ import {
   DEFAULT_OUTPUT, KEY_FILE_ENV, KEY_PEM_ENV, PACKAGES, SUMS_FILE, SUMMARY_FILE,
   buildPlan, buildSummary, checkKeyLocation, checksumsText, compareRelease, describe, distTarget, foreignChanges, hashFile,
   inspect, materializeKeys, osName, outputPaths, parseArgs, releaseKind, resolveKeys, selectInstallers, setVersion,
-  signingEnv, stepEnv, validateBuildSummary, versionOf, writeOutputs,
+  signingEnv, stepEnv, validateBuildSummary, versionKind, versionOf, writeOutputs,
 } from './build-package.mjs';
 
 const scratch = () => mkdtempSync(join(tmpdir(), 'build-package-'));
@@ -59,6 +59,26 @@ test('releaseKind: an rc above the checkout, a final version equal to it', () =>
   assert.throws(() => releaseKind('0.1.8-rc.3', '0.1.8'), /not above the checkout's version 0\.1\.8/);
   assert.throws(() => releaseKind('0.0.0-rc.1', '0.1.8'), /not above/);
   assert.throws(() => releaseKind('0.1.9', '0.1.8'), /merge the version bump first/);
+});
+
+test('a nightly build: dated, above the checkout like an rc, and before any rc of its version', () => {
+  assert.equal(parseArgs(['--version', '0.1.12-nightly.20261126', '--channel', 'beta']).version, '0.1.12-nightly.20261126');
+  for (const bad of ['0.1.12-nightly.2026112', '0.1.12-nightly.020261126', '0.1.12-nightly.1', '0.1.12-nightly', '0.1.12-nightly.20261126.1', '0.1.12-rc.1-nightly.20261126']) {
+    assert.throws(() => parseArgs(['--version', bad, '--channel', 'beta']), /not a release version/, bad);
+  }
+  assert.equal(versionKind('0.1.12-nightly.20261126'), 'nightly');
+  assert.equal(versionKind('0.1.12-rc.2'), 'rc');
+  assert.equal(versionKind('0.1.12'), 'final');
+  assert.equal(releaseKind('0.1.12-nightly.20261126', '0.1.11'), 'nightly');
+  assert.throws(() => releaseKind('0.1.11-nightly.20261126', '0.1.11'), /not above the checkout's version 0\.1\.11/);
+  // SemVer: "nightly" sorts before "rc", so a tester on a nightly still takes the rc and the release.
+  assert.equal(compareRelease('0.1.12-nightly.20261126', '0.1.12-rc.1'), -1);
+  assert.equal(compareRelease('0.1.12-nightly.20261126', '0.1.12'), -1);
+  assert.equal(compareRelease('0.1.12-nightly.20261127', '0.1.12-nightly.20261126'), 1);
+  assert.equal(compareRelease('0.1.12-nightly.20261126', '0.1.12-nightly.20261126'), 0);
+  const nightly = summaryOf({ version: '0.1.12-nightly.20261126', kind: 'nightly' });
+  assert.equal(validateBuildSummary(nightly), nightly);
+  assert.throws(() => validateBuildSummary({ ...nightly, kind: 'rc' }), /kind does not match/);
 });
 
 test('setVersion rewrites the first version field only', () => {
