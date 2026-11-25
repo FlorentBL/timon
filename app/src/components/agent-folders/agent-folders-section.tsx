@@ -139,7 +139,7 @@ export function AgentFoldersSection({ agents, showAgent = false, emptyStatus, on
               <DropdownMenuItem disabled={busy} onSelect={() => void run(() => addAgentFolder(agent, { path: folder.path, mode: folder.mode === 'write' ? 'read' : 'write' }))}>
                 {t(folder.mode === 'write' ? 'agentFolders.makeRead' : 'agentFolders.makeWrite')}
               </DropdownMenuItem>
-              <DropdownMenuItem disabled={busy} className="text-destructive focus:text-destructive" onSelect={() => void run(() => removeAgentFolder(agent, folder.path))}>
+              <DropdownMenuItem disabled={busy} className="text-destructive focus:bg-destructive/10 focus:text-destructive" onSelect={() => void run(() => removeAgentFolder(agent, folder.path))}>
                 {t('agentFolders.remove')}
               </DropdownMenuItem>
             </>}
