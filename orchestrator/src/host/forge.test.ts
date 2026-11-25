@@ -530,6 +530,18 @@ test('the standing of a branch: its default branch, a classic protection or a ru
   assert.equal((await githubForge(null, { gh: plain.run }).branchStanding('acme/app', '-x')).ok, false);
 });
 
+test('the history of a pull request head: a deletion or a restoration since it opened, read from its timeline', async () => {
+  const quiet = recorder({ stdout: '' });
+  assert.deepEqual(await githubForge(null, { gh: quiet.run }).headRefDeleted('acme/app', 7), { ok: true, deleted: false });
+  assert.deepEqual(quiet.calls[0]?.args.slice(0, 3), ['api', '--paginate', 'repos/acme/app/issues/7/timeline?per_page=100']);
+  const deleted = recorder({ stdout: 'head_ref_deleted\nhead_ref_restored\n' });
+  assert.deepEqual(await githubForge(null, { gh: deleted.run }).headRefDeleted('acme/app', 7), { ok: true, deleted: true });
+  // Unknown is never read as never deleted.
+  assert.equal((await githubForge(null, { gh: recorder({ code: 1, stderr: 'HTTP 502' }).run }).headRefDeleted('acme/app', 7)).ok, false);
+  assert.equal((await githubForge(null, { gh: recorder({ stdout: '<html>' }).run }).headRefDeleted('acme/app', 7)).ok, false);
+  assert.equal((await githubForge(null, { gh: quiet.run }).headRefDeleted('acme/app', 0)).ok, false);
+});
+
 test('a commit pushed to another repository is a plain refspec, never forced', () => {
   assert.deepEqual(pushCommitArguments('git@github.com:contrib/app.git', HEAD, 'fix/typo'),
     ['--', 'git@github.com:contrib/app.git', `${HEAD}:refs/heads/fix/typo`]);
