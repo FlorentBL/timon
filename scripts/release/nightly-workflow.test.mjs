@@ -1,8 +1,8 @@
 /**
  * Static checks on .github/workflows/nightly.yml: it builds the head of main
  * every night with the release's build steps, and must never publish, hold a
- * release key, enter a release environment, commit its version, or stand in
- * the way of a release on the shared Mac.
+ * release key, enter a release environment, commit its version, or run on
+ * the project's Mac that builds releases.
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -78,7 +78,7 @@ test('permissions: read by default; the report job writes issues and nothing els
 test('the report job runs no code of the repository and puts no secret in the issue', () => {
   const report = wf.job('report').join('\n');
   assert.doesNotMatch(report, /actions\/checkout@|actions\/setup-node@|\bnpm\b|\bnpx\b|\bnode\b/);
-  // Not on a cancelled run: a nightly cancelled by a release on the Mac files nothing.
+  // Not on a cancelled run: a nightly replaced by a newer one files nothing.
   assert.equal(wf.keyOf('report', 'if'), "${{ !cancelled() && github.repository == 'ai-timon/timon' && github.ref == 'refs/heads/main' }}");
   const step = wf.stepNamed('report', 'Open, update or close the nightly failure issue');
   const env = step.split('\n').map((line) => /^ {10}([A-Z_]+): (.+)$/.exec(line)).filter(Boolean).map((m) => [m[1], m[2].trim()]);
@@ -103,13 +103,18 @@ test('the report job runs no code of the repository and puts no secret in the is
   assert.match(run, /elif \[ "\$PREPARE" = success \] && \[ "\$BUILD" = success \]; then/);
 });
 
-test('a release always goes first on the shared Mac', () => {
+test('a nightly never runs on the release Mac, nor waits for or evicts a release', () => {
   // A nightly started by hand replaces the one in progress, never a release.
   assert.match(wf.text, /^concurrency:\n {2}group: nightly\n {2}cancel-in-progress: true\n/m);
-  assert.doesNotMatch(wf.code, /group: release\b|timon-mac-runner/);
-  // The Mac's own group lives in build-packages.yml, where a release leg cancels a nightly leg.
+  assert.doesNotMatch(wf.code, /group: release\b|timon-mac-runner|self-hosted|timon-release|runs-on: \[/);
+  // build-packages.yml gives the project's Mac, and its concurrency group, to purpose release only.
   const packages = readWorkflow('build-packages.yml');
-  assert.match(packages.blockOf('build', 'concurrency').join('\n'), /cancel-in-progress: \$\{\{ inputs\.purpose == 'release' \}\}/);
+  const runsOn = packages.keyOf('build', 'runs-on');
+  assert.match(runsOn, /^\$\{\{ matrix\.os == 'mac' && inputs\.purpose == 'release' && fromJSON\('\["self-hosted", "macOS", "ARM64", "timon-release"\]'\) \|\| matrix\.runner \}\}$/);
+  assert.match(packages.job('build').join('\n'), /\{ os: mac, runner: macos-15 \}/);
+  const group = packages.blockOf('build', 'concurrency').map((line) => line.trim()).find((line) => line.startsWith('group:'));
+  assert.match(group, /matrix\.os == 'mac' && inputs\.purpose == 'release' && 'timon-mac-runner'/);
+  assert.match(packages.blockOf('build', 'concurrency').join('\n'), /cancel-in-progress: false/);
 });
 
 test('every action is pinned, every checkout drops its credential, every job has a time limit', () => {

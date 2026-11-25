@@ -1,9 +1,10 @@
 # Builds the head of main on Linux, macOS and Windows every night, with the
 # very build steps of a release (build-packages.yml), and publishes nothing.
 # A packaging break (a runner image that moves, a tool that disappears, a
-# self-hosted runner left dirty, a native module tied to the runner) shows up
-# the morning after it lands, not on the day of a release, so a release comes
-# down to a version bump and an approval.
+# native module tied to the runner) shows up the morning after it lands, not
+# on the day of a release, so a release comes down to a version bump and an
+# approval. The state of the project's Mac is not checked: only a release
+# builds there.
 #
 #   prepare  reads the head of main, names the build x.y.(z+1)-nightly.YYYYMMDD
 #            (UTC date), checks the request with a dry run of the package
@@ -20,10 +21,10 @@
 # key, a release environment or a token that can write code: the report job
 # writes issues only, and runs neither a checkout nor npm.
 #
-# The macOS leg runs on the project's own Mac, which releases need too: a
-# release leg cancels a nightly leg in progress, a nightly leg waits for a
-# release leg (concurrency group of build-packages.yml). A nightly cancelled
-# that way reports nothing.
+# The macOS leg runs on a runner hosted by GitHub, a fresh machine every run,
+# never on the project's Mac that signs releases (build-packages.yml decides it
+# from the purpose): a nightly neither shares that machine with the release
+# key nor waits for, or evicts, a release.
 #
 # Every value reaches a script through an environment variable, never pasted
 # into it: `${{ }}` inside `run:` would turn a value into shell code.
@@ -31,7 +32,7 @@ name: Nightly build
 
 on:
   schedule:
-    # 02:00 UTC: the Mac is idle, and the result is there in the morning.
+    # 02:00 UTC: the result is there in the morning.
     - cron: '0 2 * * *'
   workflow_dispatch:
 
@@ -169,6 +170,6 @@ jobs:
             fi
             echo "Nightly $VERSION built on every system"
           else
-            # Cancelled (by a release on the Mac, or a newer nightly) or skipped.
+            # Cancelled (by a newer nightly) or skipped.
             echo "prepare $PREPARE, build $BUILD: nothing to report"
           fi
