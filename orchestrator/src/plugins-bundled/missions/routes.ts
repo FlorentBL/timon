@@ -16,7 +16,7 @@ import { cooldownReason, fallbackFor } from '../../backend-fallback.js';
 import { messageDateTime } from '../../message-dates.js';
 import { asBackendName, defaultBackendName } from '../../backends/index.js';
 import { config } from '../../config/load.js';
-import { db, dbApi, SPAN_CURSOR_PATTERN, type EventRow, type MissionRow } from '../../db.js';
+import { db, dbApi, SPAN_CURSOR_PATTERN, viewerSeesAll, type EventRow, type MissionRow } from '../../db.js';
 import { handleSpawn } from '../../http-helpers.js';
 import { agentCommunicationAllowed, developerAutoAllows } from '../../users/agent-permissions.js';
 import { createDelegationHandler } from '../../mission-delegation.js';
@@ -638,7 +638,8 @@ export function registerRoutes(
     }
     const originFilter = originParam;
     const timing = new ServerTiming();
-    const scope = scopedDb(viewerFromRequest(req));
+    const viewer = viewerFromRequest(req);
+    const scope = scopedDb(viewer);
     // One row past the page tells whether another page exists.
     const agentNames = agentFilter
       ? [agentFilter]
@@ -742,7 +743,12 @@ export function registerRoutes(
     // Per-row reads (liveness, pending work, event count, agent config).
     timing.mark('enrich');
     // Fields next to `missions`: existing clients read only that key.
-    sendTimedJson(res, timing, { missions, has_more: hasMore, next_cursor: nextCursor });
+    const body = { missions, has_more: hasMore, next_cursor: nextCursor };
+    // A reader confined to its own missions gets no timing: the `db` phase of
+    // a `?task_id=` page, even an empty one, would measure work done on rows
+    // it cannot see (TIM-0161). One who sees every mission learns nothing new.
+    if (!viewer || viewerSeesAll(viewer, 'missions')) sendTimedJson(res, timing, body);
+    else res.json(body);
   });
 
   /**

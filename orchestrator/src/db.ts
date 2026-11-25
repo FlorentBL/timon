@@ -1610,6 +1610,15 @@ CREATE INDEX IF NOT EXISTS idx_audit_log_user ON audit_log(user_id);
   }
 }
 
+// TIM-0161: a restricted reader's `?task_id=` walks this index, which starts
+// with the owner. Through `idx_missions_task` the scan would first visit the
+// task's missions of every account, and its duration would tell whether a
+// task of another account exists. No trailing `id`: it would make the index
+// covering for `SELECT id … ORDER BY started_at`, and the planner would scan it
+// whole instead of `idx_missions_started` for the unfiltered list. Ties on
+// started_at are sorted within one owner's task, a handful of rows.
+db.exec(`CREATE INDEX IF NOT EXISTS idx_missions_owner_task ON missions(owner_user_id, task_id, started_at)`);
+
 // A workflow is piloted by an existing agent (decision of 20/10/2026): the
 // column replaces the `workflow.<uuid>` agent the engine used to create for
 // each workflow. NULL on rows minted before that: publish and run refuse them
@@ -3930,10 +3939,10 @@ const unindexedMissionsStmt = db.prepare(
  */
 const MISSION_ORIGIN_SQL = missionOriginSql('m', 'ot');
 
-function missionListSql(whereSql: string): string {
+function missionListSql(whereSql: string, indexHint = ''): string {
   // The origin is computed inside the page so `?origin=` filters before the LIMIT.
   return `WITH page AS (
-            SELECT m.*, ${MISSION_ORIGIN_SQL} AS origin FROM missions m
+            SELECT m.*, ${MISSION_ORIGIN_SQL} AS origin FROM missions m ${indexHint}
             LEFT JOIN tasks ot ON ot.id = m.task_id
             ${whereSql}
             ORDER BY m.started_at DESC, m.id DESC
@@ -4022,7 +4031,12 @@ export function missionListQuery(
     params.push(...owner.params);
   }
   const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
-  return { sql: missionListSql(whereSql), params };
+  // Forced, not left to the planner: without ANALYZE statistics it may still
+  // prefer `idx_missions_task`, which visits the task's missions of every
+  // account before the owner filter drops them; the scan time would then tell
+  // a restricted reader whether another account's task exists (TIM-0161).
+  const hint = scoped && taskId !== undefined ? 'INDEXED BY idx_missions_owner_task' : '';
+  return { sql: missionListSql(whereSql, hint), params };
 }
 const missionOriginStmt = db.prepare(
   `SELECT ${MISSION_ORIGIN_SQL} AS origin FROM missions m LEFT JOIN tasks ot ON ot.id = m.task_id WHERE m.id = ?`,
