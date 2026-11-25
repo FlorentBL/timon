@@ -3282,6 +3282,14 @@ const markIntegrationOpenStmt = db.prepare(`
   UPDATE integrations SET state = 'open', pr_number = ?, pr_url = ?, head_sha = ?, updated_at = ?
   WHERE id = ? AND state = 'branch'
 `);
+// Only from 'closed': the landing gesture opened a new pull request for a job
+// whose previous one was closed without a merge. The closing's notice is
+// forgotten, so a second closing is told again.
+const markIntegrationReopenedStmt = db.prepare(`
+  UPDATE integrations SET state = 'open', pr_number = ?, pr_url = ?, head_sha = ?, checks = NULL,
+    notified_state = NULL, updated_at = ?
+  WHERE id = ? AND state = 'closed'
+`);
 // A pushed repair moves the head the poller compares with the target; the
 // checks read before it describe a commit the pull request no longer ends on.
 const setIntegrationHeadStmt = db.prepare(`
@@ -6028,6 +6036,13 @@ export const dbApi = {
    *  the row is gone or already past the 'branch' state. */
   markIntegrationOpen(id: string, pr: { number: number; url: string; headSha: string }): boolean {
     const opened = markIntegrationOpenStmt.run(pr.number, pr.url, pr.headSha, Date.now(), id).changes > 0;
+    if (opened) publishIntegrationChange(id, ['state', 'pull_request']);
+    return opened;
+  },
+  /** Records the new pull request of a job whose previous one was closed
+   *  without a merge; false unless the row is still 'closed'. */
+  markIntegrationReopened(id: string, pr: { number: number; url: string; headSha: string }): boolean {
+    const opened = markIntegrationReopenedStmt.run(pr.number, pr.url, pr.headSha, Date.now(), id).changes > 0;
     if (opened) publishIntegrationChange(id, ['state', 'pull_request']);
     return opened;
   },

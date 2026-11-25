@@ -918,7 +918,8 @@ Pull requests (projects whose jobs land through one, see set-integration):
   timon pr land <job-id|series-id> [--title TEXT] [--body TEXT | --body-file PATH]
                                              lands a job kept on its branch: merged into the local target
                                              (fast-forward or merge commit, refused on a conflict or a dirty
-                                             checkout of the target), or its pull request opened (title needed)
+                                             checkout of the target), or its pull request opened (title needed;
+                                             a new one when the previous one was closed without a merge)
 
 Projects (agent roles per project):
   timon project list                           lists configured projects

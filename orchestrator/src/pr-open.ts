@@ -56,6 +56,9 @@ export type PrOpenRequest = {
   id: string;
   title: string;
   body: string;
+  /** The landing gesture of a person: a job whose pull request was closed
+   *  without a merge gets a new one. Every other caller is refused then. */
+  reopen?: boolean;
 };
 
 export type PrOpenRefusalCode =
@@ -513,7 +516,10 @@ export async function openPullRequest(request: PrOpenRequest, deps: PrOpenDeps =
   if (row.state === 'open') {
     return refuse(409, 'pr_refused', `a pull request is already open for ${row.branch}${row.pr_url ? `: ${row.pr_url}` : ''}`);
   }
-  if (row.state !== 'branch') return refuse(409, 'pr_refused', `the pull request of ${row.branch} is already ${row.state}`);
+  const reopening = row.state === 'closed' && request.reopen === true;
+  if (row.state !== 'branch' && !reopening) {
+    return refuse(409, 'pr_refused', `the pull request of ${row.branch} is already ${row.state}`);
+  }
   const resolvedSetting = pullRequestSetting(row, project);
   if ('refusal' in resolvedSetting) return refuse(409, 'pr_refused', resolvedSetting.refusal);
   const { setting, remoteUrl, account, repository } = resolvedSetting;
@@ -549,7 +555,9 @@ export async function openPullRequest(request: PrOpenRequest, deps: PrOpenDeps =
     if (!created.ok) {
       return refuse(502, 'pr_create_failed', `${branch} was pushed, the pull request was not created: ${created.reason}. Run the command again to retry.`, checks);
     }
-    dbApi.markIntegrationOpen(row.id, { number: created.pr.number, url: created.pr.url, headSha: head });
+    const recorded = { number: created.pr.number, url: created.pr.url, headSha: head };
+    if (reopening) dbApi.markIntegrationReopened(row.id, recorded);
+    else dbApi.markIntegrationOpen(row.id, recorded);
     return {
       ok: true,
       pr: created.pr,
