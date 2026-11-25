@@ -140,6 +140,8 @@ A branch under embargo (`sec/<topic>`, for a security fix) is never pushed by th
 
 If the push succeeds but the pull request cannot be created, run the command again: the branch is already there and only the pull request is opened.
 
+Once the pull request is open, a card in your notifications gives its link, and the conversation that planned the job gets a message with it, unless the job's own final task opened it: that task's report already says so.
+
 ## Once the pull request is merged
 
 Timon checks every few minutes whether the pull request was merged, by looking for its branch in the remote's target branch. Once it was, the job's TO DO ideas close, its documentation task is created, a card in your notifications says the pull request was merged, and the conversation that planned the job gets a message listing what closed. A pull request closed without a merge closes nothing and keeps the branches: the card is an alert, and the job's conversation is asked what comes next. Without access to the forge, `timon task mark-merged <task> --sha <merge commit>` on a task of the job does the same by hand. If the conversation that planned the job no longer exists, the card is the only notice.
