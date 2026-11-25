@@ -73,6 +73,9 @@ const ALLOWED = new Set([
   'orchestrator/src/backends/acp/extensions.ts',
   'orchestrator/src/backends/acp/models.ts',
   'orchestrator/src/backends/acp/provider.ts',
+  // The ACP provider marks its codec as declaring stdio MCP servers only (TODO #1071): a WeakSet and
+  // two functions, no import at all.
+  'orchestrator/src/backends/acp/stdio-only-mcp.ts',
   'orchestrator/src/backends/acp/transport.ts',
   'orchestrator/src/backends/acp/wire.ts',
   'orchestrator/src/backends/catalog-model.ts',
