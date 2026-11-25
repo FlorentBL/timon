@@ -29,6 +29,38 @@ const { getHost } = await import('./host/index.js');
 const { setDaemonNodeCheckForTest, spawnAgent, upsertAgent } = await import('./agent.js');
 const { NoTrustedNodeError } = await import('./host/launch-path.js');
 
+/**
+ * Lines GNU `env` does run through the first `node` of PATH (Linux hands
+ * `env` the rest of the line as one word, which only `-S` splits): the control
+ * below proves it, so each refusal of these is what keeps the fake node idle.
+ */
+const REACHING = [
+  '#!/usr/bin/env -S VAR=x node',
+  '#!/usr/bin/env -S -u NODE_OPTIONS node',
+  '#!/usr/bin/env -S "node" --flag',
+  '#!/usr/bin/env --split-string=node',
+];
+
+/**
+ * The CLI's first line, one mission each: the standard one, then forms the
+ * reader does not read with certainty (options, assignments, quotes, `-S`
+ * spellings) and plain spellings that still name `node`.
+ */
+const LINES = [
+  '#!/usr/bin/env node',
+  '#!/usr/bin/env -i node',
+  '#!/usr/bin/env -u NODE_OPTIONS node',
+  '#!/usr/bin/env VAR=x node',
+  '#!/usr/bin/env -S "node --flag"',
+  "#!/usr/bin/env -S 'node'",
+  '#!/usr/bin/env --split-string=node',
+  '#!/usr/bin/env -Snode',
+  '#!/usr/bin/env -- node',
+  '#!/usr/bin/env  \t node',
+  '#!/usr/bin/env nodejs',
+  ...REACHING,
+];
+
 test('no trusted node: an `env node` CLI is refused and the fake node first on PATH never runs',
   { skip: process.platform === 'win32' && 'POSIX shebang' }, async (t) => {
     const root = mkdtempSync(join(tmpdir(), 'timon-no-node-'));
@@ -44,7 +76,7 @@ test('no trusted node: an `env node` CLI is refused and the fake node first on P
     rmSync(marker);
 
     // The CLI the launch resolves: an npm script whose line looks `node` up on PATH.
-    writeFileSync(join(stubs, 'claude'), '#!/usr/bin/env node\nprocess.exit(0);\n', { mode: 0o755 });
+    writeFileSync(join(stubs, 'claude'), `${LINES[0]}\nprocess.exit(0);\n`, { mode: 0o755 });
     const previousPath = process.env.PATH;
     process.env.PATH = `${fakeBin}${delimiter}${previousPath ?? ''}`;
     const host = getHost();
@@ -94,4 +126,35 @@ test('no trusted node: an `env node` CLI is refused and the fake node first on P
     assert.ok(mission);
     assert.equal(mission.status, 'failed');
     assert.notEqual(mission.interrupted_reason, 'crash', 'a replay meets the same machine: no crash to replay');
+
+    // #1102, iteration 5: every other `env` line naming `node`, or whose interpreter is not
+    // certain, is refused the same way. Each is tried as its own mission against the same witness.
+    await t.test('every unrecognised `env` line is refused too, and the fake node never runs', async () => {
+      for (const line of LINES.slice(1)) {
+        writeFileSync(join(stubs, 'claude'), `${line}\nprocess.exit(0);\n`, { mode: 0o755 });
+        const before = spawns;
+        let refused: unknown = null;
+        try {
+          await spawnAgent('no-node', 'ping');
+        } catch (err) {
+          refused = err;
+        }
+        assert.ok(refused instanceof NoTrustedNodeError, `${JSON.stringify(line)}: expected NoTrustedNodeError, got ${String(refused)}`);
+        assert.equal(spawns, before, `${JSON.stringify(line)}: no process is started`);
+        await new Promise((resolve) => setTimeout(resolve, 100));
+        assert.equal(existsSync(marker), false, `${JSON.stringify(line)}: the fake node on the mission's PATH never ran`);
+      }
+    });
+
+    // The control: launched through its own line, with the mission's PATH, such a CLI does run the
+    // fake node (GNU env), so the refusals above are what keeps it from running.
+    await t.test('control: these lines do reach the fake node when left to `env`', { skip: process.platform !== 'linux' && 'GNU env' }, () => {
+      const probe = join(root, 'probe');
+      for (const line of REACHING) {
+        writeFileSync(probe, `${line}\n`, { mode: 0o755 });
+        execFileSync(probe, { env: { ...process.env, PATH: `${fakeBin}${delimiter}${previousPath ?? ''}` } });
+        assert.ok(existsSync(marker), `${line}: runs the fake node`);
+        rmSync(marker);
+      }
+    });
   });

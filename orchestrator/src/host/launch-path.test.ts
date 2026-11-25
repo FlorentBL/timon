@@ -136,6 +136,60 @@ test('#1102 review, iteration 4: with no node chosen, an `env node` CLI is refus
   assert.equal(launchInterpreter('C:\\npm\\codex.cmd', null, 'win32', 'codex', read('@ECHO off\r\nnode x')), null);
 });
 
+test('#1102 review, iteration 5: with no node chosen, an `env` line whose interpreter is not certain is refused', () => {
+  const script = posix.join('/home', 'sam', '.npm-global', 'lib', 'node_modules', '@openai', 'codex', 'bin', 'codex.js');
+  const read = (text: string) => () => text;
+  const refused = [
+    // Options of `env` itself, before the interpreter.
+    '#!/usr/bin/env -i node\n',
+    '#!/usr/bin/env -u NODE_OPTIONS node\n',
+    '#!/usr/bin/env -- node\n',
+    '#!/usr/bin/env --split-string=node\n',
+    '#!/usr/bin/env --split-string node --flag\n',
+    '#!/usr/bin/env -Snode\n',
+    '#!/usr/bin/env -iS node\n',
+    '#!/usr/bin/env -S -i node\n',
+    // Assignments.
+    '#!/usr/bin/env VAR=x node\n',
+    '#!/usr/bin/env -S NODE_ENV=production node\n',
+    // Quotes, escapes, variables `-S` expands.
+    '#!/usr/bin/env -S "node --flag"\n',
+    "#!/usr/bin/env -S 'node'\n",
+    '#!/usr/bin/env "node"\n',
+    '#!/usr/bin/env -S no\\_de\n',
+    '#!/usr/bin/env -S ${NODE}\n',
+    // A relative folder, looked up from the mission's working directory.
+    '#!/usr/bin/env ./bin/node\n',
+    // Whitespace the kernel, `env` and the reader would cut differently.
+    '#!/usr/bin/env \u00a0node\n',
+    '#!/usr/bin/env node\fx\n',
+    '#!/usr/bin/env node\rx\n',
+    // Nothing after `env`, or after `-S`.
+    '#!/usr/bin/env\n',
+    '#!/usr/bin/env -S\n',
+    // Plain, but `node` by name all the same, wherever `env` sits.
+    '#!/usr/bin/env  \t node\n',
+    '#!/usr/local/bin/env\tnode\n',
+    '#!/usr/bin/env nodejs\n',
+    '#!/usr/bin/env -S node22 --no-warnings\n',
+  ];
+  for (const line of refused) {
+    for (const platform of ['linux', 'darwin'] as const) {
+      assert.throws(() => launchInterpreter(script, null, platform, 'codex', read(line)),
+        (err: unknown) => err instanceof NoTrustedNodeError && err.cli === 'codex', `${platform}: ${JSON.stringify(line)}`);
+    }
+  }
+  // A plain line naming another interpreter, or an absolute one, never looks `node` up: unchanged.
+  for (const line of ['#!/usr/bin/env python3\n', '#!/usr/bin/env -S python3 -u\n', '#!/usr/bin/env  bun\n', '#!/usr/bin/env /opt/node/bin/node\n']) {
+    assert.equal(launchInterpreter(script, null, 'linux', 'codex', read(line)), null, JSON.stringify(line));
+  }
+  // With a node chosen, a recognised `node` line still gets it, whatever the spacing.
+  const node = posix.join('/usr', 'local', 'bin', 'node');
+  assert.deepEqual(launchInterpreter(script, node, 'linux', 'codex', read('#!/usr/bin/env  \t node\n')), { file: node, args: [] });
+  assert.deepEqual(launchInterpreter(script, node, 'linux', 'codex', read('#!/usr/bin/env\t-S node  --no-warnings\n')),
+    { file: node, args: ['--no-warnings'] });
+});
+
 test('nodeInDir finds an executable node on disk', { skip: process.platform === 'win32' }, () => {
   const dir = mkdtempSync(join(tmpdir(), 'launch-path-'));
   try {
