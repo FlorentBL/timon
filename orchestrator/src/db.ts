@@ -5909,13 +5909,19 @@ export const dbApi = {
   }): IntegrationRow {
     const now = Date.now();
     const id = randomUUID();
+    const before = getIntegrationStmt.get(row.repo, row.branch) as IntegrationRow | undefined;
     upsertIntegrationStmt.run(
       id, row.repo, row.branch, row.remote, row.target, row.mode,
       row.project ?? null, row.seriesId ?? null, row.baseSha ?? null, now, now,
     );
     const recorded = getIntegrationStmt.get(row.repo, row.branch) as IntegrationRow;
-    // Recording an existing branch again moves nothing a screen shows.
     if (recorded.id === id) publishIntegrationChange(id, ['created']);
+    // Recording an existing branch again only fills what it lacked. A filled
+    // project or series puts the job in front of a screen filtered on it,
+    // which would otherwise wait for its slow poll; the base sha shows nowhere.
+    else if (before && (before.project !== recorded.project || before.series_id !== recorded.series_id)) {
+      publishIntegrationChange(recorded.id, ['scope']);
+    }
     return recorded;
   },
   getIntegration(repo: string, branch: string): IntegrationRow | undefined {

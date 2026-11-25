@@ -86,8 +86,9 @@ export type AgentEventSnapshot = Readonly<{
 }>;
 
 /** What an `integration_changed` write touched. `checks` is the forge's stored
- *  reading, compared without its read time. */
-export type IntegrationChange = 'created' | 'state' | 'pull_request' | 'checks' | 'landed';
+ *  reading, compared without its read time; `scope` is a project or series
+ *  filled in on a job recorded without it. */
+export type IntegrationChange = 'created' | 'state' | 'pull_request' | 'checks' | 'landed' | 'scope';
 
 export type BusEvent =
   | { kind: 'plugin_realtime'; pluginId: string; topic: string; ownerUserId: string; payload: unknown }
