@@ -136,3 +136,11 @@ export const HIDDEN_LIST_FRESH_MS = 60_000;
 export function shouldRead(front: boolean, readAt: number | null, now: number): boolean {
   return front || readAt === null || now - readAt >= HIDDEN_LIST_FRESH_MS;
 }
+
+/**
+ * How often a hidden tab checks the age of its list. Read only at mount and
+ * when brought forward, a tab left behind for an hour would keep an
+ * hour-old count; a check a quarter as long as the freshness keeps it under
+ * 75 seconds old, and costs nothing while the list is fresh.
+ */
+export const HIDDEN_LIST_CHECK_MS = HIDDEN_LIST_FRESH_MS / 4;

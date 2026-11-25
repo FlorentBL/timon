@@ -14,7 +14,7 @@ import * as ui from '@timon/ui';
 import type { ClientContext, WidgetChromeProps } from '@timon-ai/sdk';
 import messages from './messages.json';
 import {
-  errorKey, labelProblem, parseIssueInput, safeHref, shouldRead, sortCandidates, toImport,
+  errorKey, HIDDEN_LIST_CHECK_MS, labelProblem, parseIssueInput, safeHref, shouldRead, sortCandidates, toImport,
   type Candidate, type Candidates, type IssueDetails, type IssueLabel, type IssueTodo, type ProjectLabel,
 } from './issues-model.js';
 
@@ -257,6 +257,15 @@ function IssuesWidget({ api, handle, className }: { api: Api } & Partial<WidgetC
     if (front && !wasFront.current) void reload(true);
     wasFront.current = front;
   }, [front, reload]);
+  // Left behind, its count is kept no older than the freshness above: the
+  // list is read again once the last one, this tab's or another's, has aged.
+  useEffect(() => {
+    if (front || !project) return;
+    const timer = setInterval(() => {
+      if (shouldRead(false, lastRead.get(project)?.at ?? null, Date.now())) void reload(true);
+    }, HIDDEN_LIST_CHECK_MS);
+    return () => clearInterval(timer);
+  }, [front, project, reload]);
   useEffect(() => {
     if (!notice) return;
     const timer = setTimeout(() => setNotice(null), 4000);

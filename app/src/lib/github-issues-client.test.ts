@@ -306,6 +306,57 @@ test('stacked, the count goes to the tab, the reload to the menu, and a hidden t
   }
 });
 
+test('a hidden Issues tab reads its list again once it has aged, without being brought forward', async (t) => {
+  const m = await mount();
+  const client = await loadClient();
+  const { clientContext } = await import('@/lib/plugin-host/loader');
+  const { pickStackProject } = await import('@/plugins-client/kanban/git-stack-project');
+  const { WidgetSelfProvider } = await import('@/components/widget-host/widget-self');
+  const dispose = client.apply(clientContext(manifest.timon.id, manifest.timon.client.slots));
+  const realNow = Date.now;
+  t.mock.timers.enable({ apis: ['setInterval'] });
+  try {
+    pickStackProject('acme');
+    const entry = m.slots.slotEntries('cockpit.widget').find((e) => e.pluginId === PLUGIN && e.key === 'issues');
+    const Widget = entry!.Component as ComponentType<{ handle?: unknown }>;
+    const counts: Array<number | null> = [];
+    const stacked = (selected: boolean) => m.React.createElement(WidgetSelfProvider, { value: {
+      id: 'plugin:github-issues:issues', tabbed: true, selected,
+      publishCount: (_id: string, count: number | null) => { counts.push(count); },
+      publishMenu: () => {}, publishAttention: () => {},
+    } }, m.React.createElement(Widget, { handle: null }));
+    const reads = () => m.calls.filter((c) => c.url === `${BASE}candidates?project=acme`).length;
+    // One check of the hidden tab (`HIDDEN_LIST_CHECK_MS`).
+    const check = async () => { await m.React.act(async () => { t.mock.timers.tick(15_000); }); };
+
+    await m.render(stacked(false));
+    await m.until(() => counts.includes(2), 'the count read for the tab');
+    assert.equal(reads(), 1);
+    await check();
+    await m.until(() => true, 'a check');
+    assert.equal(reads(), 1, 'a fresh list is not read again');
+
+    // A minute later, still behind: the next check reads it.
+    Date.now = () => realNow() + 61_000;
+    await check();
+    await m.until(() => reads() === 2, 'a stale count read again by the timer');
+
+    // In front, the timer stops.
+    await m.render(stacked(true));
+    await m.until(() => reads() === 3, 'read when its tab comes forward');
+    Date.now = () => realNow() + 122_000;
+    await check();
+    await m.until(() => true, 'a check');
+    assert.equal(reads(), 3);
+  } finally {
+    Date.now = realNow;
+    await m.React.act(async () => { dispose(); });
+    pickStackProject(null);
+    client.cleanup();
+    await m.unmount();
+  }
+});
+
 test('the project settings row shows the label and what is left, and changes the label in a dialog', async () => {
   const m = await mount(({ method, url }) => (method === 'PUT' && url === `${BASE}project` ? Response.json({ project: 'acme', label: 'triage' }) : undefined));
   const client = await loadClient();
