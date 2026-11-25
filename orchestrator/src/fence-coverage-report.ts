@@ -20,7 +20,14 @@ export type FenceCoverageCheck = {
   why: string;
 };
 
-export type FenceCoverageProfile = { profile: string; ok: boolean; checks: FenceCoverageCheck[]; error?: string };
+/**
+ * Whether the profile's real launch was built (`buildSpawn`) and how many paths of the Timon home it
+ * named, each one among the checks; or why it could not be (a sign-in missing, a provider refusing):
+ * then only the folders the fence grants a mission were checked. Absent from an older daemon.
+ */
+export type FenceCoverageLaunch = { built: true; paths: number } | { built: false; error: string };
+
+export type FenceCoverageProfile = { profile: string; ok: boolean; checks: FenceCoverageCheck[]; error?: string; launch?: FenceCoverageLaunch };
 
 export type FenceCoverageReport = {
   /** `checked`: the fence applies and each active profile was checked. `unfenced`: missions run without it here. */
@@ -64,7 +71,11 @@ export function formatFenceCoverage(report: FenceCoverageReport | null, unavaila
       continue;
     }
     const failed = profile.checks.filter(failedCheck);
-    lines.push(`  ${profile.profile.padEnd(width)}  ${failed.length ? '✗' : '✓'} ${profile.checks.length} path(s)`);
+    const launch = profile.launch?.built ? `, ${profile.launch.paths} named by its launch` : '';
+    lines.push(`  ${profile.profile.padEnd(width)}  ${failed.length ? '✗' : '✓'} ${profile.checks.length} path(s)${launch}`);
+    if (profile.launch && !profile.launch.built) {
+      lines.push(`      launch not built (${profile.launch.error}): only the folders the fence grants were checked`);
+    }
     for (const check of failed) lines.push(`      ${describe(check)}`);
   }
   for (const entry of report.exceptions) lines.push(`  exception ${entry.path} opens nothing: ${entry.reason}`);
