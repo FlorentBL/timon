@@ -36,6 +36,8 @@ export type BinaryPinErrorCode =
   | 'path_not_file'
   | 'path_not_executable'
   | 'wrong_program'
+  | 'no_answer'
+  | 'unsupported_program'
   | 'no_config'
   | 'config_unreadable';
 
@@ -47,6 +49,8 @@ const MESSAGES: Record<BinaryPinErrorCode, string> = {
   path_not_file: 'This path is a folder, not the binary itself.',
   path_not_executable: 'This file cannot be run: it is not executable.',
   wrong_program: 'This file is not the program this provider runs: its `--version` answer does not match.',
+  no_answer: 'This file did not answer `--version`: it failed, ran past its time limit or printed too much.',
+  unsupported_program: 'On Windows, pin the program\'s .exe, or the .cmd shim npm installed for it.',
   no_config: 'Finish the setup first: timon.config.json does not exist yet.',
   config_unreadable: 'timon.config.json cannot be read as JSON; fix or restore it first.',
 };
@@ -58,6 +62,8 @@ const STATUS: Record<BinaryPinErrorCode, number> = {
   path_not_file: 400,
   path_not_executable: 400,
   wrong_program: 400,
+  no_answer: 400,
+  unsupported_program: 400,
   no_config: 409,
   config_unreadable: 409,
 };
@@ -155,9 +161,15 @@ export async function assertPinIdentity(name: string, path: string): Promise<voi
   if (!identity) return;
   const result = await checkBinaryIdentity(path, identity);
   if (result.ok) return;
-  console.warn(`[backends] ${name}: pin refused, ${binaryIdentityRefusal(`\`${name}\``, path, identity, result.printed, result.slow)}`);
+  console.warn(`[backends] ${name}: pin refused, ${binaryIdentityRefusal(`\`${name}\``, path, identity, result.reason)}`);
+  const asked = (identity.args ?? DEFAULT_IDENTITY_ARGS).join(' ');
+  if (result.reason === 'unsupported') throw new BinaryPinError('unsupported_program');
+  // A pattern too slow to read the answer is the provider's fault, but for the person the file was not checked.
+  if (result.reason !== 'mismatch') {
+    throw new BinaryPinError('no_answer', `This file did not answer \`${asked}\`: it failed, ran past its time limit or printed too much.`);
+  }
   throw new BinaryPinError('wrong_program', identity.expected
-    ? `This file is not ${identity.expected}: its \`${(identity.args ?? DEFAULT_IDENTITY_ARGS).join(' ')}\` answer does not match.`
+    ? `This file is not ${identity.expected}: its \`${asked}\` answer does not match.`
     : MESSAGES.wrong_program);
 }
 

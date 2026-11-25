@@ -451,6 +451,8 @@
       "path_not_file": "To folder. Wybierz sam plik programu.",
       "path_not_executable": "Tego pliku nie można uruchomić: nie jest wykonywalny.",
       "wrong_program": "Ten plik nie jest interfejsem CLI {name}.",
+      "no_answer": "Ten program nie odpowiedział na `--version`: zakończył się błędem, trwał za długo lub wypisał za dużo.",
+      "unsupported_program": "W systemie Windows wybierz plik .exe programu lub plik .cmd zainstalowany dla niego przez npm.",
       "no_config": "Najpierw dokończ konfigurację.",
       "config_unreadable": "Nie można odczytać timon.config.json. Napraw go lub przywróć, a potem sprawdź ponownie.",
       "invalid_body": "Tej ścieżki nie można zapisać.",

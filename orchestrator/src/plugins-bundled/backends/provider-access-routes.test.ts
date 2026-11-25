@@ -102,6 +102,9 @@ async function call(method: string, path: string, as: Caller, body?: unknown) {
   return { status: res.status, json, text };
 }
 
+/** Setting or removing a program's path: a superadmin in a session, beyond any level of the screen. */
+const PINNING = new Set(['PUT /api/host/binaries/claude', 'DELETE /api/host/binaries/claude']);
+
 /** Routes of the sections other than Connection, and of adding a provider. Cheap to call: no network, no install. */
 const FULL_ONLY: readonly [string, string, unknown?][] = [
   ['GET', '/api/host/binaries'],
@@ -153,8 +156,21 @@ test('own accounts: refused on every section but Connection', async () => {
     const res = await call(method, path, 'own', body);
     assert.equal(res.status, 403, `${method} ${path}`);
     const refusal = res.json as { code?: string; permission?: unknown };
+    if (PINNING.has(`${method} ${path}`)) {
+      // Choosing the program the daemon runs is the superadmin's, whatever the level.
+      assert.equal(refusal.code, 'operator_only', `${method} ${path}`);
+      continue;
+    }
     assert.equal(refusal.code, 'account_lacks_permission', `${method} ${path}`);
     assert.equal(refusal.permission, 'providers:manage', `${method} ${path}`);
+  }
+});
+
+test('full access: pinning or unpinning a program stays the superadmin\'s', async () => {
+  for (const [method, path, body] of FULL_ONLY.filter(([m, p]) => PINNING.has(`${m} ${p}`))) {
+    const res = await call(method, path, 'full', body);
+    assert.equal(res.status, 403, `${method} ${path}`);
+    assert.equal((res.json as { code?: string }).code, 'operator_only', `${method} ${path}`);
   }
 });
 

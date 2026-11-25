@@ -283,7 +283,19 @@ to it is refused on the click, and again before every launch.
 The same check runs on a path the person pins for your program (**Program →
 Advanced settings** on the provider page): a file that does not match is refused
 before it is saved, and `timon doctor` marks an existing pin that does not match as
-failed, quoting what it printed.
+failed. Neither the refusal nor the report quotes what the program printed.
+
+Make sure your program answers the identity question on its own:
+
+- it must exit with code 0, within a few seconds, printing less than 64 KB. A
+  program that prints the expected line and then fails or hangs is refused;
+- it runs in an empty temporary folder, with only `PATH`, `HOME`, `USERPROFILE`,
+  `SystemRoot`, `TEMP`, `TMP` and `LANG` in its environment: no `NODE_*`, no
+  `npm_config_*`, no Timon variable;
+- on Windows, Timon starts a `.exe`, or an npm `.cmd` shim it can read, through the
+  runtime the shim names. Any other file (`.bat`, `.com`, another kind of `.cmd`)
+  is refused without being run;
+- whatever it starts is ended with it, on every system.
 
 ### Updating a provider
 

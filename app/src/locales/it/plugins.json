@@ -451,6 +451,8 @@
       "path_not_file": "Questa è una cartella. Scegli il file del programma stesso.",
       "path_not_executable": "Questo file non può essere eseguito: non è eseguibile.",
       "wrong_program": "Questo file non è la CLI di {name}.",
+      "no_answer": "Questo programma non ha risposto a `--version`: è fallito, ha impiegato troppo o ha scritto troppo.",
+      "unsupported_program": "Su Windows, scegli il file .exe del programma o il file .cmd che npm ha installato per esso.",
       "no_config": "Completa prima la configurazione.",
       "config_unreadable": "Impossibile leggere timon.config.json. Correggilo o ripristinalo, poi ricontrolla.",
       "invalid_body": "Questo percorso non può essere salvato.",

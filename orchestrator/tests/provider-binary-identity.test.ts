@@ -173,7 +173,7 @@ test('REFUSAL: grok\'s `agent` answers to the alias, and the authorization click
   assert.deepEqual(providerBinaryRequests(manifest), [{ name: 'cursor-agent', found: 'agent', resolved: AGENT, allowed: false, refused: null }]);
   await assert.rejects(grantProviderBinaries(manifest, [AGENT]), (error: Error) =>
     error instanceof ExecGrantError && error.code === 'binary-identity' && error.status === 409
-    && error.message.includes('"grok 1.0.13 (5e9a58528b76) [stable]"') && error.message.includes("Cursor's agent CLI"));
+    && !error.message.includes('grok 1.0.13') && error.message.includes("Cursor's agent CLI"));
   assert.deepEqual(config().pluginPolicy.exec.allow, []);
   await assert.rejects(async () => entry.apply(context()), 'without an authorization the plugin does not register');
   assert.equal(getDialect('cursor'), undefined);
@@ -194,5 +194,5 @@ test('Cursor\'s own `agent` is authorized on the click, and the plugin launches 
 test('REFUSAL: grok\'s installer writes its `agent` over the authorized one — the launch is refused', { skip: !posix }, async () => {
   installAgent(`${GROK_AGENT}# another size, so the answer kept for the previous file is not reused\n`);
   await assert.rejects(assertLaunchIdentity('cursor', 'agent'), (error: Error) =>
-    error instanceof BinaryIdentityError && /printed "grok 1\.0\.13/.test(error.message));
+    error instanceof BinaryIdentityError && /`agent` is not Cursor's agent CLI/.test(error.message) && !error.message.includes('grok'));
 });

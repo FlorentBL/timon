@@ -15,7 +15,7 @@ import { apiPort, boundAddress } from './api-url.js';
 import { buildInfo } from './build-info.js';
 import { CONFIG_FILE, config } from './config/load.js';
 import { compareVersions, packagedDaemon, readDataVersion, timonVersion } from './data-version.js';
-import { diagnose, systemdPresent } from './doctor.js';
+import { diagnose, refreshPinnedIdentities, systemdPresent } from './doctor.js';
 import { buildDiagnosticReport, doctorOutcome, type Finding } from './host/diagnostic-report.js';
 import { packagedRuntime } from './host/bundled-node.js';
 import { getHost } from './host/index.js';
@@ -325,6 +325,10 @@ export async function daemonDiagnosticReport(appVersion: string | null): Promise
         `licence   ${license.edition}, plan ${license.plan ?? '—'}, ${license.status}, channel ${license.channel}`,
       ],
     }],
-    doctor: async () => doctorOutcome(diagnose()),
+    doctor: async () => {
+      // A support report may wait: the pins never asked yet are, so the report does not miss them.
+      await refreshPinnedIdentities();
+      return doctorOutcome(diagnose());
+    },
   });
 }

@@ -451,6 +451,8 @@
       "path_not_file": "Das ist ein Ordner. Wähle die Programmdatei selbst.",
       "path_not_executable": "Diese Datei kann nicht ausgeführt werden: Sie ist nicht ausführbar.",
       "wrong_program": "Diese Datei ist nicht die {name}-CLI.",
+      "no_answer": "Dieses Programm hat nicht auf `--version` geantwortet: Es ist fehlgeschlagen, hat zu lange gebraucht oder zu viel ausgegeben.",
+      "unsupported_program": "Wähle unter Windows die .exe des Programms oder die .cmd-Datei, die npm dafür installiert hat.",
       "no_config": "Schließe zuerst die Einrichtung ab.",
       "config_unreadable": "timon.config.json kann nicht gelesen werden. Repariere oder stelle sie wieder her und prüfe dann erneut.",
       "invalid_body": "Dieser Pfad kann nicht gespeichert werden.",

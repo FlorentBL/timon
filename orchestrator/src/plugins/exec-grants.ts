@@ -153,7 +153,7 @@ async function assertIdentities(
     if (!program || !samePath(canonicalPath(program), request.resolved)) throw new ExecGrantError('mismatch', CHANGED, 409);
     const result = await checkBinaryIdentity(program, identity);
     if (!result.ok) {
-      throw new ExecGrantError('binary-identity', binaryIdentityRefusal(`provider \`${manifest.id}\``, request.resolved, identity, result.printed, result.slow, 'provider.binaries[].identity'), 409);
+      throw new ExecGrantError('binary-identity', binaryIdentityRefusal(`provider \`${manifest.id}\``, request.resolved, identity, result.reason, 'provider.binaries[].identity'), 409);
     }
   }
 }

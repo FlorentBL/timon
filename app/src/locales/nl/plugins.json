@@ -451,6 +451,8 @@
       "path_not_file": "Dit is een map. Kies het programmabestand zelf.",
       "path_not_executable": "Dit bestand kan niet worden uitgevoerd: het is niet uitvoerbaar.",
       "wrong_program": "Dit bestand is niet de {name}-CLI.",
+      "no_answer": "Dit programma antwoordde niet op `--version`: het mislukte, duurde te lang of schreef te veel.",
+      "unsupported_program": "Kies op Windows het .exe-bestand van het programma, of het .cmd-bestand dat npm ervoor installeerde.",
       "no_config": "Rond eerst de configuratie af.",
       "config_unreadable": "timon.config.json kan niet worden gelezen. Herstel het bestand en controleer opnieuw.",
       "invalid_body": "Dit pad kan niet worden opgeslagen.",

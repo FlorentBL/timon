@@ -14,7 +14,7 @@ import type { AddressInfo } from 'node:net';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import express from 'express';
-import { postTestAccount } from '../../../tests/helpers/accounts.js';
+import { grantTestPermissions, postTestAccount } from '../../../tests/helpers/accounts.js';
 
 const HOME = mkdtempSync(join(tmpdir(), 'timon-binary-pins-'));
 process.env.TIMON_HOME = HOME;
@@ -27,6 +27,7 @@ const { registerBinaryRoutes } = await import('./binary-routes.js');
 const { dbApi } = await import('../../db.js');
 const { SESSION_COOKIE } = await import('../../users/session.js');
 const { issueMissionApiToken } = await import('../../users/api-tokens.js');
+const { issuePairingCode, redeemPairingCode } = await import('../../users/devices.js');
 const { CONFIG_FILE, config } = await import('../../config/load.js');
 const { checkBackendBinaries } = await import('../../backends/binary-check.js');
 const { assertExecutablePin, normalizePinPath, runnableOnWindows } = await import('../../backends/binary-pins.js');
@@ -85,6 +86,10 @@ const admin = dbApi.listUsers().find((u) => u.email === 'admin@example.com')!;
 dbApi.createMission('mission-binary-pins', 'admin.agent', 'work', undefined, admin.id);
 const missionToken = issueMissionApiToken('mission-binary-pins');
 assert.ok(adaId);
+// The superadmin's own paired machine: it acts with the owner's rights, but it is not the person.
+const paired = redeemPairingCode({ code: issuePairingCode(admin.id).code, name: 'laptop', ip: null, userAgent: null });
+assert.equal(paired.kind, 'ok');
+const deviceToken = paired.kind === 'ok' ? paired.token : '';
 
 // What a configured install looks like: a file the person wrote, four-space
 // indent, keys this feature must not touch.
@@ -135,6 +140,32 @@ test('daemon token, mission token, non-superadmin session: 403, nothing written'
   }
   assert.equal(readFileSync(CONFIG_FILE, 'utf8'), before);
   assert.equal(config().host.binaries[CMD], undefined);
+});
+
+/**
+ * A pin is the program the daemon runs at every mission, and the PUT runs it once to check it: a setting of
+ * the host. `providers:manage` opens the Providers screen and the list of programs, not this.
+ */
+test('pinning and unpinning: a superadmin in a session only — not providers:manage, not a paired device', async () => {
+  grantTestPermissions(dbApi, adaId, ['providers:manage']);
+  try {
+    const before = readFileSync(CONFIG_FILE, 'utf8');
+    for (const [method, path, body] of ROUTES) {
+      const manager = await call(method, path, { body, cookie: adaCookie });
+      const device = await call(method, path, { body, bearer: deviceToken });
+      if (method === 'PUT' || method === 'DELETE') {
+        assert.equal(manager.status, 403, `providers:manage ${method} ${path}: ${manager.text}`);
+        assert.equal(device.status, 403, `device ${method} ${path}: ${device.text}`);
+      } else {
+        assert.equal(manager.status, 200, `providers:manage still reads: ${method} ${path}`);
+        assert.equal(device.status, 200, `the superadmin's device still reads: ${method} ${path}`);
+      }
+    }
+    assert.equal(readFileSync(CONFIG_FILE, 'utf8'), before);
+    assert.equal(config().host.binaries[CMD], undefined);
+  } finally {
+    grantTestPermissions(dbApi, adaId, []);
+  }
 });
 
 test('refusals: unknown name, relative, missing, folder, not executable — none echoes the input', async () => {
@@ -233,7 +264,9 @@ test('no config file yet: the pin is refused rather than ending the first run', 
  * #1101: a tester pinned `/usr/local/bin/ollama` for Ollama Cloud, which runs on the Codex CLI, and every
  * mission ran `ollama exec …`. The Codex provider declares how its CLI describes itself: the pin asks first.
  */
-test('a pin on another program is refused, naming the CLI expected; the right one is saved', async () => {
+// Windows starts only a `.exe` or a known npm shim to check it, and these stubs are batch files: the format
+// itself is tested in `binary-identity.test.ts`.
+test('a pin on another program is refused, naming the CLI expected; the right one is saved', { skip: process.platform === 'win32' }, async () => {
   const stubOf = (name: string, line: string): string => {
     const file = join(BIN_DIR, `${name}${RUNNABLE}`);
     writeFileSync(file, process.platform === 'win32' ? `@echo ${line}\r\n` : `#!/bin/sh\necho "${line}"\n`, { mode: 0o755 });
@@ -248,6 +281,14 @@ test('a pin on another program is refused, naming the CLI expected; the right on
   assert.deepEqual(wrong.json, { error: 'wrong_program', message: 'This file is not the Codex CLI: its `--version` answer does not match.' });
   assert.equal(readFileSync(CONFIG_FILE, 'utf8'), before, 'nothing written');
   assert.equal(config().host.binaries.codex, undefined);
+
+  // The right version, then a failure: the identity is read only from a run that succeeded.
+  const failing = join(BIN_DIR, `codex-failing${RUNNABLE}`);
+  writeFileSync(failing, process.platform === 'win32' ? '@echo codex-cli 0.169.0\r\n@exit /b 1\r\n' : '#!/bin/sh\necho "codex-cli 0.169.0"\nexit 1\n', { mode: 0o755 });
+  const failed = await call('PUT', '/api/host/binaries/codex', { cookie: adminCookie, body: { path: failing } });
+  assert.equal(failed.status, 400, failed.text);
+  assert.equal((failed.json as { error: string }).error, 'no_answer');
+  assert.equal(readFileSync(CONFIG_FILE, 'utf8'), before, 'nothing written');
 
   const right = await call('PUT', '/api/host/binaries/codex', { cookie: adminCookie, body: { path: codex } });
   assert.equal(right.status, 200, right.text);

@@ -517,6 +517,8 @@
       "path_not_file": "C'est un dossier. Choisissez le fichier du programme lui-même.",
       "path_not_executable": "Ce fichier ne peut pas être lancé : il n'est pas exécutable.",
       "wrong_program": "Ce fichier n'est pas le CLI {name}.",
+      "no_answer": "Ce programme n'a pas répondu à `--version` : il a échoué, a mis trop longtemps ou a trop écrit.",
+      "unsupported_program": "Sous Windows, choisissez le .exe du programme, ou le fichier .cmd que npm a installé pour lui.",
       "no_config": "Terminez d'abord la configuration initiale.",
       "config_unreadable": "timon.config.json est illisible. Corrigez-le ou restaurez-le, puis vérifiez à nouveau.",
       "invalid_body": "Ce chemin ne peut pas être enregistré.",

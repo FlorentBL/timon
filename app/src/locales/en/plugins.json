@@ -527,6 +527,8 @@
       "path_not_file": "This is a folder. Pick the program file itself.",
       "path_not_executable": "This file cannot be run: it is not executable.",
       "wrong_program": "This file is not the {name} CLI.",
+      "no_answer": "This program did not answer `--version`: it failed, took too long or printed too much.",
+      "unsupported_program": "On Windows, pick the program's .exe, or the .cmd file npm installed for it.",
       "no_config": "Finish the setup first.",
       "config_unreadable": "timon.config.json cannot be read. Fix or restore it, then check again.",
       "invalid_body": "This path cannot be saved.",

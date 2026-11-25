@@ -461,6 +461,8 @@
       "path_not_file": "这是一个文件夹，请选择程序文件本身。",
       "path_not_executable": "此文件不是可执行文件，无法运行。",
       "wrong_program": "此文件不是 {name} CLI。",
+      "no_answer": "此程序没有响应 `--version`：它失败了、耗时过长或输出过多。",
+      "unsupported_program": "在 Windows 上，请选择程序的 .exe，或 npm 为它安装的 .cmd 文件。",
       "no_config": "请先完成设置。",
       "config_unreadable": "无法读取 timon.config.json。请修复或还原该文件后重新检查。",
       "invalid_body": "无法保存此路径。",

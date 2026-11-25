@@ -13,7 +13,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 process.env.TIMON_HOME = mkdtempSync(join(tmpdir(), 'timon-kill-tree-'));
-const { execTree, killProcessTree, stopProcessGroup } = await import('./kill-tree.js');
+const { execTree, killProcessTree, stopProcessGroup, sweepWindowsOrphans, windowsOrphanSweepScript } = await import('./kill-tree.js');
 const { getHost } = await import('./index.js');
 type ExecResult = import('./types.js').ExecResult;
 
@@ -324,4 +324,63 @@ test('no taskkill elsewhere, nor without a pid: the signal goes out at once', (t
     assert.deepEqual(signals, ['SIGTERM'], platform);
   }
   assert.equal(exec.mock.callCount(), 0);
+});
+
+/**
+ * Windows has no group, and `taskkill /T` walks down from a living root only: a program that exits at once
+ * and leaves a child would keep it. With `sweepOrphans`, the call ends what the exited root left, before it
+ * returns. Run on Linux with the host taken for a Windows one: the sweep (PowerShell there) is the fake.
+ */
+test('Windows: with sweepOrphans, what the exited root left is swept before the call returns', { skip: !posix }, async (t) => {
+  const host = getHost();
+  const pidFile = join(dir, 'orphan-pid');
+  const file = stub('leaves-orphan', `sleep 8 &\necho $! > "${pidFile}"\necho done`);
+  t.mock.property(host, 'platform', 'win32');
+  const swept: { pid: number; script: string }[] = [];
+  let rootPid = 0;
+  const spawnOriginal = host.spawn.bind(host);
+  t.mock.method(host, 'spawn', (...call: Parameters<typeof host.spawn>) => {
+    const proc = spawnOriginal(...call);
+    rootPid = proc.pid ?? 0;
+    return proc;
+  });
+  t.mock.method(host, 'execAsync', async (name: string, args: string[]) => {
+    assert.equal(name, 'powershell');
+    const script = args[args.length - 1]!;
+    swept.push({ pid: Number(/^\$root = (\d+)$/m.exec(script)?.[1]), script });
+    // What the real script does to the orphan.
+    process.kill(readPid(pidFile), 'SIGKILL');
+    return ANSWERED;
+  });
+  const started = Date.now();
+  const result = await execTree(file, [], { ...LIMITS, sweepOrphans: true });
+  const left = readPid(pidFile);
+  try {
+    assert.equal(result.code, 0);
+    assert.ok(Date.now() - started < 3_000, 'the orphan holding stdout did not hold the call');
+    assert.equal(swept.length, 1, 'one sweep, after the root exited');
+    assert.equal(swept[0]!.pid, rootPid, 'from the root it started');
+    assert.ok(await stopsRunning(left), `sleep ${left} survived`);
+  } finally { cleanUp(left); }
+
+  swept.length = 0;
+  await execTree(file, [], LIMITS);
+  cleanUp(readPid(pidFile));
+  assert.equal(swept.length, 0, 'without the option, no PowerShell is started');
+});
+
+test('the sweep script: never while the pid is held, only processes since the root, never a system pid', () => {
+  const script = windowsOrphanSweepScript(4242, new Date('2026-11-25T03:00:00.000Z'));
+  assert.match(script, /^\$root = 4242$/m);
+  assert.match(script, /'2026-11-25T03:00:00\.000Z'/);
+  assert.match(script, /Where-Object \{ \$_\.ProcessId -eq \$root \}\)\.Count -gt 0\) \{ return \}/, 'a held pid is someone else\'s');
+  assert.match(script, /CreationDate\.ToUniversalTime\(\) -ge \$since/, 'an older process named a previous holder');
+  assert.match(script, /Stop-Process -Id \$id -Force/);
+  for (const pid of [0, 4, -1, 1.5, Number.NaN]) assert.throws(() => windowsOrphanSweepScript(pid, new Date()), String(pid));
+});
+
+test('the sweep never throws: no PowerShell, a refused pid', async () => {
+  const failing = { execAsync: () => Promise.reject(new Error('binary "powershell" not found in PATH')) };
+  await assert.doesNotReject(sweepWindowsOrphans(failing, 4242, new Date()));
+  await assert.doesNotReject(sweepWindowsOrphans({ execAsync: () => Promise.resolve(ANSWERED) }, 0, new Date()));
 });
