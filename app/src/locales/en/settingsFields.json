@@ -244,6 +244,11 @@
       "description": "Delay after a task closes before its worktree becomes a candidate. Gives the merger and the following doc task time to work in it.",
       "unit": "min"
     },
+    "TIMON_WORKTREE_ADD_STALL_MS": {
+      "label": "Worktree creation without progress",
+      "description": "2 min by default. Creating a task's worktree may take as long as git keeps reporting its checkout progress, as on a large repository or a disk slowed down by an antivirus. Past this delay without any progress, git and the processes it started are stopped, the half-made worktree is removed (its branch is kept) and the task is blocked with the reason.",
+      "unit": "ms"
+    },
     "TIMON_PERMISSION_AUTONOMOUS_TIMEOUT_MS": {
       "label": "Delay before auto-deny (autonomous missions)",
       "description": "SHORT delay, for an Allow / Deny card (forms have their own delay), applied when nobody could be notified on their phone (Web Push not configured, no subscription, send failed): the assumption \"nobody will click\" holds, and leaving a night agent hanging is pointless. Past this delay the request is denied with a message inviting the agent to pick an alternative. If the push was delivered, \"Delay before auto-deny (human notified)\" applies instead. Chat missions are NEVER auto-resolved.",
