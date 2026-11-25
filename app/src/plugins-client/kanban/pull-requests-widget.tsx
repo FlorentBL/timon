@@ -57,7 +57,7 @@ import { PublishDialog, type PublishTarget } from './publish-dialog';
 import { useForgeProposals } from './use-forge-proposals';
 import { StackProjectPicker, useStackProject } from './git-stack-project';
 import { proposeAskContributor, proposeBranchUpdate } from './forge-branch-api';
-import { ConflictDialog } from './conflict-dialog';
+import { ConflictDialog } from './product-conflict-dialog';
 import { useLandingChanges, useLandingFallbackPoll, type LandingChange } from './landing-events';
 import { landsLocally, LocalLandingEmpty, useProjectIntegration } from './local-landing';
 import { onIntegrationChanged } from './project-integration-api';
