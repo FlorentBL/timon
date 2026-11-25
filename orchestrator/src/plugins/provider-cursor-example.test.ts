@@ -11,7 +11,7 @@
  *  - with both on the PATH, `cursor-agent` is what the manifest authorizes, never `agent` (grok's binary on many machines,
  *    Cursor's alias); an `agent` alone is accepted if it satisfies the identity (`tests/provider-binary-identity.test.ts`);
  *  - a program at the authorized path that does not describe itself as Cursor's (`declares.binary.identity`) is
- *    refused at launch, saying what it printed; what the plugin never saw work reaches the catalogue (`unverified`).
+ *    refused at launch, without quoting what it printed; what the plugin never saw work reaches the catalogue (`unverified`).
  */
 import { createTestAccount } from '../../tests/helpers/accounts.js';
 import '../test-home.js';
@@ -180,7 +180,7 @@ test('REFUSAL: no mission token, no vault slice, no daemon env reaches the Curso
   }
 });
 
-test('REFUSAL: another CLI written over the authorized path is refused at launch, saying what it printed', { skip: !posix }, async () => {
+test('REFUSAL: another CLI written over the authorized path is refused at launch, without quoting it', { skip: !posix }, async () => {
   upsertAgent({
     name: 'cursor.namesake',
     system_prompt: 'witness — does nothing.',
@@ -199,7 +199,8 @@ test('REFUSAL: another CLI written over the authorized path is refused at launch
   writeFileSync(join(bin, 'cursor-agent'), `${GROK_STUB}# a different size, so the cached answer is not reused\n`);
   try {
     await assert.rejects(() => spawnAgent('cursor.namesake', 'ping'), (error: Error) =>
-      /is not the program backend `cursor` runs \(Cursor's agent CLI[^)]*\): `--version` printed "grok-cli 0\.9\.1"/.test(error.message));
+      /`cursor-agent` is not Cursor's agent CLI.*?, the program backend `cursor` runs: its `--version` answer does not match/.test(error.message)
+      && !error.message.includes('grok-cli'));
     assert.equal(spawned, false, 'nothing was started');
   } finally {
     host.spawn = original;

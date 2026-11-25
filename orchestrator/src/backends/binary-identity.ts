@@ -4,8 +4,13 @@
  * A bare name is not an identity: Cursor's installer and grok's both put an `agent` in `~/.local/bin`, and
  * the last one installed wins the name — even after the operator authorized that path for the other. A
  * provider that declares how its program describes itself (`agent --version` → `2026.10.16-…`) has it
- * checked before a mission starts it, and a mission on the wrong program fails at once, saying what the
- * program printed, instead of running a stranger's CLI with the mission's prompt.
+ * checked before a mission starts it, and a mission on the wrong program fails at once instead of running a
+ * stranger's CLI with the mission's prompt.
+ *
+ * What the program printed never leaves this module: not in a refusal, not in a log, not in `doctor`. A
+ * stranger's `--version` may print a private path or a secret no redaction list knows, and a refusal only
+ * needs to say which kind of answer it got (`BinaryIdentityFailure`). Nor does the refusal quote the full
+ * path, which names the home folder: the file's own name is enough to recognise it.
  *
  * The answer is kept per file (path, size, modification time), so a mission start costs one run of the
  * program only after it was installed or replaced.
@@ -17,13 +22,13 @@
  * refuses lookarounds and backreferences, which the SDK contract allows.
  */
 import { statSync } from 'node:fs';
+import { basename } from 'node:path';
 import { Script } from 'node:vm';
 import { declaredBinaries, declaredBinary } from '../host/declared-binaries.js';
 import { getHost } from '../host/index.js';
 import { execTree } from '../host/kill-tree.js';
 import { resolveExecutable } from '../plugins/policy.js';
 import { systemEnv } from '../secrets/env.js';
-import { redactText } from '../secrets/redact.js';
 import type { ProviderBinaryIdentity } from './provider-declarations.js';
 import { profileDeclarations } from './registry.js';
 
@@ -31,12 +36,17 @@ const IDENTITY_TIMEOUT_MS = 5_000;
 const IDENTITY_MAX_OUTPUT = 64 * 1024;
 /** A version line takes microseconds; past this, the pattern is backtracking out of control. */
 const PATTERN_TIMEOUT_MS = 250;
-const PRINTED_MAX_CHARS = 120;
 const CACHE_MAX = 64;
 export const DEFAULT_IDENTITY_ARGS: readonly string[] = ['--version'];
 
-/** `slow`: the pattern ran past its time limit, so the program's answer could not be read at all. */
-export type BinaryIdentityResult = { readonly ok: true } | { readonly ok: false; readonly printed: string; readonly slow?: true };
+/**
+ * Why a program is refused, never with what it printed:
+ * - `mismatch`: it answered, and the answer is not the declared one;
+ * - `no_answer`: it printed nothing usable, or was stopped at the time limit;
+ * - `slow_pattern`: the provider's pattern ran past its time limit, so the answer could not be read at all.
+ */
+export type BinaryIdentityFailure = 'mismatch' | 'no_answer' | 'slow_pattern';
+export type BinaryIdentityResult = { readonly ok: true } | { readonly ok: false; readonly reason: BinaryIdentityFailure };
 
 /** Limits of one check; tests shorten them. */
 export type BinaryIdentityLimits = { readonly runTimeoutMs: number; readonly patternTimeoutMs: number };
@@ -63,13 +73,6 @@ export class BinaryIdentityError extends Error {
   }
 }
 
-/** The first line the program printed, short and with secrets masked: what the refusal quotes. */
-function firstLine(output: string): string {
-  const line = output.split(/\r?\n/).map((l) => l.trim()).find(Boolean) ?? '';
-  const clipped = line.length > PRINTED_MAX_CHARS ? `${line.slice(0, PRINTED_MAX_CHARS)}…` : line;
-  return redactText(clipped);
-}
-
 /** The cache key of one check: the file as it is on disk, the question, the expected answer. `''` = never cached. */
 function cacheKey(program: string, args: readonly string[], identity: ProviderBinaryIdentity): string {
   let stamp = '';
@@ -86,8 +89,8 @@ function verdict(
 ): BinaryIdentityResult {
   const matched = testIdentityPattern(identity.pattern, output, limits.patternTimeoutMs);
   // Not cached: under a heavy load a sane pattern could run past the limit once.
-  if (matched === null) return { ok: false, printed: firstLine(output), slow: true };
-  const result: BinaryIdentityResult = matched ? { ok: true } : { ok: false, printed: firstLine(output) };
+  if (matched === null) return { ok: false, reason: 'slow_pattern' };
+  const result: BinaryIdentityResult = matched ? { ok: true } : { ok: false, reason: output.trim() ? 'mismatch' : 'no_answer' };
   // A program stopped by the timeout said nothing about itself: on a loaded machine, the next try must really ask.
   if (key && !timedOut) {
     if (cache.size >= CACHE_MAX) cache.delete(cache.keys().next().value!);
@@ -132,21 +135,23 @@ export function checkBinaryIdentitySync(
 }
 
 /**
- * The refusal a person reads: which file, what it said, what was expected, what to do. `who`: "backend `cursor`".
- * `where`: the field the pattern came from, the one the provider must change.
+ * The refusal a person reads: which program, what kind of answer, what was expected, what to do. A fixed
+ * sentence: the file is named by its own name, never by its full path, and what it printed is not quoted.
+ * `who`: "backend `cursor`". `where`: the field the pattern came from, the one the provider must change.
  */
 export function binaryIdentityRefusal(
-  who: string, program: string, identity: ProviderBinaryIdentity, printed: string, slow = false, where = 'declares.binary.identity',
+  who: string, program: string, identity: ProviderBinaryIdentity, reason: BinaryIdentityFailure, where = 'declares.binary.identity',
 ): string {
   const args = (identity.args ?? DEFAULT_IDENTITY_ARGS).join(' ');
-  if (slow) {
-    return `\`${program}\` could not be checked as the program ${who} runs: its \`${where}.pattern\` `
+  const file = `\`${basename(program)}\``;
+  if (reason === 'slow_pattern') {
+    return `${file} could not be checked as the program ${who} runs: its \`${where}.pattern\` `
       + `ran past ${PATTERN_TIMEOUT_MS} ms on what \`${args}\` printed. The provider must declare a simpler pattern.`;
   }
-  const expected = identity.expected ? ` (${identity.expected})` : '';
-  const said = printed ? `printed "${printed}"` : 'printed nothing';
-  return `\`${program}\` is not the program ${who} runs${expected}: \`${args}\` ${said}. `
-    + 'Install the right program, or pin its path in `host.binaries` (timon.config.json).';
+  const fix = 'Install the right program, or pin its path in `host.binaries` (timon.config.json).';
+  if (reason === 'no_answer') return `${file}, the program ${who} runs, did not answer \`${args}\`. ${fix}`;
+  const expected = identity.expected ?? 'the program its provider declares';
+  return `${file} is not ${expected}, the program ${who} runs: its \`${args}\` answer does not match. ${fix}`;
 }
 
 /**
@@ -158,7 +163,7 @@ export async function assertLaunchIdentity(backend: string, cmd: string): Promis
   if (!identity) return;
   const program = resolveExecutable(cmd) ?? cmd;
   const result = await checkBinaryIdentity(program, identity);
-  if (!result.ok) throw new BinaryIdentityError(binaryIdentityRefusal(`backend \`${backend}\``, program, identity, result.printed, result.slow));
+  if (!result.ok) throw new BinaryIdentityError(binaryIdentityRefusal(`backend \`${backend}\``, program, identity, result.reason));
 }
 
 /**
@@ -170,7 +175,7 @@ export async function assertDeclaredIdentity(name: string, program: string, who:
   const identity = declaredBinary(name)?.identity;
   if (!identity) return;
   const result = await checkBinaryIdentity(program, identity);
-  if (!result.ok) throw new BinaryIdentityError(binaryIdentityRefusal(who, program, identity, result.printed, result.slow));
+  if (!result.ok) throw new BinaryIdentityError(binaryIdentityRefusal(who, program, identity, result.reason));
 }
 
 /**

@@ -188,7 +188,8 @@ test('REFUSAL: another program under the same name is a 409, and the file is not
   await assert.rejects(
     grantProviderBinaries(withIdentity('acme-stranger'), [stranger.path], file),
     (err: unknown) => err instanceof ExecGrantError && err.code === 'binary-identity' && err.status === 409
-      && err.message.includes(stranger.path) && err.message.includes('grok-cli 0.9.1') && err.message.includes("Acme's CLI"),
+      && err.message.includes('`acme-stranger`') && !err.message.includes(stranger.path)
+      && !err.message.includes('grok-cli 0.9.1') && err.message.includes("Acme's CLI"),
   );
   assert.equal(readFileSync(file, 'utf8'), before, 'not a byte written');
 });

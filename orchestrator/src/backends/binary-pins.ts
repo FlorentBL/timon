@@ -155,7 +155,7 @@ export async function assertPinIdentity(name: string, path: string): Promise<voi
   if (!identity) return;
   const result = await checkBinaryIdentity(path, identity);
   if (result.ok) return;
-  console.warn(`[backends] ${name}: pin refused, ${binaryIdentityRefusal(`\`${name}\``, path, identity, result.printed, result.slow)}`);
+  console.warn(`[backends] ${name}: pin refused, ${binaryIdentityRefusal(`\`${name}\``, path, identity, result.reason)}`);
   throw new BinaryPinError('wrong_program', identity.expected
     ? `This file is not ${identity.expected}: its \`${(identity.args ?? DEFAULT_IDENTITY_ARGS).join(' ')}\` answer does not match.`
     : MESSAGES.wrong_program);

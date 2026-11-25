@@ -209,10 +209,10 @@ test('an empty main seat names the command that fills it', () => {
 
 /**
  * #1101: `codex ✓ /usr/local/bin/ollama (pinned in timon.config.json)`, and every mission died on
- * `ollama exec`. A pin whose program does not describe itself as its provider declared is ✗, says what it
- * printed, and counts as no backend.
+ * `ollama exec`. A pin whose program does not describe itself as its provider declared is ✗, says so in a
+ * fixed sentence, and counts as no backend.
  */
-test('a pin on another program is not ok, and the report says what it printed', async () => {
+test('a pin on another program is not ok, and the report says so without quoting it', async () => {
   const { mkdtempSync, writeFileSync, rmSync } = await import('node:fs');
   const { tmpdir } = await import('node:os');
   const { join } = await import('node:path');
@@ -230,7 +230,8 @@ test('a pin on another program is not ok, and the report says what it printed', 
     const wrong = diagnose().binaries.find((b) => b.name === 'codex')!;
     assert.equal(wrong.ok, false);
     assert.equal(wrong.path, ollama);
-    assert.match(wrong.error ?? '', /is not the program the `codex` pin runs \(the Codex CLI\): `--version` printed "ollama version is 0\.16\.2"/);
+    assert.match(wrong.error ?? '', /^`ollama(\.cmd)?` is not the Codex CLI, the program the `codex` pin runs: its `--version` answer does not match/);
+    assert.doesNotMatch(wrong.error ?? '', /0\.16\.2|timon-doctor-pin-/, 'neither what it printed nor its folder');
     assert.match(formatDoctor(diagnose()), /codex\s+✗/);
 
     setConfig(TimonConfigSchema.parse({ host: { binaries: { codex } } }));

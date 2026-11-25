@@ -107,7 +107,7 @@ function pinnedIdentityProblem(name: string, path: string): string | null {
   const identity = declaredBinary(name)?.identity;
   if (!identity) return null;
   const result = checkBinaryIdentitySync(path, identity, DOCTOR_IDENTITY_LIMITS);
-  return result.ok ? null : binaryIdentityRefusal(`the \`${name}\` pin`, path, identity, result.printed, result.slow);
+  return result.ok ? null : binaryIdentityRefusal(`the \`${name}\` pin`, path, identity, result.reason);
 }
 
 function dockerUsable(bin: string | null): { present: boolean; usable: boolean; detail: string } {
