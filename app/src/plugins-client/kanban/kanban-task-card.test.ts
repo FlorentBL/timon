@@ -187,7 +187,7 @@ test('a running task whose mission waits on a card says on what, since when and 
     await m.render(task({ ...running, status: 'BLOCKED', pending_permission: {
       kind: 'permission', tool_name: 'Bash', since: NOW, expires_at: null, remaining_ms: null, count: 1,
     } }));
-    assert.equal(m.card().querySelector('[data-pending-permission]'), null, 'only a running task says it');
+    assert.ok(!m.card().querySelector('[data-pending-permission]'), 'only a running task says it');
   } finally {
     await m.unmount();
   }
