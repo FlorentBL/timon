@@ -131,8 +131,10 @@ Release the version with *Release* instead.
 
 Every night at 02:00 UTC, *Nightly build* builds the head of `main` on the
 three systems with the very steps of a release, so a packaging break (a runner
-image that changes, a tool that disappears, a self-hosted runner left dirty)
-shows up the morning after it lands rather than on the day of a release.
+image that changes, a tool that disappears, a native module tied to the
+runner) shows up the morning after it lands rather than on the day of a
+release. The state of the project's Mac is the one thing it does not check:
+only a release builds there.
 
 Its jobs: `pick the nightly version` (names the build
 `x.y.(z+1)-nightly.YYYYMMDD` after the version `main` carries, UTC date, and
@@ -150,12 +152,15 @@ key pair made on the runner, like a release candidate. Like one, it is not a
 trusted build. Its version is not one the updater of an installed Timon reads:
 install one to look at a package, not to keep it.
 
-The macOS builds run on the project's own Mac, which a release needs too. A
-release always goes first: its macOS build cancels a nightly macOS build in
-progress, and a nightly macOS build waits for a release one. A nightly
-cancelled that way reports nothing. Start one by hand from the Actions tab
-(*Nightly build* › *Run workflow*, on `main`) to check a fix before the next
-night.
+Its macOS build runs on `macos-15`, an Apple Silicon runner hosted by GitHub
+and new at every run, never on the project's Mac that builds releases: that
+Mac keeps its account and its disk between runs, and the dependencies of an
+unreleased `main` must not run where the release key is used. A nightly
+therefore never waits for a release, nor takes its place in a queue, and does
+not need the `release-mac` runner group. A nightly that lands on a self-hosted
+runner anyway stops before it checks anything out. Start one by hand from the
+Actions tab (*Nightly build* › *Run workflow*, on `main`) to check a fix before
+the next night.
 
 ## Publish an announcement
 
@@ -225,9 +230,13 @@ repository must allow auto-merge.
 
 The release passes its two build secrets to `build-packages.yml` by name, and
 the called job, which declares `release-build`, reads them from that
-environment. The org runner group of the project's Mac must list
-`build-packages.yml`: a job defined in a reusable workflow is matched by the
-file that defines it, not by its caller.
+environment. Only a release builds on the project's Mac. Its org runner group
+`release-mac` must list
+`ai-timon/timon/.github/workflows/build-packages.yml@refs/heads/main`: a job
+defined in a reusable workflow is matched by the file that defines it, not by
+its caller, so a group that lists only `release.yml` leaves the release's
+macOS build waiting for a runner. The nightly build needs no entry there: its
+macOS build runs on a runner hosted by GitHub.
 
 What reaches what: a step gets only the secrets it uses; the builds get no
 GitHub token; the attestation token never shares a job with npm or the built
