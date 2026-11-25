@@ -1,5 +1,5 @@
 /**
- * The host's own sign-in done in the app (TODO #426), on the screens that offer it: the
+ * The host's own sign-in done in the app (TODO #426, #1139), on the screens that offer it: the
  * onboarding's provider rows and the row of the providers list. Without a session, "Sign in"
  * opens the page-and-code dialog instead of typing a command in a terminal; with a terminal
  * session and no long-lived token, the row offers one; once both are there, nothing. The
@@ -190,6 +190,124 @@ test('a CLI whose host sign-in Timon cannot keep still signs in with its termina
     await m.click(document.querySelector('[data-state="signIn"] button'));
     await m.until(() => m.typed.length === 1, 'the command typed in the terminal');
     assert.equal(dialog(), null);
+  } finally {
+    await m.unmount();
+  }
+});
+
+/** The command shown as code: the terminal's line, which the recovery cards keep out of sight. */
+const commandShown = (command: string) => Array.from(document.querySelectorAll('code')).some((c) => c.textContent === command);
+
+async function openRowMenu(m: Awaited<ReturnType<typeof mount>>, scope: Element): Promise<Element[]> {
+  const trigger = scope.querySelector('button[data-row-menu]') as HTMLElement;
+  assert.ok(trigger, 'the "…" menu');
+  await m.React.act(async () => {
+    trigger.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+  });
+  await m.until(() => document.querySelectorAll('[role="menuitem"]').length > 0, 'the menu items');
+  return Array.from(document.querySelectorAll('[role="menuitem"]'));
+}
+
+test('recovery: "Sign in" opens the page-and-code dialog, the command waits behind the "…" menu', async () => {
+  const server: Server = { list: [cli()], flows: {}, calls: [], codes: [] };
+  const m = await mount(server);
+  try {
+    const { ProviderCliCards } = await import('./provider-cli-cards');
+    await m.render(m.React.createElement(ProviderCliCards, { mode: 'recovery' }));
+    await m.until(() => offer('login') !== null, 'the in-app sign-in button');
+    const card = document.querySelector('section[aria-label="Claude"]')!;
+    assert.equal(commandShown('/usr/bin/claude'), false, 'no command in permanence');
+    assert.doesNotMatch(card.textContent ?? '', /\/login/);
+    // One main action in the card: the sign-in.
+    assert.deepEqual(Array.from(card.querySelectorAll('button:not([data-row-menu])')).map((b) => b.textContent), ['Sign in']);
+
+    await m.click(offer('login'));
+    await m.until(linkShown, 'the sign-in page link');
+    assert.equal(dialog()?.getAttribute('data-host-sign-in'), 'login');
+    assert.deepEqual(m.typed, [], 'no command was typed in a terminal');
+    assert.deepEqual(server.calls, ['POST login']);
+    const cancel = Array.from(document.querySelectorAll('[data-host-sign-in] button')).find((b) => b.textContent === 'Cancel the sign-in');
+    await m.click(cancel);
+    await m.until(() => dialog() === null, 'the dialog closed');
+
+    const items = await openRowMenu(m, card);
+    const show = items.find((i) => i.textContent === 'Show the sign-in command');
+    await m.click(show);
+    await m.until(() => commandShown('/usr/bin/claude'), 'the command, on demand');
+    assert.match(card.textContent ?? '', /\/login/);
+  } finally {
+    await m.unmount();
+  }
+});
+
+test('recovery: the "Desktop app — sign in" card signs in in the app, its installer moves to the menu', async () => {
+  const server: Server = { list: [cli({ bundled: true, path: '/Applications/Claude.app/claude', signInCommand: '/Applications/Claude.app/claude' })], flows: {}, calls: [], codes: [] };
+  const m = await mount(server);
+  try {
+    const { ProviderCliCards } = await import('./provider-cli-cards');
+    await m.render(m.React.createElement(ProviderCliCards, { mode: 'recovery' }));
+    await m.until(() => document.querySelector('[data-state="bundled"]') !== null, 'the bundled card');
+    const card = document.querySelector('[data-state="bundled"]')!;
+    assert.match(card.textContent ?? '', /Desktop app — sign in/);
+    assert.ok(offer('login'), 'the in-app sign-in is the main action');
+    assert.deepEqual(Array.from(card.querySelectorAll('button:not([data-row-menu])')).map((b) => b.textContent), ['Sign in']);
+    assert.equal(commandShown('/Applications/Claude.app/claude'), false);
+    assert.doesNotMatch(card.textContent ?? '', /open a NEW terminal/);
+
+    const items = await openRowMenu(m, card);
+    assert.deepEqual(items.map((i) => i.textContent), ['Install', 'Show the sign-in command']);
+
+    await m.click(offer('login'));
+    await m.until(() => dialog()?.getAttribute('data-host-sign-in') === 'login', 'the sign-in dialog');
+    assert.deepEqual(m.typed, []);
+  } finally {
+    await m.unmount();
+  }
+});
+
+test('recovery: a CLI Timon cannot sign in hands its command to a terminal, and shows it only on demand', async () => {
+  const server: Server = { list: [cli({ host: null })], flows: {}, calls: [], codes: [] };
+  const m = await mount(server);
+  try {
+    const { ProviderCliCards } = await import('./provider-cli-cards');
+    await m.render(m.React.createElement(ProviderCliCards, { mode: 'recovery' }));
+    await m.until(() => document.querySelector('[data-state="signIn"]') !== null, 'the card');
+    const card = document.querySelector('[data-state="signIn"]')!;
+    const signIn = () => Array.from(card.querySelectorAll('button')).find((b) => b.textContent === 'Sign in');
+    assert.equal(offer('login'), null);
+    assert.equal(commandShown('/usr/bin/claude'), false);
+
+    await m.click(signIn());
+    await m.until(() => m.typed.length === 1, 'the command typed in the terminal');
+    assert.equal(dialog(), null);
+    assert.match(card.textContent ?? '', /Typed in Timon's terminal/);
+    assert.equal(commandShown('/usr/bin/claude'), false, 'handed over: not shown');
+
+    // Nothing else in sight: the command is one menu item away.
+    const items = await openRowMenu(m, card);
+    assert.deepEqual(items.map((i) => i.textContent), ['Show the sign-in command']);
+  } finally {
+    await m.unmount();
+  }
+});
+
+test('recovery: a command Timon could neither type nor copy unfolds, for a terminal of one\'s own', async () => {
+  // A line the terminal refuses (a control character) and a clipboard that refuses too.
+  const command = '/usr/bin/claude\u0007';
+  const server: Server = { list: [cli({ host: null, signInCommand: command })], flows: {}, calls: [], codes: [] };
+  const m = await mount(server);
+  Object.defineProperty(window.navigator, 'clipboard', { configurable: true, value: { writeText: async () => { throw new Error('denied'); } } });
+  Object.defineProperty(document, 'execCommand', { configurable: true, value: () => false });
+  try {
+    const { ProviderCliCards } = await import('./provider-cli-cards');
+    await m.render(m.React.createElement(ProviderCliCards, { mode: 'recovery' }));
+    await m.until(() => document.querySelector('[data-state="signIn"]') !== null, 'the card');
+    const card = document.querySelector('[data-state="signIn"]')!;
+    await m.click(Array.from(card.querySelectorAll('button')).find((b) => b.textContent === 'Sign in'));
+    await m.until(() => commandShown(command), 'the command, unfolded');
+    assert.deepEqual(m.typed, []);
+    assert.match(card.textContent ?? '', /Timon could not copy the command/);
+    assert.equal(card.querySelector('button[data-row-menu]'), null, 'nothing left in the menu');
   } finally {
     await m.unmount();
   }
