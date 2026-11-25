@@ -105,7 +105,7 @@ test('a queued task lays its pieces in the shared zones of a board card', async 
   const m = await mount();
   try {
     await m.render(task({
-      run_by: { agent: 'demo.reviewer', source: null, reason: null },
+      run_by: { agent: 'demo.reviewer', source: 'role', reason: 'other_role', planned: true },
       scheduled_at: new Date(2026, 10, 5, 2, 0).getTime(),
       attachment_count: 2,
       deps: '["other"]',
@@ -116,7 +116,9 @@ test('a queued task lays its pieces in the shared zones of a board card', async 
     assert.equal(card.getAttribute('data-density'), 'card');
     assert.equal(card.getAttribute('draggable'), 'true', 'a queued task can be dragged');
 
-    assert.match(m.text('identity'), /demo\.coder/);
+    // #1109: the agent the dispatcher hands the task to, not the one it names.
+    assert.match(m.text('identity'), /demo\.reviewer/);
+    assert.doesNotMatch(m.text('identity'), /demo\.coder/);
     assert.match(m.text('identity'), /Coder/, 'the agent\'s role under its name');
     assert.ok(m.zone('identity')?.querySelector('[data-task-params]'), 'the model chip beside the agent');
     assert.equal(m.text('corner'), 'P4');
@@ -129,7 +131,10 @@ test('a queued task lays its pieces in the shared zones of a board card', async 
 
     assert.match(m.text('badges'), /^code/, 'the type first');
     assert.equal(m.zone('badges')?.querySelector('[data-task-status]')?.textContent, 'Pending', 'then the status');
-    assert.ok(m.zone('badges')?.querySelector('[data-task-runner="demo.reviewer"]'), 'the runner badge');
+    const runner = m.zone('badges')?.querySelector('[data-task-runner="demo.reviewer"]');
+    assert.ok(runner, 'the runner badge');
+    assert.equal(runner?.textContent, 'assigned to demo.coder', 'the badge recalls the agent the task names');
+    assert.match(runner?.getAttribute('title') ?? '', /will be run by demo\.reviewer/, 'a plan, not a past run');
     assert.match(m.text('badges'), /#42/, 'the linked idea');
     assert.match(m.text('badges'), /Bug/, 'its urgency');
 

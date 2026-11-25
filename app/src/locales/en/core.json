@@ -1562,8 +1562,11 @@
     "interruptionUnknown": "mission killed: undetermined cause (no usable signal)",
     "interruptionDefault": "mission interrupted",
     "runBy": {
-      "label": "run by {agent}",
+      "assigned": "assigned to {named}",
       "title": "Assigned to {named}, run by {agent}: {reason}",
+      "titlePlanned": "Assigned to {named}, will be run by {agent}: {reason}",
+      "detail": "Run by {agent}",
+      "detailPlanned": "Will be run by {agent}",
       "reasonPinned": "the project pins this role to {agent} (roles.json)",
       "reasonMissing": "{named} does not exist",
       "reasonOtherProject": "{named} does not belong to the task's project",

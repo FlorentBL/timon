@@ -111,7 +111,7 @@ export function KanbanTaskCard({
         <AgentAvatar identity={agent} />
       )}
       <span className="flex min-w-0 flex-1 flex-col">
-        <span className="truncate text-[13px] font-semibold">{t.agent_name}</span>
+        <span className="truncate text-[13px] font-semibold">{taskRunAgent(t)}</span>
         {subtitle && <span className="truncate text-[12px] tabular-nums text-muted-foreground">{subtitle}</span>}
       </span>
       <TaskParamsBadge task={t} onSaved={onSaved} target={modelTarget} />

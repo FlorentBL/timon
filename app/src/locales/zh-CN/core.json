@@ -1812,8 +1812,11 @@
     "interruptionUnknown": "任务会话已终止：原因不明（无可用信号）",
     "interruptionDefault": "任务会话已中断",
     "runBy": {
-      "label": "由 {agent} 执行",
+      "assigned": "分配给 {named}",
       "title": "分配给 {named}，由 {agent} 执行：{reason}",
+      "titlePlanned": "分配给 {named}，将由 {agent} 执行：{reason}",
+      "detail": "由 {agent} 执行",
+      "detailPlanned": "将由 {agent} 执行",
       "reasonPinned": "项目已将此角色固定分配给 {agent}（roles.json）",
       "reasonMissing": "{named} 不存在",
       "reasonOtherProject": "{named} 不属于此任务所在的项目",

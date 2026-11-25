@@ -2648,6 +2648,9 @@ export function isSelfMergePipeline(pipeline: string | null | undefined): boolea
   return pipeline === 'code-self';
 }
 
+/** Who ran a task's mission and on what: the board's read (#1109). */
+export type MissionRunnerRow = Pick<MissionRow, 'agent_name' | 'source_meta' | 'backend_override' | 'model_override'>;
+
 export type MissionRow = {
   /** Frozen browser assignment. Null with resolved=1 explicitly disables browsing. */
   browser_profile_id: string | null;
@@ -3692,7 +3695,7 @@ const markZombieFailedStmt = db.prepare(
 const getMissionStmt = db.prepare(`SELECT * FROM missions WHERE id = ?`);
 // Two columns, not `SELECT *`: the board reads it for every listed task, and a
 // mission row carries its whole prompt.
-const missionRunnerStmt = db.prepare(`SELECT agent_name, source_meta FROM missions WHERE id = ?`);
+const missionRunnerStmt = db.prepare(`SELECT agent_name, source_meta, backend_override, model_override FROM missions WHERE id = ?`);
 const insertEventStmt = db.prepare(
   `INSERT INTO events (mission_id, type, timestamp, payload) VALUES (?, ?, ?, ?)`,
 );
@@ -6765,10 +6768,10 @@ export const dbApi = {
   getMission(id: string, viewer?: DbViewer | null): MissionRow | undefined {
     return rowVisible(getMissionStmt.get(id) as MissionRow | undefined, viewer, 'missions');
   },
-  /** Agent and `source_meta` of a mission, for the board (TIM-0109). The
+  /** Agent, `source_meta` and LLM pair of a mission, for the board (TIM-0109, #1109). The
    *  caller has already checked the task the mission runs. */
-  getMissionRunner(id: string): Pick<MissionRow, 'agent_name' | 'source_meta'> | undefined {
-    return missionRunnerStmt.get(id) as Pick<MissionRow, 'agent_name' | 'source_meta'> | undefined;
+  getMissionRunner(id: string): MissionRunnerRow | undefined {
+    return missionRunnerStmt.get(id) as MissionRunnerRow | undefined;
   },
   /** Who started the mission (`mission-origin.ts`), by the list's own SQL.
    *  A label, not a read: the caller has already checked the mission. */
