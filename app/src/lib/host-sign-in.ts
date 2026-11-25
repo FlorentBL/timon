@@ -18,6 +18,11 @@ export type HostSignInView = {
   browser: boolean;
   /** A long-lived token can be minted in the app; `stored`: one is kept. */
   token: { stored: boolean } | null;
+  /**
+   * Only that token runs the host's launches: Timon is a macOS service outside
+   * the user's session, where no sign-in can be read. Absent from an older daemon.
+   */
+  tokenOnly?: boolean;
   signedIn: boolean | null;
 };
 

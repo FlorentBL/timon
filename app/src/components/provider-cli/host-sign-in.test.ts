@@ -268,3 +268,61 @@ test('the provider page: this computer signs in in the app, a kept sign-in says 
     await m.unmount();
   }
 });
+
+test('setup: a macOS service outside the session offers the long-lived token alone, and says why', async () => {
+  const host = view({ browser: false, tokenOnly: true });
+  const server: Server = { list: [cli({ host })], flows: {}, calls: [], codes: [] };
+  const m = await mount(server);
+  try {
+    const { ProviderCliCards } = await import('./provider-cli-cards');
+    await m.render(m.React.createElement(ProviderCliCards, { mode: 'onboarding' }));
+    await m.until(() => offer('token') !== null, 'the token offer');
+    assert.equal(offer('login'), null, 'no sign-in it could not read');
+    assert.match(document.body.textContent ?? '', /outside your session/);
+    await m.click(offer('token'));
+    await m.until(() => dialog()?.getAttribute('data-host-sign-in') === 'token' && server.calls.includes('POST token'), 'the token flow');
+    assert.deepEqual(m.typed, [], 'no command typed in a terminal');
+  } finally {
+    await m.unmount();
+  }
+});
+
+test('the provider page: outside the session, this computer offers the token, and no sign-in in its menu', async () => {
+  const { computerState } = await import('@/plugins-client/backends/provider-connection-section');
+  assert.deepEqual(computerState(overview({ host: view({ browser: false, tokenOnly: true }) }).connection as never),
+    { tone: 'action', key: 'hostSignIn.status.tokenOnly' });
+  assert.deepEqual(computerState(overview({ signedIn: true, host: view({ browser: false, tokenOnly: true, token: { stored: true }, kept: true }) }).connection as never),
+    { tone: 'ready', key: 'hostSignIn.status.tokenOnlySet' });
+
+  const server: Server = { list: [], flows: {}, calls: [], codes: [] };
+  const m = await mount(server);
+  const own = globalThis.fetch;
+  globalThis.fetch = (async (input: string, init?: { method?: string }) => {
+    if (String(input) === '/api/ui/backends/accounts') return Response.json({ accounts: [], backends: ['claude'] });
+    return own(input, init);
+  }) as typeof fetch;
+  try {
+    const { ConnectionSection } = await import('@/plugins-client/backends/provider-connection-section');
+    const { ProviderPageProvider } = await import('@/components/provider-page/provider-page-context');
+    await m.render(m.React.createElement(ProviderPageProvider, {
+      value: { provider: overview({ host: view({ browser: false, tokenOnly: true }) }) as never, status: 'not-connected', defaultBackend: null, refresh: async () => {}, back: () => {} },
+    }, m.React.createElement(ConnectionSection)));
+    const computer = () => document.querySelector('[data-connection="computer"]');
+    await m.until(() => computer()?.querySelector('[data-host-sign-in-offer="token"]') != null, 'the token offer');
+    assert.match(computer()!.textContent ?? '', /Outside your session: needs a long-lived token/);
+    assert.ok(!computer()!.querySelector('[data-host-sign-in-offer="login"]'));
+    const trigger = computer()!.querySelector('button[data-row-menu]') as HTMLElement;
+    await m.React.act(async () => {
+      trigger.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    });
+    await m.until(() => document.querySelectorAll('[role="menuitem"]').length > 0, 'the menu');
+    const { t } = await import('@/lib/i18n');
+    const items = Array.from(document.querySelectorAll('[role="menuitem"]')).map((i) => i.textContent);
+    assert.deepEqual(items, [t('providerPage.connection.checkAgain')], 'neither a sign-in nor the terminal command');
+    await m.click(computer()!.querySelector('[data-host-sign-in-offer="token"]'));
+    await m.until(() => dialog()?.getAttribute('data-host-sign-in') === 'token' && server.calls.includes('POST token'), 'the token flow');
+  } finally {
+    globalThis.fetch = own;
+    await m.unmount();
+  }
+});
