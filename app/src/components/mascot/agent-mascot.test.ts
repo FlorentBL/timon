@@ -128,6 +128,8 @@ test('defaultLookFor reads the onboarding tables, by role and by missions', () =
   assert.deepEqual(defaultLookFor('coder'), defaultLookFor('code'), 'an agent\'s config.role name works too');
   assert.deepEqual(defaultLookFor('reviewer'), defaultLookFor('review'));
   assert.deepEqual(defaultLookFor('ops'), defaultLookFor('chore'));
+  assert.deepEqual(defaultLookFor('researcher'), defaultLookFor('research'));
+  assert.deepEqual(defaultLookFor('main'), defaultLookFor('orchestrator'));
   assert.deepEqual(defaultLookFor('nobody'), DEFAULT_LOOK);
 
   assert.deepEqual(defaultLookFor(['mail', 'agenda']), { shape: 'squircle', color: '#ff5fbf', eyes: 'pill', acc: 'clipboard' });
@@ -478,4 +480,15 @@ test('the examples/plugin-mascot-head template draws its ember for the agents th
   await w.act(() => { dispose(); });
   assert.ok(!w.document.querySelector('svg[data-ember]'));
   assert.deepEqual(Array.from(w.document.querySelectorAll('svg[data-mascot]')).map((svg) => svg.getAttribute('data-shape')), [base.shape, 'gem'], 'the role\'s default skull meanwhile');
+});
+
+test('every role a project seeds gets a look of its own, not the default', () => {
+  for (const role of ['coder', 'reviewer', 'merger', 'researcher', 'ops', 'librarian', 'orchestrator']) {
+    assert.notDeepEqual(defaultLookFor(role), DEFAULT_LOOK, `${role} falls back to the default look`);
+  }
+  assert.deepEqual(defaultLookFor('merger'), { ...DEFAULT_LOOK, eyes: 'happy', acc: 'clipboard' });
+  assert.deepEqual(defaultLookFor('merge'), defaultLookFor('merger'));
+  assert.deepEqual(defaultLookFor('librarian'), { ...DEFAULT_LOOK, acc: 'quill' });
+  assert.deepEqual(defaultLookFor('doc'), defaultLookFor('librarian'));
+  assert.deepEqual(defaultLookFor('nobody'), DEFAULT_LOOK);
 });

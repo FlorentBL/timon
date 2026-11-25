@@ -169,7 +169,20 @@ const ROLE_EYES: Readonly<Record<MascotRole, MascotEyes>> = {
   code: 'code', research: 'big', review: 'squint', orchestrator: 'pill', chore: 'pill',
 };
 /** The agent's `config.role` names (`app/src/lib/roles.ts`) that mean a developer role above. */
-const ROLE_ALIASES: Readonly<Record<string, MascotRole>> = { coder: 'code', reviewer: 'review', ops: 'chore' };
+const ROLE_ALIASES: Readonly<Record<string, MascotRole>> = {
+  coder: 'code', reviewer: 'review', researcher: 'research', ops: 'chore', main: 'orchestrator',
+};
+/**
+ * Roles a project seeds that the onboarding does not offer (they stay out of
+ * `ROLES`, which the onboarding lists): their eyes and tool, by `config.role`
+ * name or task type, so a seeded merger or librarian gets a look of its own.
+ */
+const SEEDED_ROLE_LOOKS: Readonly<Record<string, Pick<AgentLook, 'eyes' | 'acc'>>> = {
+  merger: { eyes: 'happy', acc: 'clipboard' },
+  merge: { eyes: 'happy', acc: 'clipboard' },
+  librarian: { eyes: 'pill', acc: 'quill' },
+  doc: { eyes: 'pill', acc: 'quill' },
+};
 
 const isMission = (value: string): value is MascotMission => (MISSIONS as readonly string[]).includes(value);
 
@@ -189,7 +202,8 @@ function lookForMissions(input: readonly string[]): AgentLook {
 
 function lookForRole(input: string): AgentLook {
   const role = (ROLES as readonly string[]).includes(input) ? input as MascotRole : ROLE_ALIASES[input];
-  if (!role) return { ...DEFAULT_LOOK };
+  const seeded = SEEDED_ROLE_LOOKS[input];
+  if (!role) return seeded ? { ...DEFAULT_LOOK, ...seeded } : { ...DEFAULT_LOOK };
   // The coder alone gets its own skull and colour; the other roles keep the
   // default head and say their job with eyes and tool.
   const head: Pick<AgentLook, 'shape' | 'color'> = role === 'code' ? { shape: 'tri', color: '#7ed957' } : { shape: DEFAULT_LOOK.shape, color: DEFAULT_LOOK.color };
@@ -199,7 +213,7 @@ function lookForRole(input: string): AgentLook {
 /**
  * The look an agent gets before anyone styles it: from its developer role
  * (`'code'`, `'review'`… or the agent's `config.role` — `coder`, `reviewer`,
- * `ops`), or from the list of its missions (`['mail', 'agenda']`). Unknown
+ * `researcher`, `ops`, `merger`, `librarian`), or from the list of its missions (`['mail', 'agenda']`). Unknown
  * values fall back to a default look; never throws.
  */
 export function defaultLookFor(roleOrMissions: string | readonly string[]): AgentLook {
