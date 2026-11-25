@@ -255,6 +255,11 @@ export function checkDaemonNode(runtime?: NodeRuntimeFacts, deps: DaemonNodeDeps
   const realpath = deps.realpath ?? realpathSync;
   const stat = deps.stat ?? statSync;
   const executable = deps.executable ?? isExecutable;
+  // A runtime replaced since startup, or whose startup identity is unknown, still stands when
+  // only root or the daemon's account could have put it there (#1102, iteration 4, decision of
+  // the series pilot on the review's strict-refusal finding): whoever holds those rights already
+  // controls the daemon, so refusing would protect nothing, and would fail every mission after
+  // the package manager upgrades `/usr/bin/node`. A file a third party could write is refused.
   const sound = deps.soundTree ?? soundTree(facts.platform);
   // Another runtime than this process's own has no startup identity to compare with.
   const startup = 'startup' in deps ? deps.startup ?? null : runtime ? null : STARTUP?.identity ?? null;

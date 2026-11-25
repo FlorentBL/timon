@@ -7,6 +7,7 @@ import {
   checkDaemonNode, chooseLaunchNode, daemonNode, designatesDaemonRuntime, launchPath, nodeInDir, nodeInterpreter, nodelessBackends,
   nodelessBackendText, pathKeyOf, runsOnNode, withLaunchPath,
 } from './launch-path.js';
+import { untrustedPathProblem, type TrustStat } from './trusted-tree.js';
 import { binaryCandidates } from './binary-path.js';
 
 const nvmBin = posix.join('/Users', 'sam', '.nvm', 'versions', 'node', 'v22.11.0', 'bin');
@@ -305,6 +306,56 @@ test('#1102 review: the daemon\'s Node is checked on disk before it stands in', 
     platform: 'linux', resolve: (name) => (name === 'codex' ? codex : name === 'node' ? runtimeFile : null), read: () => '#!/usr/bin/env node\n',
     hasNode: () => false, runtimeNode: null, runtimeProblem: 'replaced', isRuntime: (file) => file === runtimeFile,
   }), [{ name: 'codex', path: codex, runtimeProblem: 'replaced' }]);
+});
+
+/**
+ * A `/usr/bin/node` replaced since the daemon started, its folders as a table:
+ * `owner` and `folderMode` say who could have written it. Nothing reads the
+ * machine's own folders, whose owners differ from one runner to the next.
+ */
+function replacedSystemNode(owner: number, folderMode = 0o755) {
+  const DAEMON = 1000;
+  const file = posix.join('/usr', 'bin', 'node');
+  const table: Record<string, TrustStat> = {
+    '/': { uid: 0, mode: 0o755, kind: 'directory' },
+    '/usr': { uid: 0, mode: 0o755, kind: 'directory' },
+    '/usr/bin': { uid: 0, mode: folderMode, kind: 'directory' },
+    [file]: { uid: owner, mode: 0o755, kind: 'file' },
+  };
+  const lstat = (path: string): TrustStat => {
+    const entry = table[path];
+    if (!entry) throw new Error(`ENOENT ${path}`);
+    return entry;
+  };
+  const soundTree = (path: string) =>
+    untrustedPathProblem(path, { platform: 'linux', uid: DAEMON, lstat, readlink: () => { throw new Error('EINVAL'); } }) === null;
+  const now = { dev: 1, ino: 2, size: 3, mtimeMs: 4 };
+  const deps = {
+    realpath: (path: string) => path,
+    stat: () => ({ ...now, isFile: () => true }),
+    executable: () => true,
+    soundTree,
+  };
+  return { facts: { execPath: file, platform: 'linux' as const }, file, deps, before: { ...now, ino: 99 }, DAEMON };
+}
+
+test('#1102 review, iteration 4: a replaced runtime put there by a third party is refused', () => {
+  const other = replacedSystemNode(1001);
+  assert.deepEqual(checkDaemonNode(other.facts, { ...other.deps, startup: other.before }), { node: null, problem: 'replaced' });
+  assert.deepEqual(checkDaemonNode(other.facts, { ...other.deps, startup: null }), { node: null, problem: 'unverified' });
+  // Root's file in a folder its group can write: the group could have swapped it.
+  const group = replacedSystemNode(0, 0o775);
+  assert.deepEqual(checkDaemonNode(group.facts, { ...group.deps, startup: group.before }), { node: null, problem: 'replaced' });
+});
+
+test('#1102 review, iteration 4: a replaced runtime written only by root or the daemon account is accepted', () => {
+  // Decision of the series pilot: whoever holds those rights already controls the daemon, and a
+  // strict refusal would fail every mission after the package manager upgrades `/usr/bin/node`.
+  const apt = replacedSystemNode(0);
+  assert.deepEqual(checkDaemonNode(apt.facts, { ...apt.deps, startup: apt.before }), { node: apt.file, problem: null });
+  assert.deepEqual(checkDaemonNode(apt.facts, { ...apt.deps, startup: null }), { node: apt.file, problem: null });
+  const own = replacedSystemNode(apt.DAEMON);
+  assert.deepEqual(checkDaemonNode(own.facts, { ...own.deps, startup: own.before }), { node: own.file, problem: null });
 });
 
 /**
