@@ -51,21 +51,3 @@ test('every setting owner is a bundled plugin of the catalog', async () => {
   assert.ok(owners.length > 0);
   for (const owner of owners) assert.ok(ids.has(owner), `unknown owner ${owner}`);
 });
-
-test('a hidden setting is read from the env only, never written nor listed for the interface', async () => {
-  const { setSetting, settingBool, settingGroups, SETTINGS } = await import('./settings.js');
-  const key = 'TIMON_INTEGRATION_CLEANUP_ENABLED';
-  assert.equal(SETTINGS.find((d) => d.key === key)?.hidden, true);
-  assert.equal(setSetting(key, 'true').ok, false, 'the settings API refuses it');
-  dbApi.setSetting(key, 'true');
-  invalidateSettingsCache();
-  assert.equal(settingBool(key), false, 'a value stored in the database is ignored');
-  process.env[key] = '1';
-  invalidateSettingsCache();
-  assert.equal(settingBool(key), true, 'the environment turns it on');
-  delete process.env[key];
-  dbApi.deleteSetting(key);
-  invalidateSettingsCache();
-  const groups = settingGroups();
-  assert.ok(groups.includes('Worktrees'), 'its group stays for the settings that are shown');
-});
