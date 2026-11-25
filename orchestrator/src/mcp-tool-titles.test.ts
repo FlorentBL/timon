@@ -22,7 +22,7 @@ const TITLED = [
   'ui_routes', 'ui_navigate', 'nav_get', 'nav_propose',
   // mcp-tools-agents.mjs
   'agent_update', 'agent_delete', 'agent_trash_list', 'agent_trash_restore', 'agent_rename',
-  'agent_set_scope', 'agent_doc_list', 'agent_doc_get', 'agent_doc_put', 'agent_doc_rm', 'backends_list',
+  'agent_set_scope', 'agent_doc_list', 'agent_doc_get', 'agent_doc_put', 'agent_doc_rm', 'agent_extra_dirs', 'backends_list',
   'skill_list', 'skill_get', 'skill_attachment_list', 'skill_attach', 'skill_detach', 'skill_resolve', 'skill_reads',
   'skill_put', 'skill_rm', 'mcp_server_list', 'mcp_server_get', 'mcp_server_put', 'mcp_server_rm',
   // mcp-tools-missions.mjs

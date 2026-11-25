@@ -19,6 +19,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import express from 'express';
 import { grantTestPermissions, postTestAccount } from '../../../tests/helpers/accounts.js';
+import { cli, session } from '../../../tests/helpers/mcp-cli-parity.js';
 
 process.env.TIMON_HOME = mkdtempSync(join(tmpdir(), 'timon-extra-dirs-'));
 await import('../../../tests/helpers/paid-license.js');
@@ -121,6 +122,28 @@ test('no mission changes the folders of its own agent, whatever its account hold
   const r = await call('POST', ROUTE, { bearer: readerOwnMission, body: { path: projects, mode: 'write' } });
   assert.equal(r.status, 403, JSON.stringify(r.json));
   assert.match(String(r.json.reason ?? ''), /its own missions/);
+  assert.equal(storedOf('lib.reader'), undefined);
+});
+
+test('the agent_extra_dirs tool and `timon agent extra-dirs` meet the same guard as the route', async () => {
+  const tool = (token: string, args: Record<string, unknown>) => session(strict.base, [
+    { method: 'tools/call', params: { name: 'agent_extra_dirs', arguments: { name: 'lib.reader', ...args } } },
+  ], true, { TIMON_API_TOKEN: token });
+  // An account without agents:privileged-config reads, but changes nothing.
+  const [listed] = await tool(managerMission, {});
+  assert.notEqual(listed!.result?.isError, true, listed!.result?.content?.[0]?.text);
+  const [denied] = await tool(managerMission, { action: 'add', path: projects, mode: 'write' });
+  assert.equal(denied!.result?.isError, true);
+  assert.match(String(denied!.result?.content?.[0]?.text), /agents:privileged-config/);
+  const [removal] = await tool(managerMission, { action: 'remove', path: projects });
+  assert.equal(removal!.result?.isError, true);
+  const fromCli = await cli(strict.base, ['agent', 'extra-dirs', 'add', 'lib.reader', projects, '--write'], { TIMON_API_TOKEN: managerMission });
+  assert.equal(fromCli.code, 2, fromCli.out);
+  assert.match(fromCli.out, /403/);
+  // Its own agent stays out of reach, whatever the account holds.
+  const [own] = await tool(readerOwnMission, { action: 'add', path: projects, mode: 'read' });
+  assert.equal(own!.result?.isError, true);
+  assert.match(String(own!.result?.content?.[0]?.text), /its own missions/);
   assert.equal(storedOf('lib.reader'), undefined);
 });
 

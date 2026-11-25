@@ -17,8 +17,9 @@ const kit = await import('../../../packages/sdk/src/testing/index.js');
 const { providerRuntime } = await import('../backends/provider-runtime.js');
 const { COMMAND_POLICY } = await import('../backends/command-policy.js');
 const plugin = await import('../../official-providers/provider-copilot/lib/index.js') as { apply(ctx: unknown): void };
-const { ALLOWLIST_REFUSAL_TEXT, copilotRules, createEventMapper } = await import('../../official-providers/provider-copilot/lib/copilot.js') as {
+const { ALLOWLIST_REFUSAL_TEXT, copilotRules, createEventMapper, extraDirArgs } = await import('../../official-providers/provider-copilot/lib/copilot.js') as {
   ALLOWLIST_REFUSAL_TEXT: string;
+  extraDirArgs(dirs: BuildSpawnOpts['extraDirs'], permissionMode?: string): string[];
   copilotRules(policy: typeof COMMAND_POLICY, formsServer: string): {
     permissionArgs(mode: string | undefined, servers: readonly string[], allowed?: readonly string[]): string[];
     shellGrantsFromAllowedTools(allowed: readonly string[] | undefined): string[];
@@ -271,6 +272,25 @@ test('bypassPermissions is the one unsandboxed mode, the deny rules still hold',
 test('resume passes the id as its own argument, never a bare --resume', async () => {
   const sp = await provider.launch(opts({ resumeSession: 'abc-123' }), PROFILE);
   assert.equal(argAfter(sp.args, '--resume'), 'abc-123');
+});
+
+test('the agent\'s extra folders reach the CLI as --add-dir, a read-only one only where nothing writes', async () => {
+  const dirs = [{ path: '/srv/notes', mode: 'write' as const }, { path: '/srv/library', mode: 'read' as const }];
+  // No Copilot rule keeps one path read-only, and no fence may hold the launch.
+  for (const mode of ['auto', 'default', 'acceptEdits', 'bypassPermissions', undefined]) {
+    assert.deepEqual(extraDirArgs(dirs, mode), ['--add-dir', '/srv/notes'], String(mode));
+  }
+  for (const mode of ['plan', 'read-only']) {
+    assert.deepEqual(extraDirArgs(dirs, mode), ['--add-dir', '/srv/notes', '--add-dir', '/srv/library'], mode);
+  }
+  assert.deepEqual(extraDirArgs(undefined, 'auto'), []);
+  const sp = await provider.launch(opts({ extraDirs: dirs }), PROFILE);
+  assert.equal(argAfter(sp.args, '--add-dir'), '/srv/notes');
+  assert.equal(sp.args.includes('/srv/library'), false);
+  const planned = await provider.launch(opts({ extraDirs: dirs }, { permission_mode: 'plan' }), PROFILE);
+  assert.equal(planned.args.includes('/srv/library'), true);
+  const none = await provider.launch(opts(), PROFILE);
+  assert.equal(none.args.includes('--add-dir'), false);
 });
 
 test('images become attachments on disk', async () => {

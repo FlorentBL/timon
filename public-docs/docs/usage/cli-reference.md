@@ -78,6 +78,14 @@ Agents & missions:
                                          write one; content from --file or stdin (≤ 2 MB). From a
                                          mission: its own agent, or one it orchestrates
   timon agent doc rm <agent> <file>       delete one (system-prompt.md cannot be deleted)
+  timon agent extra-dirs list <agent>     the folders outside its working directory its missions may reach
+  timon agent extra-dirs add <agent> <path> [--write] [--restart]
+                                         give it a folder, read only (or read and write with --write);
+                                         a folder already listed changes access
+  timon agent extra-dirs rm <agent> <path> [--restart]
+                                         take one back. Changes need agents:privileged-config, never on
+                                         your own agent; they apply from its next mission (--restart
+                                         stops its running processes)
   timon agent export <name…> | --all [--out FILE] [--force]
                                          chosen agents (or all) to a zip another Timon imports:
                                          prompt, identity docs, rules, skills, MCP servers, routines,
@@ -668,7 +676,7 @@ usage: timon agent set-main <name>
 ### timon agent …
 
 ```text
-usage: timon agent <create|update|set-scope|set-avatar|rename|set-main|doc|trash|export|import|export-skill> <name> …
+usage: timon agent <create|update|set-scope|set-avatar|rename|set-main|doc|extra-dirs|trash|export|import|export-skill> <name> …
        (deletion: the app or the agent_delete tool, which move the agent to the trash)
 ```
 

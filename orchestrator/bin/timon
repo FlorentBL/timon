@@ -801,6 +801,14 @@ Agents & missions:
                                          write one; content from --file or stdin (≤ 2 MB). From a
                                          mission: its own agent, or one it orchestrates
   timon agent doc rm <agent> <file>       delete one (system-prompt.md cannot be deleted)
+  timon agent extra-dirs list <agent>     the folders outside its working directory its missions may reach
+  timon agent extra-dirs add <agent> <path> [--write] [--restart]
+                                         give it a folder, read only (or read and write with --write);
+                                         a folder already listed changes access
+  timon agent extra-dirs rm <agent> <path> [--restart]
+                                         take one back. Changes need agents:privileged-config, never on
+                                         your own agent; they apply from its next mission (--restart
+                                         stops its running processes)
   timon agent export <name…> | --all [--out FILE] [--force]
                                          chosen agents (or all) to a zip another Timon imports:
                                          prompt, identity docs, rules, skills, MCP servers, routines,
@@ -1800,6 +1808,45 @@ async function cmdAgentDoc(argv) {
   }
 }
 
+const AGENT_EXTRA_DIRS_USAGE = 'usage: timon agent extra-dirs <list <agent> | add <agent> <path> [--write] [--restart] | rm <agent> <path> [--restart]>\n';
+
+/** An agent's extra folders: the routes of the Workspace tab, and of the agent_extra_dirs tool. */
+async function cmdAgentExtraDirs(argv) {
+  const [sub, ...rest] = argv;
+  const write = takeSwitch(rest, 'write');
+  const restart = takeSwitch(rest, 'restart');
+  const route = (agent) => `/api/agents/${encodeURIComponent(agent)}/extra-dirs`;
+  const print = (j) => process.stdout.write(JSON.stringify(j, null, 2) + '\n');
+  switch (sub) {
+    case 'list': {
+      const [agent] = rest;
+      if (!agent || rest.length > 1 || write || restart) { process.stderr.write(AGENT_EXTRA_DIRS_USAGE); process.exit(64); }
+      print(await http('GET', route(agent)));
+      return;
+    }
+    case 'add': {
+      const [agent, path] = rest;
+      if (!agent || !path || rest.length > 2) { process.stderr.write(AGENT_EXTRA_DIRS_USAGE); process.exit(64); }
+      const body = { path, mode: write ? 'write' : 'read' };
+      if (restart) body.restart = true;
+      print(await http('POST', route(agent), body));
+      return;
+    }
+    case 'rm':
+    case 'remove': {
+      const [agent, path] = rest;
+      if (!agent || !path || rest.length > 2 || write) { process.stderr.write(AGENT_EXTRA_DIRS_USAGE); process.exit(64); }
+      const body = { path };
+      if (restart) body.restart = true;
+      print(await http('DELETE', route(agent), body));
+      return;
+    }
+    default:
+      process.stderr.write(AGENT_EXTRA_DIRS_USAGE);
+      process.exit(64);
+  }
+}
+
 /** What `timon agent export|import` needs from this CLI: the daemon, files, a question. */
 function agentTransferIo() {
   return {
@@ -1839,6 +1886,8 @@ async function cmdAgent(argv) {
     case 'doc':
     case 'docs':
       return cmdAgentDoc(rest);
+    case 'extra-dirs':
+      return cmdAgentExtraDirs(rest);
     case 'trash':
       return cmdAgentTrash(rest);
     case 'export':
@@ -1849,7 +1898,7 @@ async function cmdAgent(argv) {
       return cmdAgentExportSkill(rest, agentTransferIo());
     default:
       process.stderr.write(
-        'usage: timon agent <create|update|set-scope|set-avatar|rename|set-main|doc|trash|export|import|export-skill> <name> …\n' +
+        'usage: timon agent <create|update|set-scope|set-avatar|rename|set-main|doc|extra-dirs|trash|export|import|export-skill> <name> …\n' +
         '       (deletion: the app or the agent_delete tool, which move the agent to the trash)\n',
       );
       process.exit(64);
