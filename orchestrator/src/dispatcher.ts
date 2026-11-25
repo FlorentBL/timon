@@ -1869,16 +1869,21 @@ export function lastMissionError(missionId: string): string | null {
   const events = dbApi.listEventsTail(missionId, 50);
   for (let i = events.length - 1; i >= 0; i--) {
     const ev = events[i]!;
-    if (ev.type !== 'backend_failed' && ev.type !== 'spawn_failed' && ev.type !== 'fence_refused' && ev.type !== 'assistant') continue;
+    if (ev.type !== 'backend_failed' && ev.type !== 'spawn_failed' && ev.type !== 'fence_refused'
+      && ev.type !== 'fence_suspected' && ev.type !== 'assistant') continue;
     let p: {
       binary?: unknown; cause?: unknown; cwd?: unknown; exitCode?: unknown; stderr?: unknown; error?: unknown;
-      message?: { content?: unknown }; access?: unknown; display?: unknown; mechanism?: unknown;
+      message?: { content?: unknown }; access?: unknown; display?: unknown; mechanism?: unknown; said?: unknown;
     };
     try { p = JSON.parse(ev.payload) as typeof p; } catch { continue; }
     // Recorded after the CLI's own words when both exist: the cause, rather than its symptom.
     if (ev.type === 'fence_refused') {
       const verb = p.access === 'write' ? 'write to' : 'read';
       return `the mission fence (${fenceMechanismName(String(p.mechanism ?? '?'))}) did not let it ${verb} ${String(p.display ?? '?')}; see Settings › System › Security.`;
+    }
+    // No path to name: the CLI's words, and the fence as the likely cause.
+    if (ev.type === 'fence_suspected') {
+      return `the backend stopped on "${clip(String(p.said ?? '?'))}" without naming a path; the mission fence (${fenceMechanismName(String(p.mechanism ?? '?'))}) may have refused it, see Settings › System › Security.`;
     }
     if (ev.type === 'assistant') {
       // Only the CLI's own error-coded message, never what the model wrote.

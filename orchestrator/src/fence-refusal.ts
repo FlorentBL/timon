@@ -205,6 +205,76 @@ export function fenceRefusalInOutput(
   return null;
 }
 
+/** Beyond this much of one tool's output, a refusal is not looked for: a huge listing is read in part. */
+const TOOL_OUTPUT_SCAN_CHARS = 200_000;
+
+/**
+ * The text each tool result of a normalised `user` event carries (`content` as a
+ * string, or as text blocks), cut to `TOOL_OUTPUT_SCAN_CHARS`. Every process
+ * dialect reports its tool outputs this way (`stream-json-spans.ts`), codex's
+ * command runs included.
+ */
+export function toolResultTexts(payload: unknown): string[] {
+  const content = (payload as { message?: { content?: unknown } } | null)?.message?.content;
+  if (!Array.isArray(content)) return [];
+  const texts: string[] = [];
+  for (const block of content) {
+    if (block === null || typeof block !== 'object') continue;
+    const { type, content: inner } = block as { type?: unknown; content?: unknown };
+    if (type !== 'tool_result') continue;
+    const text = typeof inner === 'string'
+      ? inner
+      : Array.isArray(inner)
+        ? inner.flatMap((part) => (part && typeof part === 'object' && typeof (part as { text?: unknown }).text === 'string' ? [(part as { text: string }).text] : [])).join('\n')
+        : '';
+    if (text) texts.push(text.slice(0, TOOL_OUTPUT_SCAN_CHARS));
+  }
+  return texts;
+}
+
+/** A refusal with no path: `Operation not permitted (os error 1)` is how a Rust CLI (codex) words one. */
+const PATHLESS_REFUSAL = /operation not permitted|\bEPERM\b|os error 1\b/i;
+const ANY_POSIX_PATH = /(?:^|[\s'"`(=:,[{<])\/[^\s'"`,;)\]}>]/;
+
+/**
+ * The first line of `output` that says a file operation was not permitted
+ * without naming any path, trimmed for display; null when there is none. Such a
+ * line cannot be checked against the policy: it is a suspicion, never a refusal.
+ */
+export function pathlessRefusalIn(output: string): string | null {
+  if (!output) return null;
+  for (const line of output.split('\n')) {
+    if (!PATHLESS_REFUSAL.test(line) || ANY_POSIX_PATH.test(line)) continue;
+    const said = line.trim().replace(/\s+/g, ' ');
+    return said.length > 200 ? `${said.slice(0, 199)}…` : said;
+  }
+  return null;
+}
+
+/**
+ * A turn that bounced on a refusal naming no path, inside the fence: persisted as
+ * the payload of a mission event `fence_suspected`. Nothing proves the fence
+ * refused it, so nothing is offered to open; the notice names the fence and where
+ * it is set, which is all a person needs to try.
+ */
+export type FenceSuspicion = {
+  missionId: string;
+  agent: string | null;
+  backend: string;
+  mechanism: FenceMechanism;
+  stage: 'run';
+  /** The CLI's own line, trimmed. */
+  said: string;
+  setting: typeof FENCE_SETTING;
+};
+
+/** The suspicion in one English paragraph, for the daemon's log. The thread renders its own, translated. */
+export function fenceSuspicionMessage(suspicion: FenceSuspicion): string {
+  return `The ${suspicion.backend} CLI stopped on "${suspicion.said}" without naming a path. `
+    + `This mission runs in the mission fence (${fenceMechanismName(suspicion.mechanism)}), which may be what refused it: `
+    + 'add the folder the agent needs to its extra folders, or see Mission isolation in Settings › System › Security.';
+}
+
 /** The structured refusal, from what the launch knows. */
 export function fenceRefusal(input: {
   path: string;
