@@ -96,7 +96,11 @@ function authorizedPrograms(backend: string): string[] {
  * The check and the spawn are not one system call: the provider's identity check runs in between
  * (`binary-identity.ts`, it starts the program), so a link retargeted or a file renamed over the checked
  * one during that time would be started unchecked. `assertLaunchPinned` is the last thing before the
- * spawn. No content hash (decision 3-B, option C set aside): a file rewritten in place keeps its inode.
+ * spawn. Device and inode alone are not enough (TODO #1212): ext4 hands a freed inode to the next file
+ * created, so a path replaced twice can lead to another file under the checked identity. Size,
+ * modification and change times are pinned too, in nanoseconds. The change time is the one a writer
+ * cannot set back (`utimes` moves it), so on POSIX a rewrite in place is caught as well. No content
+ * hash (decision 3-B, option C set aside).
  */
 export type LaunchPin = {
   readonly backend: string;
@@ -107,15 +111,24 @@ export type LaunchPin = {
   readonly file: string;
   readonly dev: bigint;
   readonly ino: bigint;
+  readonly size: bigint;
+  readonly mtimeNs: bigint;
+  readonly ctimeNs: bigint;
 };
 
-function fileIdentity(file: string): { dev: bigint; ino: bigint } | null {
+type FileIdentity = Pick<LaunchPin, 'dev' | 'ino' | 'size' | 'mtimeNs' | 'ctimeNs'>;
+
+function fileIdentity(file: string): FileIdentity | null {
   try {
     const st = statSync(file, { bigint: true });
-    return st.isFile() ? { dev: st.dev, ino: st.ino } : null;
+    return st.isFile() ? { dev: st.dev, ino: st.ino, size: st.size, mtimeNs: st.mtimeNs, ctimeNs: st.ctimeNs } : null;
   } catch {
     return null;
   }
+}
+
+function sameIdentity(a: FileIdentity, b: FileIdentity): boolean {
+  return a.dev === b.dev && a.ino === b.ino && a.size === b.size && a.mtimeNs === b.mtimeNs && a.ctimeNs === b.ctimeNs;
 }
 
 /** A refused third-party launch: the error the mission reports, and the card that leads to the fix. */
@@ -166,13 +179,14 @@ export function assertLaunchAuthorized(backend: string, cmd: string): { program:
 /**
  * The spawn is about to start `pin.program`: it must still lead to the very file that was checked, by
  * path and by identity. Synchronous, and called with nothing awaited between it and the spawn. What it
- * cannot see is what happens after it — between this call and the `execve` of the launcher chain — and
- * a file rewritten in place (`docs/SECURITY.md` § 6.4.1).
+ * cannot see is what happens after it — between this call and the `execve` of the launcher chain — and,
+ * where the change time is not kept, a file rewritten in place to the same size and times
+ * (`docs/SECURITY.md` § 6.4.1).
  */
 export function assertLaunchPinned(pin: LaunchPin): void {
   const file = canonicalPath(pin.program);
   const identity = fileIdentity(file);
-  if (samePath(file, pin.file) && identity && identity.dev === pin.dev && identity.ino === pin.ino) return;
+  if (samePath(file, pin.file) && identity && sameIdentity(identity, pin)) return;
   throw refuse(pin.owner, pin.backend, `backend \`${pin.backend}\` was about to launch \`${pin.program}\`, which no longer is the file `
     + `checked for this launch (\`${pin.file}\`): it was replaced, or a link moved, between the check and the launch`);
 }

@@ -16,7 +16,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
 import { PassThrough } from 'node:stream';
-import { chmodSync, copyFileSync, mkdirSync, mkdtempSync, realpathSync, renameSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { type BigIntStats, chmodSync, copyFileSync, mkdirSync, mkdtempSync, realpathSync, renameSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { delimiter, join } from 'node:path';
 import type { ChildProcessWithoutNullStreams } from 'node:child_process';
@@ -359,6 +359,38 @@ test('REFUSAL: a mission whose program is swapped after the check starts nothing
   }) as typeof host.bin;
   try {
     const { started, error } = await launches('fx.auth-third');
+    assert.deepEqual(started, []);
+    assert.match(String(error), /no longer is the file checked for this launch/);
+  } finally {
+    host.bin = originalBin;
+  }
+  assert.equal((await launches('fx.auth-third')).error, null, 'the next launch checks the file as it is now');
+});
+
+test('REFUSAL: a program under the checked inode that is no longer the checked file starts nothing (TODO #1212)', async () => {
+  allowExec('acme-auth');
+  const host = getHost();
+  const originalBin = host.bin;
+  const before = statSync(agentFile, { bigint: true });
+  const swapped: { stat: BigIntStats | null; count: number } = { stat: null, count: 0 };
+  // ext4 hands a freed inode to the next file created: a path replaced twice can lead to another file
+  // under the very device and inode that were checked. Rewriting the file in place gives that state
+  // deterministically, on every file system. As in the test above, the lookup that lands between the
+  // check and the spawn is the one that matters, so every lookup but `node`'s writes another file.
+  host.bin = ((name: string) => {
+    if (name !== 'node') {
+      swapped.count += 1;
+      const echo = 'x'.repeat(swapped.count);
+      writeFileSync(agentFile, posix ? `#!/bin/sh\necho ${echo}\nexit 0\n` : `@echo ${echo}\r\n@exit /b 0\r\n`);
+      swapped.stat = statSync(agentFile, { bigint: true });
+    }
+    return originalBin.call(host, name);
+  }) as typeof host.bin;
+  try {
+    const { started, error } = await launches('fx.auth-third');
+    assert.ok(swapped.stat, 'the program was replaced between the check and the spawn');
+    assert.equal(swapped.stat.dev, before.dev);
+    assert.equal(swapped.stat.ino, before.ino, 'same device and inode: the identity alone would let it through');
     assert.deepEqual(started, []);
     assert.match(String(error), /no longer is the file checked for this launch/);
   } finally {
