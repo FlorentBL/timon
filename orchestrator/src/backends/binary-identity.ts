@@ -138,19 +138,51 @@ export function probeLaunch(
   return direct && win32.extname(direct.file).toLowerCase() === '.exe' ? direct : null;
 }
 
+/**
+ * The errno code of a file-system failure (`ENOENT`, `EACCES`), or `unknown`. What a log keeps of such a
+ * failure: Node's message quotes the full path, which names the home folder or the temporary folder.
+ */
+export function errnoCode(error: unknown): string {
+  const code = (error as { code?: unknown } | null)?.code;
+  return typeof code === 'string' && /^[A-Z][A-Z0-9_]{1,39}$/.test(code) ? code : 'unknown';
+}
+
+/** The folder a check runs in could not be made. A fixed message: Node's own names the temporary folder. */
+export class BinaryProbeSetupError extends Error {
+  readonly code = 'probe_setup_failed';
+  constructor(readonly errno: string) {
+    super('The program could not be checked: the folder the check runs in could not be prepared.');
+    this.name = 'BinaryProbeSetupError';
+  }
+}
+
+/** A folder left behind costs some disk, not the answer: logged with its errno code, never its path. */
+function removeProbeFolder(cwd: string): void {
+  try {
+    rmSync(cwd, { recursive: true, force: true });
+  } catch (error) {
+    console.warn(`[backends] identity check: its temporary folder could not be removed (${errnoCode(error)})`);
+  }
+}
+
 /** An empty folder of its own for one run, so the program reads and leaves nothing in the daemon's. */
 function withProbeFolder<T>(run: (cwd: string) => T): T {
-  const cwd = mkdtempSync(join(tmpdir(), 'timon-identity-'));
+  let cwd: string;
+  try {
+    cwd = mkdtempSync(join(tmpdir(), 'timon-identity-'));
+  } catch (error) {
+    throw new BinaryProbeSetupError(errnoCode(error));
+  }
   let async = false;
   try {
     const out = run(cwd);
     if (out instanceof Promise) {
       async = true;
-      return out.finally(() => rmSync(cwd, { recursive: true, force: true })) as T;
+      return out.finally(() => removeProbeFolder(cwd)) as T;
     }
     return out;
   } finally {
-    if (!async) rmSync(cwd, { recursive: true, force: true });
+    if (!async) removeProbeFolder(cwd);
   }
 }
 

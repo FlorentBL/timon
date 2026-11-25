@@ -16,14 +16,16 @@
  * (`setup.ts`), and a file written from here would end onboarding and drop
  * the ports a packaged first launch decided through the environment.
  */
-import { existsSync, readFileSync, renameSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, isAbsolute, join, win32 } from 'node:path';
 import { CONFIG_FILE, config, expandTilde, setConfig } from '../config/load.js';
 import { HostSchema } from '../config/schema.js';
 import { findExecutableBinary } from '../host/binary-path.js';
 import { declaredBinary } from '../host/declared-binaries.js';
-import { binaryIdentityRefusal, checkBinaryIdentity, DEFAULT_IDENTITY_ARGS } from './binary-identity.js';
+import {
+  BinaryProbeSetupError, binaryIdentityRefusal, checkBinaryIdentity, DEFAULT_IDENTITY_ARGS, errnoCode, type BinaryIdentityResult,
+} from './binary-identity.js';
 import { buildSetupConfig, SetupError } from '../setup.js';
 import {
   backendBinaryAnchor, checkBackendBinaries, invalidateBackendBinaryAvailability, type BackendBinaryStatus,
@@ -39,7 +41,9 @@ export type BinaryPinErrorCode =
   | 'no_answer'
   | 'unsupported_program'
   | 'no_config'
-  | 'config_unreadable';
+  | 'config_unreadable'
+  | 'pin_write_failed'
+  | 'probe_setup_failed';
 
 /** Fixed messages: none of them quotes what the caller sent. */
 const MESSAGES: Record<BinaryPinErrorCode, string> = {
@@ -53,6 +57,8 @@ const MESSAGES: Record<BinaryPinErrorCode, string> = {
   unsupported_program: 'On Windows, pin the program\'s .exe, or the .cmd shim npm installed for it.',
   no_config: 'Finish the setup first: timon.config.json does not exist yet.',
   config_unreadable: 'timon.config.json cannot be read as JSON; fix or restore it first.',
+  pin_write_failed: 'timon.config.json could not be written: check that the daemon may write to its folder.',
+  probe_setup_failed: 'This file could not be checked: the folder the check runs in could not be prepared. Try again.',
 };
 
 const STATUS: Record<BinaryPinErrorCode, number> = {
@@ -66,15 +72,25 @@ const STATUS: Record<BinaryPinErrorCode, number> = {
   unsupported_program: 400,
   no_config: 409,
   config_unreadable: 409,
+  pin_write_failed: 500,
+  probe_setup_failed: 500,
 };
 
 export class BinaryPinError extends Error {
   readonly status: number;
-  /** `message`: a sentence built from the provider's declaration, never from what the caller sent. */
-  constructor(readonly code: BinaryPinErrorCode, message: string = MESSAGES[code]) {
+  /**
+   * `message`: a sentence built from the provider's declaration, never from what the caller sent.
+   * `errno`: the code of the file-system failure behind it (`EACCES`), the only part of it a log keeps.
+   */
+  constructor(readonly code: BinaryPinErrorCode, message: string = MESSAGES[code], readonly errno: string | null = null) {
     super(message);
     this.status = STATUS[code];
   }
+}
+
+/** A `BinaryPinError` for a file-system failure: its fixed message, and the errno code alone. */
+function failed(code: BinaryPinErrorCode, error: unknown): BinaryPinError {
+  return new BinaryPinError(code, MESSAGES[code], errnoCode(error));
 }
 
 /** Shape a binary name must have before it is even looked up. */
@@ -159,7 +175,13 @@ export function assertExecutablePin(path: string, platform: NodeJS.Platform = pr
 export async function assertPinIdentity(name: string, path: string): Promise<void> {
   const identity = declaredBinary(name)?.identity;
   if (!identity) return;
-  const result = await checkBinaryIdentity(path, identity);
+  let result: BinaryIdentityResult;
+  try {
+    result = await checkBinaryIdentity(path, identity);
+  } catch (error) {
+    if (error instanceof BinaryProbeSetupError) throw new BinaryPinError('probe_setup_failed', MESSAGES.probe_setup_failed, error.errno);
+    throw error;
+  }
   if (result.ok) return;
   console.warn(`[backends] ${name}: pin refused, ${binaryIdentityRefusal(`\`${name}\``, path, identity, result.reason)}`);
   const asked = (identity.args ?? DEFAULT_IDENTITY_ARGS).join(' ');
@@ -200,11 +222,17 @@ function readUserFile(file: string): { json: Json; raw: string } {
 }
 
 /** Same directory, then rename: neither the config watcher nor a crash ever
- *  sees half a file. */
+ *  sees half a file. A failure names neither file: Node's message quotes the
+ *  full path, the home folder included. */
 function writeAtomically(file: string, content: string): void {
   const tmp = join(dirname(file), `.timon.config.${process.pid}.${Date.now()}.tmp`);
-  writeFileSync(tmp, content);
-  renameSync(tmp, file);
+  try {
+    writeFileSync(tmp, content);
+    renameSync(tmp, file);
+  } catch (error) {
+    try { rmSync(tmp, { force: true }); } catch { /* the failure reported is the write's */ }
+    throw failed('pin_write_failed', error);
+  }
 }
 
 /** Rewrites `host.binaries.<name>` in the user's file; `null` removes it. */
@@ -238,7 +266,7 @@ async function dismissResolvedAlerts(statuses: readonly BackendBinaryStatus[]): 
     const { dbApi } = await import('../db.js');
     for (const status of resolved) dbApi.dismissNotificationsByAnchor(backendBinaryAnchor(status.cmd), 'alert');
   } catch (err) {
-    console.warn(`[backends] could not dismiss the missing-CLI alert: ${(err as Error).message}`);
+    console.warn(`[backends] could not dismiss the missing-CLI alert (${errnoCode(err)})`);
   }
 }
 

@@ -238,7 +238,8 @@ export function diagnose(): DoctorReport {
       pinned,
       attemptedPaths: pin ? pinnedBinaryCandidates(b.name, pin)
         : [...binaryCandidates(b.name), ...(path ? [] : npmPrefixCandidates(b.name))],
-      ...(pinned && !path ? { error: `host.binaries.${b.name} does not point to an executable file: ${pins[b.name]}` } : {}),
+      // The pin itself is not quoted: it names the home folder. `attemptedPaths` lists it for the person who reads.
+      ...(pinned && !path ? { error: `host.binaries.${b.name}: the pinned file is missing or cannot be run` } : {}),
       ...(wrongProgram ? { error: wrongProgram } : {}),
       installCommand: installCommandFor(b.name, machine),
     };
