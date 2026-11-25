@@ -71,6 +71,13 @@ Generated from the configuration schema and the loader's environment override ta
 | `pluginPolicy.http.allow` | string[] | [] | Operator allowlist; an empty list refuses access. | — |
 | `pluginPolicy.http.byPlugin` | object | {} | Plugin ID to the hostnames that plugin alone may reach, on top of the shared allowlist. | — |
 | `pluginPolicy.http.connectionApproval` | "admin" &#124; "owner" | "admin" | Who approves the destination of a user's plugin connection: an administrator, or its owner. | — |
+| `pluginPolicy.publicImages` | object | See child fields | Image fetches from public hosts for plugins that declare http:public-images; no host allowlist. | — |
+| `pluginPolicy.publicImages.enabled` | boolean | true | Whether plugins that declare http:public-images may fetch images from public hosts. | — |
+| `pluginPolicy.publicImages.denied` | string[] | [] | Plugin IDs refused public image fetches, even when enabled. | — |
+| `pluginPolicy.publicImages.maxBytes` | integer | 5242880 | Largest image one fetch may return, in bytes; a plugin may ask for less. | — |
+| `pluginPolicy.publicImages.timeoutMs` | integer | 15000 | Longest one fetch may take, redirects included, in milliseconds. | — |
+| `pluginPolicy.publicImages.max` | integer | 120 | Maximum image fetches one plugin may start in a window; zero denies them. | — |
+| `pluginPolicy.publicImages.windowMs` | integer | 60000 | Time window in milliseconds. | — |
 | `authThrottle` | object | See child fields | Credential endpoint back-off and lockout policy. | — |
 | `authThrottle.enabled` | boolean | true | Whether this feature is enabled. | — |
 | `authThrottle.maxAttempts` | integer | 5 | Failed credential attempts allowed before lockout. | — |

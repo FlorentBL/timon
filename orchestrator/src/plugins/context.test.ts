@@ -196,6 +196,23 @@ test('fetch only appears with http:outbound', async () => {
   await root.fiber.dispose();
 });
 
+test('fetchPublicImage only appears with http:public-images, never with http:outbound alone', async () => {
+  const root = new Context();
+  const { ctx } = await pluginFiber(root);
+  const images = createPluginContext(ctx, {
+    manifest: manifestOf('image-plugin', ['http:public-images']),
+    version: '1.0.0',
+  }, fakeHost());
+  assert.equal(typeof images.fetchPublicImage, 'function');
+  assert.equal(images.fetch, undefined, 'the image relay does not open `ctx.fetch`');
+  const outbound = createPluginContext(ctx, {
+    manifest: manifestOf('net-only-plugin', ['http:outbound']),
+    version: '1.0.0',
+  }, fakeHost());
+  assert.equal(outbound.fetchPublicImage, undefined);
+  await root.fiber.dispose();
+});
+
 test('a plugin never sees the keys of another one in plugin_kv', async () => {
   const root = new Context();
   const { ctx } = await pluginFiber(root);

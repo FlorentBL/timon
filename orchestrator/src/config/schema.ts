@@ -280,7 +280,9 @@ export const SecretsSchema = z.object({
  * subscriptions: spawning missions burns them, `host:exec` calls their CLI
  * directly, and `http:outbound` carries whatever was read back out. Refusing
  * by default costs a config line to the operator who wants one of them, and
- * costs an attacker the whole path.
+ * costs an attacker the whole path. `publicImages` is not one of the three: it
+ * reaches public hosts only, carries nothing but a URL and brings back nothing
+ * but a checked image, so it is on until the operator turns it off.
  */
 export const PluginPolicySchema = z.object({
   spawn: z.object({
@@ -333,6 +335,22 @@ export const PluginPolicySchema = z.object({
      */
     connectionApproval: z.enum(['admin', 'owner']).default('admin').describe("Who approves the destination of a user's plugin connection: an administrator, or its owner."),
   }).prefault({}).describe("Allowed outbound hostnames; a wildcard covers subdomains only."),
+  /**
+   * `ctx.fetchPublicImage` (`http:public-images`): an image from any PUBLIC
+   * host, through the SSRF guard, with nothing of the plugin's but the URL.
+   * On by default, unlike `http.allow`: the hosts are not known in advance (a
+   * mail's sender, its avatar), so an allowlist would have to be opened to
+   * everything; the sensitive permission shown at install is the consent, and
+   * these fields are how the operator takes it back.
+   */
+  publicImages: z.object({
+    enabled: z.boolean().default(true).describe("Whether plugins that declare http:public-images may fetch images from public hosts."),
+    denied: z.array(z.string()).default([]).describe("Plugin IDs refused public image fetches, even when enabled."),
+    maxBytes: z.number().int().positive().max(52_428_800).default(5_242_880).describe("Largest image one fetch may return, in bytes; a plugin may ask for less."),
+    timeoutMs: z.number().int().positive().max(120_000).default(15_000).describe("Longest one fetch may take, redirects included, in milliseconds."),
+    max: z.number().int().nonnegative().default(120).describe("Maximum image fetches one plugin may start in a window; zero denies them."),
+    windowMs: z.number().int().positive().default(60_000).describe("Time window in milliseconds."),
+  }).prefault({}).describe("Image fetches from public hosts for plugins that declare http:public-images; no host allowlist."),
 });
 
 /**
