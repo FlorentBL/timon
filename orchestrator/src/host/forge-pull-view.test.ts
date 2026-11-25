@@ -7,7 +7,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import type { GhRunner } from './gh.js';
 import {
-  githubPullPageReader, githubUrl, parsePullEventsPage, parsePullRequestPage, parseReviewThreadsPage, PULL_PAGE_FIELDS, reactionsOf, VIEW_BODY_LIMIT,
+  githubPullPageReader, githubUrl, THREAD_PAGE_CALLS, THREADS_READ_DEADLINE_MS, parsePullEventsPage, parsePullRequestPage, parseReviewThreadsPage, PULL_PAGE_FIELDS, reactionsOf, VIEW_BODY_LIMIT,
   VIEW_EVENT_LIMIT,
   VIEW_COMMENT_LIMIT, VIEW_FILE_LIMIT, VIEW_THREAD_COMMENT_BUDGET, VIEW_THREAD_COMMENTS, VIEW_THREAD_LIMIT, VIEW_TIMELINE_LIMIT, viewText,
 } from './forge-pull-view.js';
@@ -305,6 +305,54 @@ test('a long thread\'s next comments are read through its id, within the bound p
   const followUps = calls.filter((c) => valueOf(c, 'id'));
   assert.deepEqual(followUps.map((c) => [valueOf(c, 'id'), valueOf(c, 'after')]), [['T0', 'k20']]);
   assert.ok(!calls.flat().some((x) => /mutation/i.test(x)));
+});
+
+test('pages of threads left empty keep coming: the calls stop at their bound', async () => {
+  const calls: string[][] = [];
+  // Every page holds nothing a thread is made of, and always names a next one.
+  const gh: GhRunner = async (args) => {
+    calls.push(args);
+    return { code: 0, stdout: threadsAnswer([{ junk: true }], 9_999, `c${calls.length}`), stderr: '' };
+  };
+  const out = await githubPullPageReader(null, { gh }).pullRequestThreadsPage('acme/widgets', 42);
+  assert.ok(out.ok);
+  assert.equal(out.value.threads.length, 0);
+  assert.equal(out.value.threadsMore, 9_999);
+  assert.equal(calls.length, THREAD_PAGE_CALLS);
+  assert.equal(THREAD_PAGE_CALLS, 3);
+});
+
+test('a cursor the forge already gave ends the list of threads', async () => {
+  const calls: string[][] = [];
+  const gh: GhRunner = async (args) => {
+    calls.push(args);
+    // The second page sends back the cursor that led to it.
+    return { code: 0, stdout: threadsAnswer([threadNode(calls.length)], 500, 'same'), stderr: '' };
+  };
+  const out = await githubPullPageReader(null, { gh }).pullRequestThreadsPage('acme/widgets', 42);
+  assert.ok(out.ok);
+  assert.equal(out.value.threads.length, 2);
+  assert.deepEqual(calls.map((c) => valueOf(c, 'after') ?? null), [null, 'same']);
+});
+
+test('the whole read of the threads has a deadline, each call within what is left', async () => {
+  let clock = 1_000;
+  const timeouts: number[] = [];
+  const first = Array.from({ length: 20 }, (_, i) => ({ author: { login: 'a' }, body: `c${i}`, createdAt: '2026-11-17T11:00:00Z', url: null }));
+  const gh: GhRunner = async (args, opts) => {
+    timeouts.push(opts.timeout ?? -1);
+    clock += 40_000;
+    if (valueOf(args, 'id')) throw new Error('no follow-up past the deadline');
+    const long = threadNode(timeouts.length, { comments: { totalCount: 130, pageInfo: { hasNextPage: true, endCursor: 'k20' }, nodes: first } });
+    return { code: 0, stdout: threadsAnswer([long], 500, `c${timeouts.length}`), stderr: '' };
+  };
+  const out = await githubPullPageReader(null, { gh, now: () => clock }).pullRequestThreadsPage('acme/widgets', 42);
+  assert.ok(out.ok);
+  // 90 s in all: two pages of 40 s, then a call that may last 10 s, then none.
+  assert.deepEqual(timeouts, [60_000, 50_000, 10_000]);
+  assert.equal(out.value.threads.length, 3);
+  assert.equal(out.value.threads[0]!.comments.length, 20);
+  assert.equal(THREADS_READ_DEADLINE_MS, 90_000);
 });
 
 test('thread comments stay within the page\'s budget, the rest counted', () => {

@@ -1,7 +1,8 @@
 /**
  * The page of one pull request and the end of a failed check's log: who may
  * read them, what reaches the forge (reads only, never git), and the short
- * cache that keeps a window opened twice from starting gh twice.
+ * cache that keeps a window opened twice from starting gh twice, and the
+ * account gh signs in as, checked before any read.
  */
 import '../../test-home.js';
 import assert from 'node:assert/strict';
@@ -15,8 +16,9 @@ import express from 'express';
 import { bus } from '../../bus.js';
 import { dbApi } from '../../db.js';
 import { getHost } from '../../host/index.js';
+import type { GhLoginOutcome } from '../../host/gh.js';
 import type { ExecOpts, ExecResult } from '../../host/types.js';
-import { forgetPullRequestPages, PAGE_CACHE_MS, watchPullRequestPages } from '../../pull-request-page.js';
+import { ACCOUNT_CHECK_MS, forgetPullRequestPages, PAGE_CACHE_MS, watchPullRequestPages } from '../../pull-request-page.js';
 import { registerExternalPrRoutes } from './external-pr-routes.js';
 
 const home = realpathSync(mkdtempSync(join(tmpdir(), 'timon-pr-page-')));
@@ -25,6 +27,12 @@ dbApi.upsertProject('acme', { cwd: join(home, 'code', 'acme') });
 dbApi.upsertProject('solo', { cwd: join(home, 'code', 'solo') });
 dbApi.setProjectIntegration('acme', JSON.stringify({
   mode: 'pr', remote: 'origin', target: 'main', forge: 'github', account: 'ai-bot',
+  gh_config_dir: null, branch_prefix: 'feat/', remote_url: 'git@github.com:acme/widgets.git',
+}));
+// Stored before an account was required: its reads run as they always did.
+dbApi.upsertProject('open', { cwd: join(home, 'code', 'open') });
+dbApi.setProjectIntegration('open', JSON.stringify({
+  mode: 'pr', remote: 'origin', target: 'main', forge: 'github', account: null,
   gh_config_dir: null, branch_prefix: 'feat/', remote_url: 'git@github.com:acme/widgets.git',
 }));
 
@@ -72,7 +80,12 @@ app.use((req, _res, next) => {
   next();
 });
 let clock = 1_000_000;
-registerExternalPrRoutes(app, { now: () => clock });
+const loginCalls: Array<string | null> = [];
+let loginAnswer: GhLoginOutcome = { ok: true, login: 'AI-Bot' };
+registerExternalPrRoutes(app, {
+  now: () => clock,
+  ghLogin: async (dir) => { loginCalls.push(dir); return loginAnswer; },
+});
 const server = app.listen(0, '127.0.0.1');
 await once(server, 'listening');
 const stopWatching = watchPullRequestPages();
@@ -88,6 +101,8 @@ const LOG_URL = `${PAGE_URL}/check-log?url=${encodeURIComponent('https://github.
 
 beforeEach(() => {
   calls.length = 0;
+  loginCalls.length = 0;
+  loginAnswer = { ok: true, login: 'AI-Bot' };
   forgetPullRequestPages();
   threadsFail = false;
   eventsFail = false;
@@ -98,6 +113,7 @@ test('an anonymous caller is refused, and gh never runs', async () => {
   assert.equal((await get(PAGE_URL, 'anonymous')).status, 401);
   assert.equal((await get(LOG_URL, 'anonymous')).status, 401);
   assert.deepEqual(calls, []);
+  assert.deepEqual(loginCalls, []);
 });
 
 test('a caller without projects:manage is refused', async () => {
@@ -189,6 +205,51 @@ test('the end of a failed check\'s log comes from the repository\'s own CI only'
   const other = await get(`${PAGE_URL}/check-log?url=${encodeURIComponent('https://github.com/other/repo/actions/runs/1/job/2')}`, 'manager');
   assert.equal(other.status, 422);
   assert.equal(calls.length, 1);
+});
+
+test('gh signed in as another account than the project expects reads nothing, and says so without the login', async () => {
+  loginAnswer = { ok: true, login: 'someone-else' };
+  for (const url of [PAGE_URL, LOG_URL]) {
+    const res = await get(url, 'manager');
+    assert.equal(res.status, 409);
+    const text = await res.text();
+    assert.equal((JSON.parse(text) as { code: string }).code, 'forge_account_mismatch');
+    assert.doesNotMatch(text, /someone-else/i);
+  }
+  assert.deepEqual(calls, []);
+});
+
+test('an account check that cannot run reads nothing', async () => {
+  loginAnswer = { ok: false, code: 'gh_failed', reason: 'HTTP 401: Bad credentials' };
+  const res = await get(PAGE_URL, 'manager');
+  assert.equal(res.status, 502);
+  assert.equal(((await res.json()) as { code: string }).code, 'forge_read_failed');
+  assert.deepEqual(calls, []);
+  // A failure is not kept: the next window asks again.
+  loginAnswer = { ok: true, login: 'ai-bot' };
+  assert.equal((await get(PAGE_URL, 'manager')).status, 200);
+  assert.equal(loginCalls.length, 2);
+});
+
+test('the account is checked once a minute per config folder, not at every window', async () => {
+  await get(`${PAGE_URL}?fresh=1`, 'manager');
+  await get(`${PAGE_URL}?fresh=1`, 'manager');
+  await get(LOG_URL, 'manager');
+  assert.deepEqual(loginCalls, [null]);
+  clock += ACCOUNT_CHECK_MS;
+  await get(`${PAGE_URL}?fresh=1`, 'manager');
+  assert.equal(loginCalls.length, 2);
+  // The folder now signs in as someone else: even a cached page is refused.
+  clock += ACCOUNT_CHECK_MS;
+  loginAnswer = { ok: true, login: 'someone-else' };
+  assert.equal((await get(PAGE_URL, 'manager')).status, 409);
+});
+
+test('a project that names no account reads as before, without checking one', async () => {
+  const res = await get('/api/projects/open/pull-requests/12', 'manager');
+  assert.equal(res.status, 200);
+  assert.deepEqual(loginCalls, []);
+  assert.equal(calls.length, 3);
 });
 
 test('an event older than the first comment kept counts with the entries left out', async () => {
