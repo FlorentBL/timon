@@ -135,7 +135,13 @@ const TOOLS = [
       type: 'object',
       properties: {
         title: { type: 'string', description: 'Short task title.' },
-        agent_name: { type: 'string', description: 'Name of the agent who will run the task.' },
+        agent_name: {
+          type: 'string',
+          description:
+            'Name of the agent who will run the task. For a code/review/merge/research/chore task the ' +
+            'project\'s role system may hand it to the agent holding the type\'s role instead: the reply ' +
+            'then carries `warnings` naming who will run it (the task is still created).',
+        },
         description: { type: 'string', description: 'Optional context/details.' },
         priority: { type: 'number', minimum: 1, maximum: 5, description: '1 (someday) to 5 (urgent), default 3.' },
         deps: { type: 'array', items: { type: 'string' }, description: 'IDs of blocking tasks.' },
@@ -1070,7 +1076,9 @@ const TOOLS = [
     description:
       'Shows an image or a video in the chat of YOUR mission, as a media card (preview, '
       + 'enlarge, download). `src` is one of: an absolute path of a file under your working '
-      + 'directory (PNG, JPEG, GIF, WebP, AVIF, MP4, WebM, MOV, Ogg); an https:// address on a '
+      + 'directory (PNG, JPEG, GIF, WebP, AVIF, MP4, WebM, MOV, Ogg), never inside a hidden folder (a name '
+      + 'starting with ".", like .git or .timon) — symlinks are followed, and a refused path answers '
+      + 'path_hidden_segment or path_outside_roots, a missing file not_found; an https:// address on a '
       + 'public host name, which Timon downloads itself (never the browser); a data:image/png|jpeg|gif|webp;base64 '
       + 'URL. Refused: http:, file:, javascript:, blob:, SVG, IP addresses, localhost, custom ports, '
       + 'user:password@ in the address. Never put a secret or a piece of the conversation in the address. '
@@ -1079,7 +1087,7 @@ const TOOLS = [
     inputSchema: {
       type: 'object',
       properties: {
-        src: { type: 'string', description: 'Absolute file path, https:// address, or raster data: URL.' },
+        src: { type: 'string', description: 'Absolute file path (under your working directory, outside hidden folders), https:// address, or raster data: URL.' },
         caption: { type: 'string', description: 'Plain text shown under the media (max 300 characters).' },
       },
       required: ['src'],
@@ -1430,7 +1438,8 @@ async function runTool(rawName, args, ctx) {
       if (args.todo_id !== undefined) body.todo_id = args.todo_id;
       if (env.traceId) body.trace_id = env.traceId;
       const r = await call('POST', '/api/tasks', body);
-      return r.task;
+      // A task another agent will run, or a schedule far out: said, not refused.
+      return r.warnings?.length ? { ...r.task, warnings: r.warnings } : r.task;
     }
     case 'series_fallback_set': {
       const id = args.series_id ?? 'current';

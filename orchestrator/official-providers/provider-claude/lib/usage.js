@@ -271,27 +271,49 @@ async function cachedProbe(slot, force, load) {
 /** One refresh at a time per account, as for the host (`refreshSlot`). */
 const accountRefreshSlots = new Map();
 
-async function readAccountToken(configDir, fetchImpl, platform = process.platform) {
+/**
+ * The access token an account's gauge asks with, read from the account's folder. On macOS that
+ * file is where the daemon moves the CLI's keychain entry before a fenced launch
+ * (`account-keychain.js`), and where a fenced CLI writes a renewed pair: it is read there, never
+ * renewed, and the keychain entry itself is left alone (only a launch may touch it).
+ * `fallbackToken`: the long-lived token Timon keeps for the host, for the host's kept sign-in only.
+ */
+async function readAccountToken(configDir, fetchImpl, platform = process.platform, fallbackToken) {
     const file = join(configDir, '.credentials.json');
     const credentials = readCredentialsAt(file);
     const oauth = credentials?.claudeAiOauth;
     const accessToken = typeof oauth?.accessToken === 'string' ? oauth.accessToken : '';
-    if (!accessToken)
-        throw new UsageNotSignedInError('This subscription account is not signed in; sign it in from the settings');
-    if (!isExpired(expiryMs(oauth?.expiresAt)))
+    if (accessToken && !isExpired(expiryMs(oauth?.expiresAt)))
         return accessToken;
     // Renewed like the host's file, which the CLI of the account reads the same way: a gauge left
     // "stale" until a mission happened to run on the account told nothing. Never on macOS, where
     // the CLI keeps its session in the keychain and a rotated token would sign it out.
-    if (platform === 'darwin' || typeof oauth.refreshToken !== 'string' || !oauth.refreshToken) {
+    const renewable = accessToken && platform !== 'darwin' && typeof oauth.refreshToken === 'string' && oauth.refreshToken;
+    if (renewable) {
+        let slot = accountRefreshSlots.get(configDir);
+        if (!slot) {
+            slot = { current: null };
+            accountRefreshSlots.set(configDir, slot);
+        }
+        return refreshStored(file, slot, credentials, fetchImpl);
+    }
+    // The missions of the host's kept sign-in run on this token when one is kept: so does its gauge.
+    const longLived = fallbackToken ? await fallbackToken() : null;
+    if (longLived)
+        return longLived;
+    if (accessToken)
         throw new Error('The session of this subscription account expired; the next mission on it renews it');
-    }
-    let slot = accountRefreshSlots.get(configDir);
-    if (!slot) {
-        slot = { current: null };
-        accountRefreshSlots.set(configDir, slot);
-    }
-    return refreshStored(file, slot, credentials, fetchImpl);
+    // Signed in, but the CLI still keeps the session in the login keychain, under an entry only a
+    // launch moves: a gap until then, not a sign-out the person would be sent to redo.
+    if (platform === 'darwin' && signedInAt(configDir))
+        throw new Error('This sign-in is still in the macOS keychain; its usage shows once a mission has run on it');
+    throw new UsageNotSignedInError('This subscription account is not signed in; sign it in from the settings');
+}
+
+/** The CLI records who it is signed in as in `.claude.json` (no secret), and forgets it on sign-out. */
+function signedInAt(configDir) {
+    const account = readCredentialsAt(join(configDir, '.claude.json'))?.oauthAccount;
+    return !!account && typeof account === 'object';
 }
 
 async function getClaudeAccountUsage(configDir, opts = {}) {
@@ -302,7 +324,7 @@ async function getClaudeAccountUsage(configDir, opts = {}) {
         accountProbes.set(key, slot);
     }
     const fetchImpl = opts.fetchImpl ?? fetch;
-    const raw = await cachedProbe(slot, opts.force, async () => requestUsage(await readAccountToken(key, fetchImpl, opts.platform), fetchImpl));
+    const raw = await cachedProbe(slot, opts.force, async () => requestUsage(await readAccountToken(key, fetchImpl, opts.platform, opts.fallbackToken), fetchImpl));
     return {
         windows: { five_hour: raw.five_hour, seven_day: raw.seven_day },
         extra: raw.extra_usage,

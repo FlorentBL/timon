@@ -31,7 +31,9 @@ import { existsSync, readFileSync } from 'node:fs';
 import { isAbsolute, join } from 'node:path';
 import { promisify } from 'node:util';
 import { composePrompt, type PromptPresentation } from './prompt-presentation.js';
-import { listAllSkills, readEntryContent, resolveSkill, type SkillEntry } from './skill-registry.js';
+import {
+  listAllSkills, readEntryContent, resolvePluginShortName, resolveSkill, type SkillEntry,
+} from './skill-registry.js';
 
 const execAsync = promisify(exec);
 
@@ -154,7 +156,15 @@ export async function expandSlashCommand(
 
   if (!SKILL_ID_RE.test(id)) return { expanded: message, skill: null };
 
-  const entry = resolveSkill(id, { cwd: opts.cwd });
+  let entry = resolveSkill(id, { cwd: opts.cwd });
+  if (!entry) {
+    const short = resolvePluginShortName(id, { cwd: opts.cwd });
+    if (short.candidates.length > 1) {
+      console.warn(`[slash] /${id} ignored — ambiguous short name, type one of: ${short.candidates.map((c) => `/${c}`).join(', ')}`);
+      return { expanded: message, skill: null };
+    }
+    entry = short.entry;
+  }
   if (!entry) {
     const known = listAllSkills({ cwd: opts.cwd }).filter((e) => !e.shadowed).map((e) => e.id);
     console.warn(`[slash] /${id} ignored — unknown id. Available: ${known.join(', ') || '(none)'}`);
@@ -166,6 +176,8 @@ export async function expandSlashCommand(
     console.warn(`[slash] /${id} not found on disk (${entry.path}) — message unchanged`);
     return { expanded: message, skill: null };
   }
+  // A short name resolves to its plugin's full id: that is what was applied.
+  const skillId = entry.id;
   const body = stripFrontmatter(raw);
 
   let composed: { text: string; presentation: PromptPresentation };
@@ -177,11 +189,11 @@ export async function expandSlashCommand(
     composed = composePrompt([{
       kind: 'instruction',
       label: 'commandInvoked',
-      labelVars: { id },
+      labelVars: { id: skillId },
       text: [
-        `[Claude command invoked: \`/${id}\`] Run the procedure below (the \`!\` blocks and \`@\` files are already resolved). This is the priority instruction of this turn.`,
+        `[Claude command invoked: \`/${skillId}\`] Run the procedure below (the \`!\` blocks and \`@\` files are already resolved). This is the priority instruction of this turn.`,
         ``,
-        `<command id="${id}">`,
+        `<command id="${skillId}">`,
         processed,
         `</command>`,
       ].join('\n'),
@@ -199,11 +211,11 @@ export async function expandSlashCommand(
       {
         kind: 'instruction',
         label: 'skillInvoked',
-        labelVars: { id },
+        labelVars: { id: skillId },
         text: [
-          `[Skill invoked explicitly: \`${id}\`] Apply the skill procedure below to my request, STRICTLY. This is not optional — it is the priority instruction of this turn.`,
+          `[Skill invoked explicitly: \`${skillId}\`] Apply the skill procedure below to my request, STRICTLY. This is not optional — it is the priority instruction of this turn.`,
           ``,
-          `<skill id="${id}">`,
+          `<skill id="${skillId}">`,
           body,
           `</skill>`,
           ``,
@@ -215,5 +227,5 @@ export async function expandSlashCommand(
     ]);
   }
 
-  return { expanded: composed.text, skill: id, presentation: composed.presentation };
+  return { expanded: composed.text, skill: skillId, presentation: composed.presentation };
 }

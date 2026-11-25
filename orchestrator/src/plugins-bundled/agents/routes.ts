@@ -6,7 +6,7 @@
  * Routes extracted verbatim from `index.ts` (step 1.4).
  */
 import express from 'express';
-import { randomUUID } from 'node:crypto';
+import { randomBytes, randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { createRole, deleteRole, isSafeRoleIconSvg, listRoles, getRole, resetRoleDirectives, updateRole } from '../../agent-roles.js';
 import { canonicalAgentName, createEphemeralAgent, deleteAgent, getAgent, restoreAgent, setAgentOrchestrates, teamVisibleAgents, clientTurnState, getTurnState, isAutonomousMission, killRunningForAgent, listAgents, loadConfig, patchAgentConfig, renamedTriggerReason, spawnAgent, upsertAgent } from '../../agent.js';
@@ -27,7 +27,7 @@ import { browseAgentFiles, deleteAgentPath, mkdirAgentPath, moveAgentPath, openA
 import { sendMedia } from '../../media-send.js';
 import { handleSpawn } from '../../http-helpers.js';
 import { defaultExcludedMcpIds, deleteMcp, getMcp, listMcp, mcpOAuthClient, missionTransport, presentMcpServer, redactMcpServer, setMcpOAuth, type McpHttpConfig, type McpStdioConfig, upsertMcp } from '../../mcp.js';
-import { buildAuthorizeUrl, discoverOAuth, dynamicRegister, exchangeCode, OAUTH_CALLBACK_PATH, oauthRedirectUri, oauthReturnPath, pkcePair, putPending, randomState, takePending } from '../../oauth.js';
+import { buildAuthorizeUrl, discoverOAuth, dynamicRegister, exchangeCode, OAUTH_CALLBACK_PATH, OAuthExchangeError, oauthErrorCode, oauthRedirectUri, oauthReturnPath, oauthState, pkcePair, putPending, settleState, takePending, usedState, type OAuthReturn } from '../../oauth.js';
 import { apiPort } from '../../api-url.js';
 import { agentDir, skillFile } from '../../paths.js';
 import { findAgentFolder, isValidAgentName } from '../../agent-config.js';
@@ -43,7 +43,7 @@ import { auditActor, auditRequest } from '../../users/audit-actor.js';
 import { agentTrashEnabled, agentTrashRetentionDays, getAgentTrashEntry, isAgentTrashId, listAgentTrash, purgeAgentTrashEntry, readTrashedAgentConfig, trashedAgentSkills } from '../../agent-trash.js';
 import { listPending as listPendingPermissions } from '../../permissions.js';
 import { listAlwaysApprovals, revokeApproval } from '../../approval-rules.js';
-import { settingStr } from '../../settings.js';
+import { resolve as resolveSetting, settingStr } from '../../settings.js';
 import {
   defaultImportId, deleteEntryFile, findImportableSkill, importSkill, IMPORTABLE_SOURCES, isImportableId, isManagedPath, listAllSkills,
   planSkillImport, readEntryContent, resolveSkill, SkillImportError, timonSkillPath, writeEntryFile,
@@ -233,32 +233,129 @@ type GraphEdge = {
  */
 function publicApiUrl(): string { return settingStr('TIMON_PUBLIC_API_URL'); }
 
-/** Where to bounce the user back after a successful (or failed) OAuth dance. */
-function publicAppUrl(): string { return settingStr('TIMON_PUBLIC_APP_URL'); }
-
-/** Strip a URL down to its origin, returning null on anything malformed. */
-function safeOrigin(raw: string): string | null {
-  if (!raw) return null;
-  try { return new URL(raw).origin; } catch { return null; }
+/**
+ * The app URL an administrator set on purpose. Its default,
+ * `http://timon.localhost`, only answers behind the Docker reverse proxy: on
+ * any other install a redirect there is a dead page (TIM-0165).
+ */
+function explicitAppUrl(): string | null {
+  const setting = resolveSetting('TIMON_PUBLIC_APP_URL');
+  if (!setting || setting.source === 'default') return null;
+  const raw = String(setting.value).trim().replace(/\/+$/, '');
+  return /^https?:\/\/[^/]+/i.test(raw) ? raw : null;
 }
 
-function callbackPage(opts: { ok: boolean; error?: string; mcpId?: string; returnTo?: string; returnPath?: string }): string {
-  const base = opts.returnTo || publicAppUrl();
-  const target = `${base}${opts.returnPath ?? '/mcp'}?oauth=${opts.ok ? 'success' : 'error'}` +
-    (opts.mcpId ? `&id=${encodeURIComponent(opts.mcpId)}` : '') +
-    (opts.error ? `&error=${encodeURIComponent(opts.error.slice(0, 200))}` : '');
-  const title = opts.ok ? 'Authorized' : 'Authorization failed';
-  const body = opts.ok
-    ? `<p>You can close this tab. Returning to TIMON…</p>`
-    : `<p>${escapeHtml(opts.error ?? 'unknown error')}</p>`;
-  return `<!doctype html><meta charset="utf-8"><title>${title}</title>
-<style>body{font:14px/1.5 -apple-system,system-ui,sans-serif;max-width:540px;margin:60px auto;padding:0 20px;color:#222}h1{font-size:18px}</style>
-<h1>${title}</h1>${body}
-<script>
-  // Try BroadcastChannel for the parent tab; fall back to a hard redirect.
-  try { new BroadcastChannel('timon-mcp-oauth').postMessage(${JSON.stringify({ ok: opts.ok, mcpId: opts.mcpId, error: opts.error })}); } catch(_) {}
-  setTimeout(()=>{ location.replace(${JSON.stringify(target)}); }, 600);
+/** The web app this daemon serves itself, reached from the same machine. */
+function localAppUrl(): string | null {
+  const cfg = config();
+  return cfg.app.enabled ? `http://localhost:${cfg.app.listen.port}` : null;
+}
+
+/** The origin of an absolute http(s) URL without credentials, else null. */
+function httpOrigin(raw: string): string | null {
+  if (!raw) return null;
+  try {
+    const u = new URL(raw);
+    if (u.protocol !== 'http:' && u.protocol !== 'https:') return null;
+    if (u.username || u.password) return null;
+    return u.origin;
+  } catch { return null; }
+}
+
+/**
+ * The origins the daemon knows its app under: the app URL set by an
+ * administrator, the configured public app URL, and the app it serves itself
+ * on the loopback. A browser header only selects one of them, never adds one.
+ */
+function trustedAppOrigins(): Set<string> {
+  const cfg = config();
+  const origins = new Set<string>();
+  for (const raw of [explicitAppUrl(), cfg.app.publicUrl, localAppUrl()]) {
+    const origin = raw ? httpOrigin(raw) : null;
+    if (origin) origins.add(origin);
+  }
+  if (cfg.app.enabled) {
+    const port = cfg.app.listen.port;
+    origins.add(`http://127.0.0.1:${port}`);
+    origins.add(`http://[::1]:${port}`);
+  }
+  return origins;
+}
+
+/** `raw` reduced to its origin when it is one of `trustedAppOrigins`, else null. */
+export function trustedReturnOrigin(raw: string): string | null {
+  const origin = httpOrigin(raw);
+  return origin !== null && trustedAppOrigins().has(origin) ? origin : null;
+}
+
+const EXPIRED_MESSAGE =
+  'This authorization is unknown or expired: it took more than 10 minutes, or Timon restarted since it began. Start it again from Timon.';
+
+type CallbackOutcome = {
+  ok: boolean;
+  /** Shown on the page and to the app: never a code, a token or a provider's body. */
+  message: string;
+  mcpId?: string;
+  back?: OAuthReturn | null;
+  /** A replayed callback says what happened without telling the app a second time. */
+  replay?: boolean;
+};
+
+/**
+ * The page the publisher's redirect lands on. A success goes back to the app
+ * when the daemon knows where it is; a failure stays here, readable, and only
+ * redirects when the app URL was configured on purpose.
+ */
+function oauthCallbackPage(outcome: CallbackOutcome, nonce: string): string {
+  const explicit = explicitAppUrl();
+  // Checked again here: the configuration may have changed since the flow began.
+  const remembered = outcome.back?.return_to ? trustedReturnOrigin(outcome.back.return_to) : null;
+  const base = remembered ?? explicit ?? localAppUrl();
+  const path = outcome.back?.return_path ?? '/mcp';
+  const target = base
+    ? `${base}${path}?oauth=${outcome.ok ? 'success' : 'error'}` +
+      (outcome.mcpId ? `&id=${encodeURIComponent(outcome.mcpId)}` : '') +
+      (outcome.ok ? '' : `&error=${encodeURIComponent(outcome.message.slice(0, 200))}`)
+    : null;
+  const redirect = target !== null && !outcome.replay && (outcome.ok || explicit !== null);
+  const title = outcome.ok ? 'Authorized' : 'Authorization failed';
+  const link = target
+    ? `<p><a href="${escapeHtml(target)}">Back to Timon</a></p>`
+    : '<p>Go back to the Timon window. You can close this tab.</p>';
+  const notify = outcome.replay ? '' :
+    `try { new BroadcastChannel('timon-mcp-oauth').postMessage(${scriptJson({ ok: outcome.ok, mcpId: outcome.mcpId, error: outcome.ok ? undefined : outcome.message })}); } catch(_) {}`;
+  return `<!doctype html><meta charset="utf-8"><meta name="color-scheme" content="light dark"><title>${title}</title>
+<style nonce="${nonce}">body{font:14px/1.5 -apple-system,system-ui,sans-serif;max-width:540px;margin:60px auto;padding:0 20px}h1{font-size:18px}</style>
+<h1>${title}</h1><p>${escapeHtml(outcome.message)}</p>${link}
+<script nonce="${nonce}">
+  // Tell an app tab of the same origin; another origin learns it by polling.
+  ${notify}
+  ${redirect ? `setTimeout(()=>{ location.replace(${scriptJson(target)}); }, 600);` : ''}
 </script>`;
+}
+
+/** JSON safe to inline in a <script>: a `</script>` in a message cannot close it. */
+/**
+ * Sends a callback page. Its only script and style carry a fresh nonce; the
+ * URL holds a code and a state, so it is never sent on as a referrer nor kept
+ * in a cache, and the page cannot be framed.
+ */
+function sendOAuthCallbackPage(res: express.Response, status: number, outcome: CallbackOutcome): void {
+  const nonce = randomBytes(16).toString('base64');
+  res.status(status)
+    .set('Content-Security-Policy', [
+      "default-src 'none'", `script-src 'nonce-${nonce}'`, `style-src 'nonce-${nonce}'`,
+      "base-uri 'none'", "form-action 'none'", "frame-ancestors 'none'",
+    ].join('; '))
+    .set('Referrer-Policy', 'no-referrer')
+    .set('Cache-Control', 'no-store')
+    .set('X-Content-Type-Options', 'nosniff')
+    .type('html')
+    .send(oauthCallbackPage(outcome, nonce));
+}
+
+function scriptJson(value: unknown): string {
+  return JSON.stringify(value).replace(/</g, '\\u003c');
 }
 
 function escapeHtml(s: string): string {
@@ -1913,13 +2010,13 @@ export function registerRoutes(app: express.IRouter): void {
       const saved = s.transport.oauth?.redirect_uri === redirectUri ? mcpOAuthClient(s) : undefined;
       const client = saved ?? await dynamicRegister(metadata, redirectUri);
       const { verifier, challenge } = pkcePair();
-      const state = randomState();
-      // Capture where the user came from so the post-callback bounce lands on
-      // the same scheme/host they were already on (avoids forcing https on a
-      // user who's browsing the app over http).
+      const state = oauthState(id);
+      // Where the user came from, so the post-callback bounce lands on the
+      // scheme and host they browse the app under: one of the app's known
+      // origins only, or a header would hand the link to any site.
       const referer = typeof req.headers.referer === 'string' ? req.headers.referer : '';
       const origin = typeof req.headers.origin === 'string' ? req.headers.origin : '';
-      const returnTo = safeOrigin(origin) ?? safeOrigin(referer) ?? undefined;
+      const returnTo = trustedReturnOrigin(origin) ?? trustedReturnOrigin(referer) ?? undefined;
       // The Apps page asks to come back to itself; anything else lands on /mcp.
       const returnPath = oauthReturnPath((req.body as { return_path?: unknown } | undefined)?.return_path);
       putPending(state, {
@@ -1944,11 +2041,40 @@ export function registerRoutes(app: express.IRouter): void {
     const state = typeof req.query.state === 'string' ? req.query.state : '';
     const errParam = typeof req.query.error === 'string' ? req.query.error : '';
     const pending = state ? takePending(state) : null;
-    if (errParam || !pending || !code) {
-      res.status(400).type('html').send(callbackPage({
-        ok: false,
-        error: errParam || (!pending ? 'unknown or expired state' : 'missing code'),
-      }));
+    const refuse = (status: number, outcome: Omit<CallbackOutcome, 'ok'>): void => {
+      // Never the state or the code: either one is half of a credential.
+      console.warn(`[mcp-oauth] callback for ${outcome.mcpId ?? 'an unknown server'} refused: ${outcome.message}`);
+      sendOAuthCallbackPage(res, status, { ok: false, ...outcome });
+    };
+    if (!pending) {
+      const used = state ? usedState(state) : null;
+      if (used?.outcome === 'ok') {
+        sendOAuthCallbackPage(res, 200, { ok: true, replay: true, mcpId: used.mcp_id, back: used,
+          message: 'This server is already authorized. You can close this tab.' });
+        return;
+      }
+      if (used?.outcome === 'expired') {
+        refuse(400, { mcpId: used.mcp_id, back: used, message: EXPIRED_MESSAGE });
+        return;
+      }
+      if (used) {
+        refuse(409, { replay: true, mcpId: used.mcp_id, back: used, message: used.outcome === 'in_progress'
+          ? 'This authorization is already being completed. Go back to Timon.'
+          : 'This authorization link was already used. Start the authorization again from Timon.' });
+        return;
+      }
+      // A state nobody issued proves nothing: no server, no remembered origin.
+      refuse(400, { back: null, message: EXPIRED_MESSAGE });
+      return;
+    }
+    const back: OAuthReturn = { return_to: pending.return_to, return_path: pending.return_path };
+    if (errParam || !code) {
+      settleState(state, 'failed');
+      // The code only, from a closed list: `error_description` is the
+      // publisher's free text and is never read.
+      refuse(400, { mcpId: pending.mcp_id, back, message: errParam
+        ? `The publisher refused the authorization (${oauthErrorCode(errParam)}).`
+        : 'The publisher sent no authorization code. Start the authorization again from Timon.' });
       return;
     }
     try {
@@ -1961,9 +2087,15 @@ export function registerRoutes(app: express.IRouter): void {
         redirect_uri: pending.redirect_uri,
         tokens,
       });
-      res.type('html').send(callbackPage({ ok: true, mcpId: pending.mcp_id, returnTo: pending.return_to, returnPath: pending.return_path }));
+      settleState(state, 'ok');
+      sendOAuthCallbackPage(res, 200, { ok: true, mcpId: pending.mcp_id, back,
+        message: 'You can close this tab. Returning to Timon…' });
     } catch (err) {
-      res.status(500).type('html').send(callbackPage({ ok: false, error: (err as Error).message, returnTo: pending.return_to, returnPath: pending.return_path }));
+      settleState(state, 'failed');
+      // Anything else (network, vault) may quote what it failed on: a generic word.
+      refuse(500, { mcpId: pending.mcp_id, back, message: err instanceof OAuthExchangeError
+        ? err.message
+        : 'The authorization could not be completed. Start it again from Timon.' });
     }
   });
 

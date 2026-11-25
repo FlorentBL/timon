@@ -224,6 +224,15 @@ test('the Program section paints the daemon\'s program and drives its installer 
       await until(() => document.getElementById('program-pin-claude') !== null, 'the pinned path field');
       const field = document.getElementById('program-pin-claude') as HTMLInputElement;
       assert.ok(field.closest('[data-program-advanced]'), 'under Advanced');
+      // #1101: the field names the program it wants, its example included — never another provider's.
+      assert.match(text(), /Path to the claude CLI/);
+      assert.match(field.placeholder, /\/usr\/local\/bin\/claude$/);
+
+      refusePin = 'wrong_program';
+      await type(field, '/usr/local/bin/ollama');
+      await click(button(/Save path/)!);
+      await until(() => section()?.querySelector('[role="alert"]') !== null, 'the wrong program refusal');
+      assert.equal(section()!.querySelector('[role="alert"]')!.textContent, 'This file is not the claude CLI.');
 
       refusePin = 'path_not_executable';
       await type(field, '/secret/place/claude');

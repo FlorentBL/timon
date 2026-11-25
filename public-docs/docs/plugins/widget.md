@@ -18,7 +18,7 @@ Declare `kind: "widget"` and a slot ending in `.widget`, then register the body 
 | `bar` | The widget also has a compact form: it may sit on the top bar's line (`topbar.widget`) and paints that form in the sidebars |
 | `placedByDefault` | Placed in `zone` on every page that has not placed or removed it yet, instead of waiting in the palette |
 | `formerKeys` | Keys the widget was registered under before (`''` for a keyless registration): a saved place is handed down |
-| `tabTitle` | Short name on the widget's tab when it is stacked (« PR » for « Pull requests »); the tooltip keeps `title` (API 19) |
+| `tabTitle` | Short name on the widget's tab when it is stacked ("PR" for "Pull requests"); the tooltip keeps `title` (API 19) |
 | `liveCount` | Kept mounted, hidden, behind the stack's front tab, so the count or dot it publishes stays true (API 19) |
 
 Without metadata, the title falls back to the registration key or plugin ID, the default height is 260px and the default cockpit placement is the left rail. The existing cockpit zone IDs are `gauche` and `droite`; they are placement identifiers, not translated UI text.
@@ -35,8 +35,8 @@ If instance configuration arrives asynchronously, clean up its subscription when
 
 The user can stack widgets into one card with a tab each, like the chat's **Git** stack. Your tab can say more than your title, through four hooks of the [UI kit](ui-kit.md) (manifest `"apiVersion": 19`):
 
-- `useWidgetCount(n)` puts a number on your tab (« Issues 2 »); `null` or 0 shows none. It returns whether the tab shows it: when it does not (a card on its own), paint the number next to your own title.
-- `useWidgetAttention(label)` puts a dot on your tab while something in your widget waits for the person; `label` (« 2 to approve ») is said in the tab's tooltip and to a screen reader, `null` clears it.
+- `useWidgetCount(n)` puts a number on your tab ("Issues 2"); `null` or 0 shows none. It returns whether the tab shows it: when it does not (a card on its own), paint the number next to your own title.
+- `useWidgetAttention(label)` puts a dot on your tab while something in your widget waits for the person; `label` ("2 to approve") is said in the tab's tooltip and to a screen reader, `null` clears it.
 - `useWidgetMenu(items)` moves header actions (`{ key, label, icon?, onSelect }`) into the widget's menu, the gear or a right click on the tabs: at 300px the tab strip has no room left. It returns whether it did; when it did not, keep them in your header.
 - `useWidgetInFront()` tells whether your widget is in view.
 
@@ -88,7 +88,7 @@ ctx.slots.register(
 
 ## Naming your widget
 
-`widget.title` is the card's title. Add `widget.description`: one sentence, shown under the name in the widget window, saying what the widget shows or lets the user do. Name it for what it does, precisely enough that two widgets of yours never read alike. When the title is the user's own (one card per agent), set `widget.catalogTitle` to what the window should call it (« Agent chat »). Give it a picto with `widget.icon`: SVG markup (`<svg …>`) or the URL of an SVG, drawn on its card in the widget window in the theme's text colour — only the shape counts, so a single-colour 24×24 line drawing reads best.
+`widget.title` is the card's title. Add `widget.description`: one sentence, shown under the name in the widget window, saying what the widget shows or lets the user do. Name it for what it does, precisely enough that two widgets of yours never read alike. When the title is the user's own (one card per agent), set `widget.catalogTitle` to what the window should call it ("Agent chat"). Give it a picto with `widget.icon`: SVG markup (`<svg …>`) or the URL of an SVG, drawn on its card in the widget window in the theme's text colour — only the shape counts, so a single-colour 24×24 line drawing reads best.
 
 ## Supplying your own frame
 

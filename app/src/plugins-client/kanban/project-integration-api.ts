@@ -4,7 +4,8 @@
  * `plugins-bundled/kanban/integration-routes.ts`): local merge or pull
  * requests, and where those go. Every verb needs `projects:manage`, reads
  * included: the setting names a folder of this machine and the account the
- * daemon pushes as.
+ * daemon pushes as. The mode alone (`readLandingMode`) is open to whoever
+ * sees the project.
  */
 import { apiErrorMessage } from '@/lib/api-error';
 import type { GitRemoteEntry } from '@/lib/git-store';
@@ -32,6 +33,10 @@ export type IntegrationRead = {
   /** Why the stored value no longer validates; `integration` is then the default. */
   invalid?: string;
 };
+
+/** How the project's jobs land, without the rest of the setting. `valid` is
+ *  false when the stored setting no longer validates (the default applies). */
+export type LandingModeRead = { mode: IntegrationMode; configured: boolean; valid: boolean };
 
 /** What the dialog writes. `null` clears the account, the folder or the URL. */
 export type IntegrationPatch = {
@@ -98,6 +103,15 @@ function readOf(body: unknown): IntegrationRead | undefined {
 
 export function readIntegration(project: string, fetchImpl: typeof fetch = fetch): Promise<Answer<IntegrationRead>> {
   return call(base(project), undefined, readOf, fetchImpl);
+}
+
+/** The mode alone, for any signed-in account: no account, folder nor remote. */
+export function readLandingMode(project: string, fetchImpl: typeof fetch = fetch): Promise<Answer<LandingModeRead>> {
+  return call(`${base(project)}/mode`, undefined, (body) => {
+    const b = body as Record<string, unknown> | null;
+    if (!b || (b.mode !== 'local' && b.mode !== 'pr')) return undefined;
+    return { mode: b.mode, configured: b.configured === true, valid: b.valid !== false };
+  }, fetchImpl);
 }
 
 export function saveIntegration(project: string, patch: IntegrationPatch, fetchImpl: typeof fetch = fetch): Promise<Answer<IntegrationRead>> {

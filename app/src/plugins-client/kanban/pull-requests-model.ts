@@ -19,6 +19,7 @@ export type PullReview = {
   updated_at: number;
 };
 
+import { currentAccount, onAccountChange } from '@/lib/account-change';
 import type { JobLinks } from './landing-api';
 import type { BranchGestures, BranchLock } from './forge-branch-api';
 
@@ -109,6 +110,14 @@ export function shouldReadPulls(front: boolean, readAt: number | null, now: numb
   return front || readAt === null || now - readAt >= HIDDEN_PULLS_FRESH_MS;
 }
 
+/**
+ * How often a hidden tab checks the age of its list. Read only at mount and
+ * when brought forward, a tab left behind for an hour would keep an
+ * hour-old count; a check a quarter as long as the freshness keeps it under
+ * 75 seconds old, and costs nothing while the list is fresh.
+ */
+export const HIDDEN_PULLS_CHECK_MS = HIDDEN_PULLS_FRESH_MS / 4;
+
 /** The last list read per project, shared by every PR widget of the page. */
 const lastRead = new Map<string, { list: PullRequestList; at: number }>();
 
@@ -124,6 +133,15 @@ export function keepPullList(slug: string, list: PullRequestList, at = Date.now(
 export function forgetPullListsForTests(): void {
   lastRead.clear();
 }
+
+// Another account's pull requests are not this one's: a tab remounted within
+// the minute must not show them. Naming the account for the first time is no
+// change.
+let followedAccount: string | null = currentAccount();
+onAccountChange((owner) => {
+  if (followedAccount !== null && owner !== followedAccount) lastRead.clear();
+  followedAccount = owner;
+});
 
 /** A gesture on a pull request, from its row's menu or from its window. */
 export type PullActionId = 'resolveConflict' | 'updateBranch' | 'review' | 'report' | 'askContributor' | 'comment' | 'forge';

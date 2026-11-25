@@ -276,6 +276,11 @@ See [Kanban](kanban.md) and [Missions](missions.md) for what these create.
 A task created with `kanban_add` and a `todo_id` closes that notebook idea by
 itself once its work is merged ([Ideas close themselves](kanban.md#ideas-close-themselves)).
 
+When the project's roles will hand the task to another agent than the
+`agent_name` given, `kanban_add` still creates it and its answer carries
+`warnings` naming the agent that will run it ([which agent runs a task](kanban.md)).
+`timon task create` prints the same warning on stderr.
+
 ### Pipelines and routines
 
 A **pipeline** is a reusable template of steps for several agents. `pipeline_create` takes a `name`, an optional `description` and a `definition` of the form `{ steps: [...] }`; `pipeline_run` runs one (optionally with an `input` object) and produces Kanban tasks wired together by their dependencies, and `pipeline_run_status` follows a run by its `run_id`. `pipeline_list`, `pipeline_get` and `pipeline_delete` do what they say. The CLI equivalents are `timon pipeline list|get|create|run|run-status|delete`.

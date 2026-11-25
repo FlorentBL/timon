@@ -1782,8 +1782,11 @@
     "interruptionUnknown": "미션 강제 종료: 원인 불명 (사용할 수 있는 신호 없음)",
     "interruptionDefault": "미션 중단됨",
     "runBy": {
-      "label": "실행: {agent}",
+      "assigned": "담당: {named}",
       "title": "담당 {named}, 실행 {agent}: {reason}",
+      "titlePlanned": "담당 {named}, 실행 예정 {agent}: {reason}",
+      "detail": "실행: {agent}",
+      "detailPlanned": "실행 예정: {agent}",
       "reasonPinned": "프로젝트가 이 역할을 {agent}에게 고정했습니다 (roles.json)",
       "reasonMissing": "{named}이(가) 존재하지 않습니다",
       "reasonOtherProject": "{named}은(는) 작업의 프로젝트에 속하지 않습니다",
@@ -1840,7 +1843,12 @@
       "openMission": "미션 열기",
       "stop": "미션 중지",
       "stopConfirm": "이 작업의 미션을 중지하시겠습니까?",
-      "stopFailed": "미션을 중지할 수 없습니다 (HTTP {status})."
+      "stopFailed": "미션을 중지할 수 없습니다 (HTTP {status}).",
+      "underMinute": "1분 미만",
+      "pendingPermission": "{age} 전부터 권한 ({tool})을 기다리는 중",
+      "pendingQuestion": "{age} 전부터 답변을 기다리는 중",
+      "pendingDeadline": "{left} 후 자동 거부",
+      "pendingOthers": "{count, plural, other {대기 중인 카드 #개 더}}"
     }
   },
   "agentsPage": {

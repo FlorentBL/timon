@@ -9,6 +9,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { readWorkflow } from './workflow-text.mjs';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
 const read = (name) => readFileSync(join(ROOT, '.github', 'workflows', name), 'utf8');
@@ -17,9 +18,11 @@ const lines = text.split('\n');
 const uncomment = (line) => line.replace(/(^|\s)#.*$/, '');
 /** Lines without their comment: a comment may explain what the workflow does not do. */
 const code = lines.map(uncomment).join('\n');
+/** The reusable workflow the build job calls: the release's build steps live there. */
+const packages = readWorkflow('build-packages.yml');
 
 const JOBS = ['check', 'build', 'attest', 'draft', 'publish'];
-/** The secrets each job may name, and nothing else anywhere. */
+/** The secrets each job may name, and nothing else anywhere (the build passes them to build-packages.yml). */
 const SECRETS = {
   build: ['TIMON_RELEASE_PRIVATE_KEY', 'TIMON_RELEASE_PUBLIC_KEY'],
   publish: ['TIMON_RELEASE_ED25519_KEY', 'TIMON_RELEASE_P256_KEY', 'RELEASE_PR_TOKEN'],
@@ -75,6 +78,8 @@ function runBlocks() {
 }
 
 const jobText = (name) => jobs().get(name).join('\n');
+const release = readWorkflow('release.yml');
+const { keyOf, blockOf } = release;
 const stepNamed = (job, name) => {
   const found = steps(jobs().get(job)).find((step) => step.some((line) => line.includes(`name: ${name}`)));
   assert.ok(found, `no step "${name}" in ${job}`);
@@ -124,9 +129,12 @@ test('the environments: release-build on the build, release on the publication, 
   const found = jobs();
   for (const name of JOBS) {
     const environments = found.get(name).map((line) => /^ {4}environment:\s*(.*)$/.exec(line)?.[1]).filter((value) => value !== undefined);
-    const expected = { build: ['release-build'], publish: ['release'] }[name] ?? [];
+    // The build calls build-packages.yml, whose job declares the environment.
+    const expected = { publish: ['release'] }[name] ?? [];
     assert.deepEqual(environments, expected, `job ${name}`);
   }
+  assert.equal(packages.keyOf('build', 'environment'), "${{ inputs.purpose == 'release' && 'release-build' || 'nightly-build' }}");
+  assert.equal(blockOf('build', 'with').find((line) => /^ {6}purpose:/.test(line))?.trim(), 'purpose: release');
 });
 
 test('each secret is named in its own job only, on the step that uses it', () => {
@@ -140,18 +148,37 @@ test('each secret is named in its own job only, on the step that uses it', () =>
     // On a step's env, never the job's: the other steps of the job (checkout,
     // setup-node, artifact actions) do not see it.
     assert.ok(!found.get(name).some((line) => /^ {4}env:/.test(line)), `job ${name} has a job-wide env`);
+    if (name === 'build') {
+      // Passed by name to the called workflow, each under its own name.
+      const passed = blockOf('build', 'secrets');
+      assert.deepEqual(passed.map((line) => line.trim()), SECRETS.build.map((secret) => `${secret}: \${{ secrets.${secret} }}`));
+      assert.equal(found.get(name).filter((line) => /secrets\./.test(line)).length, SECRETS.build.length);
+      continue;
+    }
     for (const step of steps(found.get(name))) {
       for (const line of step.filter((l) => /secrets\./.test(l))) assert.match(line, /^ {10}[A-Z0-9_]+: \$\{\{ secrets\.[A-Za-z0-9_]+ \}\}\s*$/, `not a step variable: ${line.trim()}`);
     }
   }
+  // In build-packages.yml: declared, optional (the nightly passes none), and
+  // read on the two steps that use them only, as step variables.
+  assert.match(packages.text, /^ {4}secrets:\n {6}TIMON_RELEASE_PRIVATE_KEY:\n {8}required: false\n {6}TIMON_RELEASE_PUBLIC_KEY:\n {8}required: false\n/m);
+  assert.doesNotMatch(packages.code, /secrets: inherit|GITHUB_TOKEN|github\.token/);
+  const readers = packages.steps('build').filter((step) => step.some((line) => /secrets\./.test(line)));
+  assert.deepEqual(readers.map((step) => /name: (.+)$/m.exec(step.join('\n'))?.[1].trim()), ['Check the signing key is the one the clients pin', 'Build the package']);
+  for (const step of readers) {
+    for (const line of step.filter((l) => /secrets\./.test(l))) assert.match(line, /^ {10}(TIMON_RELEASE_PRIVATE_KEY|TIMON_RELEASE_PUBLIC_KEY): \$\{\{ secrets\.\1 \}\}\s*$/, `not a step variable: ${line.trim()}`);
+  }
+  assert.doesNotMatch(packages.stepNamed('build', 'Check the signing key'), /PRIVATE/);
+  assert.ok(!packages.job('build').some((line) => /^ {4}env:/.test(line)), 'build-packages.yml has a job-wide env');
   assert.doesNotMatch(code.slice(0, code.indexOf('\njobs:')), /secrets\.|^env:/m, 'a secret or a variable for the whole workflow');
   assert.ok(!named.has('GITHUB_TOKEN'));
 });
 
 test('the build gets no GitHub token, and the token-bearing jobs install nothing', () => {
-  const build = jobText('build');
-  assert.doesNotMatch(build, /github\.token|GITHUB_TOKEN|GH_TOKEN|secrets\.GITHUB/);
-  assert.doesNotMatch(build, /--publish\s+(always|onTag|onTagOrDraft)/);
+  for (const build of [jobText('build'), packages.code]) {
+    assert.doesNotMatch(build, /github\.token|GITHUB_TOKEN|GH_TOKEN|secrets\.GITHUB/);
+    assert.doesNotMatch(build, /--publish\s+(always|onTag|onTagOrDraft)/);
+  }
   for (const name of ['check', 'attest']) assert.doesNotMatch(jobText(name), /github\.token|GH_TOKEN/, `job ${name}`);
   // The draft and the publication run publish.mjs, plain Node, from the built
   // commit: no npm, so no dependency's script runs next to the tokens and keys.
@@ -197,22 +224,44 @@ test('the attestation token never shares a job with npm or the built code', () =
   assert.match(body, /sha256sum --strict -c SHA256SUMS/);
   assert.ok(body.indexOf('sha256sum') < body.indexOf('attest-build-provenance'), 'the sums are checked after the attestation');
   assert.match(body, /create-storage-record:\s*false/);
-  assert.doesNotMatch(jobText('build'), /id-token|attestations:|attest-build-provenance/);
+  for (const build of [jobText('build'), packages.code]) assert.doesNotMatch(build, /id-token|attestations:|attest-build-provenance/);
 });
 
 test('the build: three systems, stable without expiry, stopped as a whole when one fails', () => {
-  const build = jobText('build');
-  assert.match(build, /fail-fast:\s*true/);
+  assert.equal(keyOf('build', 'uses'), './.github/workflows/build-packages.yml', 'the build steps are the ones the nightly runs');
+  const given = Object.fromEntries(blockOf('build', 'with').map((line) => /^ {6}([a-z-]+):\s*(.*?)\s*$/.exec(line)).filter(Boolean).map((m) => [m[1], m[2]]));
+  assert.deepEqual(given, {
+    purpose: 'release',
+    version: '${{ needs.check.outputs.version }}',
+    // The build pins the commit the first job read.
+    sha: '${{ needs.check.outputs.sha }}',
+    node: '${{ needs.check.outputs.node }}',
+    expires: 'never',
+    'fail-fast': 'true',
+    'retention-days': '30',
+  });
+  assert.doesNotMatch(code, /--expires|--channel beta|--key-dir/);
+  const build = packages.job('build').join('\n');
+  assert.match(build, /fail-fast: \$\{\{ inputs\.fail-fast \}\}/);
   assert.doesNotMatch(build, /continue-on-error/);
-  for (const [os, runner] of [['linux', 'ubuntu-24\\.04'], ['mac', '\\[self-hosted, macOS, ARM64, timon-release\\]'], ['windows', 'windows-latest']]) {
+  for (const [os, runner] of [['linux', 'ubuntu-24\\.04'], ['windows', 'windows-latest']]) {
     assert.match(build, new RegExp(`\\{ os: ${os}, runner: ${runner} \\}`));
   }
-  assert.match(build, /node scripts\/release\/build-package\.mjs --version "\$VERSION" --channel stable --no-expiry --output \.\.\/release-output$/m);
-  assert.doesNotMatch(code, /--expires|--channel beta|--key-dir/);
+  // A release always builds macOS on the project's Mac (org runner group
+  // `release-mac`), never on the hosted runner the matrix names for a nightly.
+  assert.equal(
+    packages.keyOf('build', 'runs-on'),
+    `\${{ matrix.os == 'mac' && inputs.purpose == 'release' && fromJSON('["self-hosted", "macOS", "ARM64", "timon-release"]') || matrix.runner }}`,
+  );
+  assert.match(packages.blockOf('build', 'concurrency').join('\n'), /inputs\.purpose == 'release' && 'timon-mac-runner'/);
+  const step = packages.stepNamed('build', 'Build the package');
+  assert.match(step, /if \[ "\$PURPOSE" = release \]; then\n {12}node scripts\/release\/build-package\.mjs --version "\$VERSION" --channel stable --no-expiry --output \.\.\/release-output\n/);
   assert.match(build, /actions\/upload-artifact@/);
-  assert.match(build, /ref: \$\{\{ needs\.check\.outputs\.sha \}\}/, 'the build pins the commit the first job read');
-  // The throwaway pair is for the dry run of the first job only.
-  assert.doesNotMatch(build, /throwaway-keys/);
+  assert.match(build, /name: timon-\$\{\{ inputs\.version \}\}-\$\{\{ matrix\.os \}\}/, 'the artifact name the attestation and the draft download');
+  assert.match(build, /ref: \$\{\{ inputs\.sha \}\}/);
+  // The throwaway pair never reaches a release build.
+  assert.match(packages.stepNamed('build', 'Throwaway signing keys'), /if: inputs\.purpose == 'nightly'/);
+  assert.match(packages.stepNamed('build', 'Check the signing key'), /if: matrix\.os == 'linux' && inputs\.purpose == 'release'/);
 });
 
 test('the draft goes without keys; the approved job publishes and opens the pull request of the lists', () => {
@@ -253,7 +302,8 @@ test('one release at a time, never cancelled half-way', () => {
 test('every action is pinned on a full commit sha, its version in a comment, as in rc.yml', () => {
   const pins = (source) => {
     const found = new Map();
-    for (const line of source.split('\n').filter((l) => /^\s*(?:- )?uses:/.test(l))) {
+    // A local reusable workflow (./.github/workflows/…) comes from the same commit.
+    for (const line of source.split('\n').filter((l) => /^\s*(?:- )?uses:/.test(l) && !/uses:\s*\.\//.test(l))) {
       const m = /^\s*(?:- )?uses:\s*([A-Za-z0-9_.-]+\/[A-Za-z0-9_./-]+)@([0-9a-f]{40})\s+#\s*(v\d+(?:\.\d+){0,2})\s*$/.exec(line);
       assert.ok(m, `not pinned on a sha with its version: ${line.trim()}`);
       const [, action, sha] = m;
@@ -263,10 +313,16 @@ test('every action is pinned on a full commit sha, its version in a comment, as 
     return found;
   };
   const release = pins(text);
-  assert.ok(release.size >= 5);
+  // checkout, setup-node, download-artifact, attest-build-provenance; upload-artifact is in build-packages.yml.
+  assert.ok(release.size >= 4);
+  assert.ok(new Set([...release.keys(), ...packages.pins().keys()]).size >= 5);
   // The two release workflows move together: one update of an action pin covers both.
   const rc = pins(read('rc.yml'));
   for (const [action, sha] of release) if (rc.has(action)) assert.equal(sha, rc.get(action), `${action}: release.yml and rc.yml disagree`);
+  for (const [action, sha] of packages.pins()) {
+    for (const [other, map] of [['release.yml', release], ['rc.yml', rc]]) if (map.has(action)) assert.equal(sha, map.get(action), `${action}: build-packages.yml and ${other} disagree`);
+  }
+  assert.deepEqual(packages.checkoutsKeepingCredentials(), []);
 });
 
 test('every checkout leaves no credential behind', () => {
@@ -280,7 +336,10 @@ test('every checkout leaves no credential behind', () => {
 });
 
 test('every job has a time limit', () => {
+  // A job that calls a reusable workflow takes none: the called job has its own.
+  assert.equal(packages.keyOf('build', 'timeout-minutes'), '150');
   for (const [name, body] of jobs()) {
+    if (body.some((line) => /^ {4}uses:/.test(line))) { assert.equal(name, 'build'); continue; }
     const limit = body.map((line) => /^ {4}timeout-minutes:\s*(\d+)\s*$/.exec(line)?.[1]).find(Boolean);
     assert.ok(limit, `job ${name} has no timeout-minutes`);
     assert.ok(Number(limit) > 0 && Number(limit) <= 180, `job ${name}: timeout ${limit}`);

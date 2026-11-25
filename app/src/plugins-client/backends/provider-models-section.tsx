@@ -242,7 +242,7 @@ function ModelRow({ model, isDefault, busy, onVisible, onDefault, onEdit, onRemo
       menu={<>
         {isDefault ? null : <DropdownMenuItem disabled={busy} onSelect={onDefault}>{t('providerPage.models.setDefault')}</DropdownMenuItem>}
         <DropdownMenuItem onSelect={onEdit}>{t('providerPage.models.edit')}</DropdownMenuItem>
-        <DropdownMenuItem className="text-destructive focus:text-destructive" disabled={busy} onSelect={onRemove}>{t('backendsSettings.models.remove')}</DropdownMenuItem>
+        <DropdownMenuItem variant="destructive" disabled={busy} onSelect={onRemove}>{t('backendsSettings.models.remove')}</DropdownMenuItem>
       </>}
     />
   );

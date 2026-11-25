@@ -7,7 +7,8 @@ import type { Landing, LandingPreview } from './landing-api';
  * says it is kept, how many ideas wait and when the branch last took a merge;
  * its one icon merges the branch into the local target after a short
  * confirmation with the number of commits (or, in a pull request project,
- * opens the job's window where the pull request gets its title). The
+ * opens the pull request under a title made from the branch; the job's
+ * window lets it be written first). The
  * daemon's refusals are said in the person's words, and the gesture is greyed
  * without `projects:manage` or while a task of the job still runs.
  */
@@ -253,21 +254,40 @@ test('while a task of the job still runs the gesture waits, and says why', async
   });
 });
 
-test('a pull request project: the icon opens the job, where the pull request gets its title', async () => {
-  await show({
-    jobs: [keptPr],
-    land: (_id, body) => ({
-      status: 200,
-      body: {
-        ok: true, outcome: 'pull_request', already: false, pr_url: 'https://github.com/acme/app/pull/77', pr_number: 77,
-        landing: { ...keptPr, state: 'open', kept: false, pr_number: 77, pr_url: 'https://github.com/acme/app/pull/77', pr_title: (body as { title: string }).title },
-      },
-    }),
-  }, async ({ React, calls, bodies, asked, toasts, settle, click }) => {
+const opened = (job: Landing) => (_id: string, body: unknown): LandAnswer => ({
+  status: 200,
+  body: {
+    ok: true, outcome: 'pull_request', already: false, pr_url: 'https://github.com/acme/app/pull/77', pr_number: 77,
+    landing: { ...job, state: 'open', kept: false, pr_number: 77, pr_url: 'https://github.com/acme/app/pull/77', pr_title: (body as { title: string }).title },
+  },
+});
+
+test('a pull request project: one click and a confirmation open it under a title made from the branch', async () => {
+  await show({ jobs: [keptPr], land: opened(keptPr) }, async ({ calls, bodies, asked, toasts, click }) => {
     const button = landButton('job-pr');
     assert.equal(button?.getAttribute('aria-label'), 'Open the PR');
     await click(button);
-    assert.deepEqual(lands(calls), [], 'the icon only opens the window');
+    assert.ok(!document.querySelector('[data-job-land-title]'), 'no window opens');
+    assert.deepEqual(asked.map((a) => [a.title, a.description, a.confirmLabel]), [[
+      'Open the pull request of feat/add-csv-export into main?',
+      'Title: Add csv export\n3 commits land in main.\nTo change the title first, choose Preview in the row\'s menu.',
+      'Open the PR',
+    ]]);
+    assert.equal(lands(calls).length, 1);
+    assert.deepEqual(bodies, [{ title: 'Add csv export' }]);
+    assert.deepEqual(toasts().map((t) => [t.type, t.title, t.description]), [['success', 'Pull request opened', 'https://github.com/acme/app/pull/77']]);
+  });
+});
+
+test('a pull request project: the job\'s window still lets the title be written first', async () => {
+  await show({ jobs: [keptPr], land: opened(keptPr) }, async ({ React, bodies, asked, settle, click }) => {
+    const trigger = row('job-pr')!.querySelector('button[aria-label="More actions"]')!;
+    await React.act(async () => {
+      trigger.dispatchEvent(new window.MouseEvent('pointerdown', { bubbles: true, button: 0 }));
+    });
+    await settle();
+    const preview = Array.from(document.querySelectorAll<HTMLElement>('[role="menuitem"]')).find((el) => el.textContent === 'Preview');
+    await click(preview ?? null);
     const title = document.querySelector<HTMLInputElement>('[data-job-land-title]');
     assert.ok(title);
     assert.equal(title.value, 'Add csv export', 'a first title from the branch');
@@ -279,9 +299,24 @@ test('a pull request project: the icon opens the job, where the pull request get
     });
     await settle();
     await click(document.querySelector('[data-job-land]'));
-    assert.deepEqual(asked.map((a) => [a.title, a.description]), [['Open the pull request of feat/add-csv-export into main?', '3 commits land in main.']]);
+    assert.deepEqual(asked.map((a) => [a.title, a.description]), [[
+      'Open the pull request of feat/add-csv-export into main?', 'Title: Export the mission history as CSV\n3 commits land in main.',
+    ]]);
     assert.deepEqual(bodies, [{ title: 'Export the mission history as CSV' }]);
-    assert.deepEqual(toasts().map((t) => [t.type, t.title, t.description]), [['success', 'Pull request opened', 'https://github.com/acme/app/pull/77']]);
+  });
+});
+
+test('a kept job whose pull request was closed: its icon opens a new one, under the closed one\'s title', async () => {
+  const closed: Landing = {
+    ...keptPr, id: 'job-closed', state: 'closed', pr_number: 70, pr_url: 'https://github.com/acme/app/pull/70', pr_title: 'Export as CSV',
+  };
+  await show({ jobs: [closed], land: opened(closed) }, async ({ bodies, asked, click }) => {
+    assert.ok(document.querySelector('[data-landing-group="attention"]'), 'a closed pull request needs a gesture');
+    const button = landButton('job-closed');
+    assert.equal(button?.getAttribute('aria-label'), 'Open a new PR');
+    await click(button);
+    assert.equal(asked[0]?.title, 'Open a new pull request of feat/add-csv-export into main?');
+    assert.deepEqual(bodies, [{ title: 'Export as CSV' }]);
   });
 });
 
@@ -291,6 +326,11 @@ test('the row\'s action and group of a kept job', async () => {
   assert.equal(landingGroup(kept, Date.now()), 'kept');
   assert.equal(landingAction({ ...kept, kept: false }), 'preview', 'a job still in progress is previewed');
   assert.equal(landingGroup({ ...kept, kept: false }, Date.now()), 'progress');
+  assert.equal(landingAction({ ...keptPr, state: 'closed', pr_url: 'https://github.com/acme/app/pull/1' }), 'land');
+  assert.equal(landingAction({ ...keptPr, state: 'closed', kept: false, pr_url: 'https://github.com/acme/app/pull/1' }), 'openPr');
+  const { followsKept } = await import('./landing-api');
+  assert.equal(followsKept([kept]), true);
+  assert.equal(followsKept([{ ...kept, kept: false }, merged(kept)]), false);
   const { titleFromBranch } = await import('./landing-land');
   assert.equal(titleFromBranch('feat/add-csv_export'), 'Add csv export');
   assert.equal(titleFromBranch('main'), 'Main');

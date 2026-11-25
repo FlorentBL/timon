@@ -89,7 +89,7 @@ The **LLM** tab has a **Thinking level** slider over the levels the chosen model
 
 ### Extra folders
 
-An agent works in its working folder. When it also needs other folders, a librarian that reads several projects, or an agent that keeps its notes in a second folder, add them in the **Workspace** tab, under **Extra folders**: **Add a folder** asks for the folder and its access, **Read only** or **Read and write**. Each folder's **…** menu changes its access or removes it. A project's settings list the extra folders of all its agents, under **Agent folders**, where you can also give a folder to the whole project (see [Mission isolation](./mission-isolation.md#a-projects-extra-folders)).
+An agent works in its working folder. When it also needs other folders, a librarian that reads several projects, or an agent that keeps its notes in a second folder, add them in the **Workspace** tab, under **Extra folders**: **Add a folder** asks for the folder and its access, **Read only** or **Read and write**. Each folder shows its name and access; its **…** menu shows the full path, copies it, changes the access or removes the folder. A project's settings list the extra folders of all its agents, under **Agent folders**, where you can also give a folder to the whole project (see [Mission isolation](./mission-isolation.md#a-projects-extra-folders)).
 
 Only a person changes these folders, or a mission whose account holds the **agents:privileged-config** permission, and never for its own agent. Timon's own folder, a folder that contains it, a whole home folder or disk, and folders of credentials (`~/.ssh`, the sign-ins of the AI CLIs…) are refused, with the reason. A change applies from the agent's next mission. From a terminal, `timon agent extra-dirs list|add|rm <agent> [<path>]` does the same (`--write` gives read and write access, `--restart` stops the agent's running processes so they pick up the new list); an agent uses the `agent_extra_dirs` tool, under the same rules. How the folders are enforced: [Mission isolation](./mission-isolation.md#an-agents-extra-folders).
 
@@ -416,6 +416,15 @@ Claude Code reads them by itself when a Claude Code agent works in that
 project, without going through Timon's catalogue. Other backends, such as
 Codex, do not read that folder, and a project skill cannot be attached to an
 agent.
+
+A plugin's skill is named after its plugin, as in `code-review:review`. Timon
+finds the skills in the plugin's `skills` folder and in the folders its
+`.claude-plugin/plugin.json` manifest lists, including skills filed in category
+folders; a listed path that leads out of the plugin's folder is ignored. When
+two categories of one plugin hold a skill of the same name, the one whose
+folder path comes first alphabetically is used and the other is shown as
+shadowed. In a message, `/review` can stand for `code-review:review` when no
+other plugin has a skill called `review`; when several do, type the full name.
 
 To use one of them in missions, open it and choose **Import into Timon**. Pick
 the ID of the copy (the original ID by default, with a plugin's prefix joined

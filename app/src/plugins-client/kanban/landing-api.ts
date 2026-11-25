@@ -316,14 +316,16 @@ export const LANDED_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
  * The group of `landing` at `now`; null once it is old news. An open pull
  * request needs attention when a check fails, it conflicts with its target or
  * a reviewer asked for changes. A pull request closed without its merge
- * needs a decision (reopen it, or drop the job) for a week, then leaves.
+ * needs a decision (reopen it, or drop the job) for a week, then leaves;
+ * a kept job's stays, its ideas waiting for the new one.
  */
 export function landingGroup(landing: Landing, now: number): LandingGroup | null {
   const recent = now - landing.updated_at <= LANDED_WINDOW_MS;
   switch (landing.state) {
     case 'branch': return landing.kept ? 'kept' : 'progress';
     case 'merged': return recent ? 'landed' : null;
-    case 'closed': return recent ? 'attention' : null;
+    // A kept job's ideas still wait for it: it stays until it is landed.
+    case 'closed': return recent || landing.kept === true ? 'attention' : null;
     case 'open': {
       const checks = landing.checks;
       const failing = !!checks && checks.counts.fail > 0;
@@ -370,12 +372,30 @@ export function repairsSpent(landing: Landing): boolean {
   return !!r && r.running === null && r.used >= r.max && repairsNeeded(landing).length > 0;
 }
 
+/** A job kept on its branch the landing gesture may take: never landed yet,
+ *  or its pull request closed without a merge (the gesture opens a new one). */
+export function landable(landing: Landing): boolean {
+  return landing.kept === true && (landing.state === 'branch' || landing.state === 'closed');
+}
+
+/**
+ * How often the list is read again while it shows a kept job: a task merged
+ * into its branch announces nothing on the stream, so its "last merge" chip
+ * (and the count of tasks still running) would wait for the slow poll.
+ */
+export const KEPT_REFRESH_MS = 60_000;
+
+/** True when `landings` holds a job whose chips follow its branch. */
+export function followsKept(landings: readonly Landing[]): boolean {
+  return landings.some(landable);
+}
+
 /** The row's main action: the landing of a job kept on its branch, the
  *  repair the forge calls for when one may start, else the preview while the
  *  job has something to land, its pull request once it is merged or closed
  *  (the preview is empty then). */
 export function landingAction(landing: Landing): 'land' | 'repair' | 'preview' | 'openPr' {
-  if (landing.kept && landing.state === 'branch') return 'land';
+  if (landable(landing)) return 'land';
   if (mainRepair(landing)) return 'repair';
   return (landing.state === 'merged' || landing.state === 'closed') && landing.pr_url ? 'openPr' : 'preview';
 }

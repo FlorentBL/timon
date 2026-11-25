@@ -133,7 +133,7 @@ Agents see the list of a task's files with `kanban_get` (`timon task get`).
 
 A task runs on the agent it is assigned to when that agent exists in the task's project and is not an orchestrator (the main agent, `<project>.main`, the agent that created the task) nor the holder of another role. Otherwise Timon sends it to the project agent that holds the role for its type (`code` to the coder, `review` to the reviewer, and so on), or creates `<project>.<role>` when nobody holds it.
 
-An agent pinned to the role for the project (`timon project set-role <project> <type> <agent>`) comes first: it runs every task of that type, whichever agent the task names. When a task runs under another agent than the one it names, its card shows **run by** that agent, with the reason when you hover it (role pinned for the project, agent of another project or holding another role, orchestrator), and its **mission** link opens that agent's chat. The daemon log says it too, for example `task … → mission … (acme.coder) (resolved from acme.builder-ui: the coder role is pinned to acme.coder in roles.json)`.
+An agent pinned to the role for the project (`timon project set-role <project> <type> <agent>`) comes first: it runs every task of that type, whichever agent the task names. When a task runs under another agent than the one it names, its card shows the agent that runs it, its picture and its model, with **assigned to** and the agent the task names underneath; hover it for the reason (role pinned for the project, agent of another project or holding another role, orchestrator). A task still waiting already shows the agent it will be handed to, and the task form says **Will be run by** under the agent field. Once the task has run, the card shows the agent and the model its mission really used, and its **mission** link opens that agent's chat. Creating such a task still works: `kanban_add` and `timon task create` answer with a warning naming the agent that will run it. The daemon log says it too, for example `task … → mission … (acme.coder) (resolved from acme.builder-ui: the coder role is pinned to acme.coder in roles.json)`.
 
 An agent Timon creates this way runs on the backend and model of the orchestrator that created the task, so a mission on Codex gets Codex agents. Without that information it is a Claude agent. A task created by an orchestrator that is not on Claude, with no backend or model of its own, takes the orchestrator's backend and model, unless the series, the project's role, or the agent itself sets one. An account that may not choose a backend itself (no privileged-config permission) never gets one this way: its tasks run on the agent's own backend. The same account cannot name such a backend as a task's fallback or in a series' models and fallbacks either: only a backend that asks you before each tool use, or a remote one, is accepted there, and `none` (no fallback) always is.
 
@@ -369,6 +369,12 @@ A `code` task can also be **Done** without its merge: its review or its merge ne
 From a terminal, `timon task mark-merged TASK_ID --sha SHA [--comment TEXT]` does the same for a blocked task or a done one.
 
 Timon refuses a commit that your local copy of the repository has and that is not in the task's base branch. A commit it does not have yet (a pull request merged on GitHub and not fetched) is accepted and noted as not verified in the task's comment.
+
+## A task waiting on you
+
+When the agent of a running task asks for a permission or asks you a question, its card says **Waiting for a permission (Bash) for 3 min**, or **Waiting for an answer**, followed by the time left before the request is refused automatically (an unattended task does not wait forever). Hover the line to see whether other requests wait behind it. The card names the tool only: the command itself, and the Allow and Deny buttons, are in the task's mission, which the card's open-mission button reaches.
+
+`timon task get TASK_ID` and `timon status MISSION_ID` report the same wait: a `pending_permission` field in their JSON (`kind`, `tool_name`, `since`, `expires_at`, `remaining_ms`, `count`), and one readable line on stderr, so a script reading stdout is not disturbed. Agents read the same field with `kanban_get` and `mission_status`.
 
 ## Detach a task's worktree
 

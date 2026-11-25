@@ -206,3 +206,38 @@ test('an empty main seat names the command that fills it', () => {
   const none = formatDoctor({ ...r, mainSeat: { holder: null, empty: true, candidates: [] } });
   assert.doesNotMatch(none, /set-main/, 'no command to suggest when nobody is eligible');
 });
+
+/**
+ * #1101: `codex ✓ /usr/local/bin/ollama (pinned in timon.config.json)`, and every mission died on
+ * `ollama exec`. A pin whose program does not describe itself as its provider declared is ✗, says what it
+ * printed, and counts as no backend.
+ */
+test('a pin on another program is not ok, and the report says what it printed', async () => {
+  const { mkdtempSync, writeFileSync, rmSync } = await import('node:fs');
+  const { tmpdir } = await import('node:os');
+  const { join } = await import('node:path');
+  const dir = mkdtempSync(join(tmpdir(), 'timon-doctor-pin-'));
+  const ext = process.platform === 'win32' ? '.cmd' : '';
+  const stubOf = (name: string, line: string): string => {
+    const file = join(dir, `${name}${ext}`);
+    writeFileSync(file, process.platform === 'win32' ? `@echo ${line}\r\n` : `#!/bin/sh\necho "${line}"\n`, { mode: 0o755 });
+    return file;
+  };
+  const ollama = stubOf('ollama', 'ollama version is 0.16.2');
+  const codex = stubOf('codex', 'codex-cli 0.169.0');
+  try {
+    setConfig(TimonConfigSchema.parse({ host: { binaries: { codex: ollama } } }));
+    const wrong = diagnose().binaries.find((b) => b.name === 'codex')!;
+    assert.equal(wrong.ok, false);
+    assert.equal(wrong.path, ollama);
+    assert.match(wrong.error ?? '', /is not the program the `codex` pin runs \(the Codex CLI\): `--version` printed "ollama version is 0\.16\.2"/);
+    assert.match(formatDoctor(diagnose()), /codex\s+✗/);
+
+    setConfig(TimonConfigSchema.parse({ host: { binaries: { codex } } }));
+    const right = diagnose().binaries.find((b) => b.name === 'codex')!;
+    assert.deepEqual([right.ok, right.path, right.error], [true, codex, undefined]);
+  } finally {
+    resetConfig();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});

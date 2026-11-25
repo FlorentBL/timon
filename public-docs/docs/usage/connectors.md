@@ -14,6 +14,8 @@ The section is provided by the **Official connectors** plugin, on by default (**
 Each connector connects in one of three ways:
 
 - **Sign-in with the publisher** (most connectors). Press **Connect**. The publisher's sign-in page opens in a new tab, or in your system browser in the desktop app. Sign in, approve access, and come back. The card switches to **Connected** within a few seconds. If the page did not open, for example because the browser blocked it, open the card and choose **Open the sign-in page again**.
+
+After you approve access, the publisher sends your browser to a short Timon page that takes you back to the app. If the sign-in fails, that page stays open with the reason and a link back to Timon. A sign-in has to be finished within 10 minutes and is lost if Timon restarts in the meantime: start it again from the card. Opening the same sign-in link a second time only says whether the connector is already connected.
 - **A key** (GitHub, for example). Open the card, paste the key in the masked field, then press **Connect**. The **Get a key** link opens the publisher's page that issues it. For GitHub, use a fine-grained personal access token: the token decides which repositories and actions your agents can reach. Timon keeps the key in its secrets vault, where it appears in **Settings → Secrets** as `MCP_APP_GITHUB_KEY`. No agent receives the key itself, and Timon sends it only to that connector. If the vault is switched off, a key connector cannot be connected.
 - **No account** (Context7, for example). Press **Connect** and the connector is ready.
 

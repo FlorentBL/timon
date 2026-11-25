@@ -15,7 +15,11 @@
     "provider": {
       "binaries": [
         {
-          "name": "codex"
+          "name": "codex",
+          "identity": {
+            "pattern": "^codex(-cli)?\\s+v?\\d+\\.\\d+",
+            "expected": "the Codex CLI"
+          }
         }
       ],
       "credentialDirs": [
@@ -29,6 +33,10 @@
             "names": [
               "codex"
             ],
+            "identity": {
+              "pattern": "^codex(-cli)?\\s+v?\\d+\\.\\d+",
+              "expected": "the Codex CLI"
+            },
             "install": {
               "darwin": {
                 "kind": "script",

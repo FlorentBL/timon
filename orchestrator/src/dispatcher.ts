@@ -6,6 +6,7 @@ import {
   isSelfMergePipeline,
   MAX_BLIND_QUOTA_DEATHS,
   MAX_SYSTEM_REQUEUES,
+  type MissionRow,
   type TaskInterruptionOutcome,
   type SeriesPlanLandingRecord,
   type TaskRow,
@@ -33,7 +34,7 @@ import { notifyUser } from './notify.js';
 import { daemonMessage, type DaemonMessage } from './daemon-message.js';
 import { orchestratorForProject } from './main-agent.js';
 import { messageTime } from './message-dates.js';
-import { CONVENTION_ROLES, inheritedLlm, resolveRoleAgentPreview, roleForTaskType, type RoleAgentPreview } from './agent-seed.js';
+import { CONVENTION_ROLES, inheritedLlm, previewRoleAgent, resolveRoleAgentPreview, roleForTaskType, type RoleAgentPreview } from './agent-seed.js';
 import { evaluateDeps, repairWaitStall, type DepGate } from './merge-gate.js';
 import {
   describeInterruption,
@@ -154,6 +155,20 @@ export type TaskRouting = {
 };
 
 export function resolveTaskRouting(task: TaskRow): TaskRouting {
+  return routeTask(task, true);
+}
+
+/**
+ * Who the dispatcher WILL hand the task to, read without seeding anything: the
+ * board and the creation warning ask it of tasks no mission ran yet (#1109). A
+ * role agent that does not exist yet is named all the same when the dispatcher
+ * could seed it (the project has a folder).
+ */
+export function previewTaskRouting(task: TaskRow): TaskRouting {
+  return routeTask(task, false);
+}
+
+function routeTask(task: TaskRow, seed: boolean): TaskRouting {
   const asNamed: TaskRouting = { agent: task.agent_name, source: 'as_named' };
   const cfg = loadConfig(task.agent_name);
   const slug = taskProjectSlug(task, cfg);
@@ -163,18 +178,18 @@ export function resolveTaskRouting(task: TaskRow): TaskRouting {
 
   const spec = readRoleSpec(slug, task.type);
   const creator = task.creator_mission_id ? dbApi.getMission(task.creator_mission_id) : undefined;
-  const canonical = resolveRoleAgentPreview(slug, role, {
-    // The named agent may not exist (nothing to read a cwd from): the project's
-    // own root is where the seeded role agent works then.
-    cwd: cfg.cwd ?? dbApi.getProjectRow(slug.toLowerCase())?.cwd ?? null,
-    spec,
-    named: task.agent_name,
-    // The pilot that assigns work to ITSELF is the case the role system
-    // catches, not a choice of agent.
-    avoid: [creator?.agent_name],
-    inherit: inheritedLlm(task.creator_mission_id),
-  });
-  if (!canonical || !existsSync(agentDir(canonical.agent))) return asNamed;
+  // The named agent may not exist (nothing to read a cwd from): the project's
+  // own root is where the seeded role agent works then.
+  const cwd = cfg.cwd ?? dbApi.getProjectRow(slug.toLowerCase())?.cwd ?? null;
+  // The pilot that assigns work to ITSELF is the case the role system
+  // catches, not a choice of agent.
+  const avoid = [creator?.agent_name];
+  const canonical = seed
+    ? resolveRoleAgentPreview(slug, role, { cwd, spec, named: task.agent_name, avoid, inherit: inheritedLlm(task.creator_mission_id) })
+    : previewRoleAgent(slug, role, spec, { named: task.agent_name, avoid });
+  if (!canonical) return asNamed;
+  // Seeding needs a folder: without one the dispatcher falls back on the named agent.
+  if (seed ? !existsSync(agentDir(canonical.agent)) : !canonical.exists && !cwd) return asNamed;
   return {
     agent: canonical.agent,
     source: canonical.source,
@@ -807,6 +822,37 @@ export function resolveRoleSpec(
   };
 }
 
+export type TaskLlmCache = {
+  cfg: Map<string, AgentConfig>;
+  roles: Map<string, RoleSpec | undefined>;
+  series?: Map<string, SeriesLlmChoice | undefined>;
+  modelBackend?: Map<string, string | null>;
+  defaultBackend?: BackendName;
+};
+
+function cachedConfig(name: string, cache?: TaskLlmCache): AgentConfig {
+  let cfg = cache?.cfg.get(name);
+  if (!cfg) {
+    cfg = loadConfig(name);
+    cache?.cfg.set(name, cfg);
+  }
+  return cfg;
+}
+
+/** `model`, or null when it belongs to another backend than `backend`. Same
+ *  rule as resolveRoleSpec: a model served by several backends is not a
+ *  mismatch (cf. catalogClaimsModel). */
+function modelOnBackend(backend: string, model: string | null, cache?: TaskLlmCache): string | null {
+  if (!model) return null;
+  const modelKey = `${backend}\u0000${model}`;
+  let modelBackend = cache?.modelBackend?.get(modelKey);
+  if (modelBackend === undefined) {
+    modelBackend = catalogClaimsModel(backend, model) ? backend : backendForModel(model);
+    cache?.modelBackend?.set(modelKey, modelBackend);
+  }
+  return modelBackend && modelBackend !== backend ? null : model;
+}
+
 /**
  * Backend + model ACTUALLY assigned to a task, for display (UI badge).
  * Faithfully reproduces the spawn resolution chain (agent.ts:32-33):
@@ -823,23 +869,21 @@ export function resolveRoleSpec(
  * `modelBackend` memoize the backend registry and the catalogue: both are
  * rebuilt on every call (overlay query, secret vault, zod parses), and on
  * 2,571 tasks that cost ~20× the SQL and the JSON together (26/09/2026).
+ *
+ * `runner` is the agent the dispatcher hands the task to (`previewTaskRouting`),
+ * when it is not the one the task names: its config is what the spawn falls back
+ * on, so the badge must read it too (#1109: a `research` task named after a
+ * codex reviewer showed codex while the claude researcher ran it). The project
+ * and its role are still read through the named agent, as `resolveRoleSpec` does.
  */
 export function resolveTaskLlm(
   task: TaskRow,
-  cache?: {
-    cfg: Map<string, AgentConfig>;
-    roles: Map<string, RoleSpec | undefined>;
-    series?: Map<string, SeriesLlmChoice | undefined>;
-    modelBackend?: Map<string, string | null>;
-    defaultBackend?: BackendName;
-  },
+  cache?: TaskLlmCache,
+  runner?: string,
 ): { backend: BackendName; model: string | null } {
-  let cfg = cache?.cfg.get(task.agent_name);
-  if (!cfg) {
-    cfg = loadConfig(task.agent_name);
-    cache?.cfg.set(task.agent_name, cfg);
-  }
-  const slug = taskProjectSlug(task, cfg);
+  const named = cachedConfig(task.agent_name, cache);
+  const cfg = runner && runner !== task.agent_name ? cachedConfig(runner, cache) : named;
+  const slug = taskProjectSlug(task, named);
   const roleKey = `${slug ?? ''}:${task.type}`;
   let spec: RoleSpec | undefined;
   if (cache?.roles.has(roleKey)) {
@@ -862,18 +906,40 @@ export function resolveTaskLlm(
     spec?.backend ??
     cfg.backend ??
     (cache ? (cache.defaultBackend ??= defaultBackendName()) : defaultBackendName());
-  let model = task.model_override ?? series?.model ?? spec?.model ?? cfg.model ?? null;
-  // Same rule as resolveRoleSpec: a model served by several backends is
-  // not a mismatch (cf. catalogClaimsModel).
-  if (!model) return { backend, model };
-  const modelKey = `${backend}\u0000${model}`;
-  let modelBackend = cache?.modelBackend?.get(modelKey);
-  if (modelBackend === undefined) {
-    modelBackend = catalogClaimsModel(backend, model) ? backend : backendForModel(model);
-    cache?.modelBackend?.set(modelKey, modelBackend);
-  }
-  if (modelBackend && modelBackend !== backend) model = null;
-  return { backend, model };
+  const model = task.model_override ?? series?.model ?? spec?.model ?? cfg.model ?? null;
+  return { backend, model: modelOnBackend(backend, model, cache) };
+}
+
+/**
+ * Backend + model a mission ran on: what the dispatcher froze on it (or a quota
+ * switch, a model change, the account check wrote since), else its own agent's
+ * config. The task's board reads this once a mission exists, never the agent
+ * the task names.
+ */
+export function missionLlm(
+  mission: Pick<MissionRow, 'agent_name' | 'backend_override' | 'model_override'>,
+  cache?: TaskLlmCache,
+): { backend: BackendName; model: string | null } {
+  const cfg = cachedConfig(mission.agent_name, cache);
+  const backend = mission.backend_override ??
+    cfg.backend ??
+    (cache ? (cache.defaultBackend ??= defaultBackendName()) : defaultBackendName());
+  return { backend, model: modelOnBackend(backend, mission.model_override ?? cfg.model ?? null, cache) };
+}
+
+/**
+ * What the dispatcher writes on a task's mission so it keeps the backend and
+ * the model it really runs on (#1109): the resolved pair, completed from the
+ * running agent's config when nothing above it decided. The agent's model only
+ * goes with the agent's own backend: on another one it would not be served.
+ */
+export function frozenTaskLlm(
+  resolved: { backend: BackendName | null; model: string | null },
+  runnerCfg: Pick<AgentConfig, 'backend' | 'model'>,
+): { backend: BackendName | null; model: string | null } {
+  const backend = resolved.backend ?? asBackendName(runnerCfg.backend) ?? null;
+  if (resolved.model || !backend) return { backend, model: resolved.model };
+  return { backend, model: backend === runnerCfg.backend ? runnerCfg.model ?? null : null };
 }
 
 /** Task types that run IN Timon's working tree: a `code` task writes in its
@@ -1537,8 +1603,12 @@ async function dispatch(): Promise<void> {
         // fallbackFor).
         { backend: task.fallback_backend_override, model: task.fallback_model_override },
       );
-      const backend = redirect?.backend ?? spec.backend;
-      const model = redirect ? redirect.model : spec.model;
+      // Frozen on the mission with the running agent's own pair when nothing
+      // above it decided: the board reads what ran from there (#1109).
+      const { backend, model } = frozenTaskLlm(
+        { backend: redirect?.backend ?? spec.backend, model: redirect ? redirect.model : spec.model },
+        loadConfig(effectiveAgentName),
+      );
       if (redirect) {
         console.warn(
           `[dispatcher] task ${taskId} redirected to ${redirect.backend} ` +

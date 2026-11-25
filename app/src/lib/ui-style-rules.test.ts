@@ -129,6 +129,58 @@ function scan(): Offences {
   return out;
 }
 
+/*
+ * A menu entry that removes something keeps its red text when it is
+ * highlighted, so its highlight has to be red as well: red on the accent
+ * highlight is unreadable in both themes (TODO #1136). Use
+ * `<DropdownMenuItem variant="destructive">`, or `DESTRUCTIVE_MENU_ITEM` from
+ * `components/ui/dropdown-menu` on a menu made of buttons.
+ *
+ * Read on each opening tag of a menu entry (a Radix item, or any element with
+ * `role="menuitem"`), across lines: classes held in a constant elsewhere are
+ * not seen, which is why the variant and the constant exist.
+ */
+const OPENING_TAG = /<([A-Za-z][\w.]*)((?:=>|[^>])*)>/g;
+const MENU_ITEM_TAG = /(?:Menu|^Dropdown)[\w.]*Item$/;
+const MENU_ITEM_ROLE = /\brole=["']menuitem["']/;
+const RED_TEXT = /(?<![-\w])text-destructive\b/;
+const RED_HIGHLIGHT = /\b(?:hover|focus|focus-visible|data-\[highlighted\]):bg-destructive\b/;
+
+function unreadableDestructiveItems(text: string): number {
+  let total = 0;
+  for (const [, name = '', attributes = ''] of text.matchAll(OPENING_TAG)) {
+    if (!MENU_ITEM_TAG.test(name) && !MENU_ITEM_ROLE.test(attributes)) continue;
+    if (RED_TEXT.test(attributes) && !RED_HIGHLIGHT.test(attributes)) total += 1;
+  }
+  return total;
+}
+
+test('a destructive menu entry is highlighted in red, not with the accent', () => {
+  const offenders = [...sourceFiles(SRC, /\.tsx$/), ...sourceFiles(EXAMPLES, /\.(?:m?js|tsx)$/)]
+    .map((file) => [key(file), unreadableDestructiveItems(readFileSync(file, 'utf8'))] as const)
+    .filter(([, n]) => n > 0)
+    .map(([file, n]) => `${file}: ${n}`);
+  assert.deepEqual(
+    offenders,
+    [],
+    'Red text on a menu entry needs a red highlight: `<DropdownMenuItem variant="destructive">`, or `DESTRUCTIVE_MENU_ITEM` on a menu made of buttons.',
+  );
+});
+
+test('the destructive menu entry rule catches what it is meant to catch', () => {
+  assert.equal(unreadableDestructiveItems('<DropdownMenuItem className="text-destructive focus:text-destructive" onSelect={() => void remove()}>'), 1);
+  assert.equal(unreadableDestructiveItems('<DropdownMenuItem key={g} onSelect={run[g]}\n  className={g === "delete" ? "text-destructive focus:text-destructive" : undefined}>'), 1);
+  assert.equal(unreadableDestructiveItems('<Dropdown.Item className="text-destructive">'), 1);
+  assert.equal(unreadableDestructiveItems('<ContextMenuItem className="text-destructive">'), 1);
+  assert.equal(unreadableDestructiveItems('<button type="button" role="menuitem" className={cn(ITEM, danger && \'text-destructive hover:text-destructive\')}>'), 1);
+  assert.equal(unreadableDestructiveItems('<DropdownMenuItem variant="destructive" onSelect={() => remove()}>'), 0);
+  assert.equal(unreadableDestructiveItems('<Dropdown.Item className="text-destructive focus:bg-destructive/10 focus:text-destructive">'), 0);
+  assert.equal(unreadableDestructiveItems('<button role="menuitem" className="text-destructive hover:bg-destructive/10">'), 0);
+  // Red text outside a menu entry is not this rule's business.
+  assert.equal(unreadableDestructiveItems('<p role="alert" className="text-xs text-destructive">'), 0);
+  assert.equal(unreadableDestructiveItems('<button className="hover:text-destructive">'), 0);
+});
+
 test('no monospace type outside code, no hard separator line', () => {
   const now = scan();
   const offenders = KINDS.flatMap((kind) => Object.entries(now[kind]).map(([file, n]) => `${file}: ${kind} ${n}`));

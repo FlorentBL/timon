@@ -650,6 +650,29 @@ async function cmdStatus(argv) {
   }
   const j = await http('GET', `/api/missions/${encodeURIComponent(id)}`);
   process.stdout.write(JSON.stringify(j, null, 2) + '\n');
+  notePendingPermission(j.pending_permission);
+}
+
+/** Minutes, or hours and minutes, of a duration in ms. */
+function shortDuration(ms) {
+  const minutes = Math.max(0, Math.floor(ms / 60_000));
+  if (minutes < 1) return 'less than a minute';
+  if (minutes < 60) return `${minutes} min`;
+  return `${Math.floor(minutes / 60)} h ${String(minutes % 60).padStart(2, '0')}`;
+}
+
+/**
+ * One readable line on stderr when the mission waits on a card (TODO #1094):
+ * stdout stays the JSON a script pipes into jq. Tool and clock only — the
+ * command is on the card, in the chat.
+ */
+function notePendingPermission(p) {
+  if (!p || typeof p.since !== 'number') return;
+  const what = p.kind === 'question' ? 'an answer' : `a permission (${p.tool_name})`;
+  const parts = [`waiting for ${what} for ${shortDuration(Date.now() - p.since)}`];
+  if (typeof p.remaining_ms === 'number') parts.push(`auto-deny in ${shortDuration(p.remaining_ms)}`);
+  if (p.count > 1) parts.push(`${p.count} cards open`);
+  process.stderr.write(`${parts.join(', ')} — answer it in the chat\n`);
 }
 
 async function cmdKill(argv) {
@@ -920,10 +943,14 @@ Pull requests (projects whose jobs land through one, see set-integration):
   timon pr branch <branch> [--series ID]       sequential job: cuts its integration branch from the remote's
                                              target and gives the pilot a worktree on it (default: THIS
                                              mission's series)
+  timon job branch <branch> [--series ID]      the same, under a name for any project: in one that merges
+                                             locally, the branch is cut from the local target (or taken
+                                             as it is when the planner chose an existing one)
   timon pr land <job-id|series-id> [--title TEXT] [--body TEXT | --body-file PATH]
                                              lands a job kept on its branch: merged into the local target
                                              (fast-forward or merge commit, refused on a conflict or a dirty
-                                             checkout of the target), or its pull request opened (title needed)
+                                             checkout of the target), or its pull request opened (title needed;
+                                             a new one when the previous one was closed without a merge)
 
 Projects (agent roles per project):
   timon project list                           lists configured projects
@@ -2087,6 +2114,7 @@ async function cmdTaskGet(argv) {
   if (!id) { process.stderr.write('usage: timon task get <id>\n'); process.exit(64); }
   const j = await http('GET', `/api/tasks/${id}`);
   process.stdout.write(JSON.stringify(j.task, null, 2) + '\n');
+  notePendingPermission(j.task?.pending_permission);
 }
 
 async function cmdTaskCreate(argv) {
@@ -2182,6 +2210,8 @@ async function cmdTaskCreate(argv) {
   };
 
   const j = await http('POST', '/api/tasks', body);
+  // stderr: stdout stays the task's JSON, which scripts pipe to `jq`.
+  for (const warning of j.warnings ?? []) process.stderr.write(`timon: warning: ${warning}\n`);
   process.stdout.write(JSON.stringify(j.task, null, 2) + '\n');
 }
 
@@ -2677,23 +2707,40 @@ async function cmdPrLand(argv) {
   process.stdout.write(JSON.stringify(j, null, 2) + '\n');
 }
 
-/** The integration branch of a sequential job, and the pilot's worktree on it. */
-async function cmdPrBranch(argv) {
+/**
+ * The integration branch of a sequential job, and the pilot's worktree on it.
+ * `timon job branch` is the same command under a name that also fits a
+ * project merging locally, where no pull request is ever opened.
+ */
+async function cmdJobBranch(argv, usage) {
   const series = takeFlag(argv, 'series');
   const branch = argv[0];
   if (!branch || argv.length > 1) {
-    process.stderr.write('usage: timon pr branch <branch> [--series ID]\n');
+    process.stderr.write(usage);
     process.exit(64);
   }
   const j = await http('POST', `/api/series/${encodeURIComponent(series || 'current')}/integration-branch`, { branch });
   process.stdout.write(JSON.stringify(j, null, 2) + '\n');
 }
 
+const PR_BRANCH_USAGE = 'usage: timon pr branch <branch> [--series ID]\n';
+const JOB_BRANCH_USAGE = 'usage: timon job branch <branch> [--series ID]\n';
+
+async function cmdJob(argv) {
+  const [sub, ...rest] = argv;
+  switch (sub) {
+    case 'branch': return cmdJobBranch(rest, JOB_BRANCH_USAGE);
+    default:
+      process.stderr.write('usage: timon job branch <branch> [--series ID]\n');
+      process.exit(64);
+  }
+}
+
 async function cmdPr(argv) {
   const [sub, ...rest] = argv;
   switch (sub) {
     case 'open': return cmdPrOpen(rest);
-    case 'branch': return cmdPrBranch(rest);
+    case 'branch': return cmdJobBranch(rest, PR_BRANCH_USAGE);
     case 'land': return cmdPrLand(rest);
     default:
       process.stderr.write('usage: timon pr open <task-id|series-id> --title TEXT [--body TEXT | --body-file PATH]\n');
@@ -5990,6 +6037,9 @@ async function main() {
         break;
       case 'pr':
         await cmdPr(rest);
+        break;
+      case 'job':
+        await cmdJob(rest);
         break;
       case 'project':
         await cmdProject(rest);

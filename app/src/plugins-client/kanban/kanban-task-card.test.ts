@@ -105,7 +105,7 @@ test('a queued task lays its pieces in the shared zones of a board card', async 
   const m = await mount();
   try {
     await m.render(task({
-      run_by: { agent: 'demo.reviewer', source: null, reason: null },
+      run_by: { agent: 'demo.reviewer', source: 'role', reason: 'other_role', planned: true },
       scheduled_at: new Date(2026, 10, 5, 2, 0).getTime(),
       attachment_count: 2,
       deps: '["other"]',
@@ -116,7 +116,9 @@ test('a queued task lays its pieces in the shared zones of a board card', async 
     assert.equal(card.getAttribute('data-density'), 'card');
     assert.equal(card.getAttribute('draggable'), 'true', 'a queued task can be dragged');
 
-    assert.match(m.text('identity'), /demo\.coder/);
+    // #1109: the agent the dispatcher hands the task to, not the one it names.
+    assert.match(m.text('identity'), /demo\.reviewer/);
+    assert.doesNotMatch(m.text('identity'), /demo\.coder/);
     assert.match(m.text('identity'), /Coder/, 'the agent\'s role under its name');
     assert.ok(m.zone('identity')?.querySelector('[data-task-params]'), 'the model chip beside the agent');
     assert.equal(m.text('corner'), 'P4');
@@ -129,7 +131,10 @@ test('a queued task lays its pieces in the shared zones of a board card', async 
 
     assert.match(m.text('badges'), /^code/, 'the type first');
     assert.equal(m.zone('badges')?.querySelector('[data-task-status]')?.textContent, 'Pending', 'then the status');
-    assert.ok(m.zone('badges')?.querySelector('[data-task-runner="demo.reviewer"]'), 'the runner badge');
+    const runner = m.zone('badges')?.querySelector('[data-task-runner="demo.reviewer"]');
+    assert.ok(runner, 'the runner badge');
+    assert.equal(runner?.textContent, 'assigned to demo.coder', 'the badge recalls the agent the task names');
+    assert.match(runner?.getAttribute('title') ?? '', /will be run by demo\.reviewer/, 'a plan, not a past run');
     assert.match(m.text('badges'), /#42/, 'the linked idea');
     assert.match(m.text('badges'), /Bug/, 'its urgency');
 
@@ -159,6 +164,35 @@ test('a running task shows its validation banner as context and its gestures as 
     await m.click(m.card().querySelector('[data-board-card-open]'));
     await m.click(m.zone('meta') ?? m.card());
     assert.deepEqual(m.gestures, ['stop', 'graph:task-1', 'open', 'open'], 'the title and the card body open it');
+  } finally {
+    await m.unmount();
+  }
+});
+
+test('a running task whose mission waits on a card says on what, since when and until when (TODO #1094)', async () => {
+  const m = await mount();
+  try {
+    const running = { status: 'IN_PROGRESS' as const, mission_id: 'm-1', started_at: NOW - 600_000 };
+    await m.render(task({ ...running, pending_permission: {
+      kind: 'permission', tool_name: 'Bash', since: NOW - 3 * 60_000, expires_at: NOW + 2 * 60_000, remaining_ms: 2 * 60_000, count: 2,
+    } }), { needsAction: true });
+    const line = m.zone('context')?.querySelector<HTMLElement>('[data-pending-permission="Bash"]');
+    assert.ok(line, 'the waiting line');
+    assert.match(line.textContent ?? '', /Waiting for a permission \(Bash\) for 3\smin/);
+    assert.match(line.textContent ?? '', /auto-deny in 2\smin/);
+    assert.match(line.title, /1 more card waiting/, 'the other cards in the tooltip');
+    assert.doesNotMatch(m.text('context'), /Validation required/, 'one banner, not two');
+
+    await m.render(task({ ...running, pending_permission: {
+      kind: 'question', tool_name: 'ask_user', since: NOW - 20_000, expires_at: null, remaining_ms: null, count: 1,
+    } }));
+    assert.match(m.text('context'), /Waiting for an answer for <\s1\smin/);
+    assert.doesNotMatch(m.text('context'), /auto-deny/, 'a chat mission never times out');
+
+    await m.render(task({ ...running, status: 'BLOCKED', pending_permission: {
+      kind: 'permission', tool_name: 'Bash', since: NOW, expires_at: null, remaining_ms: null, count: 1,
+    } }));
+    assert.ok(!m.card().querySelector('[data-pending-permission]'), 'only a running task says it');
   } finally {
     await m.unmount();
   }

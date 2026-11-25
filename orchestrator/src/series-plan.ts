@@ -366,7 +366,16 @@ export type SeriesPlanLanding = {
   last?: 'pr' | 'local' | 'none';
   /** The local branch a `local` last task merges into. */
   target?: string;
+  /** The project's own setting: one that merges locally gets the neutral
+   *  `timon job branch`, as no pull request is ever opened there. Absent:
+   *  `pr`, the earlier commands to the byte. */
+  projectMode?: 'pr' | 'local';
 };
+
+/** The command that gives a sequential job its branch and a worktree on it. */
+export function jobBranchCommand(landing: Pick<SeriesPlanLanding, 'projectMode'>): string {
+  return landing.projectMode === 'local' ? 'timon job branch' : 'timon pr branch';
+}
 
 /** The task that ends the job, or null when the work stays on its branch. */
 function lastTaskCommand(landing: SeriesPlanLanding, flags: string, deps: string | null): string | null {
@@ -406,7 +415,8 @@ function lastTaskCommand(landing: SeriesPlanLanding, flags: string, deps: string
  * not in that project), and a last `merge` task with `--landing pr`, which
  * depends on the code tasks (or on the grouped merge), opens the pull request.
  * A sequential mode creates no task but that last one: its pilot first asks
- * the daemon for the branch and a worktree on it (`timon pr branch`), codes
+ * the daemon for the branch and a worktree on it (`timon pr branch`, or
+ * `timon job branch` in a project that merges locally), codes
  * there, and creates the pull request task, with no deps, once the work is in
  * the branch. Without `landing`, the output is the previous one, to the byte.
  *
@@ -452,7 +462,7 @@ export function seriesPlanCommands(
   const pipeline = PIPELINE_BY_MODE[answer.mode];
   if (!pipeline && landing) {
     const project = landing.taskProject ? ` --project ${shellQuote(landing.taskProject)}` : '';
-    cmds.push(`timon pr branch ${shellQuote(landing.branch)}`);
+    cmds.push(`${jobBranchCommand(landing)} ${shellQuote(landing.branch)}`);
     const last = lastTaskCommand(landing, ` --base ${shellQuote(landing.branch)}${project}`, null);
     if (last) cmds.push(last);
   }

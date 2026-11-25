@@ -280,6 +280,11 @@ four plain arguments, and an `expected` of one line.
 With an identity, a generic alias becomes safe to declare: a namesake that answers
 to it is refused on the click, and again before every launch.
 
+The same check runs on a path the person pins for your program (**Program →
+Advanced settings** on the provider page): a file that does not match is refused
+before it is saved, and `timon doctor` marks an existing pin that does not match as
+failed, quoting what it printed.
+
 ### Updating a provider
 
 Install a newer version of the same plugin and it replaces the running one,

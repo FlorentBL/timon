@@ -130,6 +130,7 @@ test('every route refuses an anonymous call, the daemon token and an account tha
       ['GET', '/project?project=acme', undefined],
       ['PUT', '/project', { project: 'acme', label: 'x' }],
       ['POST', '/dismiss', { project: 'acme', issue: 7 }],
+      ['GET', '/hidden?project=acme', undefined],
     ];
     for (const [method, path, body] of routes) {
       assert.equal((await send(url(path), method, null, body)).status, 401, `${method} ${path} anonymous`);
@@ -238,6 +239,67 @@ test('a project sets its own label and hides issues it does not want suggested',
     assert.equal(back.label, 'accepted');
     const read = await (await send(url('/project?project=acme'), 'GET', 'person')).json() as { label: string; custom: boolean };
     assert.deepEqual([read.label, read.custom], ['accepted', false]);
+  });
+});
+
+test('a project switched off asks nothing of GitHub and imports nothing until switched on again', async () => {
+  await withPlugin(async (url) => {
+    assert.equal((await send(url('/project'), 'PUT', 'person', { project: 'acme' })).status, 400, 'nothing to change');
+    assert.equal((await send(url('/project'), 'PUT', 'person', { project: 'acme', enabled: 'no' })).status, 400);
+    const off = await (await send(url('/project'), 'PUT', 'person', { project: 'acme', enabled: false })).json() as { enabled: boolean; label: string };
+    assert.deepEqual([off.enabled, off.label], [false, 'accepted'], 'the label is kept');
+    calls.length = 0;
+    const listed = await (await send(url('/candidates?project=acme'), 'GET', 'person')).json() as Candidates & { enabled: boolean };
+    assert.deepEqual([listed.enabled, listed.issues], [false, []]);
+    assert.equal(calls.length, 0, 'GitHub is not asked');
+    const refused = await send(url('/import'), 'POST', 'person', { project: 'acme', issue: 9 });
+    assert.deepEqual([refused.status, (await refused.json() as { error: string }).error], [409, 'disabled']);
+    assert.equal(((await (await send(url('/project?project=acme'), 'GET', 'person')).json()) as { enabled: boolean }).enabled, false);
+
+    const on = await (await send(url('/project'), 'PUT', 'person', { project: 'acme', enabled: true })).json() as { enabled: boolean };
+    assert.equal(on.enabled, true);
+    const back = await (await send(url('/candidates?project=acme'), 'GET', 'person')).json() as Candidates & { enabled: boolean };
+    assert.equal(back.enabled, true);
+    assert.ok(back.issues.length > 0);
+  });
+});
+
+test('the hidden issues are listed with the title they had, newest first, and shown again one by one', async () => {
+  await withPlugin(async (url) => {
+    await send(url('/dismiss'), 'POST', 'person', { project: 'acme', issue: 9, title: 'Slow\nstart' });
+    await send(url('/dismiss'), 'POST', 'person', { project: 'acme', issue: 7 });
+    type Hidden = { repo: string; issues: Array<{ number: number; title: string | null; url: string }> };
+    const listed = await (await send(url('/hidden?project=acme'), 'GET', 'person')).json() as Hidden;
+    assert.deepEqual(listed.issues, [
+      { number: 7, title: null, url: 'https://github.com/acme/widgets/issues/7' },
+      { number: 9, title: 'Slow start', url: 'https://github.com/acme/widgets/issues/9' },
+    ]);
+    await send(url('/dismiss'), 'POST', 'person', { project: 'acme', issue: 9, hidden: false });
+    const after = await (await send(url('/hidden?project=acme'), 'GET', 'person')).json() as Hidden;
+    assert.deepEqual(after.issues.map((i) => i.number), [7]);
+    await send(url('/dismiss'), 'POST', 'person', { project: 'acme', issue: 7, hidden: false });
+    assert.equal((await send(url('/hidden?project=local'), 'GET', 'person')).status, 409, 'no GitHub repository');
+  });
+});
+
+test('an imported idea that moves elsewhere tells its owner\'s widgets to read the list again', async () => {
+  const { bus } = await import('../bus.js');
+  await withPlugin(async (url) => {
+    const made = await (await send(url('/import'), 'POST', 'person', { project: 'acme', issue: 9 })).json() as { todo: { id: number } };
+    const heard: Array<{ topic: string; owner: string; payload: unknown }> = [];
+    const listen = (ev: { kind: string; pluginId?: string; topic?: string; ownerUserId?: string; payload?: unknown }) => {
+      if (ev.kind === 'plugin_realtime' && ev.pluginId === PLUGIN) heard.push({ topic: ev.topic!, owner: ev.ownerUserId!, payload: ev.payload });
+    };
+    bus.on('event', listen);
+    try {
+      const plain = dbApi.insertProjectTodo({ text: 'not an issue', project: 'acme', ownerUserId: ada.id }).id;
+      dbApi.updateProjectTodo(plain, { status: 'done', progress: 'done' });
+      dbApi.updateProjectTodo(made.todo.id, { status: 'done', progress: 'done' });
+      for (let i = 0; i < 50 && heard.length === 0; i += 1) await new Promise((resolve) => setTimeout(resolve, 10));
+      assert.deepEqual(heard, [{ topic: 'issues', owner: ada.id, payload: { project: 'acme', todo: made.todo.id } }]);
+    } finally {
+      bus.off('event', listen);
+    }
   });
 });
 

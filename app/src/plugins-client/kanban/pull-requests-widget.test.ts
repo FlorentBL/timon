@@ -295,6 +295,54 @@ test('in the Git stack, a hidden PR tab reads the pull requests only when its co
   assert.equal(shouldReadPulls(false, null, 1_000), true);
 });
 
+test('a hidden PR tab reads its list again once it has aged, without being brought forward', async (t) => {
+  const reads = (calls: Call[]) => calls.filter((c) => c.url === '/api/ui/projects/acme/pull-requests').length;
+  const { HIDDEN_PULLS_CHECK_MS, keepPullList } = await import('./pull-requests-model');
+  t.mock.timers.enable({ apis: ['setInterval'] });
+  const list = [pull({ number: 12 })];
+  const m = await mount(list, { tabbed: true, selected: false });
+  const tick = async () => { await m.settle(); t.mock.timers.tick(HIDDEN_PULLS_CHECK_MS); await m.settle(); };
+  try {
+    assert.equal(reads(m.calls), 1, 'read once, for the count');
+    await tick();
+    assert.equal(reads(m.calls), 1, 'a fresh list is not read again');
+    // A minute later (aged by hand: the clock is not mocked), the next check reads it.
+    keepPullList('acme', { repo: 'acme/widgets', pulls: list }, Date.now() - 61_000);
+    await tick();
+    assert.equal(reads(m.calls), 2);
+    // In front, the timer stops: the landing poll takes over.
+    await m.repaint({ tabbed: true, selected: true });
+    await m.settle();
+    const inFront = reads(m.calls);
+    keepPullList('acme', { repo: 'acme/widgets', pulls: list }, Date.now() - 61_000);
+    await tick();
+    assert.equal(reads(m.calls), inFront);
+  } finally {
+    await m.unmount();
+  }
+});
+
+test("another account's pull requests are forgotten; naming the account the first time keeps them", async () => {
+  const { announceAccount } = await import('@/lib/account-change');
+  const { keepPullList, lastPullList } = await import('./pull-requests-model');
+  const list = { repo: 'acme/widgets', pulls: [pull()] };
+  try {
+    announceAccount(null);
+    keepPullList('acme', list);
+    announceAccount('alice');
+    assert.ok(lastPullList('acme'), 'the first naming is no change');
+    announceAccount('alice');
+    assert.ok(lastPullList('acme'));
+    announceAccount('bob');
+    assert.equal(lastPullList('acme'), undefined, "alice's list is gone");
+    keepPullList('acme', list);
+    announceAccount(null);
+    assert.equal(lastPullList('acme'), undefined, 'signed out, nothing is kept');
+  } finally {
+    announceAccount(null);
+  }
+});
+
 test('a click on a row opens its page in a window, at the mouse and at the keyboard; its buttons keep their own click', async () => {
   const m = await mount([pull({ review: review({ verdict: 'changes_requested' }) }), pull({ number: 13, title: 'Tidy the docs' })]);
   const pageReads = () => m.calls.filter((c) => /\/pull-requests\/12(\?|$)/.test(c.url)).length;

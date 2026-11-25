@@ -22,6 +22,8 @@ import { dirname, isAbsolute, join, win32 } from 'node:path';
 import { CONFIG_FILE, config, expandTilde, setConfig } from '../config/load.js';
 import { HostSchema } from '../config/schema.js';
 import { findExecutableBinary } from '../host/binary-path.js';
+import { declaredBinary } from '../host/declared-binaries.js';
+import { binaryIdentityRefusal, checkBinaryIdentity, DEFAULT_IDENTITY_ARGS } from './binary-identity.js';
 import { buildSetupConfig, SetupError } from '../setup.js';
 import {
   backendBinaryAnchor, checkBackendBinaries, invalidateBackendBinaryAvailability, type BackendBinaryStatus,
@@ -33,6 +35,7 @@ export type BinaryPinErrorCode =
   | 'path_missing'
   | 'path_not_file'
   | 'path_not_executable'
+  | 'wrong_program'
   | 'no_config'
   | 'config_unreadable';
 
@@ -43,6 +46,7 @@ const MESSAGES: Record<BinaryPinErrorCode, string> = {
   path_missing: 'Nothing exists at this path.',
   path_not_file: 'This path is a folder, not the binary itself.',
   path_not_executable: 'This file cannot be run: it is not executable.',
+  wrong_program: 'This file is not the program this provider runs: its `--version` answer does not match.',
   no_config: 'Finish the setup first: timon.config.json does not exist yet.',
   config_unreadable: 'timon.config.json cannot be read as JSON; fix or restore it first.',
 };
@@ -53,14 +57,16 @@ const STATUS: Record<BinaryPinErrorCode, number> = {
   path_missing: 400,
   path_not_file: 400,
   path_not_executable: 400,
+  wrong_program: 400,
   no_config: 409,
   config_unreadable: 409,
 };
 
 export class BinaryPinError extends Error {
   readonly status: number;
-  constructor(readonly code: BinaryPinErrorCode) {
-    super(MESSAGES[code]);
+  /** `message`: a sentence built from the provider's declaration, never from what the caller sent. */
+  constructor(readonly code: BinaryPinErrorCode, message: string = MESSAGES[code]) {
+    super(message);
     this.status = STATUS[code];
   }
 }
@@ -137,6 +143,22 @@ export function assertExecutablePin(path: string, platform: NodeJS.Platform = pr
     throw new BinaryPinError('path_missing');
   }
   throw new BinaryPinError(isFile ? 'path_not_executable' : 'path_not_file');
+}
+
+/**
+ * A path can name the wrong program: a tester pinned `/usr/local/bin/ollama` for the Ollama Cloud provider,
+ * which runs on the Codex CLI, and every mission then ran `ollama exec …`. When the provider declared how its
+ * program describes itself (`declares.binary.identity`), the file is asked before it is written down.
+ */
+export async function assertPinIdentity(name: string, path: string): Promise<void> {
+  const identity = declaredBinary(name)?.identity;
+  if (!identity) return;
+  const result = await checkBinaryIdentity(path, identity);
+  if (result.ok) return;
+  console.warn(`[backends] ${name}: pin refused, ${binaryIdentityRefusal(`\`${name}\``, path, identity, result.printed, result.slow)}`);
+  throw new BinaryPinError('wrong_program', identity.expected
+    ? `This file is not ${identity.expected}: its \`${(identity.args ?? DEFAULT_IDENTITY_ARGS).join(' ')}\` answer does not match.`
+    : MESSAGES.wrong_program);
 }
 
 type Json = Record<string, unknown>;
@@ -222,6 +244,7 @@ export async function pinBinary(name: string, rawPath: string, file: string = CO
     throw err;
   }
   assertExecutablePin(path);
+  await assertPinIdentity(name, path);
   writeUserPin(file, name, path);
   applyLivePins({ ...config().host.binaries, [name]: path });
   console.log(`[backends] ${name}: path pinned from Settings`);
