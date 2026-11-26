@@ -15,9 +15,11 @@ export const PRODUCT_BACKEND_HOME_DIRS: Readonly<Record<string, readonly string[
   "copilot": Object.freeze([".copilot"]),
   "opencode": Object.freeze([".config/opencode", ".local/share/opencode"]),
   "hermes": Object.freeze([".hermes"]),
+  "qwen": Object.freeze([".qwen"]),
   "pi": Object.freeze([".pi"]),
   "antigravity": Object.freeze([".gemini/antigravity-cli"]),
   "kimi": Object.freeze([".kimi"]),
+  "zai": Object.freeze([]),
   "ollama-cloud": Object.freeze([".ollama"]),
   "llmtr": Object.freeze([]),
 });

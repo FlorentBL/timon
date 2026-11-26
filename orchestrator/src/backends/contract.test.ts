@@ -186,6 +186,13 @@ const EXPECTATIONS: Record<string, Expectation> = {
     envKeys: ['ANTHROPIC_AUTH_TOKEN', 'ANTHROPIC_BASE_URL'],
     model: 'kimi-k3',
   },
+  zai: {
+    fixture: 'claude.jsonl',
+    sessionId: '3f9a1c52-7e64-4d0b-9a11-0b2c8de41f77',
+    cmd: 'claude',
+    envKeys: ['ANTHROPIC_AUTH_TOKEN', 'ANTHROPIC_BASE_URL', 'ANTHROPIC_DEFAULT_HAIKU_MODEL'],
+    model: 'glm-5.4',
+  },
   'ollama-cloud': {
     fixture: 'codex.jsonl',
     sessionId: '0199f3c1-8b7a-7c2d-9e4f-5a6b7c8d9e0f',

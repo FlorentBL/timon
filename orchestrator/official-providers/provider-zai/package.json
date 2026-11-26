@@ -1,0 +1,37 @@
+{
+  "name": "@timon-ai/provider-zai",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "lib/index.js",
+  "timon": {
+    "id": "provider-zai",
+    "apiVersion": 12,
+    "kind": "provider",
+    "label": "GLM (Z.ai)",
+    "description": "Official GLM profile on the Claude CLI protocol, through Z.ai's Anthropic-compatible endpoint.",
+    "author": "Timon",
+    "permissions": [
+      "backends:register"
+    ],
+    "provider": {
+      "binaries": [],
+      "backends": [
+        {
+          "id": "zai",
+          "rank": 85,
+          "credentialDirs": [],
+          "modelBrands": [
+            {
+              "match": "glm",
+              "brand": "zhipu"
+            }
+          ]
+        }
+      ]
+    },
+    "license": {
+      "required": false
+    }
+  }
+}

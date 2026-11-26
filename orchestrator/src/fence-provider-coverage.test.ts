@@ -5,7 +5,7 @@
  * `resolveFence`); the folders the CLI reads and writes are chosen by the dialect's `buildSpawn`.
  * Nothing at launch compares the two, so each mismatch so far was found by a tester: a profile
  * whose scratch folder belonged to another plugin than the one the fence named (a profile from a
- * user's file, a provider pack, Ollama Cloud on the codex dialect, Kimi on the claude one).
+ * user's file, a provider pack, Ollama Cloud on the codex dialect, Kimi and Z.ai on the claude one).
  *
  * The invariant checked here does not depend on who owns what: for every active profile, every
  * path under the Timon home that the real launch spec names (arguments, environment values, the
@@ -32,11 +32,12 @@ import { fileURLToPath } from 'node:url';
 const USER_HOME = realpathSync.native(mkdtempSync(join(tmpdir(), 'timon-fence-user-home-')));
 process.env.HOME = USER_HOME;
 process.env.USERPROFILE = USER_HOME;
-for (const dir of ['.claude', '.codex', '.grok', '.copilot', '.pi', '.kimi', '.ollama']) mkdirSync(join(USER_HOME, dir), { recursive: true });
+for (const dir of ['.claude', '.codex', '.grok', '.copilot', '.pi', '.qwen', '.kimi', '.ollama']) mkdirSync(join(USER_HOME, dir), { recursive: true });
 process.on('exit', () => rmSync(USER_HOME, { recursive: true, force: true }));
 process.env.TIMON_RESOURCE_GUARD_ENABLED = '0';
 // Placeholders that make the API-key profiles active; nothing here sends a request.
 process.env.KIMI_API_KEY = 'test-only-kimi';
+process.env.ZAI_API_KEY = 'test-only-zai';
 process.env.OLLAMA_API_KEY = 'test-only-ollama';
 process.env.GROK_AUTH_DIR = join(USER_HOME, '.grok');
 
@@ -97,16 +98,17 @@ registerPackProfile('acme-pack', { id: 'pack-codex', dialect: 'codex', label: 'P
  * is off until the user switches it on (`disabled` in its profile), so it is not among them.
  */
 const EXPECTED = [
-  'claude', 'codex', 'grok', 'copilot', 'pi', 'kimi', 'ollama-cloud', 'opencode', 'hermes',
+  'claude', 'codex', 'grok', 'copilot', 'pi', 'kimi', 'zai', 'ollama-cloud', 'opencode', 'hermes', 'qwen',
   'pack-codex', 'user-claude-key', ...PROCESS_DIALECTS.map((d) => `user-${d}`),
 ];
 /**
- * Dialects whose launch names no folder of the Timon home: Hermes gets its instructions and MCP
- * servers over the protocol and keeps its state in its own folder of the user's home. opencode is
+ * Dialects whose launch names no folder of the Timon home: Hermes and Qwen Code get their
+ * instructions and MCP servers over the protocol and keep their state in their own folder of the
+ * user's home. opencode is
  * not here: its cache and state live in the profile folder, which the fence must open.
  * Their missions are still checked for what they must not reach.
  */
-const NO_TIMON_FOLDER = new Set(['hermes']);
+const NO_TIMON_FOLDER = new Set(['hermes', 'qwen']);
 
 const PROJECT = realpathSync.native(mkdtempSync(join(tmpdir(), 'timon-fence-project-')));
 process.on('exit', () => rmSync(PROJECT, { recursive: true, force: true }));

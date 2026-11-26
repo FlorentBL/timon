@@ -44,7 +44,7 @@ test('the registry is asked for a scoped package with its slash encoded', () => 
 test('only the providers that said where their releases are get checked, never an ACP adapter', () => {
   const names = versionCheckedClis().map((cli) => cli.name);
   // Pi is its own CLI since the RPC switch (`pi --version`); `hermes-acp` is an adapter that may start instead.
-  assert.deepEqual(names, ['claude', 'codex', 'grok', 'copilot', 'opencode', 'pi']);
+  assert.deepEqual(names, ['claude', 'codex', 'grok', 'copilot', 'opencode', 'qwen', 'pi']);
   assert.deepEqual(versionCheckedClis().find((cli) => cli.name === 'pi')?.latest, { npm: '@earendil-works/pi-coding-agent' });
 });
 

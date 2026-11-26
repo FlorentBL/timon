@@ -129,6 +129,7 @@ test('every official provider imports only Node built-ins and the SDK', () => {
   const providers = readBuiltinList(ROOT).filter(({ source }) => isProviderPackage(resolve(ROOT, source)));
   assert.ok(providers.some((p) => p.pkg === '@timon-ai/provider-claude'));
   assert.ok(providers.some((p) => p.pkg === '@timon-ai/provider-kimi'));
+  assert.ok(providers.some((p) => p.pkg === '@timon-ai/provider-zai'));
   for (const { pkg, source } of providers) {
     const dir = resolve(ROOT, source);
     assert.ok(existsSync(dir), `${pkg}: ${dir} is missing`);

@@ -71,7 +71,7 @@ test('opencode 2 found: the card offers neither Install nor Update, which would 
 });
 
 test('a provider without an installer is a card with its vendor\'s page, never a command', () => {
-  assert.deepEqual([...PROVIDER_CLI_NAMES], ['claude', 'codex', 'grok', 'copilot', 'opencode', 'hermes-acp', 'pi', 'agy']);
+  assert.deepEqual([...PROVIDER_CLI_NAMES], ['claude', 'codex', 'grok', 'copilot', 'opencode', 'hermes-acp', 'qwen', 'pi', 'agy']);
   for (const card of setupBackends('linux', () => null, () => null, NO_VERSION)) {
     if (card.installable) assert.ok(card.installCommand, card.name);
     else assert.ok(card.installDocs?.startsWith('https://'), card.name);

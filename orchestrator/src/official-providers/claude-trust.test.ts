@@ -99,11 +99,12 @@ test('claude is the release\'s own provider: official, by registration', () => {
 const { setClaudeToken, clearClaudeToken } = await import('../../tests/helpers/claude-provider.js');
 const LONG_TOKEN = 'long-lived-claude-token-witness-0123456789';
 putGlobalSecret('KIMI_API_KEY', 'kimi-secret-witness-0123456789');
-for (const backend of ['claude', 'kimi']) {
+putGlobalSecret('ZAI_API_KEY', 'zai-secret-witness-0123456789');
+for (const backend of ['claude', 'kimi', 'zai']) {
   upsertAgent({ name: `${backend}.witness`, system_prompt: 'test', config: { backend, cwd: tmpdir(), skills: [], memory_scope: 'NONE' } });
 }
 
-for (const backend of ['claude', 'kimi']) test(`${backend}: official launch keeps the mission token, vault, MCP and provider credential isolation`, async () => {
+for (const backend of ['claude', 'kimi', 'zai']) test(`${backend}: official launch keeps the mission token, vault, MCP and provider credential isolation`, async () => {
   setClaudeToken(LONG_TOKEN);
   const run = await launch(backend);
   try {
@@ -115,6 +116,11 @@ for (const backend of ['claude', 'kimi']) test(`${backend}: official launch keep
       assert.equal(run.env.ANTHROPIC_AUTH_TOKEN, 'kimi-secret-witness-0123456789');
       assert.equal(run.env.ANTHROPIC_BASE_URL, 'https://api.moonshot.ai/anthropic');
     }
+    if (backend === 'zai') {
+      assert.equal(run.env.ANTHROPIC_AUTH_TOKEN, 'zai-secret-witness-0123456789');
+      assert.equal(run.env.ANTHROPIC_BASE_URL, 'https://api.z.ai/api/anthropic');
+      assert.equal(run.env.ANTHROPIC_DEFAULT_HAIKU_MODEL, 'glm-5.3-flash');
+    }
     const json = run.args[run.args.indexOf('--mcp-config') + 1]!;
     const servers = JSON.parse(json).mcpServers;
     assert.ok(servers.timon && servers.timon_ask);
@@ -125,8 +131,9 @@ for (const backend of ['claude', 'kimi']) test(`${backend}: official launch keep
   } finally { run.dispose(); clearClaudeToken(); }
 });
 
-test('Kimi cannot receive daemon one-shot transcripts through the Claude dialect declaration', async () => {
+test('Kimi and Z.ai cannot receive daemon one-shot transcripts through the Claude dialect declaration', async () => {
   const { oneShotProfiles } = await import('../backends/registry.js');
   assert.ok(oneShotProfiles().some((p) => p.id === 'claude'));
   assert.ok(!oneShotProfiles().some((p) => p.id === 'kimi'));
+  assert.ok(!oneShotProfiles().some((p) => p.id === 'zai'));
 });

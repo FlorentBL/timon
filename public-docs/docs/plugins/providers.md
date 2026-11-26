@@ -32,11 +32,11 @@ signature and licence requirements apply; see [Testing](testing.md) and
 
 ## Providers shipped with Timon
 
-Claude, Codex, Grok, Copilot, opencode, Hermes, Antigravity, Pi, Kimi, Ollama Cloud
-and LLMTR are provided by official plugins shipped with the app. They appear in the Plugins
+Claude, Codex, Grok, Copilot, opencode, Hermes, Antigravity, Pi, Qwen Code, Kimi,
+GLM (Z.ai), Ollama Cloud and LLMTR are provided by official plugins shipped with the app. They appear in the Plugins
 gallery with a **Built-in** badge, and they are written on the same
 `ctx.provider` kit described below, so they are the reference for what a
-provider can do. Kimi is a profile on the Claude provider; Ollama Cloud is a
+provider can do. Kimi and GLM (Z.ai) are profiles on the Claude provider; Ollama Cloud is a
 profile on Codex's. LLMTR is its own remote provider: it calls Chat Completions
 at `https://llmtr.com/v1` with the vault secret `LLMTR_API_KEY`, through
 `ctx.fetch`, and only after the operator allows `llmtr.com` in
@@ -1452,12 +1452,17 @@ applies to any provider; the sections after it are what each CLI taught.
   on demand: use `ctx.provider.binary.converse` or `serve`, which stop the process
   and its children.
 
-### ACP agents (opencode, Hermes, Cursor)
+### ACP agents (opencode, Hermes, Qwen Code, Cursor)
 
 - **MCP servers go in `session/new`, and only stdio ones.** An agent may ignore
   them: then a mission has none of Timon's tools. Check on a real agent before
   you promise Timon's tools; the Cursor template says plainly that it is
   unverified.
+- **An agent may open its session in a mode that never asks.** Qwen Code starts
+  in its own `auto` mode, or in the `yolo` mode a user's settings name, and then
+  runs tools without a `session/request_permission`. Pin the mode that asks on
+  the command line (`args`), and map only the modes that do not widen what runs
+  (`sessionModes`, such as `plan`).
 - **The model probe is not free.** It opens a session that stays in the agent's
   own history. It is cached, and it runs only through the program your manifest
   declares.
