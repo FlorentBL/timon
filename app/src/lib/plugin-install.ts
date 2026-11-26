@@ -389,5 +389,7 @@ export function vaultConsentLines(permissions: readonly string[], named?: Plugin
     if (!has('http:outbound')) lines.push({ key: 'pluginsPage.install.vault.brokerNoHttp', warn: true });
   }
   if (has('http:outbound') && !named?.hosts.length) lines.push({ key: 'pluginsPage.install.vault.network', warn: false });
+  // No host list stands behind this one: the sheet is where it is agreed to.
+  if (has('http:public-images')) lines.push({ key: 'pluginsPage.install.vault.publicImages', warn: false });
   return lines;
 }

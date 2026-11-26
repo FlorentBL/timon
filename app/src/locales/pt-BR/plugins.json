@@ -306,6 +306,7 @@
         "broker": "Chama APIs sob identidades do cofre sem ver suas chaves, apenas as que lhe foram concedidas pelo nome.",
         "brokerNoHttp": "Ele não declara http:outbound, então suas chamadas de API intermediadas serão recusadas.",
         "network": "Seu acesso à rede é limitado aos hosts abertos em timon.config.json, a todos os plugins (pluginPolicy.http.allow) ou somente a este (pluginPolicy.http.byPlugin), e aos endereços das conexões aprovadas.",
+        "publicImages": "Pode buscar imagens em qualquer host público sem uma entrada em timon.config.json: só voltam imagens verificadas, nunca da sua rede local nem desta máquina. pluginPolicy.publicImages desativa isso.",
         "secretsLead": "Segredos que ele cita. Um segredo marcado é concedido somente a este plugin; desmarcar nunca revoga uma concessão (isso é feito em Segredos).",
         "hostsLead": "Hosts que ele acessa. Um host marcado é aberto somente a este plugin.",
         "hostOwn": "Já aberto a este plugin. Desmarque para fechá-lo: seus hosts são substituídos pelos marcados aqui.",

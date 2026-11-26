@@ -134,10 +134,17 @@ import { reservedRouteSegment } from './reserved-routes.js';
  * `isValidElement`), in the browser only. API 19 shipped in 0.1.10, so a new
  * export opens a new wave: a plugin importing one of them declares 20, and a
  * host 19 refuses it instead of loading a browser half that dies on the
- * missing import. No member of the host's `PluginContext` changes
- * (docs/SDK-COMPAT.md §131).
+ * missing import (docs/SDK-COMPAT.md §131). The same wave adds
+ * `ctx.fetchPublicImage`, an image from any public host for a plugin that
+ * cannot know its hosts in advance (a mail's images and avatars), under the
+ * sensitive `http:public-images` permission and the operator's
+ * `pluginPolicy.publicImages`; a manifest declaring the permission must
+ * declare 20.
  */
 export const PLUGIN_API_VERSION = 20;
+
+/** First contract that knows `ctx.fetchPublicImage` and the `http:public-images` permission. */
+export const PUBLIC_IMAGES_API_VERSION = 20;
 
 /** First contract that knows `ctx.forge` and the `forge:read` / `forge:propose` permissions. */
 export const FORGE_API_VERSION = 19;
@@ -308,6 +315,8 @@ export const PLUGIN_PERMISSIONS = [
   // API 19 — the GitHub repository of a project (`ctx.forge`). Both sensitive.
   'forge:read',
   'forge:propose',
+  // API 20 — images from any public host (`ctx.fetchPublicImage`). Sensitive.
+  'http:public-images',
 ] as const;
 export type PluginPermission = (typeof PLUGIN_PERMISSIONS)[number];
 
@@ -382,6 +391,7 @@ export const SENSITIVE_PLUGIN_PERMISSIONS = Object.freeze([
   'dictation:engine', // hears the user's voice and turns it into text, which may leave the window
   'forge:read', // a project's issues and pull requests, read with the project's GitHub account, private repositories included
   'forge:propose', // puts a public comment, to be published under the project's GitHub account, before a person
+  'http:public-images', // GETs any public host with no allowlist: the URL it asks for is seen by that host
 ] as const satisfies readonly PluginPermission[]);
 
 /**
@@ -1122,6 +1132,10 @@ export function readManifest(
   const forge = manifest.permissions.find((permission) => permission === 'forge:read' || permission === 'forge:propose');
   if (forge && manifest.apiVersion < FORGE_API_VERSION) {
     return fail('manifest', `permission \`${forge}\` needs \`apiVersion: ${FORGE_API_VERSION}\` or later`);
+  }
+  // `ctx.fetchPublicImage` is contract 20: a manifest written for an older one cannot know it.
+  if (manifest.permissions.includes('http:public-images') && manifest.apiVersion < PUBLIC_IMAGES_API_VERSION) {
+    return fail('manifest', `permission \`http:public-images\` needs \`apiVersion: ${PUBLIC_IMAGES_API_VERSION}\` or later`);
   }
   // A format other than `standard` is contract 8: a daemon that predates it
   // refuses the manifest on its apiVersion, with a message naming the cause.

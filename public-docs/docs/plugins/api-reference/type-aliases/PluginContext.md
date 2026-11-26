@@ -987,6 +987,26 @@ readonly [`PluginBrowserRecordingOp`](PluginBrowserRecordingOp.md)[]
 
 ***
 
+### fetchPublicImage?
+
+> `readonly` `optional` **fetchPublicImage?**: (`url`, `options?`) => `Promise`\<[`PluginPublicImage`](PluginPublicImage.md)\>
+
+#### Parameters
+
+##### url
+
+`string` \| `URL`
+
+##### options?
+
+[`PluginPublicImageOptions`](PluginPublicImageOptions.md)
+
+#### Returns
+
+`Promise`\<[`PluginPublicImage`](PluginPublicImage.md)\>
+
+***
+
 ### forge
 
 > **forge**: `object`

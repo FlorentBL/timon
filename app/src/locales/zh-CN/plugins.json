@@ -316,6 +316,7 @@
         "broker": "插件可通过保管库身份调用 API，而无法看到密钥。只可使用已按名称授予它的身份。",
         "brokerNoHttp": "插件未声明 http:outbound，无法通过代理调用 API。",
         "network": "插件仅可访问 timon.config.json 中向所有插件开放的主机（pluginPolicy.http.allow）、仅向此插件开放的主机（pluginPolicy.http.byPlugin）以及已批准连接的地址。",
+        "publicImages": "无需在 timon.config.json 中添加条目，即可从任意公共主机获取图片：只返回经过校验的图片，绝不访问本地网络或本机。可通过 pluginPolicy.publicImages 关闭。",
         "secretsLead": "插件指定的机密。勾选后，仅向此插件授权；取消勾选不会撤销现有授权，如需撤销请前往“机密”页面。",
         "hostsLead": "插件访问的主机。勾选后，仅向此插件开放相应主机。",
         "hostOwn": "已向此插件开放。取消勾选可关闭访问；此插件的主机列表将以此处勾选的主机为准。",
