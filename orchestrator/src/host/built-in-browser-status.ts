@@ -8,15 +8,20 @@
  * one report (`builtInBrowserReport`), pure, which `timon doctor`, the daemon's start-up log, the
  * browser routes and `install.sh` (through `timon doctor --browser`) all read.
  *
+ * Every probe is asynchronous: the browser routes read these facts while the daemon serves every
+ * mission, and a `systemd --user` that does not answer held its event loop for each `systemctl`
+ * timeout when they were not.
+ *
  * Nothing of the provider's credential leaves here: only its process id, to tell a live provider
  * from one a `kill -9` left behind.
  */
-import { readdirSync, readFileSync, existsSync, statSync } from 'node:fs';
+import { access, readdir, readFile, stat } from 'node:fs/promises';
+import type { Dirent } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import type { BuiltInBrowserProblem, BuiltInBrowserReport } from '../plugins/contract/system.js';
 import type { BrowserHostService } from './browser-host-service.js';
-import { linuxGraphicalSession, type SessionExec } from './desktop-session.js';
+import { linuxGraphicalSessionAsync, type AsyncSessionExec } from './desktop-session.js';
 
 /** The fonts the installer adds to a server that has none (`scripts/install.sh`). */
 export const SERVER_FONT_PACKAGES = ['fonts-liberation', 'fonts-noto-core', 'fonts-noto-color-emoji'] as const;
@@ -34,15 +39,19 @@ const APPARMOR_PROFILE = join('/etc', 'apparmor.d', 'timon-desktop');
 
 /** The few file reads the sandbox check makes, faked in the tests: no real /proc there. */
 export type FileProbe = {
-  exists: (path: string) => boolean;
-  readText: (path: string) => string | null;
-  stat: (path: string) => { uid: number; mode: number } | null;
+  exists: (path: string) => Promise<boolean>;
+  readText: (path: string) => Promise<string | null>;
+  stat: (path: string) => Promise<{ uid: number; mode: number } | null>;
 };
 
+export async function pathExists(path: string): Promise<boolean> {
+  try { await access(path); return true; } catch { return false; }
+}
+
 export const realFileProbe: FileProbe = {
-  exists: (path) => existsSync(path),
-  readText: (path) => { try { return readFileSync(path, 'utf8'); } catch { return null; } },
-  stat: (path) => { try { const s = statSync(path); return { uid: s.uid, mode: s.mode }; } catch { return null; } },
+  exists: pathExists,
+  readText: async (path) => { try { return await readFile(path, 'utf8'); } catch { return null; } },
+  stat: async (path) => { try { const s = await stat(path); return { uid: s.uid, mode: s.mode }; } catch { return null; } },
 };
 
 export type BuiltInBrowserFacts = {
@@ -93,20 +102,22 @@ export function defaultFontDirs(env: NodeJS.ProcessEnv = process.env, home: stri
  * not walk a disk. Chromium on Linux finds its fonts through fontconfig, which reads these
  * folders: with none, pages render with no text at all (`desktop/src/browser-host.ts`).
  */
-export function hasInstalledFonts(dirs: readonly string[], limit = 5000): boolean {
+export async function hasInstalledFonts(dirs: readonly string[], limit = 5000): Promise<boolean> {
   let seen = 0;
-  const walk = (dir: string, depth: number): boolean => {
-    let entries: import('node:fs').Dirent[];
-    try { entries = readdirSync(dir, { withFileTypes: true }); } catch { return false; }
+  // One folder at a time: the limit bounds the whole walk, not each branch of it.
+  const walk = async (dir: string, depth: number): Promise<boolean> => {
+    let entries: Dirent[];
+    try { entries = await readdir(dir, { withFileTypes: true }); } catch { return false; }
     for (const entry of entries) {
       if (++seen > limit) return false;
       if (entry.isFile() || entry.isSymbolicLink()) {
         if (FONT_FILE.test(entry.name)) return true;
-      } else if (entry.isDirectory() && depth < 6 && walk(join(dir, entry.name), depth + 1)) return true;
+      } else if (entry.isDirectory() && depth < 6 && await walk(join(dir, entry.name), depth + 1)) return true;
     }
     return false;
   };
-  return dirs.some((dir) => walk(dir, 0));
+  for (const dir of dirs) if (await walk(dir, 0)) return true;
+  return false;
 }
 
 /** A process still exists. EPERM: it exists, under another account. */
@@ -115,16 +126,16 @@ export function processAlive(pid: number): boolean {
 }
 
 /** The pid of `<home>/browser-native/browser-host.json`, written by a host that holds the home. */
-export function readHostMarkerPid(home: string): number | null {
+export async function readHostMarkerPid(home: string): Promise<number | null> {
   try {
-    const value = JSON.parse(readFileSync(join(home, 'browser-native', 'browser-host.json'), 'utf8')) as { pid?: unknown };
+    const value = JSON.parse(await readFile(join(home, 'browser-native', 'browser-host.json'), 'utf8')) as { pid?: unknown };
     return Number.isInteger(value.pid) && (value.pid as number) > 0 ? value.pid as number : null;
   } catch { return null; }
 }
 
-function unitState(exec: SessionExec, unit: string): { state: string; exitStatus: number | null } {
+async function unitState(exec: AsyncSessionExec, unit: string): Promise<{ state: string; exitStatus: number | null }> {
   try {
-    const result = exec('systemctl', ['--user', 'show', unit, '--property=ActiveState', '--property=ExecMainStatus']);
+    const result = await exec('systemctl', ['--user', 'show', unit, '--property=ActiveState', '--property=ExecMainStatus']);
     if (result.code !== 0) return { state: 'unknown', exitStatus: null };
     const state = /^ActiveState=(\S+)/m.exec(result.stdout)?.[1] ?? 'unknown';
     const status = /^ExecMainStatus=(\d+)/m.exec(result.stdout)?.[1];
@@ -133,23 +144,28 @@ function unitState(exec: SessionExec, unit: string): { state: string; exitStatus
 }
 
 /** The package's sandbox facts, `null` when the package is not installed in `packageDir`. */
-export function sandboxFacts(probe: FileProbe, packageDir: string = LINUX_PACKAGE_DIR): BuiltInBrowserFacts['sandbox'] {
-  if (!probe.exists(join(packageDir, 'timon-desktop'))) return null;
-  const helper = probe.stat(join(packageDir, 'chrome-sandbox'));
+export async function sandboxFacts(probe: FileProbe, packageDir: string = LINUX_PACKAGE_DIR): Promise<BuiltInBrowserFacts['sandbox']> {
+  if (!await probe.exists(join(packageDir, 'timon-desktop'))) return null;
+  const [helper, restriction, profile] = await Promise.all([
+    probe.stat(join(packageDir, 'chrome-sandbox')), probe.readText(USERNS_RESTRICTION), probe.exists(APPARMOR_PROFILE),
+  ]);
   return {
-    restricted: probe.readText(USERNS_RESTRICTION)?.trim() === '1',
-    profile: probe.exists(APPARMOR_PROFILE),
+    restricted: restriction?.trim() === '1',
+    profile,
     // 4755 exactly: setuid root, and nobody else may write it.
     helperSetuid: helper !== null && helper.uid === 0 && (helper.mode & 0o7777) === 0o4755,
   };
 }
 
-/** The facts of this machine, read now. `providerPid` comes from the caller, which reads `provider.json`. */
-export function builtInBrowserFacts(input: {
+/**
+ * The facts of this machine, read now, the probes side by side: the slowest one, not their sum,
+ * bounds the wait. `providerPid` comes from the caller, which reads `provider.json`.
+ */
+export async function builtInBrowserFacts(input: {
   platform: NodeJS.Platform;
   home: string;
   env: NodeJS.ProcessEnv;
-  exec: SessionExec;
+  exec: AsyncSessionExec;
   providerPid: number | null;
   browserHost: BrowserHostService | undefined;
   /** Where a systemd user unit of this account lives, `null` off Linux. */
@@ -159,34 +175,43 @@ export function builtInBrowserFacts(input: {
   fontDirs?: readonly string[];
   probe?: FileProbe;
   packageDir?: string;
-}): BuiltInBrowserFacts {
+}): Promise<BuiltInBrowserFacts> {
   const alive = input.alive ?? processAlive;
   const linux = input.platform === 'linux';
-  const markerPid = readHostMarkerPid(input.home);
   const service = input.browserHost;
-  let host: BuiltInBrowserFacts['host'] = null;
-  if (linux && service) {
+  const readHost = async (): Promise<BuiltInBrowserFacts['host']> => {
+    if (!linux || !service) return null;
     const file = input.unitFile(service.unitName);
-    const unit = file && existsSync(file) ? unitState(input.exec, service.unitName) : null;
-    host = {
+    const [unit, executablePresent] = await Promise.all([
+      file && await pathExists(file) ? unitState(input.exec, service.unitName) : null,
+      service.executable !== null ? pathExists(service.executable) : false,
+    ]);
+    return {
       unit: service.unitName,
       enabled: service.enabled(),
       executable: service.executable,
-      executablePresent: service.executable !== null && existsSync(service.executable),
+      executablePresent,
       state: unit?.state ?? null,
       exitStatus: unit?.exitStatus ?? null,
     };
-  }
+  };
+  const [markerPid, host, graphicalSession, fonts, sandbox] = await Promise.all([
+    readHostMarkerPid(input.home),
+    readHost(),
+    linux ? linuxGraphicalSessionAsync(input.env, input.exec) : true,
+    linux ? hasInstalledFonts(input.fontDirs ?? defaultFontDirs(input.env)) : null,
+    linux ? sandboxFacts(input.probe ?? realFileProbe, input.packageDir) : null,
+  ]);
   return {
     platform: input.platform,
     providerPid: input.providerPid,
     providerAlive: input.providerPid !== null && alive(input.providerPid),
     hostPid: markerPid !== null && alive(markerPid) ? markerPid : null,
-    graphicalSession: linux ? linuxGraphicalSession(input.env, input.exec) : true,
+    graphicalSession,
     host,
-    fonts: linux ? hasInstalledFonts(input.fontDirs ?? defaultFontDirs(input.env)) : null,
+    fonts,
     apt: input.apt,
-    sandbox: linux ? sandboxFacts(input.probe ?? realFileProbe, input.packageDir) : null,
+    sandbox,
   };
 }
 
@@ -209,7 +234,8 @@ function noSandbox(f: BuiltInBrowserFacts): BuiltInBrowserProblem | null {
 
 const RUNNING = new Set(['active', 'activating', 'reloading']);
 
-function journal(unit: string): string {
+/** The command that shows why a unit stopped, or why it does not get ready. */
+export function journalCommand(unit: string): string {
   return `journalctl --user -u ${unit} -n 50`;
 }
 
@@ -242,7 +268,7 @@ function unavailable(f: BuiltInBrowserFacts, server: boolean): BuiltInBrowserPro
     return blocking('host-unit-missing', 'the browser host service is not installed.', 'timon service install');
   }
   if (!RUNNING.has(host.state)) {
-    return blocking('host-unit-stopped', `the browser host service is stopped (${host.state}${stalePid !== null ? `, its last process ${stalePid} is gone` : ''}); its log says why: ${journal(host.unit)}.`,
+    return blocking('host-unit-stopped', `the browser host service is stopped (${host.state}${stalePid !== null ? `, its last process ${stalePid} is gone` : ''}); its log says why: ${journalCommand(host.unit)}.`,
       `systemctl --user restart ${host.unit}`);
   }
   if (stalePid !== null) {
@@ -250,7 +276,7 @@ function unavailable(f: BuiltInBrowserFacts, server: boolean): BuiltInBrowserPro
       `systemctl --user restart ${host.unit}`);
   }
   return blocking('host-not-ready', 'the browser host service runs but does not offer the browser yet: it is starting, or waiting for Timon desktop to quit.',
-    `if it lasts: ${journal(host.unit)}`);
+    `if it lasts: ${journalCommand(host.unit)}`);
 }
 
 function fontFix(apt: boolean): string {

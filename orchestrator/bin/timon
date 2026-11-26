@@ -5725,12 +5725,14 @@ async function cmdDoctor(argv) {
       formatDoctor: (report) => `Update pending: ${report.updatePending}\n`,
     };
   }
-  const { diagnose, formatDoctor, refreshPinnedIdentities } = doctor;
+  const { diagnose, formatDoctor, refreshPinnedIdentities, refreshBuiltInBrowser } = doctor;
   // After the modules loaded, never before: marked, db.ts would refuse a pending update as a daemon
   // does, without the findings below. Before `diagnose()`: only a packaged install has a browser host.
   await markPackagedForDoctor();
   // The CLI asks every pinned program again: the daemon's report only reads what it last learned.
   if (typeof refreshPinnedIdentities === 'function') await refreshPinnedIdentities({ fresh: true });
+  // `diagnose()` reads what the browser probe last learned: a CLI process has learned nothing yet.
+  if (typeof refreshBuiltInBrowser === 'function') await refreshBuiltInBrowser();
   const report = diagnose();
   const local = isLocalDaemonUrl(timonHome(), API, { packaged: packagedCli() });
   const backendProfiles = await backendProfilesReport({
@@ -5809,7 +5811,7 @@ async function cmdDoctorBrowser(argv) {
     await new Promise((resolve) => setTimeout(resolve, 2000));
     answers = await probeBuiltInBrowser();
   }
-  const report = builtInBrowserNow();
+  const report = await builtInBrowserNow();
   if (args.includes('--json')) {
     process.stdout.write(JSON.stringify({ ...report, answers }, null, 2) + '\n');
   } else {

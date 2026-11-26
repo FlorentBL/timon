@@ -71,6 +71,29 @@ export function linuxGraphicalSession(env: NodeJS.ProcessEnv, exec: SessionExec)
       return result.code === 0 ? result.stdout : '';
     } catch { return ''; }
   };
-  if (/^(?:DISPLAY|WAYLAND_DISPLAY)=\S/m.test(ask(['--user', 'show-environment']))) return true;
-  return ask(['is-active', 'display-manager.service']).trim() === 'active';
+  if (EXPORTED_DISPLAY.test(ask(SHOW_ENVIRONMENT))) return true;
+  return ask(DISPLAY_MANAGER).trim() === 'active';
+}
+
+const EXPORTED_DISPLAY = /^(?:DISPLAY|WAYLAND_DISPLAY)=\S/m;
+const SHOW_ENVIRONMENT = ['--user', 'show-environment'];
+const DISPLAY_MANAGER = ['is-active', 'display-manager.service'];
+
+/** `SessionExec` that does not hold the event loop: what a daemon asks with. */
+export type AsyncSessionExec = (name: string, args: string[]) => Promise<{ code: number; stdout: string; stderr: string }>;
+
+/**
+ * `linuxGraphicalSession` for the daemon: a `systemd --user` that does not answer must not
+ * freeze every mission while `systemctl` waits for its timeout.
+ */
+export async function linuxGraphicalSessionAsync(env: NodeJS.ProcessEnv, exec: AsyncSessionExec): Promise<boolean> {
+  if (env.DISPLAY || env.WAYLAND_DISPLAY) return true;
+  const ask = async (args: string[]): Promise<string> => {
+    try {
+      const result = await exec('systemctl', args);
+      return result.code === 0 ? result.stdout : '';
+    } catch { return ''; }
+  };
+  if (EXPORTED_DISPLAY.test(await ask(SHOW_ENVIRONMENT))) return true;
+  return (await ask(DISPLAY_MANAGER)).trim() === 'active';
 }

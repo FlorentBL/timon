@@ -50,7 +50,9 @@ import type { ProviderBinaryIdentity } from './backends/provider-declarations.js
 import { declaredBinary } from './host/declared-binaries.js';
 import { usableProviders } from './backends/usable.js';
 import { isRemoteDialect } from './backends/types.js';
-import { builtInBrowserNow } from './built-in-browser.js';
+import { builtInBrowserLatest } from './built-in-browser.js';
+// `timon doctor` waits for it before `diagnose()`, as for the pinned programs.
+export { refreshBuiltInBrowser } from './built-in-browser.js';
 import { formatBuiltInBrowser } from './host/built-in-browser-status.js';
 import type { DoctorReport, BinaryReport, BinaryProvider, ProviderAuthReport } from './plugins/contract/system.js';
 export type { DoctorReport, BinaryReport, BinaryProvider, ProviderAuthReport } from './plugins/contract/system.js';
@@ -265,9 +267,9 @@ export function diagnose(): DoctorReport {
 
   const { report: missionIsolation, blocker: isolationBlocker } = missionIsolationNow(cfg);
 
-  let builtInBrowser: DoctorReport['builtInBrowser'];
-  // A browser that cannot be read is no reason to lose the rest of the report.
-  try { builtInBrowser = builtInBrowserNow(); } catch { builtInBrowser = undefined; }
+  // What the shared probe last learned: `diagnose()` answers an HTTP route and must not wait on systemd.
+  // Nothing learned yet: no section this time, the probe is started for the next report.
+  const builtInBrowser: DoctorReport['builtInBrowser'] = builtInBrowserLatest();
 
   const free = freeBytes(TIMON_HOME);
   const storage = { path: TIMON_HOME, freeBytes: free, low: free !== null && free < LOW_DISK_BYTES };

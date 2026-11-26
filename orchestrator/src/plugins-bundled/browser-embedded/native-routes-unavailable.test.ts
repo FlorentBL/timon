@@ -43,7 +43,7 @@ registerNativeBrowserRoutes(app, {
   capabilities: async () => ({ available: false, reason: desktopDown.error, refusal: desktopDown, chrome: { available: true, name: 'Chrome' } }),
   detectChrome: () => ({ found: false, reason: 'none' }),
   call: async () => { throw new NativeBrowserError(desktopDown, 503); },
-  unavailable: () => { explained += 1; return hostDown; },
+  unavailable: async () => { explained += 1; return hostDown; },
 });
 const server = app.listen(0, '127.0.0.1');
 await once(server, 'listening');

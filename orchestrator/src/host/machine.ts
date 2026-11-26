@@ -15,6 +15,7 @@
  * report, not an error to propagate out of a diagnostic.
  */
 import { readFileSync } from 'node:fs';
+import { readFile } from 'node:fs/promises';
 import { declaredBinary } from './declared-binaries.js';
 import { tailscaleManualInstallCommand } from './tailscale-install.js';
 import { builtinBinaries } from '../backends/builtin-declarations.js';
@@ -51,6 +52,15 @@ export function parseOsRelease(content: string): Record<string, string> {
 export function readOsRelease(file = '/etc/os-release'): Record<string, string> | null {
   try {
     return parseOsRelease(readFileSync(file, 'utf8'));
+  } catch {
+    return null;
+  }
+}
+
+/** `readOsRelease` without holding the event loop. */
+export async function readOsReleaseAsync(file = '/etc/os-release'): Promise<Record<string, string> | null> {
+  try {
+    return parseOsRelease(await readFile(file, 'utf8'));
   } catch {
     return null;
   }

@@ -28,15 +28,15 @@ function facts(over: Partial<BuiltInBrowserFacts> = {}, host: Partial<NonNullabl
 const blocking = (r: BuiltInBrowserReport) => r.problems.find((p) => p.blocking);
 
 /** A machine where the package is not installed: no file of the sandbox check exists. */
-const NO_PACKAGE: FileProbe = { exists: () => false, readText: () => null, stat: () => null };
+const NO_PACKAGE: FileProbe = { exists: async () => false, readText: async () => null, stat: async () => null };
 
 /** A fake filesystem for the sandbox check: the files it names, nothing else. */
 function probe(files: { restriction?: string | null; profile?: boolean; helper?: { uid: number; mode: number } | null; app?: boolean }): FileProbe {
   return {
-    exists: (path) => (path.endsWith('timon-desktop') && path.includes('apparmor.d') ? files.profile === true
+    exists: async (path) => (path.endsWith('timon-desktop') && path.includes('apparmor.d') ? files.profile === true
       : path.endsWith('timon-desktop') ? files.app !== false : false),
-    readText: (path) => (path.endsWith('apparmor_restrict_unprivileged_userns') ? files.restriction ?? null : null),
-    stat: (path) => (path.endsWith('chrome-sandbox') ? files.helper ?? null : null),
+    readText: async (path) => (path.endsWith('apparmor_restrict_unprivileged_userns') ? files.restriction ?? null : null),
+    stat: async (path) => (path.endsWith('chrome-sandbox') ? files.helper ?? null : null),
   };
 }
 
@@ -108,19 +108,19 @@ test('no font is a warning with the apt packages, even while the browser runs', 
   assert.equal(builtInBrowserReport(facts({ platform: 'darwin', fonts: null, graphicalSession: true }, null)).problems.some((p) => p.id === 'no-fonts'), false);
 });
 
-test('a font file is found in a nested folder; an empty tree or a missing folder has none', () => {
+test('a font file is found in a nested folder; an empty tree or a missing folder has none', async () => {
   const root = mkdtempSync(join(tmpdir(), 'timon-fonts-'));
   try {
     mkdirSync(join(root, 'empty', 'truetype'), { recursive: true });
     writeFileSync(join(root, 'empty', 'truetype', 'README'), '');
-    assert.equal(hasInstalledFonts([join(root, 'empty'), join(root, 'absent')]), false);
+    assert.equal(await hasInstalledFonts([join(root, 'empty'), join(root, 'absent')]), false);
     mkdirSync(join(root, 'full', 'truetype', 'liberation'), { recursive: true });
     writeFileSync(join(root, 'full', 'truetype', 'liberation', 'LiberationSans-Regular.ttf'), '');
-    assert.equal(hasInstalledFonts([join(root, 'empty'), join(root, 'full')]), true);
+    assert.equal(await hasInstalledFonts([join(root, 'empty'), join(root, 'full')]), true);
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
-test('the facts read the provider, the host marker, the unit and the fonts of this home', () => {
+test('the facts read the provider, the host marker, the unit and the fonts of this home', async () => {
   const root = mkdtempSync(join(tmpdir(), 'timon-browser-facts-'));
   try {
     const home = join(root, 'home');
@@ -131,7 +131,7 @@ test('the facts read the provider, the host marker, the unit and the fonts of th
     const executable = join(root, 'timon-desktop');
     writeFileSync(executable, '');
     const asked: string[] = [];
-    const exec = (name: string, args: string[]) => {
+    const exec = async (name: string, args: string[]) => {
       asked.push([name, ...args].join(' '));
       if (args.includes('--property=ActiveState')) return { code: 0, stdout: 'ActiveState=failed\nExecMainStatus=78\n', stderr: '' };
       return { code: 1, stdout: '', stderr: '' };
@@ -139,7 +139,7 @@ test('the facts read the provider, the host marker, the unit and the fonts of th
     const browserHost: BrowserHostService = {
       unitName: UNIT, unitContent: '[Unit]\n', executable, enabled: () => true, refusal: () => null,
     };
-    const read = builtInBrowserFacts({
+    const read = await builtInBrowserFacts({
       platform: 'linux', home, env: {}, exec, providerPid: 314, browserHost, apt: true,
       unitFile: () => unitFile, alive: (pid) => pid === 314, fontDirs: [join(root, 'no-fonts')], probe: NO_PACKAGE,
     });
@@ -150,7 +150,7 @@ test('the facts read the provider, the host marker, the unit and the fonts of th
     });
     assert.ok(asked.includes(`systemctl --user show ${UNIT} --property=ActiveState --property=ExecMainStatus`));
     // No unit file: systemd is not asked for its state.
-    const none = builtInBrowserFacts({
+    const none = await builtInBrowserFacts({
       platform: 'linux', home, env: { DISPLAY: ':0' }, exec, providerPid: null, browserHost, apt: false,
       unitFile: () => join(root, 'missing.service'), alive: () => false, fontDirs: [], probe: NO_PACKAGE,
     });
@@ -159,7 +159,7 @@ test('the facts read the provider, the host marker, the unit and the fonts of th
     assert.equal(none.hostPid, null);
     // Off Linux: no host, no font check, and nothing asked of systemd.
     const before = asked.length;
-    const mac = builtInBrowserFacts({
+    const mac = await builtInBrowserFacts({
       platform: 'darwin', home, env: {}, exec, providerPid: null, browserHost: undefined, apt: false, unitFile: () => null, alive: () => false,
     });
     assert.equal(mac.host, null);
@@ -168,10 +168,10 @@ test('the facts read the provider, the host marker, the unit and the fonts of th
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
-test('the package\'s sandbox: restricted namespaces, no profile and no setuid helper is a blocker with its repair', () => {
+test('the package\'s sandbox: restricted namespaces, no profile and no setuid helper is a blocker with its repair', async () => {
   const setuid = { uid: 0, mode: 0o104755 };
   const plain = { uid: 0, mode: 0o100755 };
-  const unusable = sandboxFacts(probe({ restriction: '1\n', profile: false, helper: plain }), '/opt/Timon');
+  const unusable = await sandboxFacts(probe({ restriction: '1\n', profile: false, helper: plain }), '/opt/Timon');
   assert.deepEqual(unusable, { restricted: true, profile: false, helperSetuid: false });
   const report = builtInBrowserReport(facts({ sandbox: unusable, providerPid: 9, providerAlive: true }));
   const problem = blocking(report);
@@ -188,14 +188,14 @@ test('the package\'s sandbox: restricted namespaces, no profile and no setuid he
     probe({ restriction: '1', profile: true, helper: plain }),
     probe({ restriction: '1', profile: false, helper: setuid }),
   ]) {
-    const sandbox = sandboxFacts(fine, '/opt/Timon');
+    const sandbox = await sandboxFacts(fine, '/opt/Timon');
     assert.equal(builtInBrowserReport(facts({ sandbox, graphicalSession: true })).problems.some((p) => p.id === 'no-sandbox'), false, JSON.stringify(sandbox));
   }
   // Setuid but not root, or root with a group-writable mode: not a helper Chromium accepts.
-  assert.equal(sandboxFacts(probe({ restriction: '1', helper: { uid: 1000, mode: 0o104755 } }), '/opt/Timon')?.helperSetuid, false);
-  assert.equal(sandboxFacts(probe({ restriction: '1', helper: { uid: 0, mode: 0o104775 } }), '/opt/Timon')?.helperSetuid, false);
+  assert.equal((await sandboxFacts(probe({ restriction: '1', helper: { uid: 1000, mode: 0o104755 } }), '/opt/Timon'))?.helperSetuid, false);
+  assert.equal((await sandboxFacts(probe({ restriction: '1', helper: { uid: 0, mode: 0o104775 } }), '/opt/Timon'))?.helperSetuid, false);
   // No package installed: nothing to say.
-  assert.equal(sandboxFacts(probe({ restriction: '1', app: false }), '/opt/Timon'), null);
+  assert.equal(await sandboxFacts(probe({ restriction: '1', app: false }), '/opt/Timon'), null);
 });
 
 test('a browser host unit failed with the launcher\'s refusal exit says the same', () => {
@@ -203,4 +203,40 @@ test('a browser host unit failed with the launcher\'s refusal exit says the same
   assert.equal(blocking(refused)?.id, 'no-sandbox');
   const crashed = builtInBrowserReport(facts({}, { state: 'failed', exitStatus: 1 }));
   assert.equal(blocking(crashed)?.id, 'host-unit-stopped');
+});
+
+test('a systemctl that takes its time does not hold the event loop, and the probes run side by side', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'timon-browser-slow-'));
+  try {
+    const unitFile = join(root, `${UNIT}.service`);
+    writeFileSync(unitFile, '[Unit]\n');
+    let running = 0;
+    let most = 0;
+    // A systemd that answers each question after 200 ms, as a slow one does after its timeout.
+    const exec = (_name: string, args: string[]) => new Promise<{ code: number; stdout: string; stderr: string }>((resolve) => {
+      running += 1;
+      most = Math.max(most, running);
+      setTimeout(() => {
+        running -= 1;
+        resolve(args.includes('--property=ActiveState')
+          ? { code: 0, stdout: 'ActiveState=activating\nExecMainStatus=0\n', stderr: '' }
+          : { code: 1, stdout: '', stderr: '' });
+      }, 200);
+    });
+    const browserHost: BrowserHostService = {
+      unitName: UNIT, unitContent: '[Unit]\n', executable: join(root, 'timon-desktop'), enabled: () => true, refusal: () => null,
+    };
+    let ticked = false;
+    const timer = setTimeout(() => { ticked = true; }, 50);
+    const read = builtInBrowserFacts({
+      platform: 'linux', home: join(root, 'home'), env: {}, exec, providerPid: null, browserHost, apt: true,
+      unitFile: () => unitFile, alive: () => false, fontDirs: [], probe: NO_PACKAGE,
+    });
+    assert.equal(ticked, false, 'the call returned before any probe answered');
+    const facts = await read;
+    clearTimeout(timer);
+    assert.equal(ticked, true, 'the 50 ms timer fired while systemctl was answering');
+    assert.equal(facts.host?.state, 'activating');
+    assert.ok(most >= 2, 'the unit and the session are asked at the same time');
+  } finally { rmSync(root, { recursive: true, force: true }); }
 });

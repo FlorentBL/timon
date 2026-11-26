@@ -109,7 +109,7 @@ import { whiteLabelAllowed } from './license/capabilities.js';
 import { createBetaGate } from './license/beta-gate.js';
 import { createMcpRelayMiddleware } from './mcp-relay-server.js';
 import { builtInBrowserBootLines, kernelBootSummary, pluginFailureNotification } from './kernel/boot-report.js';
-import { builtInBrowserNow } from './built-in-browser.js';
+import { refreshBuiltInBrowser } from './built-in-browser.js';
 
 
 /**
@@ -360,8 +360,10 @@ export async function boot(opts: { listen?: boolean; catalog?: readonly ModuleDe
       console.log(`[timon] orchestrator (kernel) listening on http://localhost:${port}`);
       // The app and the browser host start beside the daemon: give them time to offer the browser.
       setTimeout(() => {
-        try { for (const line of builtInBrowserBootLines(builtInBrowserNow())) console.log(line); }
-        catch (e) { console.warn(`[browser] the built-in browser could not be checked: ${(e as Error).message}`); }
+        void refreshBuiltInBrowser().then((report) => {
+          if (!report) { console.warn('[browser] the built-in browser could not be checked'); return; }
+          for (const line of builtInBrowserBootLines(report)) console.log(line);
+        }).catch((e: unknown) => console.warn(`[browser] the built-in browser could not be checked: ${(e as Error).message}`));
       }, BROWSER_BOOT_REPORT_DELAY_MS).unref();
     }, (error: NodeJS.ErrnoException) => {
       // Say who holds the port: a service crash-looping on EADDRINUSE is otherwise undiagnosable.
