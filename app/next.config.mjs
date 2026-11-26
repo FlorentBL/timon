@@ -55,6 +55,29 @@ class BundleModulesPlugin {
   }
 }
 
+/**
+ * Writes `<distDir>/app-entry-files.json`, `{ pages: { '/chat/page': files[] } }`:
+ * the JS the browser loads for each App Router entry, the shape of the
+ * `app-build-manifest.json` Next 15 wrote and Next 16 no longer does. Same
+ * rule as Next's own plugin: the `main-app` runtime files, then the entry's.
+ */
+class AppEntryFilesPlugin {
+  apply(compiler) {
+    compiler.hooks.afterEmit.tapPromise('AppEntryFilesPlugin', async (compilation) => {
+      const { writeFile } = await import('node:fs/promises');
+      const { join } = await import('node:path');
+      const js = (entry) => (entry ? [...entry.getFiles()].filter((f) => f.endsWith('.js') && !f.includes('.hot-update.')) : []);
+      const main = js(compilation.entrypoints.get('main-app'));
+      const pages = {};
+      for (const [name, entry] of compilation.entrypoints) {
+        if (!name.startsWith('app/')) continue;
+        pages[name.slice('app'.length)] = [...new Set([...main, ...js(entry)])];
+      }
+      await writeFile(join(compiler.outputPath, 'app-entry-files.json'), JSON.stringify({ pages }));
+    });
+  }
+}
+
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   distDir,
@@ -128,9 +151,11 @@ const nextConfig = {
       test: /vendor\/vault-graph\/(graphology\.umd\.min|sigma\.min)\.js$/,
       type: 'javascript/auto',
     });
-    // `scripts/measure-bundle.mjs --modules` reads this to say WHAT a chunk
-    // carries. Opt-in: a regular build writes nothing more.
-    if (!isServer && process.env.TIMON_BUNDLE_STATS === '1') config.plugins.push(new BundleModulesPlugin());
+    // `scripts/measure-bundle.mjs` reads these: which files each route loads,
+    // and WHAT a chunk carries. Opt-in: a regular build writes nothing more.
+    if (!isServer && process.env.TIMON_BUNDLE_STATS === '1') {
+      config.plugins.push(new AppEntryFilesPlugin(), new BundleModulesPlugin());
+    }
     return config;
   },
 };

@@ -48,6 +48,21 @@ test('sizes come from the dist dir, a missing file is reported not thrown', () =
   assert.equal(chunks.length, 1, 'each file read once');
 });
 
+test('the entry files a Next 16 stats build writes win over a Next 15 manifest', () => {
+  const dist = mkdtempSync(join(tmpdir(), 'measure-bundle-'));
+  mkdirSync(join(dist, 'static', 'chunks'), { recursive: true });
+  writeFileSync(join(dist, 'static', 'chunks', 'a.js'), 'x'.repeat(1024));
+  writeFileSync(join(dist, 'static', 'chunks', 'b.js'), 'y'.repeat(2048));
+  writeFileSync(join(dist, 'app-build-manifest.json'), JSON.stringify({ pages: { '/layout': ['static/chunks/a.js'] } }));
+  writeFileSync(join(dist, 'app-entry-files.json'), JSON.stringify({ pages: { '/layout': ['static/chunks/b.js'] } }));
+  assert.equal(measure(dist).rows[0].raw, 2048);
+});
+
+test('a build without either manifest says how to get one', () => {
+  const dist = mkdtempSync(join(tmpdir(), 'measure-bundle-'));
+  assert.throws(() => measure(dist), /TIMON_BUNDLE_STATS=1/);
+});
+
 test('modules group by package, scoped ones keep their scope', () => {
   assert.equal(packageOf('../node_modules/lucide-react/dist/esm/icons/x.js'), 'lucide-react');
   assert.equal(packageOf('./node_modules/@radix-ui/react-menu/dist/index.mjs'), '@radix-ui/react-menu');

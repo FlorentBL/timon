@@ -2,14 +2,19 @@
 /**
  * Client JS weight per App Router route, read from a finished `next build`.
  *
+ *   TIMON_BUNDLE_STATS=1 npm run build   # in app/, once, before any of these
  *   node scripts/measure-bundle.mjs [--dist app/.next] [--route /chat] [--json]
  *   node scripts/measure-bundle.mjs --dist app/.next-after --compare app/.next-before
- *   node scripts/measure-bundle.mjs --route /chat --modules   # build with TIMON_BUNDLE_STATS=1
+ *   node scripts/measure-bundle.mjs --route /chat --modules
  *   node scripts/measure-bundle.mjs --why highlight.js/lib/core  # import chain from the root layout
  *   node scripts/measure-bundle.mjs --retained   # what each module alone keeps in the root layout
  *
- * `app-build-manifest.json` lists, per entry (`/layout`, `/(main)/layout`,
- * `/chat/page`…), the files the browser loads for it. A route's cost is the
+ * `app-entry-files.json`, written by the `AppEntryFilesPlugin` of
+ * `app/next.config.mjs` when TIMON_BUNDLE_STATS=1, lists per entry
+ * (`/layout`, `/(main)/layout`, `/chat/page`…) the files the browser loads
+ * for it. Next 16 no longer writes the `app-build-manifest.json` Next 15 kept
+ * there; a Next 15 build still measures through it, so `--compare` reaches
+ * across the upgrade. A route's cost is the
  * UNION of its page and every layout above it — the shared webpack runtime
  * appears in each entry and must only count once. Only what the first paint
  * loads is counted: chunks behind `next/dynamic` or `import()` are not in the
@@ -205,9 +210,12 @@ export function retainedSizes(files, modulesByFile) {
   return out.sort((a, b) => b.size - a.size);
 }
 
+/** The per-entry file list a build left in `dist`: ours first, then Next 15's. */
+export const ENTRY_MANIFESTS = ['app-entry-files.json', 'app-build-manifest.json'];
+
 export function measure(dist) {
-  const manifestPath = join(dist, 'app-build-manifest.json');
-  if (!existsSync(manifestPath)) throw new Error(`no app-build-manifest.json in ${dist} — run next build first`);
+  const manifestPath = ENTRY_MANIFESTS.map((name) => join(dist, name)).find((path) => existsSync(path));
+  if (!manifestPath) throw new Error(`no app-entry-files.json in ${dist} — run TIMON_BUNDLE_STATS=1 npm run build in app/ first`);
   const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'));
   const cache = new Map();
   const rows = [];
