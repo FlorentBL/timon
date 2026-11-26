@@ -199,14 +199,17 @@ export function registerFenceGrantRoutes(app: IRouter, deps: { relaunch?: FenceG
       throw err;
     }
     if (!project && JSON.stringify(before) !== JSON.stringify(stored)) publishAgentUpdated(agent, ['extra_dirs']);
+    // The requeue runs before the answer is recorded, with no await between them, so the
+    // recorded answer says whether the task went back to the queue: a reload replays it.
+    const step = afterGrantStep(mission, viewerFromRequest(req));
+    const requeued = step.kind === 'requeue' ? requeueTask(step.task, viewerFromRequest(req)) : false;
     const resolution: FenceGrantResolution = {
-      id: refusalId.data, status: 'allowed', path: offer.path, mode: offer.mode, scope, project, resolvedAt: Date.now(),
+      id: refusalId.data, status: 'allowed', path: offer.path, mode: offer.mode, scope, project,
+      ...(requeued ? { requeued: true } : {}), resolvedAt: Date.now(),
     };
     recordFenceGrant(mission.id, resolution);
     auditRequest(req, 'mission.fence_grant.allow', `${project ? `project:${project}` : `agent:${agent}`} ${offer.mode} ${offer.path}`);
-    const step = afterGrantStep(mission, viewerFromRequest(req));
     if (step.kind === 'requeue') {
-      const requeued = requeueTask(step.task, viewerFromRequest(req));
       res.json({ ok: true, resolution, relaunched: false, requeued, taskId: step.task.id });
       return;
     }

@@ -15,11 +15,9 @@
  * the agent's extra folders and relaunches the mission (or puts back the
  * Kanban task the refusal blocked).
  *
- * "Allow for the project" is the product's alone for now: the `chat.fence`
- * contract of the SDK (API 19, published) carries `allow` and `refuse` only.
- * Its gesture lives in a context of its own (`useFenceGrantProject`), not
- * exported to plugins, until a contract version declares it; a plugin that
- * redraws the card keeps the agent's accord.
+ * "Allow for the project" joined the contract at client API 20 (TODO #1189):
+ * `allowProject` is null when the card offers no project, and absent on an
+ * older host, so a replacement tests it before drawing the answer.
  */
 
 import { createContext, useCallback, useContext, useMemo, useState, type ReactElement } from 'react';
@@ -33,27 +31,23 @@ import { SlotSingle } from '@/lib/plugin-host/render';
 import { CHAT_FENCE_GRANT_SLOT } from '@/lib/plugin-host/slots';
 import { cn } from '@/lib/utils';
 
-/** What a `chat.fence` occupant is rendered for, and the only two gestures it has. */
+/** What a `chat.fence` occupant is rendered for, and the only gestures it has. */
 export type FenceGrantValue = {
   grant: FenceGrantView;
   busy: boolean;
   highlighted: boolean;
   /** Opens the folder to the agent and relaunches the mission. Resolves true once the daemon recorded it. */
   allow: () => Promise<boolean>;
+  /**
+   * Opens the folder to every agent of `grant.project` (client API 20); null
+   * when the card offers no project. Same checks and relaunch as `allow`.
+   */
+  allowProject: (() => Promise<boolean>) | null;
   /** Closes the card; nothing is opened. */
   refuse: () => Promise<boolean>;
 };
 
 const FenceGrantContext = createContext<FenceGrantValue | null>(null);
-
-/** The product's "Allow for the project", beside the contract's two gestures; null when the card offers no project. */
-type FenceGrantProjectValue = { project: string; allowProject: () => Promise<boolean> };
-const FenceGrantProjectContext = createContext<FenceGrantProjectValue | null>(null);
-
-/** Not in `@timon/ui`: read by the product's own card only (see the header). */
-export function useFenceGrantProject(): FenceGrantProjectValue | null {
-  return useContext(FenceGrantProjectContext);
-}
 
 /** Readable by a plugin that takes the slot. `null` outside a fence card. */
 export function useFenceGrant(): FenceGrantValue | null {
@@ -88,20 +82,14 @@ export function ChatFenceGrantSlot({ grant, highlighted = false }: { grant: Fenc
   const allow = useCallback(() => answer('allow'), [answer]);
   const refuse = useCallback(() => answer('refuse'), [answer]);
   const allowProject = useCallback(() => answer('allow', 'project'), [answer]);
+  const offersProject = shown.project !== null;
   const value = useMemo<FenceGrantValue>(
-    () => ({ grant: shown, busy, highlighted, allow, refuse }),
-    [shown, busy, highlighted, allow, refuse],
-  );
-  const project = shown.project;
-  const projectValue = useMemo<FenceGrantProjectValue | null>(
-    () => (project ? { project, allowProject } : null),
-    [project, allowProject],
+    () => ({ grant: shown, busy, highlighted, allow, allowProject: offersProject ? allowProject : null, refuse }),
+    [shown, busy, highlighted, allow, allowProject, offersProject, refuse],
   );
   return (
     <FenceGrantContext.Provider value={value}>
-      <FenceGrantProjectContext.Provider value={projectValue}>
-        <SlotSingle name={CHAT_FENCE_GRANT_SLOT} />
-      </FenceGrantProjectContext.Provider>
+      <SlotSingle name={CHAT_FENCE_GRANT_SLOT} />
     </FenceGrantContext.Provider>
   );
 }
@@ -109,9 +97,9 @@ export function ChatFenceGrantSlot({ grant, highlighted = false }: { grant: Fenc
 /** The product's occupant of `chat.fence`. Takes no props: everything comes from `useFenceGrant()`. */
 export function FenceGrantCard(): ReactElement | null {
   const ctx = useFenceGrant();
-  const forProject = useFenceGrantProject();
   if (!ctx) return null;
-  const { grant, busy, highlighted, allow, refuse } = ctx;
+  const { grant, busy, highlighted, allow, allowProject, refuse } = ctx;
+  const forProject = allowProject && grant.project ? { project: grant.project, allowProject } : null;
   const open = grant.status === 'pending';
   const toProject = grant.scope === 'project' && grant.project ? grant.project : null;
   return (
