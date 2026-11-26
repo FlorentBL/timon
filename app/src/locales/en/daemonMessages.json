@@ -360,6 +360,10 @@
     "integration_closed": {
       "title": "{pr, select, none {Integration branch closed: {branch}} other {Pull request closed: {branch}}}",
       "body": "{branch} did not land in {target}: nothing closes and the branches are kept. Its pilot decides what comes next."
+    },
+    "mcp_server_left_out": {
+      "title": "MCP server `{serverId}` left out",
+      "body": "Timon could not start the MCP server `{serverId}` for this mission ({cause, select, vault {its variables cannot be read from the secrets vault} mission_limit {this mission already runs {max} bridged MCP servers} daemon_limit {the daemon already runs {max} bridged MCP servers} restarts {it restarted too often} stopped {its bridge was stopped} other {{detail}}}), so the agent runs without it. Its variables were not handed to the agent."
     }
   }
 }
