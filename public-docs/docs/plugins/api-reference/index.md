@@ -125,6 +125,7 @@ contexts are distinct; import these contracts as types in plugin code.
 - [PluginBusinessEventDefinition](type-aliases/PluginBusinessEventDefinition.md)
 - [PluginBusinessEventInput](type-aliases/PluginBusinessEventInput.md)
 - [PluginBusinessEvents](type-aliases/PluginBusinessEvents.md)
+- [PluginCaller](type-aliases/PluginCaller.md)
 - [PluginCommandInput](type-aliases/PluginCommandInput.md)
 - [PluginCommandReceipt](type-aliases/PluginCommandReceipt.md)
 - [PluginCommandRequest](type-aliases/PluginCommandRequest.md)
