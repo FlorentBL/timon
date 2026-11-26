@@ -31,7 +31,7 @@ Timon serves these modules to the browser; nothing installs them. To type-check 
 | `apiErrorMessage`, `parseApiError` | The message of a route error in the reader's language (API 15, see below) |
 | `useIslandContent`, `openInIsland`, `startIslandDrag` | Island tab context, opening and drag sources (API 8; see [Island content](island.md)) |
 | `useUiDocument`, `UiDocumentFrame`, `uiDocumentUrl` | The `chat.document` card: the document on screen, its sandboxed frame with bridge and focus guard, and the only URL to load (API 9; see [HTML documents in a conversation](ui-documents.md)) |
-| `useFenceGrant` | The `chat.fence` card: a path the mission fence refused, the folder offered to the agent, and `allow`, `refuse` (API 19; see [Slots](slots.md#special-surfaces)) |
+| `useFenceGrant` | The `chat.fence` card: a path the mission fence refused, the folder offered to the agent, and `allow`, `refuse` (API 19); `allowProject` and the card's `project`, `scope`, `requeued` (API 20; see [Slots](slots.md#special-surfaces)) |
 | `usePromptHistory`, `canRecallPrompt`, `isTextareaWrapped` | The per-agent prompt history the chat input recalls with ↑ / ↓ (API 12; see [Composer](composer.md#prompt-history)) |
 | `useModelPicker` | The `model.picker` occupant's host: value, `onChange`, `inherit`, `filter`, `target`, `footer`, `disabled`, `mode` (API 13; see [Slots](slots.md#special-surfaces)) |
 | `useProviderCliCards` | The `providers.cli` occupant's host: the AI CLI cards, their install jobs and console, and `install`, `refresh`, `checkUpdates`, `signIn` (API 14; see [Slots](slots.md#special-surfaces)) |
