@@ -454,3 +454,56 @@ test('a third party\'s profile without a command runs the official dialect\'s pr
     allowExec('acme-auth');
   }
 });
+
+test('an npm launcher authorized by its path also authorizes the native build the daemon starts in its place (C1 npmNative)', { skip: !posix }, async () => {
+  // `<root>/npm/bin/acme-npm` links to the package's Node launcher; the native build sits in the package.
+  const pkg = join(root, 'npm', 'lib', 'node_modules', 'acme-npm-cli');
+  mkdirSync(join(pkg, 'bin'), { recursive: true });
+  writeFileSync(join(pkg, 'package.json'), JSON.stringify({ name: 'acme-npm-cli' }));
+  const launcher = join(pkg, 'bin', 'acme.js');
+  writeFileSync(launcher, '#!/usr/bin/env node\n');
+  chmodSync(launcher, 0o755);
+  const native = join(pkg, 'dist', 'acme-npm');
+  mkdirSync(join(native, '..'), { recursive: true });
+  writeFileSync(native, '#!/bin/sh\nexit 0\n');
+  chmodSync(native, 0o755);
+  const npmBin = join(root, 'npm', 'bin');
+  mkdirSync(npmBin, { recursive: true });
+  symlinkSync(launcher, join(npmBin, 'acme-npm'));
+  const previousPath = process.env.PATH;
+  process.env.PATH = `${npmBin}${delimiter}${previousPath ?? ''}`;
+  // Registration asks for the name; each launch then asks for the file.
+  allowExec('acme-auth', 'acme-npm');
+  const ctx = pluginContext('fx-auth-npm-plugin', 'acme-npm', false);
+  const def = definition('fx-auth-npm', 'acme-npm');
+  ctx.provider.registerProvider({ ...def, declares: { binary: { names: ['acme-npm'], npmNative: {
+    package: 'acme-npm-cli', executable: { [`${process.platform}-${process.arch}`]: ['dist', 'acme-npm'] }, env: { ACME_MANAGED_BY_NPM: '1' },
+  } } } });
+  ctx.backends.registerProfile(profileOf('fx-auth-npm-profile', 'fx-auth-npm'));
+  upsertAgent({ name: 'fx.auth-npm', system_prompt: 'witness — does nothing.', config: { backend: 'fx-auth-npm-profile', cwd: tmpdir(), skills: [], memory_scope: 'NONE' } });
+  const host = getHost();
+  const original = host.spawn;
+  const seen: Array<{ cmd: string; env: NodeJS.ProcessEnv | undefined }> = [];
+  host.spawn = ((cmd: string, _args: string[], opts?: { env?: NodeJS.ProcessEnv }) => {
+    seen.push({ cmd, env: opts?.env });
+    const child = fakeChild(); setImmediate(() => child.kill()); return child;
+  }) as typeof host.spawn;
+  try {
+    assert.equal(host.bin('acme-npm'), native);
+    allowExec(launcher);
+    let error: unknown = null;
+    try { await spawnAgent('fx.auth-npm', 'ping'); } catch (err) { error = err; }
+    assert.equal(error, null, String(error));
+    assert.deepEqual(seen.map((s) => s.cmd), [native]);
+    assert.equal(seen[0]?.env?.ACME_MANAGED_BY_NPM, '1');
+    // The authorization of another file authorizes neither.
+    seen.length = 0;
+    allowExec(elsewhere);
+    try { await spawnAgent('fx.auth-npm', 'ping'); } catch { /* refused */ }
+    assert.deepEqual(seen, []);
+  } finally {
+    host.spawn = original;
+    process.env.PATH = previousPath;
+    allowExec('acme-auth');
+  }
+});

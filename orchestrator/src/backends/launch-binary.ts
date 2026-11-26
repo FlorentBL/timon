@@ -29,6 +29,8 @@ import { backendTrust, dialectDeclarations, isOfficialDialect, profileDeclaratio
 import { baseBackendId } from './instance-id.js';
 import { clearLaunchCard, raiseLaunchCard } from './launch-card.js';
 import { launchProvenance } from './launch-provenance.js';
+import { declaredBinaries } from '../host/declared-binaries.js';
+import { npmNativeBehind } from '../host/binary-path.js';
 
 /** The plugin that answers for backend `backend`'s code, for the refusal. */
 function ownerOf(backend: string): string {
@@ -64,13 +66,20 @@ export function assertLaunchBinary(backend: string, cmd: string): void {
  *  - a bare-name entry keeps its meaning, "what the host resolves this name to", and is compared as the
  *    file it resolves to now: `/elsewhere/opencode` is not `opencode` because its basename is;
  *  - a third party's profile that sets no command of its own on an OFFICIAL dialect runs that dialect's
- *    program: the files its declared names resolve to (the code that chose it is the release's).
+ *    program: the files its declared names resolve to (the code that chose it is the release's);
+ *  - an authorized npm launcher also authorizes the native build it would start itself (C1 `npmNative`):
+ *    the daemon now starts that build in its place, and an authorization given before must still hold.
  */
 function authorizedPrograms(backend: string): string[] {
   const programs: string[] = [];
   for (const entry of config().pluginPolicy.exec.allow) {
-    if (isAbsolute(entry)) programs.push(entry);
-    else {
+    if (isAbsolute(entry)) {
+      programs.push(entry);
+      for (const declaration of declaredBinaries()) {
+        const native = declaration.npmNative ? npmNativeBehind(declaration.names[0]!, entry) : null;
+        if (native) programs.push(canonicalPath(native.file));
+      }
+    } else {
       const file = canonicalExecutable(entry);
       if (file) programs.push(file);
     }

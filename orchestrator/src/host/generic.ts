@@ -9,7 +9,7 @@ import { join, posix, win32 } from 'node:path';
 import type { TimonConfig } from '../config/schema.js';
 import { TIMON_HOME } from '../paths.js';
 import type { Capability, ExecOpts, ExecResult, Host, SpawnOpts } from './types.js';
-import { findExecutableBinary, resolvePinnedBinary, type BinarySearchOptions } from './binary-path.js';
+import { findExecutableBinary, resolvePinnedBinary, withNpmNativeEnv, type BinarySearchOptions } from './binary-path.js';
 import { containersSuppression } from './containers-policy.js';
 import { spawnDetachedGeneric } from './detached.js';
 import { inspectListenPort } from './listen-port.js';
@@ -166,16 +166,21 @@ export function createGenericHost(
     return finishGitCall(args, opts, parseGitConfigList(r.stdout, scoped), parseSubmoduleNames(outputs));
   };
 
+  // The native build behind an npm launcher (C1 `npmNative`) gets what the launcher would have given it.
+  const nativeOpts = <O extends { env?: NodeJS.ProcessEnv | undefined }>(file: string, opts: O): O => {
+    const env = withNpmNativeEnv(opts.env, file, binaryOptions);
+    return env === opts.env ? opts : { ...opts, env };
+  };
   const exec = (name: string, args: string[], opts: ExecOpts = {}) => {
     const file = bin(name);
-    const call = name === 'git' ? gitCallSync(file, args, opts) : { args, opts };
+    const call = name === 'git' ? gitCallSync(file, args, opts) : { args, opts: nativeOpts(file, opts) };
     if ('failed' in call) return call.failed;
     const l = launch(file, call.args);
     return resultOf(spawnSync(l.file, l.args, { ...call.opts, ...l.extra, encoding: 'utf8' }));
   };
   const execAsync = async (name: string, args: string[], opts: ExecOpts = {}): Promise<ExecResult> => {
     const file = bin(name);
-    const call = name === 'git' ? await gitCallAsync(file, args, opts) : { args, opts };
+    const call = name === 'git' ? await gitCallAsync(file, args, opts) : { args, opts: nativeOpts(file, opts) };
     if ('failed' in call) return call.failed;
     const l = launch(file, call.args);
     return execFileResult(l.file, l.args, { ...call.opts, ...l.extra });
@@ -210,7 +215,8 @@ export function createGenericHost(
       return nodeSpawn(l.file, l.args, { ...opts, env: call.opts.env, ...l.extra });
     }
     const l = launch(resolved, args);
-    return nodeSpawn(l.file, l.args, { ...(opts.env ? { ...opts, env: opts.env } : opts), ...l.extra });
+    const native = nativeOpts(resolved, opts);
+    return nodeSpawn(l.file, l.args, { ...(native.env ? { ...native, env: native.env } : native), ...l.extra });
   };
 
   const unitsDir = join(TIMON_HOME, 'tmp', 'units');
