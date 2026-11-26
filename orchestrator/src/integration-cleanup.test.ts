@@ -112,6 +112,50 @@ test('a pull request closed without a merge gives back the pilot\'s worktree onl
   assert.equal(remoteHas(job, job.branch), true);
 });
 
+test('a pull request closed, then opened again and merged: its branch still goes once it lands', async () => {
+  const job = await prJob();
+  dbApi.finishMission(job.series, 'completed', 0);
+  assert.ok(dbApi.markIntegrationClosed(job.row.id));
+  assert.equal(await cleanIntegration(dbApi.getIntegrationById(job.row.id)!, deps(job)), 'cleaned');
+  assert.equal(existsSync(job.pilot), false);
+  branchKept(job);
+
+  // The landing gesture opens a new pull request: the closing's cleanup is forgotten.
+  const number = 7000 + Number(job.branch.split('-').pop());
+  assert.ok(dbApi.markIntegrationReopened(job.row.id, { number, url: `https://github.com/acme/app/pull/${number}`, headSha: job.head }));
+  assert.equal(dbApi.getIntegrationById(job.row.id)?.cleaned_at, null);
+  mergeOnForge(job);
+  const row = land(job);
+  cleanupSwitch(true);
+  try {
+    assert.equal((await cleanConcludedIntegrations(deps(job))).get(row.id), 'cleaned');
+  } finally {
+    cleanupSwitch(false);
+  }
+  assert.equal(has(job.repo, `refs/heads/${job.branch}`), false, 'the branch goes');
+  taskUntouched(job);
+  assert.equal(remoteHas(job, job.branch), true, 'the remote copy is only proposed');
+  assert.equal(getForgeProposalByKey(job.slug, remoteDeletionKey(row))?.target_number, number);
+});
+
+test('a pull request opened again while its closing is being cleaned: the pass stops before its effect', async () => {
+  const job = await prJob();
+  dbApi.finishMission(job.series, 'completed', 0);
+  assert.ok(dbApi.markIntegrationClosed(job.row.id));
+  const number = 8000 + Number(job.branch.split('-').pop());
+  const reopen = (): void => {
+    assert.ok(dbApi.markIntegrationReopened(job.row.id, { number, url: `https://github.com/acme/app/pull/${number}`, headSha: job.head }));
+  };
+  const out = await cleanIntegration(dbApi.getIntegrationById(job.row.id)!, deps(job, {
+    at: (point) => { if (point === 'pilot:remove') reopen(); },
+  }));
+  assert.equal(out, 'waiting');
+  pilotKept(job);
+  branchKept(job);
+  const row = dbApi.getIntegrationById(job.row.id)!;
+  assert.deepEqual([row.state, row.cleaned_at, row.cleanup_token], ['open', null, null]);
+});
+
 test('a pilot worktree holding uncommitted work is kept, the branch still goes', async () => {
   const { job, row } = await landedJob();
   writeFileSync(join(job.pilot, 'draft.txt'), 'never committed\n');
