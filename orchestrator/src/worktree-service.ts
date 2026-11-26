@@ -69,7 +69,16 @@ export function taskHolders(task: TaskRow): string[] {
  * refused removal gives it back. Once the branch is gone (or was already),
  * the tasks forget it. Shared by the GC and `timon worktree dispose`.
  */
-export async function disposeDoneTaskWorktree(task: TaskRow, repo: string): Promise<GuardedRemovalResult> {
+export async function disposeDoneTaskWorktree(
+  task: TaskRow,
+  repo: string,
+  opts: {
+    /** Refs the worktree's HEAD must be in, instead of the task's own holders. */
+    holders?: readonly string[];
+    /** Remove the folder only: the branch and its record stay. */
+    keepBranch?: boolean;
+  } = {},
+): Promise<GuardedRemovalResult> {
   const path = task.worktree_path;
   const branch = task.branch_name;
   if (!path || !branch) return { ok: false, reason: 'the task has no worktree', retry: false };
@@ -77,8 +86,8 @@ export async function disposeDoneTaskWorktree(task: TaskRow, repo: string): Prom
   const result = await removeWorktreeGuarded({
     path,
     sourceRepo: repo,
-    holders: taskHolders(task),
-    branch,
+    holders: opts.holders ?? taskHolders(task),
+    branch: opts.keepBranch ? null : branch,
     claim: () => {
       const fresh = dbApi.getTask(task.id);
       if (!fresh || fresh.status !== 'DONE' || fresh.worktree_path !== path) return null;

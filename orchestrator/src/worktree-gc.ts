@@ -31,18 +31,25 @@
  * pull request may come back with a review or a red check that the chain's
  * worktree serves, or be closed; until the integration is 'merged'
  * (`chain-landing.ts`) the worktree and the branch stay.
+ *
+ * Except the folder, once git proves the work reached the remote's target
+ * (`refs/remotes/<remote>/<target>`, as the last fetch left it): a pull request
+ * merged on the forge, outside Timon, never turns the integration 'merged',
+ * and 31 such worktrees (5.6 GB) filled a disk on 2026-11-25. Only the folder
+ * goes, under the same guards, and only when every task of the chain is DONE
+ * and one of them recorded a merge sha; the branch stays for the landing.
  */
 import { existsSync, readdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { loadConfig } from './agent.js';
-import { dbApi } from './db.js';
+import { dbApi, type TaskRow } from './db.js';
 import { settingBool, settingInt } from './settings.js';
 import { WORKTREES_ROOT, currentBranch, deleteBranchGuarded, removeWorktreeGuarded } from './worktree.js';
 import { disposeDoneTaskWorktree, taskHolders } from './worktree-service.js';
 import { classifyOrphan, isWithinGrace } from './worktree-gc-guards.js';
 import { purgeShell, sweepShells } from './worktree-shell.js';
 import { execFileHost } from './host/index.js';
-import { hasLanded } from './chain-landing.js';
+import { hasLanded, integrationOfTask } from './chain-landing.js';
 
 const exec = execFileHost;
 
@@ -86,6 +93,22 @@ async function branchExists(repo: string, branch: string): Promise<boolean> {
 /** `awaiting`: integrated into a branch that has not landed yet. */
 type Outcome = { disposed: number; kept: number; awaiting: number };
 
+/**
+ * The remote-tracking ref of the target a chain on an integration branch lands
+ * in, when its whole chain is DONE and recorded a merge sha; null otherwise.
+ * The sha proves a merger (or a `code-self` coder) integrated the work: a DONE
+ * task with no merge behind it has nothing that could have reached the target.
+ */
+export function remoteTargetOf(task: TaskRow, repo: string): string | null {
+  if (!settingBool('TIMON_WORKTREE_GC_REMOTE_TARGET')) return null;
+  const integration = integrationOfTask(task, repo);
+  if (!integration?.remote || !integration.target) return null;
+  const chain = dbApi.listVerificationChain(task.verification_root_id ?? task.id);
+  if (chain.length === 0 || chain.some((t) => t.status !== 'DONE')) return null;
+  if (!chain.some((t) => Boolean(t.merged_commit_sha))) return null;
+  return `refs/remotes/${integration.remote}/${integration.target}`;
+}
+
 /** Worktrees of DONE tasks whose work is merged.
  *
  *  The same worktree is shared by the whole code→review→merge chain (the
@@ -106,7 +129,8 @@ async function collectFromTasks(graceMs: number, now: number): Promise<Outcome> 
     const repo = repoOfAgent(listed.agent_name);
     if (!repo) continue;
     if (!hasLanded(listed, repo)) {
-      out.awaiting += 1;
+      if (await releaseLandedOnRemote(listed, repo)) out.disposed += 1;
+      else out.awaiting += 1;
       continue;
     }
 
@@ -131,6 +155,27 @@ async function collectFromTasks(graceMs: number, now: number): Promise<Outcome> 
     }
   }
   return out;
+}
+
+/**
+ * Removes the folder of a DONE task whose integration branch has not landed
+ * in Timon's eyes but whose worktree HEAD is in the remote's target. The
+ * branch stays: the landing, when Timon sees it, deletes it as usual.
+ */
+async function releaseLandedOnRemote(listed: TaskRow, repo: string): Promise<boolean> {
+  const task = dbApi.getTask(listed.id);
+  if (!task || task.status !== 'DONE' || !task.worktree_path || !task.branch_name) return false;
+  const target = remoteTargetOf(task, repo);
+  if (!target || !existsSync(task.worktree_path)) return false;
+  try {
+    const result = await disposeDoneTaskWorktree(task, repo, { holders: [target], keepBranch: true });
+    if (!result.ok || result.folder !== 'removed') return false;
+    console.log(`[worktree-gc] released ${task.branch_name} (task ${task.id.slice(0, 8)} DONE, in ${target.replace('refs/remotes/', '')}; branch kept)`);
+    return true;
+  } catch (err) {
+    console.warn(`[worktree-gc] failed on ${task.branch_name}: ${(err as Error).message}`);
+    return false;
+  }
 }
 
 /** Branches of tasks whose worktree was detached (TIM-0113): the folder is
