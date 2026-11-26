@@ -44,6 +44,17 @@ export function readNativeProvider(home = TIMON_HOME): NativeProvider | null {
   } catch { return null; }
 }
 
+/**
+ * The refusals the desktop names with a code (`BrowserCommandError.code`, desktop
+ * `native-browser-protocol.ts`). Any other code is not trusted to name a translation.
+ */
+function providerRefusal(code: unknown): ApiErrorBody | null {
+  if (code === 'browser_signin_needs_screen') {
+    return apiError('browser_signin_needs_screen', 'Signing in with Chrome opens a Chrome window, and this browser runs on a machine with no screen. Sign in to the site directly in the built-in browser.');
+  }
+  return null;
+}
+
 export async function callNativeBrowser(
   profileId: string,
   command: Record<string, unknown>,
@@ -60,9 +71,9 @@ export async function callNativeBrowser(
     });
     const result = await response.json() as Record<string, unknown>;
     if (!response.ok) {
-      // The desktop answers in English prose with no code: it stays the technical detail.
+      // The desktop answers in English prose: it stays the technical detail, unless it names a refusal the webview translates.
       const detail = typeof result.error === 'string' ? result.error : `HTTP ${response.status}`;
-      throw new NativeBrowserError(apiError('browser_command_failed', `Browser command failed: ${detail}`, { detail }), response.status);
+      throw new NativeBrowserError(providerRefusal(result.code) ?? apiError('browser_command_failed', `Browser command failed: ${detail}`, { detail }), response.status);
     }
     return result;
   } catch (error) {

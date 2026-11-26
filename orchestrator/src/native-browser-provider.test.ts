@@ -68,3 +68,34 @@ test('a browser refusal carries a code the webview translates; bare text stays a
   assert.equal(chromeMissingError('none').code, 'browser_chrome_missing');
   assert.equal(chromeMissingError('confined').code, 'browser_chrome_confined');
 });
+
+test("the desktop's coded refusal of a Chrome sign-in with no screen reaches the webview with its code; an unknown code stays a detail", async (t) => {
+  const home = mkdtempSync(join(tmpdir(), 'timon-native-provider-'));
+  t.after(() => rmSync(home, { recursive: true, force: true }));
+  mkdirSync(join(home, 'browser-native'));
+  const server = createServer(async (req, res) => {
+    let body = ''; for await (const chunk of req) body += chunk;
+    const { action } = JSON.parse(body) as { action: string };
+    res.statusCode = 409;
+    res.setHeader('content-type', 'application/json');
+    res.end(JSON.stringify(action === 'chromeSigninStart'
+      ? { error: 'No screen here.', code: 'browser_signin_needs_screen' }
+      : { error: 'Something else.', code: 'browser_made_up' }));
+  });
+  server.listen(0, '127.0.0.1'); await once(server, 'listening');
+  t.after(() => server.close());
+  writeFileSync(join(home, 'browser-native/provider.json'), JSON.stringify({
+    version: 1, origin: `http://127.0.0.1:${(server.address() as AddressInfo).port}`, token: 'provider-only-secret'.repeat(3), pid: process.pid,
+  }));
+  await assert.rejects(callNativeBrowser('chosen', { action: 'chromeSigninStart' }, { home }), (err: NativeBrowserError) => {
+    assert.equal(err.status, 409);
+    assert.equal(err.body.code, 'browser_signin_needs_screen');
+    assert.match(err.body.error, /no screen/);
+    return true;
+  });
+  await assert.rejects(callNativeBrowser('chosen', { action: 'navigate' }, { home }), (err: NativeBrowserError) => {
+    assert.equal(err.body.code, 'browser_command_failed');
+    assert.deepEqual(err.body.params, { detail: 'Something else.' });
+    return true;
+  });
+});
