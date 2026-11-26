@@ -134,6 +134,10 @@ const nextConfig = {
   // (`next/dist/server/next-server.js`, `handleNextImageRequest`);
   // `src/lib/image-optimizer-off.test.ts` keeps both halves true.
   images: { unoptimized: true },
+  // `next build` type-checks this program, not `tsconfig.json`: the tests
+  // import `orchestrator/` and `plugins/`, which the Docker context (`app/`
+  // alone) does not have. `npm run typecheck` still checks the tests.
+  typescript: { tsconfigPath: 'tsconfig.build.json' },
   // Native addon: required at runtime from node_modules, never bundled.
   serverExternalPackages: ['better-sqlite3'],
   experimental: {
