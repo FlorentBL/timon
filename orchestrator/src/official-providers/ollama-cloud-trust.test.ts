@@ -127,6 +127,51 @@ test('a mission on ollama-cloud starts the CLI with the default policy, its key 
   }
 });
 
+test('a codex replaced after its identity was checked is not started: the launch holds to the file that answered (TODO #1201)', {
+  skip: process.platform === 'win32' && 'the stand-in CLI is an extensionless file, which only a POSIX host resolves',
+}, async () => {
+  const { BinaryIdentityError, assumeDeclaredIdentities } = await import('../backends/binary-identity.js');
+  const { launchCardAnchor, launchCardsSettled } = await import('../backends/launch-card.js');
+  const codex = join(BIN, 'codex');
+  const host = getHost();
+  const originalBin = host.bin;
+  const swaps = { count: 0, assuming: false };
+  // Every lookup of the CLI rewrites it, and the new file is taken for the Codex CLI too: its identity
+  // check passes, so only the pin can tell that the program about to start is not the one that answered.
+  host.bin = ((name: string) => {
+    if (!swaps.assuming && (name === 'codex' || name === codex)) {
+      swaps.count += 1;
+      writeFileSync(codex, `#!/bin/sh\necho ${'x'.repeat(swaps.count)}\n`, { mode: 0o755 });
+      // It looks the CLI up itself: that lookup must not rewrite the file again.
+      swaps.assuming = true;
+      try { assumeDeclaredIdentities(); } finally { swaps.assuming = false; }
+    }
+    return originalBin.call(host, name);
+  }) as typeof host.bin;
+  let error: unknown = null;
+  try {
+    (await launch()).dispose();
+  } catch (err) {
+    error = err;
+  } finally {
+    host.bin = originalBin;
+  }
+  assert.ok(swaps.count > 1, 'the program was replaced after the launch had resolved it');
+  assert.ok(error instanceof BinaryIdentityError, `refused as an identity failure: ${String(error)}`);
+  assert.match(error.message, /backend `ollama-cloud` was about to launch `codex`, which no longer is the file checked for this launch/);
+  assert.equal(error.message.includes(BIN), false, 'the program by its name, never its full path');
+  await launchCardsSettled();
+  assert.equal(dbApi.listNotifications({ limit: 500 }).filter((n) => n.anchor === launchCardAnchor('provider-codex')).length, 0,
+    'a product backend has nothing for the operator to authorize: no card');
+  // Left as it is now, the program is checked as it is now.
+  const again = await launch();
+  try {
+    assert.equal(again.cmd, codex, 'the spawn starts the very path that was checked');
+  } finally {
+    again.dispose();
+  }
+});
+
 test('the sign-in folder of ollama-cloud is its own: `.ollama` is kept for its missions and masked from the others, `.codex` the other way round', () => {
   const cfg = TimonConfigSchema.parse({});
   const home = join(tmpdir(), 'ollama-home');

@@ -6,11 +6,14 @@
  * a one-shot prompt (`summary.ts`).
  */
 import { assertLaunchIdentity } from './binary-identity.js';
-import { assertLaunchAuthorized, assertLaunchBinary, assertLaunchPinned, type LaunchPin } from './launch-binary.js';
+import { assertLaunchAuthorized, assertLaunchBinary, assertLaunchPinned, pinIdentifiedProgram, type LaunchPin } from './launch-binary.js';
 import { SealedArgvError, SealedEnvError, type LaunchSeal } from './launch-seal.js';
 import type { Backend, BuildSpawnOpts, SpawnResult } from './types.js';
 
-/** The file each third-party launch was checked against, held until its spawn (`assertSpawnPinned`). */
+/**
+ * The file each launch was checked against, held until its spawn (`assertSpawnPinned`): a third party's
+ * program, and a product backend's whose identity is checked.
+ */
 const PINS = new WeakMap<SpawnResult, LaunchPin>();
 
 export async function buildSealedSpawn(backend: Backend, spawnOpts: BuildSpawnOpts, seal: LaunchSeal | null): Promise<SpawnResult> {
@@ -19,7 +22,10 @@ export async function buildSealedSpawn(backend: Backend, spawnOpts: BuildSpawnOp
   assertLaunchBinary(backend.name, built.cmd);
   // A third party's program is the file the operator authorized, checked at EVERY launch (a resume, a
   // per-turn respawn): the spawn then starts the very path that was checked.
-  const { program, pin } = assertLaunchAuthorized(backend.name, built.cmd);
+  // A product backend's program is pinned too when its identity is checked: the file that answers the
+  // check below is the one the spawn starts (TODO #1201).
+  const authorized = assertLaunchAuthorized(backend.name, built.cmd);
+  const { program, pin } = authorized.pin ? authorized : pinIdentifiedProgram(backend.name, built.cmd);
   if (program !== built.cmd) built = { ...built, cmd: program };
   // The identity check below STARTS the program: it must be the file just checked.
   if (pin) assertLaunchPinned(pin);
@@ -43,8 +49,8 @@ export async function buildSealedSpawn(backend: Backend, spawnOpts: BuildSpawnOp
 
 /**
  * The last thing before the spawn of a spec `buildSealedSpawn` returned, with nothing awaited between
- * the two: the program still leads to the file checked for this launch (TODO #598). A product backend's
- * spec carries no pin and passes.
+ * the two: the program still leads to the file checked for this launch (TODO #598, #1201). A product
+ * backend's spec whose program has no identity to check carries no pin and passes.
  */
 export function assertSpawnPinned(spec: SpawnResult): void {
   const pin = PINS.get(spec);

@@ -2159,7 +2159,8 @@ async function spawnMissionProcess(
   }
   // Issued once: a second call would revoke the row the first one handed out.
   const missionToken = seal ? seal.token() : procEnv.TIMON_API_TOKEN ?? '';
-  // Nothing awaited since: a third party's program is still the file checked for this launch.
+  // Nothing awaited since: a pinned program (a third party's, or one whose identity was checked) is
+  // still the file checked for this launch.
   assertSpawnPinned(spec);
   const proc = host.spawn(launch.cmd, launch.args, {
     cwd: cwd ?? process.cwd(),
