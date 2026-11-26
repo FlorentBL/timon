@@ -141,6 +141,8 @@ const PAGE = '<!doctype html><meta charset="utf-8"><title>Shop</title><script>'
     await attach();
     page = activeTab().view.webContents;
     await command('annotateStart', human);
+    // The tab learns over IPC that it annotates; a point asked on that same channel is answered after it.
+    await command('annotatePick', { x: 1, y: 1, preview: true, ...human });
     await js(page, 'seen.splice(0); true');
 
     // ---- A click on an element opens the bubble on it, with the keyboard -------------------------

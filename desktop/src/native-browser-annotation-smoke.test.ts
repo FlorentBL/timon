@@ -125,6 +125,8 @@ const HOSTILE = head('Hostile') + '<button id="target">Hostile</button><script>'
     report.agentStart = await outcome(command('annotateStart'));
     report.agentStartClaimingHuman = await outcome(command('annotateStart', { commandActor: 'agent' }));
     await command('annotateStart', human);
+    // The tab learns over IPC that it annotates; a point asked on that same channel is answered after it.
+    await command('annotatePick', { x: 1, y: 1, preview: true, ...human });
 
     // Swallowing: left, right, middle, double click and a tap; nothing reaches the page.
     await click(contents, 60, 35);
