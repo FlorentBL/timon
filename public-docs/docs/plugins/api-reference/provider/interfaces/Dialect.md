@@ -61,11 +61,7 @@
 
 ### nativeCompact?
 
-> `readonly` `optional` **nativeCompact?**: `object`
-
-#### command
-
-> `readonly` **command**: `string`
+> `readonly` `optional` **nativeCompact?**: [`NativeCompact`](../type-aliases/NativeCompact.md)
 
 ***
 

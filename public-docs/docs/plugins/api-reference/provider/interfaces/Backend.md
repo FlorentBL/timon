@@ -37,11 +37,7 @@
 
 ### nativeCompact?
 
-> `readonly` `optional` **nativeCompact?**: `object`
-
-#### command
-
-> `readonly` **command**: `string`
+> `readonly` `optional` **nativeCompact?**: [`NativeCompact`](../type-aliases/NativeCompact.md)
 
 ***
 
@@ -226,6 +222,22 @@
 #### Returns
 
 [`NormalizedEvent`](../type-aliases/NormalizedEvent.md)[]
+
+***
+
+### runNativeCompact()?
+
+> `optional` **runNativeCompact**(`opts`): `Promise`\<`void` \| [`NativeCompactResult`](../type-aliases/NativeCompactResult.md)\>
+
+#### Parameters
+
+##### opts
+
+[`RunNativeCompactOpts`](../type-aliases/RunNativeCompactOpts.md)
+
+#### Returns
+
+`Promise`\<`void` \| [`NativeCompactResult`](../type-aliases/NativeCompactResult.md)\>
 
 ***
 
