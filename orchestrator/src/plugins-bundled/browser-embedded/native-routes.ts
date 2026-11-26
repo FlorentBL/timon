@@ -17,7 +17,8 @@ import { registerBrowserCredentialRoutes } from './credential-routes.js';
 import { conversionBrowserCommand, conversionBrowserRefusal, conversionMissionOf } from '../../users/conversion-mission.js';
 import { noteCollectedBrowserRecording, saveBrowserRecording, stopBrowserRecording, type BrowserRecordingMetadata, type BrowserRecordingOrigin } from '../../browser-recordings.js';
 import { annotationStateOf, picksOf, saveBrowserAnnotations, type BrowserAnnotationOrigin } from '../../browser-annotations.js';
-import { apiError } from '../../api-error.js';
+import { apiError, type ApiErrorBody } from '../../api-error.js';
+import { browserUnavailableRefusal } from '../../built-in-browser.js';
 
 // `annotateHighlight` shows a stored selector again: a rectangle comes back, never the page's words.
 // `annotateUnpin` drops the desktop bubble's pins of annotations sent or deleted elsewhere (TODO #481).
@@ -94,8 +95,13 @@ export function registerNativeBrowserRoutes(app: Router, deps: {
   call?: typeof callNativeBrowser;
   capabilities?: typeof nativeBrowserCapabilities;
   detectChrome?: () => ChromeDetection;
+  /** Why no provider answers, coded: the server's browser host, or the desktop app (`built-in-browser.ts`). */
+  unavailable?: () => ApiErrorBody;
 } = {}): void {
   const call = deps.call ?? callNativeBrowser;
+  const unavailable = deps.unavailable ?? (() => browserUnavailableRefusal());
+  // The provider layer only knows that nobody answered; this one says who should have, and how to repair it.
+  const explained = (body: ApiErrorBody): ApiErrorBody => (body.code === 'browser_desktop_unavailable' ? unavailable() : body);
   // The TIMON_CHROME_PATH setting (environment first, then the settings table) pins the browser.
   const detectChrome = deps.detectChrome ?? (() => detectChromeBinary({ env: { ...process.env, TIMON_CHROME_PATH: settingStr('TIMON_CHROME_PATH') } }));
   const controls = browserControls();
@@ -246,10 +252,15 @@ export function registerNativeBrowserRoutes(app: Router, deps: {
     res.setHeader('Cache-Control', 'no-store');
     try { res.json(await operation(req)); }
     catch (error) {
-      res.status(error instanceof NativeBrowserError ? error.status : 400).json(browserErrorBody(error));
+      res.status(error instanceof NativeBrowserError ? error.status : 400).json(explained(browserErrorBody(error)));
     }
   };
-  app.get('/api/native-browser/capabilities', handle(async () => (deps.capabilities ?? nativeBrowserCapabilities)(detectChrome)));
+  app.get('/api/native-browser/capabilities', handle(async () => {
+    const capabilities = await (deps.capabilities ?? nativeBrowserCapabilities)(detectChrome);
+    if (capabilities.available || !capabilities.refusal) return capabilities;
+    const refusal = explained(capabilities.refusal);
+    return { ...capabilities, reason: refusal.error, refusal };
+  }));
   app.get('/api/native-browser/profiles', handle((req) => {
     if (req.auth?.kind === 'api-token') return { profiles: [missionProfile(req)] };
     return { profiles: listBrowserProfiles(viewerFromRequest(req)) };
