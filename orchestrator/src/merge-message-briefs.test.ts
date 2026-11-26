@@ -17,7 +17,8 @@ import { agentDir } from './paths.js';
 import { writeRoles } from './projects.js';
 import { pipelineDirective, resolveWorktree, worktreeDirective } from './dispatcher.js';
 import { runVerificationChain } from './verification-loop.js';
-import { disposeWorktree, type WorktreeInfo } from './worktree.js';
+import { type WorktreeInfo } from './worktree.js';
+import { forceRemoveTestWorktree } from './worktree-fixture.js';
 await import('../tests/helpers/claude-provider.js');
 {
   const { mountOfficialProviders } = await import('../tests/helpers/official-providers.js');
@@ -134,7 +135,7 @@ test('a refused refresh reaches the brief with its reason', async () => {
     assert.match(brief, /c\.txt/);
     assertExplicitMessages(brief, 'failed refresh');
   } finally {
-    if (wt) await disposeWorktree(wt, true);
+    if (wt) await forceRemoveTestWorktree(wt);
     rmSync(root, { recursive: true, force: true });
   }
 });

@@ -3225,6 +3225,24 @@ const setTaskWorktreeStmt = db.prepare(
 const clearTaskWorktreeStmt = db.prepare(
   `UPDATE tasks SET worktree_path = NULL, branch_name = NULL WHERE id = ?`,
 );
+// A guarded removal (`removeWorktreeGuarded`) takes the folder from every task
+// naming it, only while all of them are DONE: the dispatcher reads
+// `worktree_path` to reuse a folder, so a task reopened afterwards finds none
+// and never starts in a folder being deleted. `updated_at` is not touched (see
+// `clearTaskWorktreeStmt`).
+const openTasksOnWorktreeStmt = db.prepare(
+  `SELECT COUNT(*) AS n FROM tasks WHERE worktree_path = ? AND status != 'DONE'`,
+);
+const doneTasksOnWorktreeStmt = db.prepare(`SELECT id FROM tasks WHERE worktree_path = ? AND status = 'DONE'`);
+const detachDoneTaskWorktreeStmt = db.prepare(
+  `UPDATE tasks SET worktree_path = NULL WHERE id = ? AND status = 'DONE' AND worktree_path = ?`,
+);
+const restoreTaskWorktreeStmt = db.prepare(
+  `UPDATE tasks SET worktree_path = ? WHERE id = ? AND worktree_path IS NULL`,
+);
+const forgetTaskBranchStmt = db.prepare(
+  `UPDATE tasks SET branch_name = NULL WHERE id = ? AND worktree_path IS NULL AND branch_name = ?`,
+);
 // The branch stays recorded: it still holds the task's commits.
 const detachTaskWorktreeStmt = db.prepare(
   `UPDATE tasks SET worktree_path = NULL, updated_at = ? WHERE id = ?`,
@@ -5848,6 +5866,28 @@ export const dbApi = {
   },
   clearTaskWorktree(id: string): void {
     clearTaskWorktreeStmt.run(id);
+  },
+  /**
+   * Detaches `path` from every task naming it, only while all of them are DONE
+   * and `taskId` is one of them. Returns the ids detached (to give the folder
+   * back after a refused removal), or null when nothing was detached.
+   */
+  detachDoneTaskWorktree(taskId: string, path: string): string[] | null {
+    return db.transaction((): string[] | null => {
+      if ((openTasksOnWorktreeStmt.get(path) as { n: number }).n > 0) return null;
+      const ids = (doneTasksOnWorktreeStmt.all(path) as { id: string }[]).map((r) => r.id);
+      if (!ids.includes(taskId)) return null;
+      for (const id of ids) detachDoneTaskWorktreeStmt.run(id, path);
+      return ids;
+    }).immediate();
+  },
+  /** Gives `path` back to the tasks a refused removal detached it from. */
+  restoreTaskWorktree(ids: string[], path: string): void {
+    db.transaction(() => { for (const id of ids) restoreTaskWorktreeStmt.run(path, id); })();
+  },
+  /** Forgets a deleted task branch, once the task's worktree is detached. */
+  forgetTaskBranch(id: string, branch: string): void {
+    forgetTaskBranchStmt.run(id, branch);
   },
   /** Drops the worktree folder's path, keeps `branch_name` / `base_branch`. */
   detachTaskWorktree(id: string): void {

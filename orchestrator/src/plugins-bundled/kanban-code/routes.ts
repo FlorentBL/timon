@@ -45,15 +45,16 @@ export function registerRoutes(app: Router): void {
   app.delete('/api/tasks/:id/worktree', async (req, res) => {
     if (!requireAuth(req, res)) return;
     // A merger disposes of its own worktree as part of closing (the
-    // `timon-worktree` skill runs `timon worktree dispose` before or after
-    // `timon task done`): its own task needs no `kanban:write`, like the close.
+    // `timon-worktree` skill runs `timon worktree dispose` after
+    // `timon task done`: the removal refuses a task that is not DONE): its own
+    // task needs no `kanban:write`, like the close.
     if (!isOwnMissionTask(req, req.params.id) && rejectIfDenied(req, res, 'kanban:write')) return;
     const task = scopedDb(viewerFromRequest(req)).getTask(req.params.id);
     if (!task) { res.status(404).json(apiError('not_found', 'not found')); return; }
-    const force = req.query.force === '1' || req.query.force === 'true';
     try {
-      // Idempotent: no worktree to dispose is fine (`disposed: false`).
-      res.json({ ok: true, ...(await disposeTaskWorktree(task, force)) });
+      // Idempotent: no worktree to dispose is fine (`disposed: false`). A
+      // `force` query from an older client is ignored: nothing is forced.
+      res.json({ ok: true, ...(await disposeTaskWorktree(task)) });
     } catch (err) { answer(res, err); }
   });
 

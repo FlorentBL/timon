@@ -380,6 +380,10 @@ When the agent of a running task asks for a permission or asks you a question, i
 
 A pending or blocked task that has a worktree shows **Detach the worktree** in its editor. It removes the task's working folder and keeps its branch with its commits; when the task runs again, it gets a new folder on that same branch. Timon refuses it while the task is running, and Git refuses a folder that still has uncommitted changes: commit or discard them first. Once the task is done and its work merged, Timon deletes that branch, as it does for any finished task.
 
+## When Timon removes a finished task's worktree
+
+Timon removes a task's worktree and its local branch once the task is done and its work merged, either automatically (a few minutes after the task closes) or when you run `timon worktree dispose TASK_ID`. Before removing anything it checks the folder itself: the worktree must have no uncommitted change and no untracked file, and its current commit, not the one recorded at the merge, must already be in the merged work, the task's base or the repository's current branch. Every task sharing the folder must be done, and Timon checks again right before Git removes it. Git is never asked to force the removal, and `--force` no longer forces anything. A worktree that fails a check is kept as it is: commit or discard what it holds, and the next pass removes it. `timon worktree dispose` refuses a task that is not done: detach its worktree instead to free the folder and keep its branch.
+
 ## Delete a task
 
 Use the task’s delete action and confirm the removal. A Pending or Blocked task

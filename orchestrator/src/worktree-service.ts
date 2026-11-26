@@ -7,7 +7,10 @@
 import { existsSync } from 'node:fs';
 import { loadConfig } from './agent.js';
 import { dbApi, type TaskRow } from './db.js';
-import { createWorktree, disposeWorktree, isGitRepo, releaseWorktreeFolder, type WorktreeInfo } from './worktree.js';
+import {
+  createWorktree, isGitRepo, releaseWorktreeFolder, removeWorktreeGuarded,
+  type GuardedRemovalResult, type WorktreeInfo,
+} from './worktree.js';
 
 /** `invalid` (400: no cwd, not a repo, bad base), `busy` (409: the task is
  *  running), `failed` (500: git refused). */
@@ -50,34 +53,73 @@ export async function createTaskWorktree(task: TaskRow, base?: string): Promise<
   }
 }
 
-/** Idempotent: a task with no worktree answers `disposed: false`. */
-export async function disposeTaskWorktree(task: TaskRow, force: boolean): Promise<{ disposed: boolean }> {
+/**
+ * Where a task's work must already be before its worktree or branch may go:
+ * the merge sha it recorded, its base, or the repository's current branch
+ * (base `dev`, everything ends up on `main`).
+ */
+export function taskHolders(task: TaskRow): string[] {
+  return [task.merged_commit_sha, task.base_branch, 'HEAD'].filter((ref): ref is string => Boolean(ref));
+}
+
+/**
+ * Removes a DONE task's worktree and branch under the guards of
+ * `removeWorktreeGuarded`. The task is read again and the folder detached from
+ * every task naming it in one transaction, only while all of them are DONE; a
+ * refused removal gives it back. Once the branch is gone (or was already),
+ * the tasks forget it. Shared by the GC and `timon worktree dispose`.
+ */
+export async function disposeDoneTaskWorktree(task: TaskRow, repo: string): Promise<GuardedRemovalResult> {
+  const path = task.worktree_path;
+  const branch = task.branch_name;
+  if (!path || !branch) return { ok: false, reason: 'the task has no worktree', retry: false };
+  let detached: string[] = [];
+  const result = await removeWorktreeGuarded({
+    path,
+    sourceRepo: repo,
+    holders: taskHolders(task),
+    branch,
+    claim: () => {
+      const fresh = dbApi.getTask(task.id);
+      if (!fresh || fresh.status !== 'DONE' || fresh.worktree_path !== path) return null;
+      const ids = dbApi.detachDoneTaskWorktree(task.id, path);
+      if (!ids) return null;
+      detached = ids;
+      return () => dbApi.restoreTaskWorktree(ids, path);
+    },
+    stillClaimed: () => detached.every((id) => dbApi.getTask(id)?.status === 'DONE'),
+  });
+  if (result.ok && (result.branch === 'deleted' || result.branch === 'absent')) {
+    for (const id of detached) dbApi.forgetTaskBranch(id, branch);
+  }
+  return result;
+}
+
+/**
+ * Idempotent: a task with no worktree answers `disposed: false`. Only a DONE
+ * task's, clean and merged: anything else is refused (`busy`), and detaching
+ * the worktree is the gesture that frees a folder while keeping its branch.
+ * Git is never asked to force a removal (a `force` from an older caller is
+ * dropped before it gets here).
+ */
+export async function disposeTaskWorktree(task: TaskRow): Promise<{ disposed: boolean }> {
   if (!task.worktree_path || !task.branch_name) return { disposed: false };
   // Folder already gone (removed by hand with git): only the stale reference is
-  // left. It needs neither the agent's cwd nor git, and the branch is kept in
-  // case it still holds unmerged commits (TIM-0113).
+  // left. It needs neither the agent's cwd nor git, and the branch itself is
+  // left in the repository in case it still holds unmerged commits (TIM-0113).
   if (!existsSync(task.worktree_path)) {
     dbApi.clearTaskWorktree(task.id);
     return { disposed: true };
   }
+  if (task.status !== 'DONE') {
+    throw new WorktreeServiceError('busy', `The task is ${task.status}, not DONE: its worktree is kept. Detach it instead to free the folder and keep its branch.`);
+  }
   const cfg = loadConfig(task.agent_name);
   if (!cfg.cwd) throw new WorktreeServiceError('invalid', 'agent has no cwd');
-  try {
-    await disposeWorktree(
-      {
-        taskId: task.id,
-        path: task.worktree_path,
-        branch: task.branch_name,
-        base: task.base_branch ?? 'HEAD',
-        sourceRepo: cfg.cwd,
-      },
-      force,
-    );
-    dbApi.clearTaskWorktree(task.id);
-    return { disposed: true };
-  } catch (err) {
-    throw new WorktreeServiceError('failed', (err as Error).message);
-  }
+  const result = await disposeDoneTaskWorktree(task, cfg.cwd);
+  if (!result.ok) throw new WorktreeServiceError('busy', `The worktree is kept: ${result.reason}.`);
+  if (result.branch === 'kept') console.warn(`[worktree] branch ${task.branch_name} kept: ${result.branchReason ?? 'not merged'}`);
+  return { disposed: true };
 }
 
 /**

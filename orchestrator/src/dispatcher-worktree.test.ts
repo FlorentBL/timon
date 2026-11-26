@@ -9,7 +9,8 @@ import { join } from 'node:path';
 import { dbApi } from './db.js';
 import { agentDir } from './paths.js';
 import { resolveWorktree, worktreeDirective } from './dispatcher.js';
-import { disposeWorktree, type WorktreeInfo } from './worktree.js';
+import { type WorktreeInfo } from './worktree.js';
+import { forceRemoveTestWorktree } from './worktree-fixture.js';
 
 test('all worktree briefs protect shared dependencies, including retries and cross-project reviewers', async () => {
   const root = mkdtempSync(join(tmpdir(), 'timon-dispatch-deps-'));
@@ -57,7 +58,7 @@ test('all worktree briefs protect shared dependencies, including retries and cro
       assert.equal(worktreeDirective(dbApi.getTask(id)!, null), '');
     }
   } finally {
-    for (const wt of worktrees) await disposeWorktree(wt, true);
+    for (const wt of worktrees) await forceRemoveTestWorktree(wt);
     rmSync(root, { recursive: true, force: true });
   }
 });

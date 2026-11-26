@@ -66,7 +66,8 @@ exec "$real" "$@"
 }
 process.on('exit', () => rmSync(fakeDir, { recursive: true, force: true }));
 
-const { createWorktree, disposeWorktree } = await import('./worktree.js');
+const { createWorktree } = await import('./worktree.js');
+const { forceRemoveTestWorktree } = await import('./worktree-fixture.js');
 const { invalidateSettingsCache } = await import('./settings.js');
 
 function useStall(ms: number): void {
@@ -115,7 +116,7 @@ test('a checkout that keeps reporting progress is waited on past the stall delay
     assert.equal(git('branch', '--show-current').trim(), 'main');
   } finally {
     delete process.env.FAKE_GIT_MODE;
-    if (worktree) await disposeWorktree(worktree, true);
+    if (worktree) await forceRemoveTestWorktree(worktree);
     rmSync(repo, { recursive: true, force: true });
   }
 });
@@ -155,7 +156,7 @@ test('a silent git is stopped with its children, its half-made worktree removed 
   } finally {
     delete process.env.FAKE_GIT_MODE;
     if (left > 1) { try { process.kill(left, 'SIGKILL'); } catch { /* gone, as it should be */ } }
-    if (worktree) await disposeWorktree(worktree, true);
+    if (worktree) await forceRemoveTestWorktree(worktree);
     rmSync(repo, { recursive: true, force: true });
   }
 });
@@ -189,7 +190,7 @@ test('an existing folder is reused only once its checkout is complete', { skip: 
     assert.ok(existsSync(join(worktree.path, 'file-3.txt')));
     assert.equal(execFileSync(realGit(), ['-C', worktree.path, 'status', '--porcelain'], { encoding: 'utf8' }), '');
   } finally {
-    if (worktree) await disposeWorktree(worktree, true);
+    if (worktree) await forceRemoveTestWorktree(worktree);
     rmSync(repo, { recursive: true, force: true });
   }
 });

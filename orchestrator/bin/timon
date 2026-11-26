@@ -933,7 +933,7 @@ Series role choices (who runs, for THIS series only — roles.json untouched):
 Worktrees (git isolation per code task):
   timon worktree info <task-id>                show path/branch/base/merged-sha
   timon worktree create <task-id> [--base B]   force-create (dispatcher does it automatically for type=code)
-  timon worktree dispose <task-id> [--force]   unmounts worktree + local branch (post-merge)
+  timon worktree dispose <task-id>             removes worktree + local branch of a DONE task, once clean and merged
 
 Pull requests (projects whose jobs land through one, see set-integration):
   timon pr open <task-id|series-id> --title TEXT [--body TEXT | --body-file PATH]
@@ -2630,9 +2630,9 @@ async function cmdWorktreeCreate(argv) {
 
 async function cmdWorktreeDispose(argv) {
   const id = argv[0];
-  if (!id) { process.stderr.write('usage: timon worktree dispose <task-id> [--force]\n'); process.exit(64); }
-  const force = argv.includes('--force');
-  const j = await http('DELETE', `/api/tasks/${id}/worktree${force ? '?force=1' : ''}`);
+  if (!id) { process.stderr.write('usage: timon worktree dispose <task-id>\n'); process.exit(64); }
+  // `--force` is still accepted from older scripts; the daemon never forces a removal.
+  const j = await http('DELETE', `/api/tasks/${id}/worktree`);
   process.stdout.write(`worktree for task ${id}: ${j.disposed ? 'disposed' : 'no-op (none attached)'}\n`);
 }
 

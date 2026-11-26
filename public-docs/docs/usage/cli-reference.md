@@ -187,7 +187,7 @@ Series role choices (who runs, for THIS series only — roles.json untouched):
 Worktrees (git isolation per code task):
   timon worktree info <task-id>                show path/branch/base/merged-sha
   timon worktree create <task-id> [--base B]   force-create (dispatcher does it automatically for type=code)
-  timon worktree dispose <task-id> [--force]   unmounts worktree + local branch (post-merge)
+  timon worktree dispose <task-id>             removes worktree + local branch of a DONE task, once clean and merged
 
 Pull requests (projects whose jobs land through one, see set-integration):
   timon pr open <task-id|series-id> --title TEXT [--body TEXT | --body-file PATH]
@@ -846,10 +846,10 @@ usage: timon worktree info <task-id>
 usage: timon worktree create <task-id> [--base BRANCH]
 ```
 
-### timon worktree dispose task-id [--force]
+### timon worktree dispose task-id
 
 ```text
-usage: timon worktree dispose <task-id> [--force]
+usage: timon worktree dispose <task-id>
 ```
 
 ### timon worktree info|create|dispose task-id …
