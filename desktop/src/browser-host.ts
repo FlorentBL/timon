@@ -32,7 +32,11 @@ export const BROWSER_HOST_EXIT = {
   failed: 1,
   /** Timon desktop opened on this home and took the browser over: start again later (EX_TEMPFAIL). */
   yielded: 75,
-  /** Not on this system: starting again changes nothing (EX_CONFIG). */
+  /**
+   * Not on this system: starting again changes nothing (EX_CONFIG). Chromium refusing its
+   * sandbox aborts before this script runs: the unit's launcher, which reads its errors, exits
+   * with this code for it (`orchestrator/src/host/browser-host-launcher.ts`, a copy of the value).
+   */
   unsupported: 78,
 } as const;
 
