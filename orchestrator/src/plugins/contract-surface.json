@@ -2630,7 +2630,7 @@
       }
     },
     "NativeCompact": {
-      "since": 19,
+      "since": 20,
       "signature": "NativeCompact",
       "members": {
         "|0": "{ readonly command: string; }",
@@ -2638,7 +2638,7 @@
       }
     },
     "NativeCompactContext": {
-      "since": 19,
+      "since": 20,
       "signature": "NativeCompactContext",
       "members": {
         "missionId": "string",
@@ -2654,7 +2654,7 @@
       }
     },
     "NativeCompactResult": {
-      "since": 19,
+      "since": 20,
       "signature": "NativeCompactResult",
       "members": {
         "metadata?": "Readonly<Record<string, unknown>> | undefined"
@@ -3174,7 +3174,7 @@
         "win32-x64",
         "win32-arm64"
       ],
-      "since": 19
+      "since": 20
     }
   },
   "kitTypes": {
@@ -4118,7 +4118,7 @@
       }
     },
     "NativeCompact": {
-      "since": 19,
+      "since": 20,
       "signature": "NativeCompact",
       "members": {
         "|0": "{ readonly command: string; }",
@@ -4126,7 +4126,7 @@
       }
     },
     "NativeCompactContext": {
-      "since": 19,
+      "since": 20,
       "signature": "NativeCompactContext",
       "members": {
         "missionId": "string",
@@ -4142,14 +4142,14 @@
       }
     },
     "NativeCompactResult": {
-      "since": 19,
+      "since": 20,
       "signature": "NativeCompactResult",
       "members": {
         "metadata?": "Readonly<Record<string, unknown>> | undefined"
       }
     },
     "ProviderNpmNative": {
-      "since": 19,
+      "since": 20,
       "signature": "ProviderNpmNative",
       "members": {
         "package": "string",

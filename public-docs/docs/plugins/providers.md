@@ -338,8 +338,9 @@ binary: {
   `PATH`, the home and Timon's own variables are refused.
 - An operator who authorized your launcher by its path (`pluginPolicy.exec.allow`)
   has authorized the build it starts: the launch check accepts it.
-- `npmNative` is additive: a Timon that does not know it ignores it and runs the
-  launcher, as before. Its type is `ProviderNpmNative` in `@timon-ai/sdk/provider`.
+- `npmNative` needs API 20 and is additive: a Timon that does not know it ignores
+  it and runs the launcher, as before. Its type is `ProviderNpmNative` in
+  `@timon-ai/sdk/provider`.
 
 ### Updating a provider
 
