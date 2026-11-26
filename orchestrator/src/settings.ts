@@ -56,6 +56,13 @@ export type SettingDef = {
    */
   min?: number;
   max?: number;
+  /**
+   * Not offered in the interface nor writable through the settings API: the
+   * value comes from the environment or `timon.config.json` only, and a value
+   * stored in the database is ignored. For a feature that is not safe enough
+   * to sit behind a toggle anyone can flip.
+   */
+  hidden?: boolean;
 };
 
 export type SettingSource = 'env' | 'config' | 'db' | 'default';
@@ -295,6 +302,12 @@ export const SETTINGS: SettingDef[] = [
   { key: 'TIMON_WORKTREE_GC_ENABLED', type: 'bool', default: true, group: 'Worktrees',
     label: 'Automatic worktree cleanup',
     description: "Deletes the worktree and branch of a DONE task whose work is already integrated into the base. A branch that is not integrated is NEVER deleted, whatever the age of the task." },
+  // Hidden while its reactivation waits for a maintainer's decision (TODO
+  // #1210): a toggle in Settings would invite turning on a cleanup that
+  // deletes a branch and a worktree by itself.
+  { key: 'TIMON_INTEGRATION_CLEANUP_ENABLED', type: 'bool', default: false, group: 'Worktrees', hidden: true,
+    label: 'Cleanup after a job lands',
+    description: "Experimental, off by default, env or config only. Once a job's integration branch has landed, removes the branch and the worktree its sequential agent coded in, when both are proven in the target, and proposes the deletion of its remote copy for a person to approve. Task worktrees are left to the worktree cleanup." },
   { key: 'TIMON_WORKTREE_GC_GRACE_MIN', type: 'int', default: 30, group: 'Worktrees', unit: 'min',
     label: 'Grace before cleanup', advanced: true,
     description: "Delay after a task closes before its worktree becomes a candidate. Gives the merger and the following doc task time to work in it." },
@@ -690,7 +703,7 @@ function buildCache(): Map<string, ResolvedSetting> {
     let value: ResolvedSetting['value'] = def.default;
     let source: SettingSource = 'default';
 
-    if (dbValue !== null) {
+    if (dbValue !== null && !def.hidden) {
       const parsed = parse(def.type, dbValue);
       if (parsed !== null) { value = parsed; source = 'db'; }
     }
@@ -761,6 +774,7 @@ function outOfRange(def: SettingDef, value: boolean | number | string): string |
 export function setSetting(key: string, raw: string | null): { ok: true } | { ok: false; error: string } {
   const def = BY_KEY.get(key);
   if (!def) return { ok: false, error: `unknown setting: ${key}` };
+  if (def.hidden) return { ok: false, error: `${key} is set through the environment or timon.config.json only` };
   if (raw === null) {
     dbApi.deleteSetting(key);
     invalidateSettingsCache();
@@ -778,5 +792,5 @@ export function setSetting(key: string, raw: string | null): { ok: true } | { ok
 }
 
 export function settingGroups(): string[] {
-  return [...new Set(SETTINGS.map((s) => s.group))];
+  return [...new Set(SETTINGS.filter((s) => !s.hidden).map((s) => s.group))];
 }
