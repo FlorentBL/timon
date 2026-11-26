@@ -40,7 +40,7 @@ timon project create acme-app --name "Acme" --cwd /srv/acme --workspace "Design 
 timon project update acme-app --speech "Customer portal"
 ```
 
-The directory must already exist on the machine. A workspace you name must exist too; add `--create-workspace` to create it. An empty value (`--speech ""`) clears a field.
+The directory must already exist on the machine. A workspace you name must exist too; add `--create-workspace` to create it. An empty value (`--speech ""`) clears a field. Renaming a workspace keeps all its projects, however many times you rename it: no workspace reappears under one of its former names.
 
 The project role is the normal default for a task; task-specific overrides are useful for exceptions. A project path is not a container path unless the daemon actually executes inside that container.
 

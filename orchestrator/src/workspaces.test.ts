@@ -13,7 +13,7 @@ const { agentDir } = await import('./paths.js');
 const { registerRoutes } = await import('./plugins-bundled/projects/routes.js');
 const { listWorkspaceRecords, workspaceSlug } = await import('./workspaces.js');
 
-for (const name of ['_main.perso', 'pilot']) {
+for (const name of ['_main.perso', '_main.product', 'pilot']) {
   mkdirSync(agentDir(name), { recursive: true });
   writeFileSync(join(agentDir(name), 'config.json'), JSON.stringify({ cwd: process.env.TIMON_HOME }));
 }
@@ -182,4 +182,24 @@ test('an install already holding a colliding pair keeps its projects where they 
     assert.equal((await call('PATCH', '/api/workspaces/delta', 'manager', { name: 'Delta' })).status, 200);
   });
   assert.deepEqual(listWorkspaceRecords().find((w) => w.slug === 'summit')?.projects, ['peak']);
+});
+
+test('renaming a pole twice mints no ghost pole from the intermediate name', async () => {
+  // A legacy hub named after the intermediate name: a ghost pole would adopt it as lead.
+  dbApi.upsertProject('canvas', { workspace: 'Design Lab' });
+  dbApi.upsertProject('kit', { workspace: 'design-lab' });
+  listWorkspaceRecords();
+  const before = listWorkspaceRecords().length;
+  await withServer(async (call) => {
+    assert.equal((await call('PATCH', '/api/workspaces/design-lab', 'manager', { name: 'Product' })).status, 200);
+    // The Canvas tags a project dropped on the pole with its current name.
+    dbApi.upsertProject('deck', { workspace: 'Product' });
+    assert.equal((await call('PATCH', '/api/workspaces/design-lab', 'manager', { name: 'Marketing' })).status, 200);
+  });
+  const records = listWorkspaceRecords();
+  assert.equal(records.length, before, 'no pole appeared');
+  assert.equal(dbApi.getWorkspaceRow('product'), undefined, 'no ghost pole on the intermediate name');
+  assert.equal(records.some((w) => w.lead_agent === '_main.product'), false, 'no agent leads a ghost pole');
+  assert.deepEqual(records.find((w) => w.slug === 'design-lab')?.projects, ['canvas', 'deck', 'kit']);
+  assert.equal(dbApi.getProjectRow('kit')?.workspace, 'design-lab', 'a tag resolving by slug is left as written');
 });

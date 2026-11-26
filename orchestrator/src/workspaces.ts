@@ -7,7 +7,8 @@
  * empty pole can exist and its lead is a field. Projects still carry the tag
  * they always had (`projects.workspace`); it matches a pole through
  * `workspaceSlug()` or the pole's name, so "Design Studio" belongs to the pole
- * `design-studio` without rewriting anybody's project meta.
+ * `design-studio` without rewriting anybody's project meta. The one rewrite is
+ * a rename that would leave a tag matching nothing (`orphanedByRename`).
  */
 import { getAgent } from './agent.js';
 import { dbApi, type WorkspaceRow } from './db.js';
@@ -152,10 +153,25 @@ export function updateWorkspace(slug: string, patch: { name?: string; color?: st
   checkLead(patch.lead_agent);
   const name = patch.name?.trim();
   if (patch.name !== undefined && !name) throw new Error('name must not be empty');
-  const clash = name ? tagClash(slug, name, dbApi.listWorkspaceRows(), false) : null;
+  const rows = dbApi.listWorkspaceRows();
+  const clash = name ? tagClash(slug, name, rows, false) : null;
   if (clash) throw new Error(clash);
-  dbApi.updateWorkspace(slug, { name, color: patch.color, lead_agent: patch.lead_agent });
+  dbApi.updateWorkspace(slug, { name, color: patch.color, lead_agent: patch.lead_agent }, name ? orphanedByRename(slug, name, rows) : []);
   return getWorkspace(slug)!;
+}
+
+/** Projects of pole `slug` whose tag would stop designating it once the pole
+ *  is named `name`. The Canvas tags a dropped project with the pole's current
+ *  name, which only resolves through that name: renamed again, the tag would
+ *  match nothing and `syncWorkspaceTags` would mint a ghost pole from it,
+ *  taking the project (and any legacy hub of that name) along. Only those tags
+ *  are rewritten; one that still resolves, by slug for instance, stays as the
+ *  user wrote it. */
+function orphanedByRename(slug: string, name: string, rows: readonly WorkspaceRow[]): string[] {
+  const after = rows.map((r) => (r.slug === slug ? { ...r, name } : r));
+  return dbApi.listProjectRows()
+    .filter((p) => p.workspace && poleOfTag(p.workspace, rows) === slug && poleOfTag(p.workspace, after) !== slug)
+    .map((p) => p.slug);
 }
 
 /** Deletes the pole. Its projects stay, without a workspace; its lead agent
