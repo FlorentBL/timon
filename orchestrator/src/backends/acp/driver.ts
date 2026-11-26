@@ -25,7 +25,7 @@ import type {
 } from '../types.js';
 import {
   AcpRpcError, AcpTransport, AcpTransportError,
-  type AcpContentBlock, type AcpMcpServer, type AcpPermissionOption, type AcpPermissionRequest,
+  type AcpContentBlock, type AcpSessionMcpServer, type AcpPermissionOption, type AcpPermissionRequest,
   type AcpPermissionResponse, type AcpRecord,
 } from './transport.js';
 import { signInAdvice, type AcpSignIn } from './auth.js';
@@ -70,8 +70,9 @@ export type AcpDriverOptions = {
   /** Session to reopen, or null for a fresh one. */
   resumeSession: string | null;
   /** MCP servers of the session, resolved lazily: building them reads the
-   *  user's configuration and may refresh a token. */
-  mcpServers: () => Promise<AcpMcpServer[]>;
+   *  user's configuration and may refresh a token. Called after `initialize`,
+   *  with what the agent announced it takes (`AcpAgentMcp`). */
+  mcpServers: (agent: AcpAgentMcp) => Promise<AcpSessionMcpServer[]>;
   /** This agent never asks (cf. `SessionCapabilities.permissionsByAgent`). */
   permissionsByAgent: boolean;
   /** Only for the messages and the init event: which profile this is. */
@@ -144,6 +145,22 @@ function parseCapabilities(init: AcpRecord, permissionsByAgent: boolean): Sessio
     image: prompt !== null && prompt.image === true,
     ...(permissionsByAgent ? { permissionsByAgent: true } : {}),
   };
+}
+
+/** The MCP transports an agent announced at `initialize`, beyond stdio. */
+export type AcpAgentMcp = {
+  /** `agentCapabilities.mcpCapabilities.http`: an `McpServerHttp` may be declared to it. */
+  readonly http: boolean;
+};
+
+/**
+ * Read as announced, never assumed: an HTTP entry handed to an agent that does not take it fails the
+ * whole `session/new`, not that server alone. opencode announces it; Hermes and agy announce no
+ * `mcpCapabilities` at all and are declared stdio servers only.
+ */
+export function announcedMcp(init: AcpRecord): AcpAgentMcp {
+  const mcp = asRecord(asRecord(init.agentCapabilities)?.mcpCapabilities);
+  return { http: mcp?.http === true };
 }
 
 function authHint(init: AcpRecord): string {
@@ -282,7 +299,7 @@ function optionFor(options: readonly AcpPermissionOption[], allow: boolean): Acp
  * surfaces as itself. Shared by the session driver and the model probe, so both sign in the same way.
  */
 export async function newSessionAuthenticating(
-  transport: AcpTransport, init: AcpRecord, params: { cwd: string; mcpServers: AcpMcpServer[] }, authenticateWith: string | undefined,
+  transport: AcpTransport, init: AcpRecord, params: { cwd: string; mcpServers: AcpSessionMcpServer[] }, authenticateWith: string | undefined,
 ): Promise<{ sessionId: string; result: AcpRecord }> {
   try {
     return await transport.newSession(params);
@@ -346,7 +363,7 @@ export class AcpSessionDriver implements SessionDriver {
     try {
       const init = await this.transport.initialize();
       const capabilities = parseCapabilities(init, this.opts.permissionsByAgent);
-      const servers = await this.opts.mcpServers();
+      const servers = await this.opts.mcpServers(announcedMcp(init));
 
       let sessionId: string | null = null;
       let result: AcpRecord = {};
@@ -417,7 +434,7 @@ export class AcpSessionDriver implements SessionDriver {
 
   /** Reopens a stored session. `null` = the agent cannot or will not, and the
    *  caller starts a fresh one: losing history must not lose the mission. */
-  private async reopen(sessionId: string, caps: SessionCapabilities, servers: AcpMcpServer[]): Promise<AcpRecord | null> {
+  private async reopen(sessionId: string, caps: SessionCapabilities, servers: AcpSessionMcpServer[]): Promise<AcpRecord | null> {
     const params = { sessionId, cwd: this.opts.cwd, mcpServers: servers };
     const ways: Array<() => Promise<AcpRecord>> = [];
     if (caps.resume) ways.push(() => this.transport.resumeSession(params));

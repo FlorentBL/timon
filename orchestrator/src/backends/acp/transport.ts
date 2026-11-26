@@ -30,11 +30,11 @@ import type { ChildProcess, SpawnOptions } from 'node:child_process';
 import type { Readable, Writable } from 'node:stream';
 import { redactText } from '../../secrets/redact.js';
 import {
-  RPC_INTERNAL_ERROR, RPC_INVALID_PARAMS, RPC_METHOD_NOT_FOUND, type AcpMcpServer, type AcpRecord, type AcpUsage,
+  RPC_INTERNAL_ERROR, RPC_INVALID_PARAMS, RPC_METHOD_NOT_FOUND, type AcpMcpServer, type AcpMcpServerHttp, type AcpRecord, type AcpSessionMcpServer, type AcpUsage,
 } from './wire.js';
 
 export { RPC_INVALID_PARAMS, RPC_METHOD_NOT_FOUND };
-export type { AcpMcpServer, AcpRecord, AcpUsage };
+export type { AcpMcpServer, AcpMcpServerHttp, AcpRecord, AcpSessionMcpServer, AcpUsage };
 
 /* ── Errors ─────────────────────────────────────────────────────────────── */
 
@@ -574,7 +574,7 @@ export class AcpTransport {
 
   /** Full `session/new` result (`configOptions`, `models`, `modes`… stay the
    *  dialect's to read) with the session id checked. */
-  async newSession(params: { cwd: string; mcpServers: AcpMcpServer[] }): Promise<{ sessionId: string; result: AcpRecord }> {
+  async newSession(params: { cwd: string; mcpServers: AcpSessionMcpServer[] }): Promise<{ sessionId: string; result: AcpRecord }> {
     const r = asRecord(await this.request('session/new', params));
     if (!r || typeof r.sessionId !== 'string' || r.sessionId.length === 0) {
       throw new AcpTransportError('protocol', 'session/new: no sessionId in the reply');
@@ -585,11 +585,11 @@ export class AcpTransport {
   /** Reopens a session; the agent may replay its history as `session/update`s
    *  before replying (Hermes does, even for `resume`) — the caller decides what
    *  to do with them. `null` results (allowed by the spec) become `{}`. */
-  async loadSession(params: { sessionId: string; cwd: string; mcpServers: AcpMcpServer[] }): Promise<AcpRecord> {
+  async loadSession(params: { sessionId: string; cwd: string; mcpServers: AcpSessionMcpServer[] }): Promise<AcpRecord> {
     return asRecord(await this.request('session/load', params)) ?? {};
   }
 
-  async resumeSession(params: { sessionId: string; cwd: string; mcpServers: AcpMcpServer[] }): Promise<AcpRecord> {
+  async resumeSession(params: { sessionId: string; cwd: string; mcpServers: AcpSessionMcpServer[] }): Promise<AcpRecord> {
     return asRecord(await this.request('session/resume', params)) ?? {};
   }
 

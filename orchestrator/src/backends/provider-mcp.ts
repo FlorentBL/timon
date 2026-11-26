@@ -120,8 +120,8 @@ export async function providerMcpPlan(input: {
       mcpRelayLaunchTarget(server, { agent: spawn.agentName, missionId: spawn.missionId });
     // A stdio server with variables is run by the daemon and reached through the same relay:
     // its variables stay in the daemon. One that cannot start is left out, never written in clear.
-    // Only for an agent that can be handed an HTTP server: an ACP agent is declared the stdio
-    // servers alone, so it keeps starting the server itself, as when the setting is off.
+    // Only for an agent that can be handed an HTTP server: an ACP agent says so only once it runs
+    // (`mcpCapabilities.http`), so it keeps starting the server itself, as when the setting is off.
     const bridgeOn = settingBool('TIMON_MCP_STDIO_BRIDGE');
     const takesHttp = backendTakesHttpMcp(seal.backend);
     const bridge = bridgeOn && takesHttp
