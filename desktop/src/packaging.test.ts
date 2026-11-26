@@ -162,7 +162,10 @@ test('the shipped Node is pinned, hash-checked and required by the pack', () => 
   const spec = JSON.parse(readFileSync(join(root, 'scripts', 'node-runtime.json'), 'utf8')) as {
     version: string; abi: string; files: Record<string, { archive: string; sha256: string }>;
   };
-  assert.match(spec.version, /^22\./, 'Node 24 needs macOS 13.5: the interface runs from macOS 11');
+  assert.match(spec.version, /^24\./, 'Node 24, whose macOS binaries need 13.5: the floor of electron-builder.yml');
+  assert.equal(spec.abi, '137', 'the module ABI of Node 24: the natives are rebuilt for it');
+  const floor = /\nmac:\n(?:  .*\n)*  minimumSystemVersion: "([\d.]+)"\n/.exec(readFileSync(join(root, 'electron-builder.yml'), 'utf8'))?.[1];
+  assert.equal(floor, '13.5', 'a Node that needs a newer macOS than the pkg allows installs a daemon that cannot start');
   for (const key of ['linux-x64', 'darwin-x64', 'darwin-arm64', 'win32-x64']) {
     assert.match(spec.files[key]?.sha256 ?? '', /^[0-9a-f]{64}$/, key);
   }
@@ -212,8 +215,9 @@ test('the Windows node-pty prebuild ships its ConPTY', () => {
  * "already installed" over it. The shell decides those values on first launch
  * and the first-run screen registers the service once they exist.
  */
-test('the macOS app and its pkg declare the oldest macOS Electron runs on', () => {
-  assert.match(yml, /\nmac:\n(?:  .*\n)*  minimumSystemVersion: "13\.0"\n/);
+test('the macOS app and its pkg declare the oldest macOS the shipped Node runs on', () => {
+  // Node 24's macOS binaries are built for 13.5 (LC_BUILD_VERSION minos), Electron 45 for 13.
+  assert.match(yml, /\nmac:\n(?:  .*\n)*  minimumSystemVersion: "13\.5"\n/);
 });
 
 test('an older installer can replace a newer version, to go back after a bad update', () => {

@@ -75,10 +75,10 @@ anything. See [`docs/RELEASE-RC.md`](../docs/RELEASE-RC.md).
 
 ### Why `prepare:deps` exists
 
-The embedded daemon runs under `ELECTRON_RUN_AS_NODE`, i.e. Electron's Node
-(module ABI 130) — and so does the Next app it spawns — while
-`orchestrator/node_modules` and `app/node_modules` are built for the host's
-Node (ABI 127). Shipping those trees gives an installer whose daemon cannot
+The packaged daemon runs on the Node the package ships in `resources/node`
+(`scripts/node-runtime.json`: Node 24, module ABI 137) — and so does the Next
+app it spawns — while `orchestrator/node_modules` and `app/node_modules` are
+built for the host's Node (Node 22 on a maintainer's machine: ABI 127). Shipping those trees gives an installer whose daemon cannot
 load `better-sqlite3`: it crash-loops and the shell only says "the daemon keeps
 crashing". Three artefacts are concerned, and each fails in its own place:
 

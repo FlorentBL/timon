@@ -266,7 +266,9 @@ function main() {
     '--test',
     `--test-timeout=${testTimeoutMs}`,
     // The reporter follows OUR terminal, not the pipe we read the child through.
-    ...(process.stdout.isTTY ? ['--test-reporter=spec'] : []),
+    // Named on a pipe too: Node 24's default there is spec, not TAP, and the
+    // `# pass` / `# fail` lines agents and scripts read would be gone.
+    `--test-reporter=${process.stdout.isTTY ? 'spec' : 'tap'}`,
     ...cfg.imports.flatMap((m) => ['--import', m]),
     ...flags,
     ...(explicit ? files : cfg.files),
