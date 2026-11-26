@@ -173,6 +173,7 @@ import {
 import {
   worktreesFor, type ScopedWorktrees, type WorktreeCallerScope,
 } from './worktrees-facade.js';
+import { fetchPublicImage, type PluginPublicImageOptions } from './public-image.js';
 import { forgeFor, type ForgeCallerScope, type PluginForgeProposalInput, type ScopedForge } from './forge-facade.js';
 import { agentDocsFor, type PluginAgentDoc, type ScopedAgentDocs } from './agent-docs-facade.js';
 import { agentExportFor, type PluginAgentExport, type ScopedAgentExport } from './agent-export-facade.js';
@@ -346,6 +347,7 @@ export type {
   PluginForgeProposalInput, PluginForgeProposeResult, PluginForgePull, PluginForgePullDetails, PluginForgeRepository,
 } from './forge-facade.js';
 export { PluginForgeError } from './forge-facade.js';
+export { PluginPublicImageError } from './public-image.js';
 export type { PluginAgentDoc } from './agent-docs-facade.js';
 export type {
   PluginAgentCreatedEvent, PluginAgentDeletedEvent, PluginAgentEvent, PluginAgentEventKind, PluginAgentEventMap,
@@ -1991,6 +1993,15 @@ export function createPluginContext(
         }
         return host.fetch(input, init);
       },
+      enumerable: true,
+    });
+  }
+
+  // Absent without the permission, like `fetch`. The operator's switch is read at
+  // each call instead: turning it off must not wait for the plugin to reload.
+  if (can('http:public-images')) {
+    Object.defineProperty(pluginContext, 'fetchPublicImage', {
+      value: async (url: string | URL, options?: PluginPublicImageOptions) => fetchPublicImage(id, url, options),
       enumerable: true,
     });
   }

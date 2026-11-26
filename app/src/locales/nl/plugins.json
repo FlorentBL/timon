@@ -306,6 +306,7 @@
         "broker": "Roept API's aan onder kluisidentiteiten zonder hun sleutels te zien, alleen die hem bij naam zijn toegekend.",
         "brokerNoHttp": "Hij declareert http:outbound niet, dus zijn API-aanroepen via de broker worden geweigerd.",
         "network": "Zijn netwerktoegang is beperkt tot de hosts die in timon.config.json zijn geopend, voor elke plug-in (pluginPolicy.http.allow) of alleen voor deze (pluginPolicy.http.byPlugin), en tot de adressen van goedgekeurde verbindingen.",
+        "publicImages": "Het kan afbeeldingen ophalen van elke openbare host zonder vermelding in timon.config.json: alleen gecontroleerde afbeeldingen komen terug, nooit uit uw lokale netwerk of van deze computer. pluginPolicy.publicImages schakelt dit uit.",
         "secretsLead": "Geheimen die hij noemt. Een aangevinkt geheim wordt alleen aan deze plug-in toegekend; uitvinken trekt nooit een toekenning in (dat gebeurt via Geheimen).",
         "hostsLead": "Hosts die hij bereikt. Een aangevinkte host wordt alleen voor deze plug-in geopend.",
         "hostOwn": "Al open voor deze plug-in. Vink uit om hem te sluiten: zijn hosts worden vervangen door de hier aangevinkte.",

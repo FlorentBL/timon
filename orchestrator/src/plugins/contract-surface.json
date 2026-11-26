@@ -1,5 +1,5 @@
 {
-  "apiVersion": 19,
+  "apiVersion": 20,
   "members": {
     "accountProvider": {
       "type": "object",
@@ -418,6 +418,11 @@
       "type": "function",
       "arity": 2,
       "since": 1
+    },
+    "fetchPublicImage": {
+      "type": "function",
+      "arity": 2,
+      "since": 20
     },
     "forge": {
       "type": "object",

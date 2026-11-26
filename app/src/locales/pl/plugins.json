@@ -306,6 +306,7 @@
         "broker": "Wywołuje API w imieniu tożsamości z sejfu, nie widząc ich kluczy — tylko tych przyznanych jej z nazwy.",
         "brokerNoHttp": "Nie deklaruje http:outbound, więc jej wywołania API przez pośrednika zostaną odrzucone.",
         "network": "Jej dostęp do sieci jest ograniczony do hostów otwartych w timon.config.json — dla wszystkich wtyczek (pluginPolicy.http.allow) lub tylko dla tej (pluginPolicy.http.byPlugin) — oraz do adresów zatwierdzonych połączeń.",
+        "publicImages": "Może pobierać obrazy z dowolnego publicznego hosta bez wpisu w timon.config.json: wracają tylko sprawdzone obrazy, nigdy z sieci lokalnej ani z tego komputera. pluginPolicy.publicImages to wyłącza.",
         "secretsLead": "Sekrety, które wymienia. Zaznaczony sekret jest przyznawany tylko tej wtyczce; odznaczenie nigdy nie odbiera przyznania (to robi się w Sekretach).",
         "hostsLead": "Hosty, z którymi się łączy. Zaznaczony host jest otwierany tylko dla tej wtyczki.",
         "hostOwn": "Już otwarty dla tej wtyczki. Odznacz, aby go zamknąć: jej hosty zostaną zastąpione zaznaczonymi tutaj.",

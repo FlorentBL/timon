@@ -116,6 +116,8 @@ test('the sheet says what the vault and network permissions open, and flags a br
   assert.deepEqual(keys(['secrets:broker']), ['broker', 'brokerNoHttp!']);
   assert.deepEqual(keys(['secrets:broker', 'http:outbound', 'secrets:read']), ['read', 'broker', 'network']);
   assert.deepEqual(keys(['http:outbound']), ['network']);
+  assert.deepEqual(keys(['http:public-images']), ['publicImages']);
+  assert.deepEqual(keys(['http:outbound', 'http:public-images']), ['network', 'publicImages']);
 });
 
 test('a permission keeps its line unless the manifest names what it uses (TODO #692)', async () => {
