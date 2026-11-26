@@ -173,6 +173,41 @@ test('closing an issue says why it closes, writes no comment, and leaves the iss
   }
 });
 
+test('deleting a landed branch names the branch and its commit, writes no comment, and keeps it on "Keep the branch"', async () => {
+  const head = 'b'.repeat(40);
+  const removal: ForgeProposal = {
+    ...PROPOSAL, kind: 'delete_branch', key: 'integration:row-1:delete-branch', editable: false,
+    target: { type: 'pull', number: 53, url: 'https://github.com/acme/app/pull/53' },
+    body: 'Delete the branch `feat/login` of pull request #53 on GitHub, now merged into `main`.',
+    details: { integration_id: 'row-1', branch: 'feat/login', head_sha: head },
+  };
+  const m = await mount(({ method, url }) => {
+    if (url === `/api/ui/projects/acme/forge-proposals/${ID}`) return Response.json({ proposal: removal });
+    if (method === 'POST' && url.endsWith('/discard')) return Response.json({ proposal: { ...removal, state: 'discarded' } });
+    return undefined;
+  });
+  try {
+    const { PublishDialog } = await import('./publish-dialog');
+    await m.render(m.React.createElement(PublishDialog, { project: 'acme', proposalId: ID, onClose: () => undefined, onChange: () => undefined }));
+    await m.until(() => !!q('[data-publish-delete-branch]'), 'what the deletion does');
+    const dialog = q('[data-publish-dialog]')!.textContent ?? '';
+    assert.match(dialog, /Delete the branch of pull request #53/);
+    assert.match(dialog, /Branchfeat\/login/);
+    assert.match(dialog, /Ends onbbbbbbb/);
+    assert.match(dialog, /deleted only while it still ends on this commit/);
+    assert.equal(q('[data-publish-body]'), null, 'no comment to write');
+    assert.equal(q('[data-publish-edit]'), null, 'nothing to edit');
+    assert.equal(q('[data-publish-send]')?.textContent, 'Delete the branch');
+    assert.equal(q('[data-publish-discard]')?.textContent, 'Keep the branch');
+    assert.deepEqual(writes(m.calls), [], 'opening writes nothing');
+    await m.click(q('[data-publish-discard]'));
+    await m.until(() => writes(m.calls).length === 1, 'the deletion declined');
+    assert.equal(writes(m.calls)[0]!.url, `/api/ui/projects/acme/forge-proposals/${ID}/discard`);
+  } finally {
+    await m.unmount();
+  }
+});
+
 test('a plugin\'s proposal names the plugin and asks for a full read', async () => {
   const fromPlugin = { ...PROPOSAL, trigger: 'plugin' as const, plugin: 'acme-issues', key: 'plugin:acme-issues:thanks:209' };
   const m = await mount(({ url }) => (url === `/api/ui/projects/acme/forge-proposals/${ID}` ? Response.json({ proposal: fromPlugin }) : undefined));

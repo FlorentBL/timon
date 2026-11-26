@@ -17,8 +17,9 @@ export type ForgeProposalTrigger = 'person' | 'landing' | 'todo_resolved' | 'plu
 export type ForgeTargetType = 'issue' | 'pull';
 /** A comment; GitHub merging the base into a pull request's branch; our
  *  resolution of a contributor's conflict pushed to their branch, then a comment;
- *  the closing of an issue declined or duplicated. */
-export type ForgeProposalKind = 'comment' | 'update_branch' | 'conflict_push' | 'close_issue';
+ *  the closing of an issue declined or duplicated; the deletion of a landed
+ *  job's branch on the remote. */
+export type ForgeProposalKind = 'comment' | 'update_branch' | 'conflict_push' | 'close_issue' | 'delete_branch';
 
 export type ForgeProposal = {
   id: string;
@@ -93,6 +94,15 @@ export type IssueCloseDetails = { reason: 'not_planned' | 'duplicate' };
 export function issueCloseDetails(p: ForgeProposal): IssueCloseDetails | null {
   const d = p.kind === 'close_issue' ? p.details : null;
   return d && (d.reason === 'not_planned' || d.reason === 'duplicate') ? { reason: d.reason } : null;
+}
+
+/** The branch a landed job leaves on the remote, and the commit it must still end on. */
+export type BranchDeleteDetails = { branch: string; head_sha: string };
+
+/** The details of a remote branch's deletion, or null when the daemon wrote none. */
+export function branchDeleteDetails(p: ForgeProposal): BranchDeleteDetails | null {
+  const d = p.kind === 'delete_branch' ? p.details : null;
+  return d && text(d.branch) && text(d.head_sha) ? { branch: d.branch, head_sha: d.head_sha } : null;
 }
 
 /** The details of a conflict push, or null when the daemon wrote none. */
