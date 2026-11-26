@@ -3,10 +3,11 @@ import { proxyJson } from '@/lib/ui/proxy';
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
-type Ctx = { params: { id: string } };
+type Ctx = { params: Promise<{ id: string }> };
 
 // Only the sha and an optional comment cross: the daemon validates both.
-export async function POST(req: Request, { params }: Ctx): Promise<Response> {
+export async function POST(req: Request, props: Ctx): Promise<Response> {
+  const params = await props.params;
   const body = await req.json().catch(() => ({})) as { sha?: unknown; comment?: unknown };
   return proxyJson('POST', `/api/tasks/${encodeURIComponent(params.id)}/mark-merged`, {
     sha: body.sha,

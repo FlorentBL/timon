@@ -5,10 +5,8 @@ export const dynamic = 'force-dynamic';
 
 const ACTIONS = new Set(['start', 'stop', 'restart', 'rebuild']);
 
-export async function POST(
-  req: Request,
-  { params }: { params: { slug: string; action: string } },
-): Promise<Response> {
+export async function POST(req: Request, props: { params: Promise<{ slug: string; action: string }> }): Promise<Response> {
+  const params = await props.params;
   if (!ACTIONS.has(params.action)) {
     return Response.json({ error: 'action must be start|stop|restart|rebuild' }, { status: 400 });
   }

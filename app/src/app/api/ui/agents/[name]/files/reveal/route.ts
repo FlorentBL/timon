@@ -8,10 +8,11 @@ export const dynamic = 'force-dynamic';
  *  access to the graphical session. `client: 'desktop'` says the Electron app
  *  can show the path itself when the daemon has no desktop session; any other
  *  value is ignored. */
-export async function POST(req: Request, { params }: { params: { name: string } }): Promise<Response> {
-  const body = await req.json().catch(() => ({}));
-  const { path: rawPath, client } = body as { path?: unknown; client?: unknown };
-  const path = typeof rawPath === 'string' ? rawPath : '';
-  return proxyJson('POST', `/api/agents/${encodeURIComponent(params.name)}/files/reveal`,
-    client === 'desktop' ? { path, client } : { path });
+export async function POST(req: Request, props: { params: Promise<{ name: string }> }): Promise<Response> {
+ const params = await props.params;
+ const body = await req.json().catch(() => ({}));
+ const { path: rawPath, client } = body as { path?: unknown; client?: unknown };
+ const path = typeof rawPath === 'string' ? rawPath : '';
+ return proxyJson('POST', `/api/agents/${encodeURIComponent(params.name)}/files/reveal`,
+   client === 'desktop' ? { path, client } : { path });
 }

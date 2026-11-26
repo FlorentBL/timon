@@ -4,12 +4,13 @@ import { forwardHook, forwardHookQuery, PLUGIN_HOOK_SLUG_RE, PLUGIN_HOOK_NAME_RE
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
-type Params = { params: { plugin: string; name: string } };
+type Params = { params: Promise<{ plugin: string; name: string }> };
 
 /** The URL copied from a plugin's settings: same path on the app and the daemon.
  *  Always this app's own daemon, whatever machine a browser has switched to:
  *  the sender is an outside service, and the URL it was given names this host. */
-export async function POST(req: Request, { params }: Params): Promise<Response> {
+export async function POST(req: Request, props: Params): Promise<Response> {
+  const params = await props.params;
   // Same answer as the daemon for an unknown webhook: no oracle on what is installed.
   if (!PLUGIN_HOOK_SLUG_RE.test(params.plugin) || !PLUGIN_HOOK_NAME_RE.test(params.name)) {
     return Response.json({ error: 'authentication failed' }, { status: 401 });
@@ -18,7 +19,8 @@ export async function POST(req: Request, { params }: Params): Promise<Response> 
 }
 
 /** A sender's subscription check (Meta's `hub.challenge`), answered by the daemon alone. */
-export async function GET(req: Request, { params }: Params): Promise<Response> {
+export async function GET(req: Request, props: Params): Promise<Response> {
+  const params = await props.params;
   if (!PLUGIN_HOOK_SLUG_RE.test(params.plugin) || !PLUGIN_HOOK_NAME_RE.test(params.name)) {
     return Response.json({ error: 'authentication failed' }, { status: 401 });
   }

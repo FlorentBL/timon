@@ -4,7 +4,8 @@ export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
 /** Bytes of a previewable file outside the agent's folder (see `../route.ts`). */
-export async function GET(req: Request, { params }: { params: { name: string } }): Promise<Response> {
+export async function GET(req: Request, props: { params: Promise<{ name: string }> }): Promise<Response> {
+  const params = await props.params;
   const url = new URL(req.url);
   const path = url.searchParams.get('path') ?? '';
   if (!path) {

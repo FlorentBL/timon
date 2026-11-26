@@ -5,10 +5,8 @@ export const dynamic = 'force-dynamic';
 
 /** The page of a pull request, read from the forge. Only `fresh` and
  *  `updated` cross: the daemon validates both. */
-export async function GET(
-  req: Request,
-  { params }: { params: { slug: string; number: string } },
-): Promise<Response> {
+export async function GET(req: Request, props: { params: Promise<{ slug: string; number: string }> }): Promise<Response> {
+  const params = await props.params;
   const from = new URL(req.url).searchParams;
   const query = new URLSearchParams();
   for (const key of ['fresh', 'updated']) {

@@ -7,7 +7,8 @@ export const dynamic = 'force-dynamic';
 /** The URL copied from the Triggers page: same path on the app and the daemon.
  *  Always this app's own daemon: the sender is an outside service, never a
  *  browser with an active machine. */
-export async function POST(req: Request, { params }: { params: { slug: string } }): Promise<Response> {
+export async function POST(req: Request, props: { params: Promise<{ slug: string }> }): Promise<Response> {
+  const params = await props.params;
   // Same answer as the daemon for an unknown route: no oracle on the names.
   if (!TRIGGER_SLUG_RE.test(params.slug)) return Response.json({ error: 'authentication failed' }, { status: 401 });
   try {

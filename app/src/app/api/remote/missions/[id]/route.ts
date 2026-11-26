@@ -6,7 +6,8 @@ import { getMission, killMission } from '@/lib/orchestrator';
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
-export async function GET(req: Request, { params }: { params: { id: string } }): Promise<Response> {
+export async function GET(req: Request, props: { params: Promise<{ id: string }> }): Promise<Response> {
+  const params = await props.params;
   const auth = authenticate(req, `/missions/:id`);
   if (auth instanceof NextResponse) return auth;
   const mission = await getMission(params.id);
@@ -26,7 +27,8 @@ export async function GET(req: Request, { params }: { params: { id: string } }):
   });
 }
 
-export async function DELETE(req: Request, { params }: { params: { id: string } }): Promise<Response> {
+export async function DELETE(req: Request, props: { params: Promise<{ id: string }> }): Promise<Response> {
+  const params = await props.params;
   const auth = authenticate(req, `/missions/:id`);
   if (auth instanceof NextResponse) return auth;
   const ok = await killMission(params.id);

@@ -6,7 +6,8 @@ import { extractAssistantText, getMission } from '@/lib/orchestrator';
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
-export async function GET(req: Request, { params }: { params: { id: string } }): Promise<Response> {
+export async function GET(req: Request, props: { params: Promise<{ id: string }> }): Promise<Response> {
+  const params = await props.params;
   const auth = authenticate(req, `/missions/:id/output`);
   if (auth instanceof NextResponse) return auth;
   const mission = await getMission(params.id);

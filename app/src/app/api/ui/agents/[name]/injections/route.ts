@@ -3,7 +3,8 @@ import { proxyJson } from '@/lib/ui/proxy';
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
-export async function GET(req: Request, { params }: { params: { name: string } }): Promise<Response> {
+export async function GET(req: Request, props: { params: Promise<{ name: string }> }): Promise<Response> {
+  const params = await props.params;
   const search = new URL(req.url).searchParams;
   const forward = new URLSearchParams();
   for (const key of ['mission_text', 'mission_id']) {

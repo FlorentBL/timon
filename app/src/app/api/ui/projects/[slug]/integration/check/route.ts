@@ -3,11 +3,12 @@ import { proxyJson } from '@/lib/ui/proxy';
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
-type Ctx = { params: { slug: string } };
+type Ctx = { params: Promise<{ slug: string }> };
 
 // Asks gh which account it signs in as: the stored setting, or the draft of
 // the settings dialog (its account and folder only; nothing is written).
-export async function POST(req: Request, { params }: Ctx): Promise<Response> {
+export async function POST(req: Request, props: Ctx): Promise<Response> {
+  const params = await props.params;
   const body = await req.json().catch(() => ({})) as Record<string, unknown> | null;
   const draft: Record<string, unknown> = {};
   for (const key of ['account', 'gh_config_dir'] as const) {

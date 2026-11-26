@@ -3,7 +3,8 @@ import { proxyJson, relay, sessionProxyHeaders } from '@/lib/ui/proxy';
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
-export async function GET(_req: Request, { params }: { params: { slug: string; file: string } }): Promise<Response> {
+export async function GET(_req: Request, props: { params: Promise<{ slug: string; file: string }> }): Promise<Response> {
+  const params = await props.params;
   const upstream = await relay(
     `/api/projects/${encodeURIComponent(params.slug)}/memory/${encodeURIComponent(params.file)}`,
     { cache: 'no-store', headers: sessionProxyHeaders() },
@@ -18,7 +19,8 @@ export async function GET(_req: Request, { params }: { params: { slug: string; f
   });
 }
 
-export async function PUT(req: Request, { params }: { params: { slug: string; file: string } }): Promise<Response> {
+export async function PUT(req: Request, props: { params: Promise<{ slug: string; file: string }> }): Promise<Response> {
+  const params = await props.params;
   const body = await req.text();
   const upstream = await relay(
     `/api/projects/${encodeURIComponent(params.slug)}/memory/${encodeURIComponent(params.file)}`,
@@ -31,7 +33,8 @@ export async function PUT(req: Request, { params }: { params: { slug: string; fi
   });
 }
 
-export async function DELETE(_req: Request, { params }: { params: { slug: string; file: string } }): Promise<Response> {
+export async function DELETE(_req: Request, props: { params: Promise<{ slug: string; file: string }> }): Promise<Response> {
+  const params = await props.params;
   return proxyJson(
     'DELETE',
     `/api/projects/${encodeURIComponent(params.slug)}/memory/${encodeURIComponent(params.file)}`,

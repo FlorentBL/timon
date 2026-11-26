@@ -3,7 +3,8 @@ import { proxyJson, relay, sessionProxyHeaders } from '@/lib/ui/proxy';
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
-export async function GET(req: Request, { params }: { params: { name: string } }): Promise<Response> {
+export async function GET(req: Request, props: { params: Promise<{ name: string }> }): Promise<Response> {
+  const params = await props.params;
   const url = new URL(req.url);
   const path = url.searchParams.get('path') ?? '';
   const target = `/api/agents/${encodeURIComponent(params.name)}/files`
@@ -11,14 +12,16 @@ export async function GET(req: Request, { params }: { params: { name: string } }
   return proxyJson('GET', target);
 }
 
-export async function DELETE(_req: Request, { params }: { params: { name: string } }): Promise<Response> {
+export async function DELETE(_req: Request, props: { params: Promise<{ name: string }> }): Promise<Response> {
+  const params = await props.params;
   const url = new URL(_req.url);
   const path = url.searchParams.get('path') ?? '';
   if (!path) return new Response(JSON.stringify({ error: 'path required' }), { status: 400, headers: { 'content-type': 'application/json' } });
   return proxyJson('DELETE', `/api/agents/${encodeURIComponent(params.name)}/files?path=${encodeURIComponent(path)}`);
 }
 
-export async function POST(_req: Request, { params }: { params: { name: string } }): Promise<Response> {
+export async function POST(_req: Request, props: { params: Promise<{ name: string }> }): Promise<Response> {
+  const params = await props.params;
   const url = new URL(_req.url);
   const path = url.searchParams.get('path') ?? '';
   const action = url.searchParams.get('action') ?? 'file';
@@ -32,7 +35,8 @@ export async function POST(_req: Request, { params }: { params: { name: string }
 
 /** Write with text/plain body. proxyJson() always serialises as JSON, so
  *  we do the raw fetch inline here. Keeps the file body bytes intact. */
-export async function PUT(req: Request, { params }: { params: { name: string } }): Promise<Response> {
+export async function PUT(req: Request, props: { params: Promise<{ name: string }> }): Promise<Response> {
+  const params = await props.params;
   const url = new URL(req.url);
   const path = url.searchParams.get('path') ?? '';
   if (!path) {

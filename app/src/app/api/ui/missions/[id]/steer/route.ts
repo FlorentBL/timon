@@ -7,7 +7,8 @@ export const dynamic = 'force-dynamic';
  *  the agent works. The daemon validates the body and answers how the steer
  *  landed, or `no_turn_to_steer` / `steer_unsupported` for the composer to fall
  *  back on an ordinary message or the queue. */
-export async function POST(req: Request, { params }: { params: { id: string } }): Promise<Response> {
-  const body = await req.json().catch(() => ({}));
-  return proxyJson('POST', `/api/missions/${encodeURIComponent(params.id)}/steer`, body);
+export async function POST(req: Request, props: { params: Promise<{ id: string }> }): Promise<Response> {
+ const params = await props.params;
+ const body = await req.json().catch(() => ({}));
+ return proxyJson('POST', `/api/missions/${encodeURIComponent(params.id)}/steer`, body);
 }

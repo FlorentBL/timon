@@ -7,18 +7,22 @@ export const dynamic = 'force-dynamic';
 // person's session writes them, never a token.
 const path = (slug: string): string => `/api/projects/${encodeURIComponent(slug)}/extra-dirs`;
 
-export async function GET(_req: Request, { params }: { params: { slug: string } }): Promise<Response> {
+export async function GET(_req: Request, props: { params: Promise<{ slug: string }> }): Promise<Response> {
+  const params = await props.params;
   return proxyJson('GET', path(params.slug));
 }
 
-export async function PUT(req: Request, { params }: { params: { slug: string } }): Promise<Response> {
+export async function PUT(req: Request, props: { params: Promise<{ slug: string }> }): Promise<Response> {
+  const params = await props.params;
   return proxyJson('PUT', path(params.slug), await req.json().catch(() => ({})));
 }
 
-export async function POST(req: Request, { params }: { params: { slug: string } }): Promise<Response> {
+export async function POST(req: Request, props: { params: Promise<{ slug: string }> }): Promise<Response> {
+  const params = await props.params;
   return proxyJson('POST', path(params.slug), await req.json().catch(() => ({})));
 }
 
-export async function DELETE(req: Request, { params }: { params: { slug: string } }): Promise<Response> {
+export async function DELETE(req: Request, props: { params: Promise<{ slug: string }> }): Promise<Response> {
+  const params = await props.params;
   return proxyJson('DELETE', path(params.slug), await req.json().catch(() => ({})));
 }
