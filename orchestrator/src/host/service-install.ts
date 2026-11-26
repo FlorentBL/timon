@@ -2365,19 +2365,21 @@ export function removeServiceDefinition(opts: ServiceOpts): ServiceResult {
   if (opts.platform === 'darwin') return removeDarwinDefinition(opts, lines);
   let file: string;
   let stop: ExecResult;
+  let hostFailure: string | null = null;
   if (opts.platform === 'linux') {
     file = unitPath(opts.homeDir, opts.unitName);
     stop = run(opts, lines, 'systemctl', ['--user', 'disable', '--now', opts.unitName ?? LINUX_UNIT]);
     // Written by the same install: a browser host with no daemon to serve has nothing to do.
-    removeBrowserHost(opts, lines, null);
+    hostFailure = removeBrowserHost(opts, lines, null);
   } else {
     return { ok: false, code: 1, lines, reason: `nothing to remove on ${opts.platform}` };
   }
   if (!opts.dryRun) rmSync(file, { force: true });
   lines.push(`${opts.dryRun ? '(dry-run) would remove' : 'removed'} ${file}`);
   run(opts, lines, 'systemctl', ['--user', 'daemon-reload']);
-  const ok = stop.code === 0;
-  return { ok, code: ok ? 0 : 1, lines, ...(ok ? {} : { reason: stop.stderr.trim() || 'the service could not be stopped' }) };
+  const ok = stop.code === 0 && hostFailure === null;
+  const reason = stop.code !== 0 ? stop.stderr.trim() || 'the service could not be stopped' : hostFailure;
+  return { ok, code: ok ? 0 : 1, lines, ...(ok || reason === null ? {} : { reason }) };
 }
 
 /**
@@ -2442,11 +2444,39 @@ function installedBrowserHost(opts: ServiceOpts): { unit: string; file: string }
   return existsSync(file) ? { unit, file } : null;
 }
 
-/** Stops, disables and deletes the browser host's unit. The daemon's own reload follows, or `reload` asks for one. */
-function removeBrowserHost(opts: ServiceOpts, lines: string[], why: string | null, reload = false): void {
+/** `inactive` or `failed` with no main process, read back from systemd. Anything else, or no answer, is not stopped. */
+function unitStopped(opts: ServiceOpts, unit: string): { stopped: boolean; state: string } {
+  try {
+    const res = opts.exec('systemctl', ['--user', 'show', unit, '--property=ActiveState,MainPID']);
+    const state = /^ActiveState=(\S+)/m.exec(res.stdout)?.[1];
+    const pid = /^MainPID=(\d+)/m.exec(res.stdout)?.[1];
+    if (res.code !== 0 || !state) return { stopped: false, state: 'unknown' };
+    return { stopped: (state === 'inactive' || state === 'failed') && (pid === undefined || pid === '0'), state };
+  } catch {
+    return { stopped: false, state: 'unknown' };
+  }
+}
+
+/**
+ * Stops, disables and deletes the browser host's unit. The daemon's own reload follows, or
+ * `reload` asks for one. The file goes only once systemd says the host stopped: deleted under
+ * a unit still running, it would leave a loaded unit with no definition, which nothing in
+ * Timon finds again. Returns why it did not stop, `null` once removed (or nothing to remove).
+ */
+function removeBrowserHost(opts: ServiceOpts, lines: string[], why: string | null, reload = false): string | null {
   const installed = installedBrowserHost(opts);
-  if (!installed) return;
-  run(opts, lines, 'systemctl', ['--user', 'disable', '--now', installed.unit]);
+  if (!installed) return null;
+  const disable = run(opts, lines, 'systemctl', ['--user', 'disable', '--now', installed.unit]);
+  if (!opts.dryRun) {
+    const { stopped, state } = unitStopped(opts, installed.unit);
+    if (!stopped) {
+      const detail = disable.code !== 0 ? `${disable.stderr.trim() || `exit ${disable.code}`}, ` : '';
+      const failure = `the built-in browser service ${installed.unit} did not stop (${detail}state ${state}): `
+        + `${installed.file} was kept. Stop it with: systemctl --user disable --now ${installed.unit}, then run this command again.`;
+      lines.push(failure);
+      return failure;
+    }
+  }
   if (opts.dryRun) {
     lines.push(`(dry-run) would remove ${installed.file}`);
   } else {
@@ -2455,6 +2485,7 @@ function removeBrowserHost(opts: ServiceOpts, lines: string[], why: string | nul
   }
   if (reload) run(opts, lines, 'systemctl', ['--user', 'daemon-reload']);
   if (why) lines.push(`built-in browser service removed (${installed.unit}): ${why}`);
+  return null;
 }
 
 /**
@@ -2488,10 +2519,14 @@ function syncBrowserHost(opts: ServiceOpts, lines: string[]): void {
       : `built-in browser service installed (${host.unitName}): agents can browse with no screen`);
 }
 
-/** The desktop's own removal of the Linux service (`desktop-uninstall-service.ts`): the host goes with it. */
+/**
+ * The desktop's own removal of the Linux service (`desktop-uninstall-service.ts`): the host goes
+ * with it. Throws when the host did not stop, its file kept, as the desktop does for the daemon.
+ */
 export function removeBrowserHostService(opts: ServiceOpts): string[] {
   const lines: string[] = [];
-  removeBrowserHost(opts, lines, null, true);
+  const failure = removeBrowserHost(opts, lines, null, true);
+  if (failure) throw new Error(failure);
   return lines;
 }
 
@@ -2577,8 +2612,11 @@ export function uninstallService(opts: ServiceOpts): ServiceResult {
     const res = uninstallDarwin(opts, lines);
     if (!res.ok) return res;
   } else {
+    // The host first: one that will not stop ends the uninstall with the daemon untouched, so
+    // running it again finds the daemon still installed and retries the host.
+    const hostFailure = removeBrowserHost(opts, lines, null);
+    if (hostFailure) return { ok: false, code: 1, lines, reason: hostFailure };
     run(opts, lines, 'systemctl', ['--user', 'disable', '--now', opts.unitName ?? LINUX_UNIT]);
-    removeBrowserHost(opts, lines, null);
     const file = unitPath(opts.homeDir, opts.unitName);
     if (!opts.dryRun) {
       rmSync(file, { force: true });

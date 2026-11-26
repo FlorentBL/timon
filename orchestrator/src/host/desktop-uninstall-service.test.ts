@@ -4,6 +4,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, existsSync, rmSync } from 'node:
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { removeDesktopService } from './desktop-uninstall-service.js';
+import { browserHostUnit } from './packaged-service.js';
 import { launchDaemonPath, plistPath, unitPath, type ServiceOpts } from './service-install.js';
 
 type Result = ReturnType<ServiceOpts['exec']>;
@@ -136,6 +137,50 @@ test('Windows recognises the task of its home in every revision, and no other ho
       } finally { f.clean(); }
     }
   }
+});
+
+/**
+ * The browser host was removed after the daemon, its failure swallowed: a host that would not
+ * stop lost its file while still loaded (audit I10). It goes first now, and its failure stops
+ * the removal before the daemon is touched.
+ */
+for (const hostStops of [true, false]) test(`Linux: the browser host ${hostStops ? 'stops and goes first' : 'that will not stop keeps everything in place'}`, { skip: LINUX_UNIT }, () => {
+  const calls: string[] = [];
+  const f = fixture('linux', (_cmd, args) => {
+    calls.push(args.join(' '));
+    if (args.includes('--property=LoadState,FragmentPath,Environment,NeedDaemonReload')) return ok(
+      `LoadState=loaded\nFragmentPath=${f.file}\nEnvironment=TIMON_HOME=${f.opts.timonHome}\nNeedDaemonReload=no\n`);
+    const host = args.some((a) => a.startsWith('timon-browser-'));
+    if (args.includes('disable') && host && !hostStops) return { code: 1, stdout: '', stderr: 'denied' };
+    if (args.includes('--property=ActiveState,MainPID')) return ok(host && !hostStops ? 'ActiveState=active\nMainPID=77\n' : 'ActiveState=inactive\nMainPID=0\n');
+    return ok();
+  });
+  writeFileSync(f.file, `Environment="TIMON_HOME=${f.opts.timonHome}"\n`);
+  const unit = browserHostUnit(f.opts.timonHome);
+  const hostFile = unitPath(f.opts.homeDir, unit);
+  writeFileSync(hostFile, 'host');
+  try {
+    if (hostStops) removeDesktopService(f.opts);
+    else assert.throws(() => removeDesktopService(f.opts), new RegExp(`${unit} did not stop.*systemctl --user disable --now ${unit}`));
+    assert.equal(existsSync(hostFile), !hostStops);
+    assert.equal(existsSync(f.file), !hostStops, 'the daemon follows the host');
+    const daemonStop = calls.indexOf('--user disable --now timon-orchestrator');
+    if (hostStops) assert.ok(calls.indexOf(`--user disable --now ${unit}`) < daemonStop, JSON.stringify(calls));
+    else assert.equal(daemonStop, -1, JSON.stringify(calls));
+    assert.equal(existsSync(join(f.opts.timonHome, 'valuable')), true);
+  } finally { f.clean(); }
+});
+
+test('Linux: a host left behind by an interrupted removal is removed once the daemon is gone', { skip: LINUX_UNIT }, () => {
+  const f = fixture('linux', (_cmd, args) => (args.includes('--property=ActiveState,MainPID')
+    ? ok('ActiveState=inactive\nMainPID=0\n')
+    : args.includes('show') ? { code: 4, stdout: 'LoadState=not-found\n', stderr: '' } : ok()));
+  const hostFile = unitPath(f.opts.homeDir, browserHostUnit(f.opts.timonHome));
+  try {
+    rmSync(f.file); writeFileSync(hostFile, 'host');
+    removeDesktopService(f.opts);
+    assert.equal(existsSync(hostFile), false);
+  } finally { f.clean(); }
 });
 
 test('Linux missing service accepts systemctl exit 4 without modifying anything', () => {

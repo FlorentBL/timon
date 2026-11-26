@@ -8,7 +8,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import Database from 'better-sqlite3';
 import {
   BROWSER_HOST_SETTING, browserHostEnabled, browserHostService, installedDesktopExecutable, LINUX_DESKTOP_EXECUTABLE, readStoredSetting,
@@ -17,7 +17,7 @@ import { linuxGraphicalSession } from './desktop-session.js';
 import { releaseSourceFile } from './packaged-handback.js';
 import { browserHostUnit, packagedServiceOptions, renderBrowserHostUnit, runtimeDir, runtimeReleaseDir } from './packaged-service.js';
 import {
-  installService, removeServiceDefinition, startService, statusService, stopService, uninstallService, unitPath, type ServiceOpts,
+  installService, removeBrowserHostService, removeServiceDefinition, startService, statusService, stopService, uninstallService, unitPath, type ServiceOpts,
 } from './service-install.js';
 import { servicesSharingHome } from './service-ownership.js';
 import type { ExecResult } from './types.js';
@@ -37,6 +37,8 @@ type Machine = {
   version?: string;
   /** Directory of the installed package, under the temporary home. */
   packageDir?: string;
+  /** The host's `disable --now`: `refused` fails, `ignored` succeeds; both leave it running. */
+  hostStop?: 'refused' | 'ignored';
 };
 
 function machine(m: Machine = {}) {
@@ -46,6 +48,8 @@ function machine(m: Machine = {}) {
   mkdirSync(packageRoot, { recursive: true });
   writeFileSync(desktop, '');
   const calls: string[][] = [];
+  /** Units systemd stopped: the others run once their file is there. */
+  const stopped = new Set<string>();
   const base: ServiceOpts = {
     platform: 'linux', homeDir, timonHome: join(homeDir, '.timon'), installDir: join(packageRoot, 'resources', 'orchestrator'),
     userName: 'tester', uid: 1000, heapMb: 4096, port: 3010, nodePath: desktop, exec: () => ok(),
@@ -56,10 +60,28 @@ function machine(m: Machine = {}) {
     if (name !== 'systemctl') return name === 'loginctl' ? { code: 1, stdout: '', stderr: 'not logged in or lingering' } : ok();
     if (args[1] === 'show-environment') return ok(m.userEnv ?? 'HOME=/home/tester\nPATH=/usr/bin\n');
     if (args[0] === 'is-active') return m.displayManager ? ok('active\n') : { code: 3, stdout: 'inactive\n', stderr: '' };
+    const target = args.at(-1)!;
+    const host = target !== opts.unitName && target.startsWith('timon-browser-');
+    if (args.includes('disable') || args[1] === 'stop') {
+      if (host && m.hostStop === 'refused') return { code: 1, stdout: '', stderr: 'Access denied' };
+      if (!host || m.hostStop !== 'ignored') stopped.add(target);
+      return ok();
+    }
+    if (args.includes('enable') || args[1] === 'start' || args[1] === 'restart') stopped.delete(target);
     if (args.includes('show')) {
       const unit = args[args.indexOf('show') + 1]!;
+      if (args.includes('--property=ActiveState,MainPID')) {
+        return ok(stopped.has(unit) || !existsSync(unitPath(homeDir, unit)) ? 'ActiveState=inactive\nMainPID=0\n' : 'ActiveState=active\nMainPID=4242\n');
+      }
       if (!existsSync(unitPath(homeDir, unit))) return ok('LoadState=not-found\n');
-      if (unit !== opts.unitName) return ok('LoadState=loaded\nActiveState=active\n');
+      if (unit !== opts.unitName) {
+        // The host's unit as systemd runs it: `servicesSharingHome` reads its command.
+        const root = dirname(desktop);
+        const node = join(root, 'resources', 'node', 'node');
+        const argv = [node, join(root, 'resources', 'orchestrator', 'dist', 'host', 'browser-host-launcher.js'), desktop, `${unit}.service`];
+        return ok(`LoadState=loaded\nNeedDaemonReload=no\nActiveState=active\nEnvironment="TIMON_HOME=${opts.timonHome}"\n`
+          + `ExecStart={ path=${node} ; argv[]=${argv.join(' ')} ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }\n`);
+      }
       return ok(`LoadState=loaded\nNeedDaemonReload=no\nActiveState=active\nUnitFileState=enabled\nWorkingDirectory=${opts.installDir}\n`
         + `Environment="TIMON_HOME=${opts.timonHome}"\n`);
     }
@@ -297,4 +319,75 @@ test('a failed first install removes the host with the daemon it was written for
   assert.equal(removeServiceDefinition(opts).ok, true);
   assert.equal(existsSync(daemonFile), false);
   assert.equal(existsSync(browserFile), false);
+});
+
+/**
+ * `disable --now` refused, or accepted while the host keeps running: deleting the file anyway
+ * left a loaded unit with no definition, and the uninstall reported a success (audit I10).
+ */
+for (const hostStop of ['refused', 'ignored'] as const) {
+  test(`uninstall: a host whose stop is ${hostStop} keeps its file, the daemon too, and the failure is said`, { skip: POSIX_PATHS }, () => {
+    const { opts, acts, browserFile, daemonFile } = machine({ hostStop });
+    assert.equal(installService(opts).ok, true);
+    const unit = browserHostUnit(opts.timonHome);
+    const before = acts().length;
+
+    const removed = uninstallService(opts);
+    assert.equal(removed.ok, false);
+    assert.notEqual(removed.code, 0);
+    assert.ok(existsSync(browserFile), 'the host file stays');
+    assert.ok(existsSync(daemonFile), 'the daemon stays, so running the command again retries the host');
+    assert.ok(!acts().slice(before).includes(`--user disable --now ${opts.unitName}`), JSON.stringify(acts()));
+    assert.match(removed.reason ?? '', new RegExp(`built-in browser service ${unit} did not stop`));
+    assert.ok((removed.reason ?? '').includes(`systemctl --user disable --now ${unit}`), removed.reason);
+    assert.ok((removed.reason ?? '').includes(browserFile), removed.reason);
+    if (hostStop === 'refused') assert.match(removed.reason ?? '', /Access denied/);
+    assert.ok(!removed.lines.some((line) => line.includes('left untouched')), 'no success line');
+  });
+}
+
+test('uninstall: once the host stops, both files go, the host first', { skip: POSIX_PATHS }, () => {
+  const { opts, acts, browserFile, daemonFile } = machine();
+  assert.equal(installService(opts).ok, true);
+  const unit = browserHostUnit(opts.timonHome);
+  const before = acts().length;
+  const removed = uninstallService(opts);
+  assert.equal(removed.ok, true, removed.lines.join('\n'));
+  assert.equal(existsSync(browserFile), false);
+  assert.equal(existsSync(daemonFile), false);
+  const done = acts().slice(before);
+  assert.ok(done.indexOf(`--user disable --now ${unit}`) < done.indexOf(`--user disable --now ${opts.unitName}`), JSON.stringify(done));
+});
+
+test('a failed first install whose host will not stop keeps the host file and says so', { skip: POSIX_PATHS }, () => {
+  const { opts, browserFile, daemonFile } = machine({ hostStop: 'refused' });
+  assert.equal(installService(opts).ok, true);
+  const res = removeServiceDefinition(opts);
+  assert.equal(res.ok, false);
+  assert.match(res.reason ?? '', /did not stop/);
+  assert.ok(existsSync(browserFile));
+  assert.equal(existsSync(daemonFile), false, 'the daemon it was written for still goes');
+});
+
+test('the desktop\'s removal of the host throws when it does not stop, and removes it when it does', { skip: POSIX_PATHS }, () => {
+  const refused = machine({ hostStop: 'refused' });
+  assert.equal(installService(refused.opts).ok, true);
+  assert.throws(() => removeBrowserHostService(refused.opts), /did not stop/);
+  assert.ok(existsSync(refused.browserFile));
+
+  const stops = machine();
+  assert.equal(installService(stops.opts).ok, true);
+  const lines = removeBrowserHostService(stops.opts);
+  assert.equal(existsSync(stops.browserFile), false);
+  assert.ok(lines.includes(`removed ${stops.browserFile}`), lines.join('\n'));
+});
+
+test('install with the setting turned off: a host that will not stop stays, and the daemon is installed', { skip: POSIX_PATHS }, () => {
+  const { opts, browserFile } = machine({ stored: 'false', hostStop: 'refused' });
+  mkdirSync(dirname(browserFile), { recursive: true });
+  writeFileSync(browserFile, 'left by a previous install');
+  const result = installService(opts);
+  assert.equal(result.ok, true, result.lines.join('\n'));
+  assert.ok(existsSync(browserFile));
+  assert.ok(result.lines.some((line) => /built-in browser service .* did not stop/.test(line)), result.lines.join('\n'));
 });

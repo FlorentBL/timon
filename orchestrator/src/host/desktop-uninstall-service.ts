@@ -41,8 +41,12 @@ export function removeDesktopService(opts: ServiceOpts): void {
     const name = opts.unitName ?? 'timon-orchestrator';
     const file = unitPath(opts.homeDir, name);
     const status = opts.exec('systemctl', ['--user', 'show', name, '--property=LoadState,FragmentPath,Environment,NeedDaemonReload']);
-    // systemctl uses exit 4 for an unknown unit on some distributions.
-    if (!existsSync(file) && (status.code === 0 || status.code === 4) && /^LoadState=not-found$/m.test(status.stdout)) return;
+    // systemctl uses exit 4 for an unknown unit on some distributions. A browser host left by a
+    // removal that stopped there is still this home's (its name is the home's hash).
+    if (!existsSync(file) && (status.code === 0 || status.code === 4) && /^LoadState=not-found$/m.test(status.stdout)) {
+      removeBrowserHostService(opts);
+      return;
+    }
     if (status.code !== 0) throw new Error(`Cannot inspect systemd: ${status.stderr.trim() || status.code}`);
     if (!existsSync(file) || !status.stdout.split('\n').includes(`FragmentPath=${file}`)) {
       throw new Error('Cannot verify the installed systemd unit.');
@@ -59,6 +63,9 @@ export function removeDesktopService(opts: ServiceOpts): void {
       (_, escape: string) => escape.startsWith('x') ? String.fromCharCode(parseInt(escape.slice(1), 16)) : escape);
     sameHome(liveHome, opts.timonHome);
     if (!/^NeedDaemonReload=no$/m.test(status.stdout)) throw new Error('The systemd unit has pending changes. Reload it before uninstalling.');
+    // The browser host the daemon serves goes first, and throws when it does not stop: the
+    // daemon is then untouched, and the next removal finds it and tries the host again.
+    removeBrowserHostService(opts);
     checked('systemctl', ['--user', 'disable', '--now', name]);
     const state = checked('systemctl', ['--user', 'show', name, '--property=ActiveState,MainPID']);
     if (!/^MainPID=0$/m.test(state.stdout) || !/^ActiveState=(inactive|failed)$/m.test(state.stdout)) {
@@ -66,8 +73,6 @@ export function removeDesktopService(opts: ServiceOpts): void {
     }
     rmSync(file, { force: true });
     checked('systemctl', ['--user', 'daemon-reload']);
-    // The browser host the daemon served has nothing left to do.
-    try { removeBrowserHostService(opts); } catch { /* best effort, the daemon is already gone */ }
     return;
   } else if (opts.platform === 'win32') {
     // Query through PowerShell so "missing task" is distinct from permission

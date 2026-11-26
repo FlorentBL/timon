@@ -20,7 +20,8 @@
  * same file (TODO #736). `servicesSharingHome` reads the others.
  */
 import { readFileSync, realpathSync } from 'node:fs';
-import { isAbsolute, join, relative, resolve, win32 as winPath } from 'node:path';
+import { isAbsolute, join, posix, relative, resolve, win32 as winPath } from 'node:path';
+import { LINUX_DESKTOP_EXECUTABLE } from './browser-host-service.js';
 import { homeOfPlist, homeOfTask, homeOfUnit, linuxTimonUnits, unescapeXml } from './orphan-services.js';
 import { isBrowserHostUnit } from './packaged-service.js';
 import {
@@ -198,6 +199,12 @@ export function foreignService(opts: ServiceOpts, sourceInstallDir?: string): Fo
  * A unit of this family that names no home is a helper, not a daemon; only
  * `timon-orchestrator` runs on the default home that way.
  *
+ * The built-in browser's unit (`timon-browser-<hash>`) names this home too, and
+ * opens neither its database nor a port. It is read like any other, and let
+ * through only when systemd runs the host's launcher and nothing else
+ * (`browserHostCommands`): a residual unit, edited or overridden by a drop-in,
+ * can run `dist/boot.js` on this home under that name.
+ *
  * Not read: an `EnvironmentFile=` or an `ExecStart=` that sets `TIMON_HOME`
  * itself. The shipped units load `secrets.env` that way, and neither that file
  * nor a command line is a place Timon writes the home.
@@ -205,8 +212,7 @@ export function foreignService(opts: ServiceOpts, sourceInstallDir?: string): Fo
 export function servicesSharingHome(opts: ServiceOpts): ForeignService[] {
   if (opts.platform !== 'linux') return [];
   const own = opts.unitName ?? LINUX_UNIT;
-  // The browser host names this home too, and opens neither its database nor a port.
-  return linuxTimonUnits(opts.homeDir).filter((unit) => unit !== own && !isBrowserHostUnit(unit)).flatMap((unit): ForeignService[] => {
+  return linuxTimonUnits(opts.homeDir).filter((unit) => unit !== own).flatMap((unit): ForeignService[] => {
     const effective = readEffectiveUnit(opts, unit);
     if (effective.kind === 'absent') return [];
     const service = {
@@ -218,9 +224,72 @@ export function servicesSharingHome(opts: ServiceOpts): ForeignService[] {
       return [{ ...service, home: null, installDir: null, why: 'unverified' }];
     }
     if (!samePath(effective.home, opts.timonHome, opts.platform)) return [];
-    if (unit !== LINUX_UNIT && !effective.namesHome) return [];
+    if (isBrowserHostUnit(unit)) {
+      // Its name proves nothing: only the command systemd would run makes it the host.
+      const commands = browserHostCommands(opts, unit);
+      if (commands === 'unreadable') return [{ ...service, home: null, installDir: null, why: 'unverified' }];
+      if (commands === 'host') return [];
+    } else if (unit !== LINUX_UNIT && !effective.namesHome) {
+      return [];
+    }
     return [{ ...service, home: effective.home, installDir: effective.directory, why: 'shared' }];
   });
+}
+
+/** Every property through which a unit runs a command: the host's runs one, `ExecStart`. */
+const EXEC_PROPERTIES = ['ExecCondition', 'ExecStartPre', 'ExecStart', 'ExecStartPost', 'ExecReload', 'ExecStop', 'ExecStopPost'] as const;
+
+/** What turns the launcher's Node or `timon-desktop` into a runner of any script, `dist/boot.js` included. */
+const SCRIPT_RUNNERS = ['NODE_OPTIONS', 'ELECTRON_RUN_AS_NODE'] as const;
+
+/**
+ * Is this `timon-browser-<hash>` unit the built-in browser's host and nothing else, as systemd
+ * would run it (drop-ins included)? `host`: one command, `ExecStart`, exactly what
+ * `renderBrowserHostUnit` writes for the `timon-desktop` it names: the package's Node running
+ * `browser-host-launcher.js`, which starts `timon-desktop --browser-host`. Its package root is
+ * read from the unit, not from this process: an update or a package moved since still writes
+ * a host. `other`: a command was changed or added (a residual unit edited, a drop-in), and it
+ * may well start a daemon on this home. `unreadable`: systemd's answer could not be read.
+ *
+ * systemctl prints `argv[]` joined by spaces, unquoted: the root comes from `path=`, and the
+ * whole line must then be the expected one, character for character.
+ */
+function browserHostCommands(opts: ServiceOpts, unit: string): 'host' | 'other' | 'unreadable' {
+  let stdout: string;
+  try {
+    const res = opts.exec('systemctl', ['--user', 'show', unit, `--property=${[...EXEC_PROPERTIES, 'Environment'].join(',')}`]);
+    if (res.code !== 0) return 'unreadable';
+    stdout = res.stdout;
+  } catch {
+    return 'unreadable';
+  }
+  const commands: { property: string; path: string; argv: string }[] = [];
+  let environment = '';
+  for (const line of stdout.split('\n')) {
+    const i = line.indexOf('=');
+    if (i < 0) continue;
+    const property = line.slice(0, i);
+    const value = line.slice(i + 1);
+    if (property === 'Environment') environment = value;
+    if (!(EXEC_PROPERTIES as readonly string[]).includes(property) || value === '') continue;
+    const command = /^\{ path=(.*?) ; argv\[\]=(.*?) ; ignore_errors=/.exec(value);
+    if (!command) return 'unreadable';
+    commands.push({ property, path: command[1]!, argv: command[2]! });
+  }
+  if (SCRIPT_RUNNERS.some((name) => new RegExp(`(?:^|[\\s"])${name}=`).test(environment))) return 'other';
+  const [only, ...more] = commands;
+  if (!only || more.length > 0 || only.property !== 'ExecStart') return 'other';
+  const node = posix.join('resources', 'node', 'node');
+  if (!posix.isAbsolute(only.path) || !only.path.endsWith(`/${node}`)) return 'other';
+  const root = only.path.slice(0, -node.length - 1);
+  if (root === '' || posix.normalize(root) !== root) return 'other';
+  const expected = [
+    only.path,
+    posix.join(root, 'resources', 'orchestrator', 'dist', 'host', 'browser-host-launcher.js'),
+    posix.join(root, LINUX_DESKTOP_EXECUTABLE),
+    `${unit}.service`,
+  ].join(' ');
+  return only.argv === expected ? 'host' : 'other';
 }
 
 /**
