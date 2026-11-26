@@ -285,6 +285,9 @@ export function diagnose(): DoctorReport {
   // `enforce` refuses every mission it cannot fence: nothing works until fixed.
   // In `auto` it is a warning, never a blocker.
   if (isolationBlocker) blockers.push(isolationBlocker);
+  // Not the browser alone: Chromium refuses to start, the Timon app included.
+  const sandbox = builtInBrowser?.problems.find((p) => p.id === 'no-sandbox');
+  if (sandbox) blockers.push(`${sandbox.message} Repair: ${sandbox.fix}`);
   if (cfg.host.docker === 'required' && !docker.usable) {
     blockers.push(`host.docker is "required" but Docker is unusable (${docker.detail})`);
   }
@@ -546,7 +549,9 @@ export function formatDoctor(r: DoctorReport): string {
     lines.push('', 'WARNING:', `  - the built-in terminal cannot start: ${r.terminal.reason ?? 'node-pty did not load'}`);
   }
   // A server's browser is what its agents browse with: a missing one is said again where it shows.
-  const browserProblems = r.builtInBrowser?.server ? r.builtInBrowser.problems : r.builtInBrowser?.problems.filter((p) => !p.blocking) ?? [];
+  // The sandbox is already a blocker below.
+  const browserProblems = (r.builtInBrowser?.server ? r.builtInBrowser.problems : r.builtInBrowser?.problems.filter((p) => !p.blocking) ?? [])
+    .filter((p) => p.id !== 'no-sandbox');
   if (browserProblems.length) {
     lines.push('', 'WARNING:');
     for (const p of browserProblems) lines.push(`  - built-in browser: ${p.message}${p.fix ? `  →  ${p.fix}` : ''}`);

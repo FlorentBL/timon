@@ -9,7 +9,8 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
-  builtInBrowserFacts, builtInBrowserReport, formatBuiltInBrowser, hasInstalledFonts, SERVER_FONT_PACKAGES, type BuiltInBrowserFacts,
+  builtInBrowserFacts, builtInBrowserReport, formatBuiltInBrowser, hasInstalledFonts, sandboxFacts, SERVER_FONT_PACKAGES,
+  type BuiltInBrowserFacts, type FileProbe,
 } from './built-in-browser-status.js';
 import type { BrowserHostService } from './browser-host-service.js';
 import type { BuiltInBrowserReport } from '../plugins/contract/system.js';
@@ -19,12 +20,25 @@ const UNIT = 'timon-browser-0123456789abcdef01234567';
 function facts(over: Partial<BuiltInBrowserFacts> = {}, host: Partial<NonNullable<BuiltInBrowserFacts['host']>> | null = {}): BuiltInBrowserFacts {
   return {
     platform: 'linux', providerPid: null, providerAlive: false, hostPid: null, graphicalSession: false,
-    host: host === null ? null : { unit: UNIT, enabled: true, executable: '/opt/Timon/timon-desktop', executablePresent: true, state: 'active', ...host },
-    fonts: true, apt: true, ...over,
+    host: host === null ? null : { unit: UNIT, enabled: true, executable: '/opt/Timon/timon-desktop', executablePresent: true, state: 'active', exitStatus: 0, ...host },
+    fonts: true, apt: true, sandbox: null, ...over,
   };
 }
 
 const blocking = (r: BuiltInBrowserReport) => r.problems.find((p) => p.blocking);
+
+/** A machine where the package is not installed: no file of the sandbox check exists. */
+const NO_PACKAGE: FileProbe = { exists: () => false, readText: () => null, stat: () => null };
+
+/** A fake filesystem for the sandbox check: the files it names, nothing else. */
+function probe(files: { restriction?: string | null; profile?: boolean; helper?: { uid: number; mode: number } | null; app?: boolean }): FileProbe {
+  return {
+    exists: (path) => (path.endsWith('timon-desktop') && path.includes('apparmor.d') ? files.profile === true
+      : path.endsWith('timon-desktop') ? files.app !== false : false),
+    readText: (path) => (path.endsWith('apparmor_restrict_unprivileged_userns') ? files.restriction ?? null : null),
+    stat: (path) => (path.endsWith('chrome-sandbox') ? files.helper ?? null : null),
+  };
+}
 
 test('a live provider is the desktop app, or the host when the host marker names it', () => {
   const app = builtInBrowserReport(facts({ providerPid: 42, providerAlive: true, graphicalSession: true }));
@@ -119,7 +133,7 @@ test('the facts read the provider, the host marker, the unit and the fonts of th
     const asked: string[] = [];
     const exec = (name: string, args: string[]) => {
       asked.push([name, ...args].join(' '));
-      if (args.includes('--property=ActiveState')) return { code: 0, stdout: 'ActiveState=failed\n', stderr: '' };
+      if (args.includes('--property=ActiveState')) return { code: 0, stdout: 'ActiveState=failed\nExecMainStatus=78\n', stderr: '' };
       return { code: 1, stdout: '', stderr: '' };
     };
     const browserHost: BrowserHostService = {
@@ -127,18 +141,18 @@ test('the facts read the provider, the host marker, the unit and the fonts of th
     };
     const read = builtInBrowserFacts({
       platform: 'linux', home, env: {}, exec, providerPid: 314, browserHost, apt: true,
-      unitFile: () => unitFile, alive: (pid) => pid === 314, fontDirs: [join(root, 'no-fonts')],
+      unitFile: () => unitFile, alive: (pid) => pid === 314, fontDirs: [join(root, 'no-fonts')], probe: NO_PACKAGE,
     });
     assert.deepEqual(read, {
       platform: 'linux', providerPid: 314, providerAlive: true, hostPid: 314, graphicalSession: false,
-      host: { unit: UNIT, enabled: true, executable, executablePresent: true, state: 'failed' },
-      fonts: false, apt: true,
+      host: { unit: UNIT, enabled: true, executable, executablePresent: true, state: 'failed', exitStatus: 78 },
+      fonts: false, apt: true, sandbox: null,
     });
-    assert.ok(asked.includes(`systemctl --user show ${UNIT} --property=ActiveState`));
+    assert.ok(asked.includes(`systemctl --user show ${UNIT} --property=ActiveState --property=ExecMainStatus`));
     // No unit file: systemd is not asked for its state.
     const none = builtInBrowserFacts({
       platform: 'linux', home, env: { DISPLAY: ':0' }, exec, providerPid: null, browserHost, apt: false,
-      unitFile: () => join(root, 'missing.service'), alive: () => false, fontDirs: [],
+      unitFile: () => join(root, 'missing.service'), alive: () => false, fontDirs: [], probe: NO_PACKAGE,
     });
     assert.equal(none.host?.state, null);
     assert.equal(none.graphicalSession, true);
@@ -152,4 +166,41 @@ test('the facts read the provider, the host marker, the unit and the fonts of th
     assert.equal(mac.fonts, null);
     assert.equal(asked.length, before);
   } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test('the package\'s sandbox: restricted namespaces, no profile and no setuid helper is a blocker with its repair', () => {
+  const setuid = { uid: 0, mode: 0o104755 };
+  const plain = { uid: 0, mode: 0o100755 };
+  const unusable = sandboxFacts(probe({ restriction: '1\n', profile: false, helper: plain }), '/opt/Timon');
+  assert.deepEqual(unusable, { restricted: true, profile: false, helperSetuid: false });
+  const report = builtInBrowserReport(facts({ sandbox: unusable, providerPid: 9, providerAlive: true }));
+  const problem = blocking(report);
+  assert.equal(problem?.id, 'no-sandbox');
+  assert.equal(problem?.message, 'Chromium has no usable sandbox: the Timon app and the built-in browser cannot start.');
+  assert.equal(problem?.fix, 'sudo chown root:root /opt/Timon/chrome-sandbox && sudo chmod 4755 /opt/Timon/chrome-sandbox'
+    + ' (or reinstall the package, which installs its AppArmor profile)');
+  assert.equal(report.problems.filter((p) => p.blocking).length, 1, 'the sandbox replaces the unit state as the cause');
+
+  // Any one of the three ways out is enough.
+  for (const fine of [
+    probe({ restriction: '0', profile: false, helper: plain }),
+    probe({ restriction: null, profile: false, helper: plain }),
+    probe({ restriction: '1', profile: true, helper: plain }),
+    probe({ restriction: '1', profile: false, helper: setuid }),
+  ]) {
+    const sandbox = sandboxFacts(fine, '/opt/Timon');
+    assert.equal(builtInBrowserReport(facts({ sandbox, graphicalSession: true })).problems.some((p) => p.id === 'no-sandbox'), false, JSON.stringify(sandbox));
+  }
+  // Setuid but not root, or root with a group-writable mode: not a helper Chromium accepts.
+  assert.equal(sandboxFacts(probe({ restriction: '1', helper: { uid: 1000, mode: 0o104755 } }), '/opt/Timon')?.helperSetuid, false);
+  assert.equal(sandboxFacts(probe({ restriction: '1', helper: { uid: 0, mode: 0o104775 } }), '/opt/Timon')?.helperSetuid, false);
+  // No package installed: nothing to say.
+  assert.equal(sandboxFacts(probe({ restriction: '1', app: false }), '/opt/Timon'), null);
+});
+
+test('a browser host unit failed with the launcher\'s refusal exit says the same', () => {
+  const refused = builtInBrowserReport(facts({}, { state: 'failed', exitStatus: 78 }));
+  assert.equal(blocking(refused)?.id, 'no-sandbox');
+  const crashed = builtInBrowserReport(facts({}, { state: 'failed', exitStatus: 1 }));
+  assert.equal(blocking(crashed)?.id, 'host-unit-stopped');
 });
