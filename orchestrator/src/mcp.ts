@@ -30,6 +30,7 @@ import { pinnedLaunchTarget } from './mcp-launch-proxy.js';
 import { vaultEnabled } from './secrets/availability.js';
 import { SecretStoreError, createSecret, deleteSecret, readSecretValue, updateSecret } from './secrets/store.js';
 import { mcpRelayRoute } from './mcp-relay-route.js';
+import { hasSecretArgs, maskSecretArgs, secretArgSpot } from './mcp-arg-secrets.js';
 import {
   McpOAuthVaultUnavailableError, forgetMcpOAuthTokens, mcpOAuthVaultAvailable, readMcpOAuthClientSecret, readMcpOAuthTokens,
   storeMcpOAuthClientSecret, storeMcpOAuthTokens,
@@ -84,6 +85,13 @@ export type McpStoredHttpConfig = McpHttpConfig & {
  */
 export type McpStoredStdioConfig = McpStdioConfig & {
   env_secrets?: Record<string, McpHeaderSecret>;
+  /**
+   * By index in `args`, the vault secret holding the credential of that
+   * argument (TODO #1181, `mcp-arg-secrets.ts`): the file's argument reads
+   * `prefix` + `***`, the bridge reads `prefix` + the value. Same rules as
+   * `env_secrets`.
+   */
+  args_secrets?: Record<string, McpHeaderSecret>;
 };
 
 /** A server as its file holds it (`McpServer` plus the storage-only fields). */
@@ -479,7 +487,7 @@ export function missionTransport(
 ): { transport: McpStdioConfig | McpHttpConfig } | { refusal: string } {
   const stored = existing?.transport;
   if (incoming.type === 'stdio') {
-    const { env_secrets: _dropped, ...rest } = incoming as McpStoredStdioConfig;
+    const { env_secrets: _dropped, args_secrets: _droppedArgs, ...rest } = incoming as McpStoredStdioConfig;
     // A masked variable stays masked: `upsertMcp` carries the stored value over
     // itself, from the vault or the file. Refused here first, so that the
     // mission's refusal is audited and says why.
@@ -487,6 +495,10 @@ export function missionTransport(
       if (value !== SECRET_MASK) continue;
       const why = maskedEnvGap(stored ?? null, rest, key);
       if (why) return { refusal: maskedRefusal('env', key, why) };
+    }
+    for (const { index, prefix } of maskedArgs(rest)) {
+      const why = maskedArgGap(stored ?? null, rest, index, prefix);
+      if (why) return { refusal: maskedRefusal('args', String(index), why) };
     }
     return { transport: rest };
   }
@@ -510,10 +522,44 @@ function maskedHeaderGap(stored: McpStoredServer['transport'] | null, url: strin
   return 'no stored value';
 }
 
+/** The indexes of `args` whose credential the vault holds. */
+function sealedArgIndexes(transport: McpStoredStdioConfig): Set<number> {
+  return new Set(Object.keys(transport.args_secrets ?? {}).map(Number));
+}
+
+/** A stdio server's arguments with every credential masked: what a reader sees, and what a target is judged on. */
+function publicArgs(transport: Pick<McpStoredStdioConfig, 'args' | 'args_secrets'>): string[] {
+  return maskSecretArgs(transport.args, sealedArgIndexes(transport as McpStoredStdioConfig));
+}
+
+/** Same command, same arguments — a credential argument's value apart, as a variable's is. */
 function sameStdioTarget(stored: McpStoredServer['transport'] | null, incoming: Pick<McpStdioConfig, 'command' | 'args'>): boolean {
   return stored?.type === 'stdio'
     && stored.command === incoming.command
-    && JSON.stringify(stored.args ?? []) === JSON.stringify(incoming.args ?? []);
+    && JSON.stringify(publicArgs(stored)) === JSON.stringify(maskSecretArgs(incoming.args));
+}
+
+/** Why a masked credential argument cannot keep its stored value; `null` when it can. */
+function maskedArgGap(stored: McpStoredServer['transport'] | null, incoming: Pick<McpStdioConfig, 'command' | 'args'>, index: number, prefix: string): string | null {
+  if (!sameStdioTarget(stored, incoming)) return stored?.type === 'stdio' ? 'command or args changed' : 'no stored value';
+  if (stored?.type !== 'stdio') return 'no stored value';
+  const ref = stored.args_secrets?.[String(index)];
+  if (ref) return (ref.prefix ?? '') === prefix ? null : 'no stored value';
+  const before = stored.args?.[index];
+  return before !== undefined && before.startsWith(prefix) && before.length > prefix.length && before.slice(prefix.length) !== SECRET_MASK
+    ? null
+    : 'no stored value';
+}
+
+/** The masked credential arguments of `incoming`: index and prefix. */
+function maskedArgs(incoming: Pick<McpStdioConfig, 'args'>): Array<{ index: number; prefix: string }> {
+  const args = incoming.args ?? [];
+  const out: Array<{ index: number; prefix: string }> = [];
+  args.forEach((arg, index) => {
+    const spot = secretArgSpot(args, index);
+    if (spot && arg === spot.prefix + SECRET_MASK) out.push({ index, prefix: spot.prefix });
+  });
+  return out;
 }
 
 /** Why a masked variable cannot keep its stored value for this command; `null` when it can. */
@@ -529,12 +575,13 @@ function maskedEnvGap(stored: McpStoredServer['transport'] | null, incoming: Pic
  * editor too: a value the vault holds is not read back (TODO #1071).
  */
 function publicStdio(transport: McpStoredStdioConfig): McpStdioConfig {
-  const { env_secrets: refs, env: stored, ...rest } = transport;
+  const { env_secrets: refs, env: stored, args_secrets: _argRefs, ...rest } = transport;
+  const args = rest.args ? { args: publicArgs(transport) } : {};
   const names = [...Object.keys(stored ?? {}), ...Object.keys(refs ?? {})];
-  return names.length ? { ...rest, env: maskValues(Object.fromEntries(names.map((name) => [name, '']))) } : rest;
+  return names.length ? { ...rest, ...args, env: maskValues(Object.fromEntries(names.map((name) => [name, '']))) } : { ...rest, ...args };
 }
 
-function maskedRefusal(field: 'env' | 'headers', key: string, why: string): string {
+function maskedRefusal(field: 'env' | 'headers' | 'args', key: string, why: string): string {
   return `${field}.${key} is the masked value (${SECRET_MASK}) and the stored secret cannot be carried over (${why}): `
     + 'send the real value, or leave the entry out';
 }
@@ -582,18 +629,25 @@ export function upsertMcp(input: UpsertMcpInput): McpStoredServer {
   const sameTarget = transport.type === 'http' && existing?.transport.type === 'http'
     && existing.transport.url === transport.url;
   let sealed: Record<string, McpHeaderSecret> = {};
+  let sealedArgs: Record<string, McpHeaderSecret> = {};
   if (transport.type === 'stdio') {
     // Same rule as headers: a stored variable keeps reaching the command it was
     // given for, and is never carried to another one.
     const { kept, clear } = resolveEnv(input.id, transport, existing?.transport ?? null);
+    const args = resolveArgs(input.id, transport, existing?.transport ?? null);
     const { refs, file } = sealOrKeep(input.id, clear, 'env');
     sealed = refs;
+    const argsSealed = sealArgs(input.id, args.file, args.clear);
+    sealedArgs = argsSealed.refs;
     const { env: _incoming, ...rest } = transport;
     const vaultHeld = { ...kept, ...refs };
+    const argsHeld = { ...args.kept, ...argsSealed.refs };
     transport = {
       ...rest,
+      ...(rest.args ? { args: argsSealed.args } : {}),
       ...(hasEntries(file) ? { env: file } : {}),
       ...(hasEntries(vaultHeld) ? { env_secrets: vaultHeld } : {}),
+      ...(hasEntries(argsHeld) ? { args_secrets: argsHeld } : {}),
     } as McpStoredStdioConfig;
   }
   if (transport.type === 'http') {
@@ -639,6 +693,7 @@ export function upsertMcp(input: UpsertMcpInput): McpStoredServer {
   } catch (err) {
     // Nothing names them: left in the vault, they would be keys nobody sees the use of.
     deleteRefs(sealed);
+    deleteRefs(sealedArgs);
     throw err;
   }
   // Only once the new record is written: a failed write leaves the server
@@ -700,11 +755,66 @@ function resolveEnv(
   return { kept, clear };
 }
 
-type VaultKind = 'header' | 'env';
+/**
+ * The credential arguments a write of a stdio server asks for: `kept`, the
+ * vault-held ones a masked value keeps, by index; `clear`, the values to seal,
+ * typed or carried over from the file; `file`, the arguments to store before
+ * sealing. A masked one that cannot keep its value is an error, as for a variable.
+ */
+function resolveArgs(
+  id: string,
+  incoming: McpStdioConfig,
+  stored: McpStoredServer['transport'] | null,
+): { file: string[]; kept: Record<string, McpHeaderSecret>; clear: Record<string, { prefix: string; value: string }> } {
+  const file = [...(incoming.args ?? [])];
+  const kept: Record<string, McpHeaderSecret> = {};
+  const clear: Record<string, { prefix: string; value: string }> = {};
+  file.forEach((arg, index) => {
+    const spot = secretArgSpot(file, index);
+    if (!spot) return;
+    const value = arg.slice(spot.prefix.length);
+    if (value !== SECRET_MASK) { clear[String(index)] = { prefix: spot.prefix, value }; return; }
+    const why = maskedArgGap(stored, incoming, index, spot.prefix);
+    if (why || stored?.type !== 'stdio') throw new Error(`mcp ${id}: ${maskedRefusal('args', String(index), why ?? 'no stored value')}`);
+    const ref = stored.args_secrets?.[String(index)];
+    if (ref) kept[String(index)] = ref;
+    else clear[String(index)] = { prefix: spot.prefix, value: (stored.args?.[index] ?? '').slice(spot.prefix.length) };
+  });
+  return { file, kept, clear };
+}
+
+/**
+ * Seals the credential arguments `clear` names into the vault: each becomes
+ * `prefix` + `***` in the returned arguments. When the vault cannot take them,
+ * they stay in clear, as variables do, and a warning names the server only.
+ */
+function sealArgs(
+  id: string, args: string[], clear: Record<string, { prefix: string; value: string }>,
+): { args: string[]; refs: Record<string, McpHeaderSecret> } {
+  const out = [...args];
+  const entries = Object.entries(clear);
+  for (const [index, { prefix, value }] of entries) out[Number(index)] = prefix + value;
+  if (!entries.length) return { args: out, refs: {} };
+  const sealed = sealHeaders(id, Object.fromEntries(entries.map(([index, { value }]) => [index, value])), 'arg');
+  if ('failure' in sealed) {
+    warnHeadersKept(id, sealed.failure, 'arg');
+    return { args: out, refs: {} };
+  }
+  const refs: Record<string, McpHeaderSecret> = {};
+  for (const [index, ref] of Object.entries(sealed.refs)) {
+    const prefix = clear[index]!.prefix;
+    refs[index] = prefix ? { ...ref, prefix } : ref;
+    out[Number(index)] = prefix + SECRET_MASK;
+  }
+  return { args: out, refs };
+}
+
+type VaultKind = 'header' | 'env' | 'arg';
 
 /** `MCP_<ID>_<HEADER>` / `MCP_<ID>_ENV_<VAR>`: the vault names secrets like environment variables. */
 function headerSecretName(id: string, header: string, kind: VaultKind = 'header'): string {
-  return `MCP_${`${id}_${kind === 'env' ? 'ENV_' : ''}${header}`.toUpperCase().replace(/[^A-Z0-9]+/g, '_')}`;
+  const tag = kind === 'env' ? 'ENV_' : kind === 'arg' ? 'ARG_' : '';
+  return `MCP_${`${id}_${tag}${header}`.toUpperCase().replace(/[^A-Z0-9]+/g, '_')}`;
 }
 
 /**
@@ -718,8 +828,8 @@ function sealHeaders(id: string, headers: Record<string, string>, kind: VaultKin
   const refs: Record<string, McpHeaderSecret> = {};
   try {
     for (const [header, typed] of Object.entries(headers)) {
-      const what = kind === 'env' ? 'variable' : 'header';
-      const value = kind === 'env' ? portablePath(typed) : typed;
+      const what = kind === 'env' ? 'variable' : kind === 'arg' ? 'argument' : 'header';
+      const value = kind === 'header' ? typed : portablePath(typed);
       const secret = createSecret({ name: headerSecretName(id, header, kind), value, note: `MCP server ${id}: ${what} ${header}` });
       refs[header] = { secret_id: secret.id, typed: true, ...(value !== typed ? { home: true as const } : {}) };
       if (readSecretValue(secret.id) !== value) return abandon(refs, 'the vault did not give the value back');
@@ -748,7 +858,7 @@ const headersKeptWarned = new Set<string>();
 function warnHeadersKept(id: string, why: string, kind: VaultKind = 'header'): void {
   if (headersKeptWarned.has(id)) return;
   headersKeptWarned.add(id);
-  const what = kind === 'env' ? 'variables' : 'headers';
+  const what = kind === 'env' ? 'variables' : kind === 'arg' ? 'credential arguments' : 'headers';
   console.warn(`[timon] mcp ${id}: its ${what} stay in its file, the secrets vault could not take them (${why}); agents do not get this server until it can`);
 }
 
@@ -795,12 +905,19 @@ export function migrateMcpHeadersToVault(): { moved: string[]; kept: string[] } 
       if (!moved.includes(id)) moved.push(id);
     }
     if (s && portableSealedPaths(s)) s = readFileRecord(id);
+    const args = s ? sealFileArgs(s) : 'none';
+    if (args === 'moved') {
+      s = readFileRecord(id);
+      if (!moved.includes(id)) moved.push(id);
+    } else if (args === 'kept' && !kept.includes(id)) {
+      kept.push(id);
+    }
     if (!s || (s.transport.type !== 'http' && s.transport.type !== 'stdio')) continue;
     const kind: VaultKind = s.transport.type === 'stdio' ? 'env' : 'header';
     const clear = (s.transport.type === 'stdio' ? s.transport.env : s.transport.headers) ?? {};
     if (!Object.values(clear).some((value) => value !== '')) continue;
     const { refs, file } = sealOrKeep(id, clear, kind);
-    if (!hasEntries(refs)) { kept.push(id); continue; }
+    if (!hasEntries(refs)) { if (!kept.includes(id)) kept.push(id); continue; }
     let next: McpStoredServer;
     if (s.transport.type === 'stdio') {
       const { env: _clear, ...rest } = s.transport;
@@ -821,6 +938,35 @@ export function migrateMcpHeadersToVault(): { moved: string[]; kept: string[] } 
     if (!moved.includes(id)) moved.push(id);
   }
   return { moved, kept };
+}
+
+/**
+ * Seals the credential arguments a stdio server's file still holds in clear
+ * (written before the vault held them, or while it was off or locked).
+ */
+function sealFileArgs(s: McpStoredServer): 'moved' | 'kept' | 'none' {
+  if (s.transport.type !== 'stdio' || !s.transport.args?.length) return 'none';
+  const t = s.transport;
+  const sealedAt = sealedArgIndexes(t);
+  const list = t.args ?? [];
+  const clear: Record<string, { prefix: string; value: string }> = {};
+  list.forEach((arg, index) => {
+    if (sealedAt.has(index)) return;
+    const spot = secretArgSpot(list, index);
+    const value = spot ? arg.slice(spot.prefix.length) : '';
+    if (spot && value !== SECRET_MASK) clear[String(index)] = { prefix: spot.prefix, value };
+  });
+  if (!hasEntries(clear)) return 'none';
+  const { args, refs } = sealArgs(s.id, list, clear);
+  if (!hasEntries(refs)) return 'kept';
+  try {
+    writeFileRecord({ ...s, transport: { ...t, args, args_secrets: { ...t.args_secrets, ...refs } } });
+  } catch (err) {
+    deleteRefs(refs);
+    warnHeadersKept(s.id, (err as Error).name, 'arg');
+    return 'kept';
+  }
+  return 'moved';
 }
 
 /**
@@ -856,7 +1002,9 @@ function portableSealedPaths(s: McpStoredServer): boolean {
 
 function headerSecretIds(s: McpStoredServer | null): string[] {
   if (s?.transport.type === 'http') return Object.values(s.transport.header_secrets ?? {}).map((ref) => ref.secret_id);
-  if (s?.transport.type === 'stdio') return Object.values(s.transport.env_secrets ?? {}).map((ref) => ref.secret_id);
+  if (s?.transport.type === 'stdio') {
+    return [...Object.values(s.transport.env_secrets ?? {}), ...Object.values(s.transport.args_secrets ?? {})].map((ref) => ref.secret_id);
+  }
   return [];
 }
 
@@ -879,8 +1027,8 @@ function forgetUnreferencedKeys(id: string, before: McpStoredServer | null, afte
 
 function withoutHeaderSecrets(transport: McpStoredStdioConfig | McpStoredHttpConfig): McpStdioConfig | McpStoredHttpConfig {
   if (transport.type === 'stdio') {
-    if (!('env_secrets' in transport)) return transport;
-    const { env_secrets: _dropped, ...rest } = transport;
+    if (!('env_secrets' in transport) && !('args_secrets' in transport)) return transport;
+    const { env_secrets: _dropped, args_secrets: _droppedArgs, ...rest } = transport;
     return rest;
   }
   if (!('header_secrets' in transport)) return transport;
@@ -1010,6 +1158,37 @@ function stdioEnv(id: string, transport: McpStoredStdioConfig): Record<string, s
 }
 
 /**
+ * A stdio server's arguments, each credential read from the vault; `null` when
+ * one cannot be (vault off, locked, secret deleted, file edited by hand), the
+ * server then left out rather than started without its key.
+ */
+function stdioArgs(id: string, transport: McpStoredStdioConfig): string[] | null {
+  const args = [...(transport.args ?? [])];
+  const entries = Object.entries(transport.args_secrets ?? {});
+  if (!entries.length) return args;
+  if (!vaultEnabled()) {
+    console.warn(`[timon] mcp ${id} unavailable: a credential argument is in the vault, which is switched off`);
+    return null;
+  }
+  for (const [index, ref] of entries) {
+    const at = Number(index);
+    const prefix = ref.prefix ?? '';
+    if (!Number.isInteger(at) || args[at] !== prefix + SECRET_MASK) {
+      console.warn(`[timon] mcp ${id} unavailable: its argument ${index} no longer matches the credential the vault holds`);
+      return null;
+    }
+    try {
+      const value = readSecretValue(ref.secret_id);
+      args[at] = prefix + (ref.home ? expandPath(value) : value);
+    } catch (err) {
+      console.warn(`[timon] mcp ${id} unavailable: its argument ${index} cannot be read from the vault (${(err as Error).name})`);
+      return null;
+    }
+  }
+  return args;
+}
+
+/**
  * Persist OAuth state for an MCP server. Used by the /oauth/* routes.
  * Returns the updated server, or null if it doesn't exist or isn't http.
  * `oauth.tokens` go to the vault (`writeRaw`); without them, the stored ones
@@ -1121,7 +1300,8 @@ function relayedServer(s: McpStoredServer): s is McpStoredServer & { transport: 
  * and the CLI starts it as before.
  */
 export function bridgedStdioServer(s: McpStoredServer): s is McpStoredServer & { transport: McpStoredStdioConfig } {
-  return s.transport.type === 'stdio' && (hasEntries(s.transport.env) || hasEntries(s.transport.env_secrets));
+  return s.transport.type === 'stdio' && (hasEntries(s.transport.env) || hasEntries(s.transport.env_secrets)
+    || hasEntries(s.transport.args_secrets) || hasSecretArgs(s.transport.args));
 }
 
 /**
@@ -1129,8 +1309,9 @@ export function bridgedStdioServer(s: McpStoredServer): s is McpStoredServer & {
  * its command and arguments — another command is another route, and the
  * old one leads nowhere.
  */
-export function stdioRelayTarget(transport: Pick<McpStdioConfig, 'command' | 'args'>): string {
-  return `stdio:${JSON.stringify([transport.command, ...(transport.args ?? [])])}`;
+export function stdioRelayTarget(transport: Pick<McpStoredStdioConfig, 'command' | 'args' | 'args_secrets'>): string {
+  // Masked: a credential argument never reaches a route, and a new key keeps the route, as a new variable does.
+  return `stdio:${JSON.stringify([transport.command, ...publicArgs(transport)])}`;
 }
 
 /** What a launch hands a CLI for a server that carries a credential (`mcp-relay.ts`). */
@@ -1199,12 +1380,13 @@ export async function resolveLaunchServers(
     if (s.transport.type === 'stdio') {
       // The bridge switched off (`TIMON_MCP_STDIO_BRIDGE`): the variables are written as before.
       const env = stdioEnv(id, s.transport);
-      if (!env) continue;
+      const args = stdioArgs(id, s.transport);
+      if (!env || !args) continue;
       out.push({
         type: 'stdio',
         name,
         command: s.transport.command,
-        args: s.transport.args ?? [],
+        args,
         env,
       });
     } else if (s.transport.type === 'http') {
@@ -1246,10 +1428,11 @@ export function mcpStdioBridgeLaunch(id: string): McpStdioLaunch | null {
   const s = readRaw(id);
   if (!s || !bridgedStdioServer(s)) return null;
   const env = stdioEnv(id, s.transport);
-  if (!env) return null;
+  const args = stdioArgs(id, s.transport);
+  if (!env || !args) return null;
   return {
     command: s.transport.command,
-    args: [...(s.transport.args ?? [])],
+    args,
     env,
     target: stdioRelayTarget(s.transport),
   };
