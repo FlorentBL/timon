@@ -134,7 +134,8 @@ test('a queued task shows the agent and the model that will really run it', asyn
     }],
   });
   assert.equal(r.queued.length, 1);
-  const [row] = r.queued;
+  const row = r.queued[0];
+  assert.ok(row, 'one queued row');
   assert.equal(row.runner, 'timon.reviewer');
   assert.equal(row.model, 'opus');
   assert.match(row.href ?? '', /timon\.reviewer(?!-ui)/);
