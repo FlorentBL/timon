@@ -43,6 +43,7 @@ import type {
   PluginForgeProposeResult, PluginForgePull, PluginForgePullDetails, PluginForgeRepository,
 } from './forge.js';
 import type { Router } from './http.js';
+import type { PluginPublicImage, PluginPublicImageOptions } from './public-images.js';
 import type { ScopedChat, ScopedLayout } from './layout.js';
 import type {
   PluginMcpServers, PluginMessages, PluginNotifications, PluginOutbox, PluginQuestions, PluginSkills,
@@ -778,6 +779,18 @@ export type PluginContext = {
   };
   /** Present ONLY with `http:outbound` (§10.4): absence is the refusal. */
   readonly fetch?: typeof globalThis.fetch;
+  /**
+   * An image from any public host (API 20), present ONLY with
+   * `http:public-images`: absence is the refusal. No `pluginPolicy.http`
+   * entry is needed; the daemon makes a bare GET (no header, cookie or body
+   * of the plugin's), towards public addresses only, each redirect judged
+   * again, under a size ceiling, a deadline and a per-plugin quota, and
+   * returns the bytes only when they are an image, typed from the bytes. An
+   * SVG comes back only with `svg: true`, and is the plugin's to sanitise.
+   * Rejects with a `PluginPublicImageError` (tell it by `name`, then `code`),
+   * or with the signal's reason when `signal` aborts.
+   */
+  readonly fetchPublicImage?: (url: string | URL, options?: PluginPublicImageOptions) => Promise<PluginPublicImage>;
   host: { exec(bin: string, args?: readonly string[], opts?: { cwd?: string }): Promise<PluginExecResult> };
   /**
    * Quota of the LLM accounts this machine uses (§10.15). Inside a request,

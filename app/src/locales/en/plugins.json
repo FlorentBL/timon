@@ -346,6 +346,7 @@
         "broker": "Calls APIs under vault identities without seeing their keys, only those granted to it by name.",
         "brokerNoHttp": "It does not declare http:outbound, so its brokered API calls will be refused.",
         "network": "Its network access is limited to the hosts opened in timon.config.json, to every plugin (pluginPolicy.http.allow) or to this one alone (pluginPolicy.http.byPlugin), and to the addresses of approved connections.",
+        "publicImages": "It can fetch images from any public host without an entry in timon.config.json: only checked images come back, never from your local network or this machine. pluginPolicy.publicImages turns this off.",
         "secretsLead": "Secrets it names. A ticked secret is granted to this plugin alone; unticking never revokes a grant (that is done from Secrets).",
         "hostsLead": "Hosts it reaches. A ticked host is opened to this plugin alone.",
         "hostOwn": "Already open to this plugin. Untick to close it: its hosts are replaced by the ones ticked here.",

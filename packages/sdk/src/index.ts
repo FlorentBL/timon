@@ -309,6 +309,17 @@ export type {
 } from '../../../orchestrator/src/plugins/contract/forge.js';
 
 /**
+ * Images from any public host, API 20 — host half. `ctx.fetchPublicImage`
+ * (`http:public-images`, sensitive) needs no `pluginPolicy.http` entry: the
+ * daemon makes a bare GET towards public addresses only and hands back the
+ * bytes when they are an image, typed from the bytes. Errors carry a `code`.
+ */
+export type {
+  PluginPublicImage, PluginPublicImageError, PluginPublicImageErrorCode, PluginPublicImageOptions,
+  PluginPublicImageType,
+} from '../../../orchestrator/src/plugins/contract/public-images.js';
+
+/**
  * The screen and the conversation, API 10 — host half. `ctx.layout`
  * (`layout:read`, `layout:propose`, `layout:presets`) reads the arrangement of
  * the account of the request and asks its owner to change it; `ctx.ui.navigate`

@@ -424,6 +424,11 @@
       "arity": 2,
       "since": 1
     },
+    "fetchPublicImage": {
+      "type": "function",
+      "arity": 2,
+      "since": 20
+    },
     "forge": {
       "type": "object",
       "since": 19

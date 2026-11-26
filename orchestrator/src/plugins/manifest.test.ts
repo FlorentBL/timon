@@ -763,6 +763,17 @@ test('a slot opened by API 19 needs a manifest that declares it', () => {
   assert.equal(SLOT_API_VERSIONS['kanban.todo.landing'], 19);
 });
 
+test('http:public-images needs API 20 and is shown apart at install', () => {
+  // A host 19 has no `ctx.fetchPublicImage`: the plugin would load there and
+  // find the member missing, without a word to its author.
+  assert.match(refusal(pkg({ apiVersion: 19, permissions: ['http:public-images'] })),
+    /permission `http:public-images` needs `apiVersion: 20`/);
+  const res = readManifest(pkg({ apiVersion: 20, permissions: ['http:public-images'] }));
+  assert.ok(res.ok, res.ok ? '' : res.message);
+  // No allowlist stands behind it, unlike `http:outbound`: the install sheet is the consent.
+  assert.ok((SENSITIVE_PLUGIN_PERMISSIONS as readonly string[]).includes('http:public-images'));
+});
+
 test('the job and Publish on GitHub dialogs join wave 19', () => {
   // Their hooks are missing from a host 18: a manifest naming either slot must
   // declare 19, or its browser half would die there on a missing import.
