@@ -136,19 +136,6 @@ if (-not $account) {
 $mine = { param($process) $account -and ((& $sidOf $process) -eq $account) }
 & $note ("pause: start, elevated: {0}, installer pid {1}, account SID {2} (from {3}), installation '{4}', data '{5}'" -f $elevated, $InstallerPid, $account, $accountSource, $InstallDir, $TimonHome)
 
-# Disabled first: its 5-minute repeating trigger would otherwise start the
-# daemon again from half-replaced files.
-& $note ("pause: task {0} is {1}" -f $task, (& $taskState))
-try {
-  $null = Disable-ScheduledTask -TaskName $task -TaskPath '\' -ErrorAction Stop
-  & $note 'pause: task disabled'
-} catch { & $note "pause: task not disabled: $($_.Exception.Message)" }
-try {
-  Stop-ScheduledTask -TaskName $task -TaskPath '\' -ErrorAction Stop
-  & $note 'pause: task stopped'
-} catch { & $note "pause: task not stopped: $($_.Exception.Message)" }
-& $note ("pause: task {0} is now {1}" -f $task, (& $taskState))
-
 # The daemon runs on the Node the package ships (resources\node\node.exe);
 # a package before it ran it on $Exe as Node. An update from one to the other
 # finds either, so both are ours.
@@ -168,6 +155,20 @@ $processes = {
     @()
   }
 }
+
+# Disabled first: its 5-minute repeating trigger would otherwise start the
+# daemon again from half-replaced files.
+& $note ("pause: task {0} is {1}" -f $task, (& $taskState))
+try {
+  $null = Disable-ScheduledTask -TaskName $task -TaskPath '\' -ErrorAction Stop
+  & $note 'pause: task disabled'
+} catch { & $note "pause: task not disabled: $($_.Exception.Message)" }
+try {
+  Stop-ScheduledTask -TaskName $task -TaskPath '\' -ErrorAction Stop
+  & $note 'pause: task stopped'
+} catch { & $note "pause: task not stopped: $($_.Exception.Message)" }
+& $note ("pause: task {0} is now {1}" -f $task, (& $taskState))
+
 $end = {
   param($process, [string]$what)
   & $note ("pause: found {0}: {1}" -f $what, (& $describe $process))
