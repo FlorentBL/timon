@@ -1012,7 +1012,9 @@
     "glassTintReset": "표면 색상",
     "glassTuningReset": "기본 흐림 및 투명도",
     "glassTuningTitle": "유리 조정",
-    "glassTuningHint": "유리의 흐림, 투명도, 색상을 한꺼번에 또는 영역별로 조정합니다.",
+    "glassTuningAdjust": "조정",
+    "glassTuningClose": "완료",
+    "glassTuningStatus": "흐림 {blur} px · 투명도 {transparency} %",
     "glassZones": {
       "general": "일반",
       "chrome": "외곽",
@@ -1020,18 +1022,10 @@
       "widgets": "위젯",
       "bubbles": "말풍선"
     },
-    "glassZoneOwn": "별도 조정",
-    "glassZoneHints": {
-      "general": "별도로 조정하지 않는 한 모든 영역이 사용하는 설정입니다.",
-      "chrome": "상단 바, 측면 메뉴, 아일랜드 사이 간격.",
-      "islands": "각 아일랜드의 반투명 판으로, 외곽과 별도로 흐려집니다.",
-      "widgets": "위젯 카드, 채팅 읽기 열, 팝업.",
-      "bubbles": "채팅 메시지."
-    },
     "glassZoneFollow": "일반 조정 따르기",
+    "glassZoneFollows": "일반 설정을 따름",
     "glassFloor": "가독성 하한",
     "glassFloorOff": "끔",
-    "glassFloorHint": "투명도와 상관없이 아일랜드, 위젯, 말풍선의 최소 불투명도로, 밝은 배경화면 위에서도 텍스트를 읽을 수 있게 합니다.",
     "glassProfiles": {
       "title": "유리 프로필",
       "hint": "유리 모양 전체를 이름으로 저장합니다: 스위치, 범위, 각 영역의 조정, 가독성 하한. 저장된 프로필은 인터페이스 맞춤 설정 메뉴에도 표시됩니다.",

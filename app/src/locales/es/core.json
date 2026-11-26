@@ -1012,7 +1012,9 @@
     "glassTintReset": "Color de la superficie",
     "glassTuningReset": "Desenfoque y transparencia por defecto",
     "glassTuningTitle": "Ajuste del cristal",
-    "glassTuningHint": "Desenfoque, transparencia y color del cristal, para todo a la vez o zona por zona.",
+    "glassTuningAdjust": "Ajustar",
+    "glassTuningClose": "Listo",
+    "glassTuningStatus": "Desenfoque {blur} px · transparencia {transparency} %",
     "glassZones": {
       "general": "General",
       "chrome": "Marco",
@@ -1020,18 +1022,10 @@
       "widgets": "Widgets",
       "bubbles": "Burbujas"
     },
-    "glassZoneOwn": "Ajustada aparte",
-    "glassZoneHints": {
-      "general": "Lo que usa cada zona salvo que se ajuste aparte.",
-      "chrome": "Barra superior, menú lateral y los espacios entre islas.",
-      "islands": "La placa esmerilada de cada isla, desenfocada aparte del marco.",
-      "widgets": "Tarjetas de widgets, la columna de lectura del chat y las ventanas emergentes.",
-      "bubbles": "Mensajes del chat."
-    },
     "glassZoneFollow": "Seguir el ajuste general",
+    "glassZoneFollows": "Sigue el ajuste general",
     "glassFloor": "Mínimo de legibilidad",
     "glassFloorOff": "Desactivado",
-    "glassFloorHint": "La opacidad mínima de islas, widgets y burbujas, sea cual sea su transparencia, para que el texto siga siendo legible sobre un fondo de pantalla claro.",
     "glassProfiles": {
       "title": "Perfiles de cristal",
       "hint": "Todo el aspecto del cristal bajo un nombre: interruptores, alcance, el ajuste de cada zona y el mínimo de legibilidad. Los perfiles guardados también se ofrecen en el menú Personalizar interfaz.",

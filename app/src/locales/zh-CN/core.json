@@ -1042,7 +1042,9 @@
     "glassTintReset": "使用界面底色",
     "glassTuningReset": "恢复默认模糊度和透明度",
     "glassTuningTitle": "玻璃效果调节",
-    "glassTuningHint": "可统一设置或按区域分别调整玻璃的模糊度、透明度和颜色。",
+    "glassTuningAdjust": "调整",
+    "glassTuningClose": "完成",
+    "glassTuningStatus": "模糊 {blur} px · 透明度 {transparency} %",
     "glassZones": {
       "general": "全局",
       "chrome": "界面框架",
@@ -1050,18 +1052,10 @@
       "widgets": "小组件",
       "bubbles": "聊天气泡"
     },
-    "glassZoneOwn": "单独设置",
-    "glassZoneHints": {
-      "general": "未单独设置的区域使用此处的设置。",
-      "chrome": "顶部栏、侧边菜单以及面板之间的空隙。",
-      "islands": "各面板的磨砂底板，与界面框架分开模糊。",
-      "widgets": "小组件卡片、聊天阅读区和弹出窗口。",
-      "bubbles": "聊天消息。"
-    },
     "glassZoneFollow": "沿用全局设置",
+    "glassZoneFollows": "跟随常规设置",
     "glassFloor": "最低不透明度",
     "glassFloorOff": "关闭",
-    "glassFloorHint": "无论透明度如何设置，面板、小组件和气泡的不透明度都不会低于此值，确保亮色壁纸上的文字清晰可读。",
     "glassProfiles": {
       "title": "玻璃效果预设",
       "hint": "为整套玻璃效果命名并保存，包括开关、应用范围、各区域设置和最低不透明度。也可从“自定义界面”菜单应用已保存的预设。",

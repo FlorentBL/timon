@@ -1012,7 +1012,9 @@
     "glassTintReset": "Cor da superfície",
     "glassTuningReset": "Desfoque e transparência padrão",
     "glassTuningTitle": "Ajuste do vidro",
-    "glassTuningHint": "Desfoque, transparência e cor do vidro, para tudo de uma vez ou zona por zona.",
+    "glassTuningAdjust": "Ajustar",
+    "glassTuningClose": "Concluído",
+    "glassTuningStatus": "Desfoque {blur} px · transparência {transparency} %",
     "glassZones": {
       "general": "Geral",
       "chrome": "Moldura",
@@ -1020,18 +1022,10 @@
       "widgets": "Widgets",
       "bubbles": "Balões"
     },
-    "glassZoneOwn": "Ajustada à parte",
-    "glassZoneHints": {
-      "general": "O que cada zona usa, a menos que seja ajustada à parte.",
-      "chrome": "Barra superior, menu lateral e os espaços entre as ilhas.",
-      "islands": "A placa fosca de cada ilha, desfocada separadamente da moldura.",
-      "widgets": "Cartões de widget, a coluna de leitura do chat e pop-ups.",
-      "bubbles": "Mensagens do chat."
-    },
     "glassZoneFollow": "Seguir o ajuste geral",
+    "glassZoneFollows": "Segue o ajuste geral",
     "glassFloor": "Piso de legibilidade",
     "glassFloorOff": "Desativado",
-    "glassFloorHint": "A menor opacidade de ilhas, widgets e balões, qualquer que seja a transparência, para que o texto continue legível sobre um papel de parede claro.",
     "glassProfiles": {
       "title": "Perfis de vidro",
       "hint": "Todo o visual de vidro sob um nome: chaves, escopo, o ajuste de cada zona e o piso de legibilidade. Os perfis salvos também aparecem no menu Personalizar a interface.",
