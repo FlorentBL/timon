@@ -65,3 +65,15 @@ export type PluginUser = {
   name: string;
   is_superadmin: boolean;
 };
+
+/**
+ * API 20 — what stands behind the current `ctx.router()` request, without
+ * naming it. `person`: someone signed in at a screen (a session, or a paired
+ * device relaying one). `mission`: an agent's mission, with the token issued to
+ * it. `service`: any other credential (the daemon token of the CLI and the MCP
+ * servers, a plugin's or a system token). No id, no token: `ctx.user()` names
+ * the account, this only says how it reached the plugin.
+ */
+export type PluginCaller = {
+  kind: 'person' | 'mission' | 'service';
+};

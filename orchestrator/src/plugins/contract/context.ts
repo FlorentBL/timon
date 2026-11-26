@@ -30,7 +30,7 @@ import type {
   PluginBrowserRecordingDetail, PluginBrowserRecordingOp, PluginBrowserRecordingRef,
 } from './browser-recordings.js';
 import type { PluginBrowserSession } from './browser.js';
-import type { PluginUser, PluginExecResult, PluginLog, PluginSettingValue, PluginSqlDatabase, PluginStorage } from './core.js';
+import type { PluginCaller, PluginUser, PluginExecResult, PluginLog, PluginSettingValue, PluginSqlDatabase, PluginStorage } from './core.js';
 import type { PluginAccountProvider, PluginPermissionSource } from './accounts.js';
 import type { PluginDocHit } from './docs.js';
 import type { PluginEdition } from './edition.js';
@@ -139,6 +139,15 @@ export type PluginContext = {
    * request (plugin job, `ctx.effect`) — there is no user account to name.
    */
   user(): PluginUser | undefined;
+  /**
+   * API 20 — whether a person, a mission or a service made the current
+   * `ctx.router()` request (`PluginCaller`). `undefined` where `user()` has no
+   * request to read (job, `ctx.effect`, event handler, webhook delivery) and
+   * for the anonymous request of a machine with no account yet. A daemon older
+   * than 20 has no `caller`: test `typeof ctx.caller === 'function'` or declare
+   * `apiVersion: 20`.
+   */
+  caller(): PluginCaller | undefined;
   /** Router mounted on `/api/plugins/<id>/`, removed on unload. */
   router(prefix?: string): Router;
   /** Cordis effect, with the same forms as the kernel: returned functions are
