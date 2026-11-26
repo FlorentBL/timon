@@ -1817,6 +1817,7 @@
       "titlePlanned": "分配给 {named}，将由 {agent} 执行：{reason}",
       "detail": "由 {agent} 执行",
       "detailPlanned": "将由 {agent} 执行",
+      "on": "{agent}（{model}）",
       "reasonPinned": "项目已将此角色固定分配给 {agent}（roles.json）",
       "reasonMissing": "{named} 不存在",
       "reasonOtherProject": "{named} 不属于此任务所在的项目",

@@ -5,6 +5,8 @@
  * task no mission ran yet, `planned` marks the agent it WILL be handed to (#1109).
  */
 
+import { backendShortName, type BackendCatalog } from '@/lib/backends';
+import { shortModelName, taskModelMark, type TaskModelMark } from '@/lib/kanban-card';
 import { t } from '@/lib/i18n';
 
 export type TaskRunBy = {
@@ -39,4 +41,42 @@ export function runByTitle(named: string, runBy: TaskRunBy): string {
   return runBy.planned
     ? t('kanbanPage.runBy.titlePlanned', { ...vars, reason })
     : t('kanbanPage.runBy.title', { ...vars, reason });
+}
+
+/** The task fields a row reads to say who runs it, and on what. */
+export type TaskRunSource = {
+  agent_name: string;
+  run_by?: TaskRunBy | null;
+  backend_override?: string | null;
+  model_override?: string | null;
+  effective_backend?: string | null;
+  effective_model?: string | null;
+};
+
+/** What a narrow row writes about a task's runner: the same facts as the card (#1203). */
+export type TaskRunView = {
+  /** The agent that runs the task, or will. */
+  agent: string;
+  /** The task names another agent: the roles chose this one. */
+  rerouted: boolean;
+  /** Short model name, else the backend's; `null` when the daemon sent neither. */
+  model: string | null;
+  mark: TaskModelMark;
+  /** Tooltip: the agent, the full backend and model, and why it is not the named agent. */
+  title: string;
+};
+
+export function taskRunView(catalog: BackendCatalog, task: TaskRunSource): TaskRunView {
+  const agent = taskRunAgent(task);
+  const backendId = task.effective_backend ?? task.backend_override ?? '';
+  const backend = backendId ? backendShortName(catalog, backendId) : '';
+  const slug = task.effective_model ?? task.model_override ?? null;
+  const mark = taskModelMark(catalog, task);
+  const model = slug ? shortModelName(slug) : backend || null;
+  const full = slug
+    ? [backend, slug].filter(Boolean).join(' / ')
+    : backend ? t('kanbanPage.defaultModel', { backend }) : null;
+  const lines = [full ? t('kanbanPage.runBy.on', { agent, model: full }) : agent];
+  if (task.run_by) lines.push(runByTitle(task.agent_name, task.run_by));
+  return { agent, rerouted: !!task.run_by, model, mark, title: lines.join('\n') };
 }

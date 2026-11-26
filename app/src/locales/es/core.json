@@ -1787,6 +1787,7 @@
       "titlePlanned": "Asignada a {named}, la ejecutará {agent}: {reason}",
       "detail": "Ejecutada por {agent}",
       "detailPlanned": "La ejecutará {agent}",
+      "on": "{agent} con {model}",
       "reasonPinned": "el proyecto fija este rol en {agent} (roles.json)",
       "reasonMissing": "{named} no existe",
       "reasonOtherProject": "{named} no pertenece al proyecto de la tarea",

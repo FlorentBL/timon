@@ -1787,6 +1787,7 @@
       "titlePlanned": "담당 {named}, 실행 예정 {agent}: {reason}",
       "detail": "실행: {agent}",
       "detailPlanned": "실행 예정: {agent}",
+      "on": "{agent} ({model})",
       "reasonPinned": "프로젝트가 이 역할을 {agent}에게 고정했습니다 (roles.json)",
       "reasonMissing": "{named}이(가) 존재하지 않습니다",
       "reasonOtherProject": "{named}은(는) 작업의 프로젝트에 속하지 않습니다",

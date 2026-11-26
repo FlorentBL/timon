@@ -1787,6 +1787,7 @@
       "titlePlanned": "Przypisane do {named}, wykona {agent}: {reason}",
       "detail": "Wykonuje {agent}",
       "detailPlanned": "Wykona {agent}",
+      "on": "{agent} na {model}",
       "reasonPinned": "projekt przypina tę rolę do {agent} (roles.json)",
       "reasonMissing": "{named} nie istnieje",
       "reasonOtherProject": "{named} nie należy do projektu zadania",

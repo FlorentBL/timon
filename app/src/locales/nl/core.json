@@ -1787,6 +1787,7 @@
       "titlePlanned": "Toegewezen aan {named}, wordt uitgevoerd door {agent}: {reason}",
       "detail": "Uitgevoerd door {agent}",
       "detailPlanned": "Wordt uitgevoerd door {agent}",
+      "on": "{agent} met {model}",
       "reasonPinned": "het project zet deze rol vast op {agent} (roles.json)",
       "reasonMissing": "{named} bestaat niet",
       "reasonOtherProject": "{named} hoort niet bij het project van de taak",
