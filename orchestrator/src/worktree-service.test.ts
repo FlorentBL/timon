@@ -12,7 +12,7 @@ test('disposing a worktree whose folder is gone clears the reference without nee
   dbApi.createTask(id, 'Stale worktree', 'no-such-agent');
   dbApi.setTaskWorktree(id, join(process.env.TIMON_HOME!, 'gone', id), `timon/task/${id}`, 'main');
   const task = dbApi.getTask(id)!;
-  assert.deepEqual(await disposeTaskWorktree(task, false), { disposed: true });
+  assert.deepEqual(await disposeTaskWorktree(task), { disposed: true });
   const after = db.prepare('SELECT worktree_path, branch_name FROM tasks WHERE id = ?').get(id);
   assert.deepEqual(after, { worktree_path: null, branch_name: null });
 });
