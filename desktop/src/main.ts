@@ -104,6 +104,8 @@ import { canUninstall, cleanupCopy, cleanupPlan, uninstallRequest, removalInstru
 import { performUninstall, prepareCleanup, stopInstalledService, verifyStopped } from './uninstall-controller.js';
 import { runUninstallHelper } from './uninstall-helper.js';
 import { runWindowsServiceShell, WINDOWS_SERVICE_FLAG } from './windows-service-shell.js';
+import { BROWSER_HOST_EXIT, browserHostRequested, launchedByBrowserHost, takeHomeFromBrowserHost } from './browser-host.js';
+import { runBrowserHost } from './browser-host-shell.js';
 import { BROWSER_ATTACH_CHANNEL, BROWSER_DETACH_CHANNEL, trustedBrowserSender } from './native-browser-protocol.js';
 
 import { DaemonStartTimeoutError, updateOffer, finishUpdate, finishUpdateDeps, updateCopy, updateFailureDialog, unmanagedDaemon, type UpdateOffer, type UpdateStage } from './data-update.js';
@@ -1880,6 +1882,56 @@ if (process.platform === 'win32' && process.argv.includes(WINDOWS_SERVICE_FLAG))
   void runWindowsServiceShell(app, process.argv).catch(() => app.exit(1));
 } else if (process.argv.includes(UNINSTALL_HELPER_FLAG)) {
   void runUninstallHelper().catch(error => { dialog.showErrorBox(DISPLAY_NAME, String(error)); app.exit(1); });
+} else if (browserHostRequested(process.argv)) {
+  // The built-in browser alone, for a Linux machine with no Timon window (`browser-host.ts`).
+  app.on('session-created', (created) => keepDictionariesLocal(created, process.platform));
+  void runBrowserHost({
+    platform: process.platform, argv: process.argv, env: process.env, pid: process.pid, execPath: process.execPath,
+    execve: (file, args, env) => {
+      // Node 22.15 and later; typed here since older @types/node do not declare it.
+      const execve = (process as { execve?: (file: string, args: readonly string[], env: NodeJS.ProcessEnv) => never }).execve;
+      if (!execve) throw new Error(`This runtime cannot start itself again: start it with ${args.slice(-2).join(' ')}`);
+      execve(file, args, env);
+    },
+    ozonePlatform: () => app.commandLine.getSwitchValue('ozone-platform'),
+    setUserData: (path) => app.setPath('userData', path),
+    requestLock: (data) => app.requestSingleInstanceLock(data),
+    whenReady: () => app.whenReady(),
+    keepRunningWithoutWindows: () => { app.on('window-all-closed', () => { /* A host serves with no window open. */ }); },
+    onSecondInstance: (listener) => { app.on('second-instance', (_event, _argv, _cwd, data) => listener(data)); },
+    onQuitRequest: (listener) => { app.on('before-quit', (event) => listener(() => event.preventDefault())); },
+    onSignal: (signal, listener) => { process.once(signal, listener); },
+    exit: (code) => app.exit(code),
+    resolveHome: () => {
+      const requested = resolve(resolveTimonHome());
+      mkdirSync(requested, { recursive: true });
+      return realpathSync(requested);
+    },
+    installLog: (home) => { installDesktopLog(home); },
+    start: async (home, headless) => {
+      const engine = new NativeBrowserEngine(home, { headless });
+      // Its capture window streams hidden, headless platform included (measured): only `capturePage` needs a shown window.
+      const media = new NativeBrowserMedia(home, profileId => engine.mediaSource(profileId));
+      const provider = await startNativeBrowserServer(home, providerCommand(() => ({ browser: engine, media })));
+      return {
+        close: async () => {
+          // The descriptor goes first: the daemon stops sending while the profiles flush.
+          await provider.close();
+          media.close();
+          await engine.close();
+        },
+      };
+    },
+    measureText: async () => {
+      const probe = new BrowserWindow({ show: false, width: 400, height: 200, webPreferences: { sandbox: true, contextIsolation: true } });
+      try {
+        await probe.loadURL('data:text/html;charset=utf-8,<span style="font:16px sans-serif">Timon</span>');
+        return Number(await probe.webContents.executeJavaScript('document.querySelector("span").getBoundingClientRect().width'));
+      } finally { probe.destroy(); }
+    },
+    log: (line) => console.log(line),
+    error: (line, cause) => { if (cause === undefined) console.error(line); else console.error(line, cause); },
+  }).catch((error: unknown) => { console.error('[browser-host] failed', error); app.exit(BROWSER_HOST_EXIT.failed); });
 } else {
 // Before any window: the class the dock matches its launcher against (`linux-desktop.ts`).
 const devName = devShellName(process.platform, app.isPackaged);
@@ -1910,9 +1962,19 @@ layoutKeeper = new WindowLayoutKeeper(readWindowLayout(desktopHome), {
 const ownBuild = shellBuild({ packaged: app.isPackaged, version: app.getVersion(), mainModifiedMs: mainModifiedMs() });
 
 // A second launch opens a window in this shell (`second-instance`), never a second shell.
-if (!app.requestSingleInstanceLock({ build: ownBuild } satisfies LaunchData)) {
-  app.quit();
-} else {
+const ownLaunch = { build: ownBuild } satisfies LaunchData;
+if (app.requestSingleInstanceLock(ownLaunch)) startShell();
+else {
+  // A browser host holding this home steps aside for the app with a screen (`browser-host.ts`).
+  void takeHomeFromBrowserHost({
+    home: desktopHome, pid: process.pid, request: () => app.requestSingleInstanceLock(ownLaunch), log: (line) => console.log(line),
+  }).then((taken) => { if (taken) startShell(); else app.quit(); }, (error: unknown) => {
+    console.error('[desktop] could not take the home from the browser host', error);
+    app.quit();
+  });
+}
+
+function startShell(): void {
   const restartAfterSetup = setupRestarter({
     validate: () => {
       if (!existsSync(join(desktopHome, 'timon.config.json'))) {
@@ -2325,6 +2387,8 @@ if (!app.requestSingleInstanceLock({ build: ownBuild } satisfies LaunchData)) {
   // three windows, each on its machine. While the interface is failing or a
   // check or update window is up, it is the gesture that brings them back.
   app.on('second-instance', (_event, _argv, _cwd, launch: unknown) => {
+    // A browser host waiting for this home asks for the lock every few seconds: not a launch.
+    if (launchedByBrowserHost(launch)) return;
     const cfg = loadDesktopConfig(desktopHome, { packaged: app.isPackaged });
     const url = originOf(cfg.app.listen);
     // Another build launched: its pages would ask for bridges this main process does not have.
@@ -2423,6 +2487,8 @@ if (!app.requestSingleInstanceLock({ build: ownBuild } satisfies LaunchData)) {
 
   // Every session, before any page loads: no spell-check dictionary from Google.
   app.on('session-created', (created) => keepDictionariesLocal(created, process.platform));
+  // Taken from a browser host after Electron was ready: the default session was created before the listener.
+  if (app.isReady()) keepDictionariesLocal(session.defaultSession, process.platform);
   app.whenReady().then(main).catch(async (e: unknown) => {
     console.error('[desktop] startup failed', e);
     // Quit only once the box is closed: on Linux the copied report would go with the app.
