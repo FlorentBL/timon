@@ -13,6 +13,7 @@ contexts are distinct; import these contracts as types in plugin code.
 - [ApiErrorBody](interfaces/ApiErrorBody.md)
 - [Dialect](interfaces/Dialect.md)
 - [PluginPolicyError](interfaces/PluginPolicyError.md)
+- [PluginPublicImageError](interfaces/PluginPublicImageError.md)
 - [SessionDriver](interfaces/SessionDriver.md)
 
 ## Type Aliases
@@ -294,6 +295,10 @@ contexts are distinct; import these contracts as types in plugin code.
 - [PluginProviderAccountPatch](type-aliases/PluginProviderAccountPatch.md)
 - [PluginProvisionedAccount](type-aliases/PluginProvisionedAccount.md)
 - [PluginProvisionInput](type-aliases/PluginProvisionInput.md)
+- [PluginPublicImage](type-aliases/PluginPublicImage.md)
+- [PluginPublicImageErrorCode](type-aliases/PluginPublicImageErrorCode.md)
+- [PluginPublicImageOptions](type-aliases/PluginPublicImageOptions.md)
+- [PluginPublicImageType](type-aliases/PluginPublicImageType.md)
 - [PluginQuestion](type-aliases/PluginQuestion.md)
 - [PluginQuestionActor](type-aliases/PluginQuestionActor.md)
 - [PluginQuestionAnswer](type-aliases/PluginQuestionAnswer.md)
