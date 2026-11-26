@@ -547,7 +547,7 @@ export const NPM_NATIVE_PACKAGE_ROOT = '${packageRoot}';
  * Variables the daemon starts the build without anything a declaration may set: what loads code into it
  * (the dynamic loader, Node's options), where it looks for programs and files, and Timon's own names.
  */
-const NPM_NATIVE_ENV_REFUSED = /^(?:LD_|DYLD_|NODE_|TIMON_|PKOS_)|^(?:PATH|HOME|USERPROFILE|TMPDIR|TEMP|TMP|SHELL|COMSPEC|PATHEXT|SYSTEMROOT)$/;
+const NPM_NATIVE_ENV_REFUSED = /^(?:LD_|DYLD_|NODE_|TIMON_)|^(?:PATH|HOME|USERPROFILE|TMPDIR|TEMP|TMP|SHELL|COMSPEC|PATHEXT|SYSTEMROOT)$/;
 
 /** A path of plain segments inside a package: no separator, no `.` or empty segment, `..` only where `allowUp`. */
 function segmentsProblem(value: unknown, allowUp: boolean): boolean {
