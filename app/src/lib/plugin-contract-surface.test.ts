@@ -267,8 +267,9 @@ test('a widget\'s tab count, dot, menu and front state join wave 19, still unrel
   assert.ok(declarations.includes('export function useWidgetInFront(): boolean;'));
 });
 
-test('the fence card joins wave 19, still unreleased', () => {
-  // A host 18 paints no `chat.fence` card: a plugin that redraws it declares 19.
+test('the fence card belongs to wave 19', () => {
+  // A host 17 paints no `chat.fence` card: a plugin that redraws it declares 19,
+  // which `SLOT_API_VERSIONS` enforces on the daemon side (`plugins/manifest.ts`).
   assert.equal(UI_KIT.useFenceGrant, useFenceGrant);
   assert.ok(platformModuleExports('ui.js').includes('useFenceGrant'));
   assert.equal(snapshot.modules['ui.js']?.useFenceGrant?.since, 19);
