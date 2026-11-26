@@ -26,9 +26,11 @@ import {
 import { whenProvidersLoaded } from './backends/registry.js';
 import {
   createWorktree, isGitRepo, currentBranch, refreshWorktreeBase, prepareWorktreeDependencies,
-  refreshMergeMessage, integrateMergeMessage, branchExists,
+  refreshMergeMessage, integrateMergeMessage, branchExists, worktreeDiskGate,
   type WorktreeInfo, type RefreshOutcome,
 } from './worktree.js';
+import { DiskPause, diskGateMessage, type DiskGate } from './disk-gate.js';
+import { formatBytes } from './storage-failure.js';
 import { agentDir } from './paths.js';
 import { notifyUser } from './notify.js';
 import { daemonMessage, type DaemonMessage } from './daemon-message.js';
@@ -1465,6 +1467,40 @@ function isNightSchedule(scheduledAt: number): boolean {
   return h >= 22 || h < 8;
 }
 
+const diskPause = new DiskPause();
+
+/**
+ * False while free space is under `TIMON_DISK_MIN_FREE_MB`: the tick starts
+ * nothing, the tasks wait as PENDING, and the user hears it once when the
+ * pause starts and once when it ends. Exported for its test.
+ */
+export function diskAllowsDispatch(gate: DiskGate = worktreeDiskGate()): boolean {
+  const change = diskPause.update(gate);
+  if (change === 'paused' && !gate.ok) {
+    const detail = diskGateMessage(gate);
+    console.warn(`[dispatcher] paused: ${detail}`);
+    notifyUser(
+      'Tasks paused: the disk is almost full',
+      `No task starts while ${detail}. Each task adds a worktree and writes to the database; ` +
+        'a full disk stops Timon itself. Free some space: dispatching resumes on its own.',
+      {
+        type: 'alert',
+        message: daemonMessage('dispatcher_disk_paused', {
+          free: formatBytes(gate.free), min: formatBytes(gate.min), dir: gate.dir,
+        }),
+      },
+    );
+  } else if (change === 'resumed') {
+    console.log('[dispatcher] resumed: free space is back above the floor');
+    notifyUser(
+      'Tasks resumed: free space is back',
+      'Free space is back above the floor (TIMON_DISK_MIN_FREE_MB): waiting tasks start again.',
+      { type: 'report', message: daemonMessage('dispatcher_disk_resumed') },
+    );
+  }
+  return gate.ok;
+}
+
 async function dispatch(): Promise<void> {
   // Before the back-pressure below: a requeue spawns nothing, and a task that
   // waits for its quota must not wait one more tick because the machine is busy.
@@ -1483,6 +1519,7 @@ async function dispatch(): Promise<void> {
     console.log(`[dispatcher] dispatch deferred: ${adm.reason}`);
     return;
   }
+  if (!diskAllowsDispatch()) return;
 
   const inProgress = dbApi.countInProgress();
   if (inProgress >= MAX_PARALLEL()) return;

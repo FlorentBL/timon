@@ -19,6 +19,14 @@
     "integration_branch_unavailable": "Integration branch {branch} is unavailable: {detail}. The task was not started, and the branch is never cut from the local base instead of {baseRef}. Fix the remote or the branch name, then retry the task.",
     "task_base_missing": "Base {base} does not exist in the repository. The task was not started: a {type} task never runs without its base. Create the branch or change the task's base, then retry it.",
     "task_worktree_unavailable": "No worktree for this {type} task ({cause}). It was not started: in the agent's own folder it would write to the checkout every agent shares. Fix the cause, then retry the task.",
+    "dispatcher_disk_paused": {
+      "title": "Tasks paused: the disk is almost full",
+      "body": "No task starts while only {free} is free for {dir}, under the floor of {min} (TIMON_DISK_MIN_FREE_MB). Each task adds a worktree and writes to the database; a full disk stops Timon itself. Free some space: dispatching resumes on its own."
+    },
+    "dispatcher_disk_resumed": {
+      "title": "Tasks resumed: free space is back",
+      "body": "Free space is back above the floor (TIMON_DISK_MIN_FREE_MB): waiting tasks start again."
+    },
     "review_verdict_unusable": {
       "title": "Review with no usable verdict: {title}",
       "body": "Review {taskId} closed without a parsable JSON verdict, so the code→review→merge chain cannot continue.\n\nThe reviewer wrote: {excerpt, select, none {(empty)} other {{excerpt}}}\n\nRe-trigger the review or decide manually (merge / new code iteration)."
