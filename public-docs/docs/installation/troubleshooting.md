@@ -248,7 +248,17 @@ does not contact the provider or verify whether a session has expired.
 
 ## Codex fails with "env: node: No such file or directory"
 
-Codex installed with npm runs on Node.js. Timon launches it with the folder it
+Codex installed with npm is a small Node.js launcher that only starts the native
+Codex program shipped in the same npm package (`@openai/codex-<os>-<arch>`).
+Timon starts that native program directly, for missions, sign-in, the version
+check and `timon doctor` alike, with the variables the launcher would have set
+(`CODEX_MANAGED_BY_NPM`, `CODEX_MANAGED_PACKAGE_ROOT`): such a Codex needs no
+Node.js. `timon doctor` and the provider page then show the native program's path,
+inside the npm package. When the native program is missing (an install made with
+`--omit=optional`, or an older Codex whose package is laid out differently), Timon
+runs the launcher, and what follows applies.
+
+Another CLI installed with npm runs on Node.js. Timon launches it with the folder it
 was found in and with the Node.js it finds on the machine: the PATH, then the
 places version managers keep it without telling a background service (nvm,
 fnm, mise, asdf, Volta, nvm-windows, Homebrew, `~/.local/bin`). When the
