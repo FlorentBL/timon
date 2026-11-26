@@ -179,3 +179,22 @@ test('a reload replays "the task is back in the queue" from the recorded answer 
   // A refusal never says it, whatever the payload claims.
   assert.equal(applyFenceGrantResolution(view(), parseFenceGrantResolution({ ...recorded, status: 'refused' })!).requeued, null);
 });
+
+test('a plugin that takes the slot offers "Allow for the project" through the contract (client API 20)', async (t) => {
+  const w = await mount(t, { body: { ok: true, resolution: { id: 'refusal-1', status: 'allowed', scope: 'project', project: 'lib' }, relaunched: true, requeued: false } });
+  const seen: Array<{ project: string | null; offered: boolean }> = [];
+  function Replacement() {
+    const ctx = w.card.useFenceGrant();
+    seen.push({ project: ctx?.grant.project ?? null, offered: typeof ctx?.allowProject === 'function' });
+    return w.React.createElement('button', { 'data-replacement': '', onClick: () => void ctx?.allowProject?.() }, ctx?.grant.scope ?? 'open');
+  }
+  const undo = w.slots.register({ slot: w.slots.CHAT_FENCE_GRANT_SLOT, pluginId: 'acme' }, Replacement);
+  t.after(undo);
+  await w.render(view());
+  assert.deepEqual(seen.at(-1), { project: null, offered: false }, 'no project in the offer: no gesture');
+  await w.render(projectView());
+  assert.deepEqual(seen.at(-1), { project: 'lib', offered: true });
+  await w.click('[data-replacement]');
+  await w.until(() => document.querySelector('[data-replacement]')?.textContent === 'project', 'the replacement to show the accord');
+  assert.deepEqual(w.calls, [{ method: 'POST', url: '/api/ui/missions/m1/fence-grants/refusal-1', body: { decision: 'allow', scope: 'project' } }]);
+});

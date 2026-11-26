@@ -278,6 +278,16 @@ test('the fence card belongs to wave 19', () => {
   assert.ok(declarations.includes('export function useFenceGrant(): FenceGrantValue | null;'));
 });
 
+test('"Allow for the project" joins the fence card in wave 20, optional for a host 19', () => {
+  // 0.1.11 shipped API 19 without it: the member is optional in the SDK, so a
+  // plugin tests it before drawing the answer instead of calling undefined.
+  assert.ok(snapshot.apiVersion >= 20);
+  const declarations = readFileSync(join(process.cwd(), '../packages/sdk/src/ui.d.ts'), 'utf8');
+  assert.ok(declarations.includes('allowProject?: (() => Promise<boolean>) | null;'));
+  assert.ok(declarations.includes('project?: string | null;'));
+  assert.ok(declarations.includes('requeued?: boolean | null;'));
+});
+
 test('the signal of a change of account opens in wave 20, with no id for the plugin', () => {
   // 0.1.11 shipped API 19 without it: a plugin importing it by name declares 20.
   assert.ok(snapshot.apiVersion >= 20);

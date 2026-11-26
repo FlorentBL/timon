@@ -465,8 +465,20 @@ declare module '@timon/ui' {
     status: 'pending' | 'allowed' | 'refused';
     /** After an accord given in this window: whether the mission started again; `null` otherwise. */
     relaunched: boolean | null;
+    /**
+     * The agent's project an accord may open the folder to; `null` when the
+     * card offers the agent alone (client API 20, absent on an older host).
+     */
+    project?: string | null;
+    /** Whose extra folders the accord joined; `null` while pending or refused (client API 20). */
+    scope?: 'agent' | 'project' | null;
+    /**
+     * `true` when the accord put back the Kanban task the refusal blocked,
+     * also after a reload of the thread; `null` when unknown (client API 20).
+     */
+    requeued?: boolean | null;
   };
-  /** What a `chat.fence` occupant is rendered for, and its two answers (client API 19). */
+  /** What a `chat.fence` occupant is rendered for, and its answers (client API 19). */
   export type FenceGrantValue = {
     grant: FenceGrantView;
     busy: boolean;
@@ -477,6 +489,13 @@ declare module '@timon/ui' {
      * once recorded.
      */
     allow(): Promise<boolean>;
+    /**
+     * Opens the folder to every agent of `grant.project`, with the same checks
+     * and relaunch as `allow`; it also takes the person's right to manage
+     * projects. `null` when the card offers no project. Client API 20: absent
+     * on an older host, so test `typeof allowProject === 'function'`.
+     */
+    allowProject?: (() => Promise<boolean>) | null;
     /** Closes the card; nothing is opened. */
     refuse(): Promise<boolean>;
   };

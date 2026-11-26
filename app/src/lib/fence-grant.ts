@@ -35,10 +35,10 @@ export type FenceGrantView = {
   /** True once the mission was relaunched after the accord given here. */
   relaunched: boolean | null;
   /**
-   * Product-only, beyond the `chat.fence` contract of the SDK (API 19): the
-   * agent's project an accord may open the folder to (null: the agent alone),
-   * whose list the accord joined, and whether it put back the Kanban task the
-   * refusal blocked.
+   * In the `chat.fence` contract since client API 20 (TODO #1189): the agent's
+   * project an accord may open the folder to (null: the agent alone), whose
+   * list the accord joined, and whether it put back the Kanban task the
+   * refusal blocked (null: unknown, or no accord).
    */
   project: string | null;
   scope: FenceGrantScope | null;

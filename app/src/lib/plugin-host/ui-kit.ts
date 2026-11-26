@@ -130,7 +130,7 @@ export const UI_KIT = {
   // `chat.secret` occupant renders, and its two gestures.
   useSecretRequest,
   // A path the mission fence refused, with the folder offered to the agent (client API 19):
-  // what a `chat.fence` occupant renders, and its two answers.
+  // what a `chat.fence` occupant renders, and its answers (`allowProject` since API 20).
   useFenceGrant,
   // Deprecated since client API 17: the `updates.banner` slot is no longer
   // painted, so this answers `null`. Kept so an API 15 plugin still loads.
