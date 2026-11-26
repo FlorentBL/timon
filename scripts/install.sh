@@ -15,7 +15,9 @@
 #      BEFORE installing anything;
 #   4. installs it (sudo is asked for the deb and the pkg only);
 #   5. on a machine with a screen, opens Timon; on a server (no display),
-#      installs the background service and prints the next step.
+#      installs the background service, checks that the built-in browser
+#      answers, and prints the next step. A server with no font gets the
+#      fonts the built-in browser needs in the same apt-get install.
 #
 # The whole script is one function called on its last line: a download cut
 # halfway runs nothing.
@@ -45,6 +47,12 @@ MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEyUUvXZE0kGYqgsXTRslQyKnF1Y5M
 K2wjSflgy5lGkUbEUzJK9zRP1Iv88aOPoObrkPVSyJWVW4fGJE2Q7N5C6w==
 -----END PUBLIC KEY-----'
 DOCS_URL='https://docs.timon-ai.com/installation/overview'
+# A server image often ships no font: the built-in browser then renders pages
+# with no text at all. The Chinese, Japanese and Korean set is heavy:
+# `timon doctor` names it instead.
+SERVER_FONTS='fonts-liberation fonts-noto-core fonts-noto-color-emoji'
+# How long the built-in browser may take to answer after the service starts.
+BROWSER_WAIT=60
 
 say() { printf '%s\n' "$*"; }
 warn() { printf 'timon-install: %s\n' "$*" >&2; }
@@ -87,6 +95,8 @@ apply_test_hooks() {
       RELEASE_P256_PUBLIC_KEY=$(cat "$TIMON_INSTALL_P256_KEY_FILE")
       RELEASE_P256_KEY_ID="${TIMON_INSTALL_P256_KEY_ID:-}"
     fi
+    TIMON_BIN_OVERRIDE="${TIMON_INSTALL_TIMON_BIN:-}"
+    FONT_DIRS_OVERRIDE="${TIMON_INSTALL_FONT_DIRS:-}"
     TESTING=1
   else
     TESTING=0
@@ -292,8 +302,11 @@ print_plan() {
     appimage) say "  install:   $APPIMAGE_PATH (no sudo; no timon command)" ;;
     pkg) say "  install:   installer -pkg -target / (sudo)" ;;
   esac
+  if [ -n "$FONT_PACKAGES" ]; then
+    say "  fonts:     $FONT_PACKAGES (this server has none; the built-in browser needs them)"
+  fi
   if [ "$SERVER" = yes ] && [ "$NO_SERVICE" = 0 ]; then
-    say "  then:      timon service install (background service)"
+    say "  then:      timon service install (background service and built-in browser)"
   elif [ "$NO_LAUNCH" = 0 ]; then
     say "  then:      open Timon"
   fi
@@ -306,7 +319,9 @@ install_package() {
       # earns a warning, so the folder and the file are made readable.
       chmod 755 "$WORK"
       chmod 644 "$PACKAGE"
-      as_root env DEBIAN_FRONTEND=noninteractive apt-get install -y "$PACKAGE" </dev/null
+      # FONT_PACKAGES is a list of package names: split on purpose.
+      # shellcheck disable=SC2086
+      as_root env DEBIAN_FRONTEND=noninteractive apt-get install -y "$PACKAGE" $FONT_PACKAGES </dev/null
       ;;
     appimage)
       mkdir -p "$(dirname "$APPIMAGE_PATH")"
@@ -320,8 +335,40 @@ install_package() {
   esac
 }
 
+# True when a font file is installed where fontconfig looks for one.
+has_fonts() {
+  if [ "$TESTING" = 1 ] && [ -n "$FONT_DIRS_OVERRIDE" ]; then
+    dirs=$(printf '%s' "$FONT_DIRS_OVERRIDE" | tr ':' ' ')
+  else
+    dirs="/usr/share/fonts /usr/local/share/fonts ${XDG_DATA_HOME:-$HOME/.local/share}/fonts $HOME/.fonts"
+  fi
+  for dir in $dirs; do
+    [ -d "$dir" ] || continue
+    found=$(find "$dir" -type f \( -name '*.ttf' -o -name '*.otf' -o -name '*.ttc' -o -name '*.pfb' -o -name '*.woff' -o -name '*.woff2' \) 2>/dev/null | head -n 1)
+    [ -n "$found" ] && return 0
+  done
+  return 1
+}
+
+# The fonts to add to the deb's apt-get install: on a server with none, the
+# ones this distribution knows (an older release lacks fonts-noto-core, and an
+# unknown name would fail the whole install).
+pick_fonts() {
+  FONT_PACKAGES=''
+  [ "$OS" = linux ] && [ "$FORMAT" = deb ] && [ "$SERVER" = yes ] || return 0
+  has_fonts && return 0
+  has apt-cache || return 0
+  for font in $SERVER_FONTS; do
+    if apt-cache show "$font" >/dev/null 2>&1; then
+      FONT_PACKAGES="${FONT_PACKAGES:+$FONT_PACKAGES }$font"
+    fi
+  done
+}
+
 timon_command() {
-  if [ -x /opt/Timon/cli/timon ] && [ "$OS" = linux ]; then
+  if [ "$TESTING" = 1 ] && [ -n "$TIMON_BIN_OVERRIDE" ]; then
+    say "$TIMON_BIN_OVERRIDE"
+  elif [ -x /opt/Timon/cli/timon ] && [ "$OS" = linux ]; then
     say /opt/Timon/cli/timon
   elif has timon; then
     command -v timon
@@ -336,6 +383,21 @@ account_step() {
   else
     say '  open the web interface through an SSH tunnel and create it there:'
     say '  https://docs.timon-ai.com/installation/remote-access#step-0-finish-the-first-run-through-an-ssh-tunnel'
+  fi
+}
+
+# Whether the browser host the service install started answers, asked through
+# timon: it knows the provider's file and the unit. An older package has no
+# such check, and says nothing.
+browser_step() {
+  "$1" help 2>/dev/null | grep -q 'doctor --browser' || return 0
+  say 'Checking the built-in browser...'
+  if "$1" doctor --browser --wait "$BROWSER_WAIT" </dev/null >"$WORK/browser.txt" 2>&1; then
+    say 'The built-in browser is ready: agents can browse with no screen.'
+  else
+    warn 'the built-in browser does not answer:'
+    sed 's/^/  /' "$WORK/browser.txt" >&2
+    warn 'check it again with: timon doctor --browser'
   fi
 }
 
@@ -371,6 +433,7 @@ after_install() {
     else
       say 'Installing the background service...'
       if "$timon_bin" service install </dev/null; then
+        browser_step "$timon_bin"
         say ''
         say 'Timon runs in the background. Next step, create your account:'
         account_step "$timon_bin"
@@ -512,6 +575,7 @@ main() {
   esac
   [ "${#A_SHA}" -eq 64 ] || die 'the release manifest gives an invalid checksum'
 
+  pick_fonts
   print_plan
   if [ "$DRY_RUN" = 1 ]; then
     say ''
