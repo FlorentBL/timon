@@ -139,7 +139,9 @@ import { reservedRouteSegment } from './reserved-routes.js';
  * cannot know its hosts in advance (a mail's images and avatars), under the
  * sensitive `http:public-images` permission and the operator's
  * `pluginPolicy.publicImages`; a manifest declaring the permission must
- * declare 20.
+ * declare 20. It also opens the `agent.folders` slot, an agent's or a
+ * project's extra folders (`useAgentFolders`, docs/SDK-COMPAT.md §139): a
+ * manifest naming it must declare 20.
  */
 export const PLUGIN_API_VERSION = 20;
 
@@ -173,6 +175,7 @@ export const SLOT_API_VERSIONS: Readonly<Record<string, number>> = Object.freeze
   'forge.publish.dialog': 19,
   'project.settings': 19,
   'chat.fence': 19,
+  'agent.folders': 20,
 });
 
 /** A public path relative to the plugin prefix: lowercase segments or `:name` parameters, never a wildcard. */
