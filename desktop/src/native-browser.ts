@@ -11,6 +11,7 @@ import {
   browserFileName, browserFileChunk, BROWSER_FILE_CHUNK_BYTES, BROWSER_MAX_FILE_BYTES,
   BROWSER_PROMPT_CHANNEL, BROWSER_RECORD_EVENT_CHANNEL, BROWSER_RECORD_STATE_CHANNEL, BROWSER_RECORD_TOGGLE_CHANNEL,
   BROWSER_ANNOTATE_EVENT_CHANNEL, BROWSER_ANNOTATE_PICK_AT_CHANNEL, BROWSER_ANNOTATE_STATE_CHANNEL, BROWSER_ANNOTATE_TOGGLE_CHANNEL,
+  BROWSER_NEEDS_SCREEN,
 } from './native-browser-protocol.js';
 import {
   RECORDING_AGENT_ALLOWED_COMMANDS, RECORDING_CONTROL_COMMANDS, RecordingSession, acceptsPageEventSize, credentialStep,
@@ -130,6 +131,14 @@ export interface NativeBrowserEngineOptions {
    * the window's webContents; absent, the window's webContents is focused.
    */
   focusWindow?: (window: BrowserWindow) => void;
+  /**
+   * Chromium runs on its headless Ozone platform (`--browser-host` on a machine with no screen).
+   * There, a hidden window has no display surface and `capturePage` rejects its tabs
+   * ("Current display surface not available for capture"): the host windows are shown, on a
+   * screen nobody sees. A stream needs no such thing. A Chrome sign-in, which opens a real Chrome
+   * window, is refused.
+   */
+  headless?: boolean;
 }
 
 const isQueued = (capture: AnnotationCapture): capture is QueuedCapture => (capture as Partial<QueuedCapture>).queued === true;
@@ -943,6 +952,10 @@ export class NativeBrowserEngine {
     if (body.action === 'chromeSigninFinish') return this.chromeSignin.finish(profileId);
     if (body.action === 'chromeSigninCancel') return this.chromeSignin.cancel(profileId);
     if (body.action === 'chromeSigninStart') {
+      if (this.options.headless) {
+        throw new BrowserCommandError('Signing in with Chrome opens a Chrome window, and this browser runs on a machine with no screen.'
+          + ' Sign in to the site directly in the built-in browser.', 409, BROWSER_NEEDS_SCREEN);
+      }
       // The cookies land in this profile's session and nowhere else.
       return this.chromeSignin.start(profileId, { executable: body.executable, url: body.url },
         this.requireProfile(profileId).session.cookies);
@@ -1211,7 +1224,7 @@ export class NativeBrowserEngine {
       this.configuredSessions.add(browserSession);
     }
     const host = new BrowserWindow({
-      show: false, width: DEFAULT_VIEWPORT.width, height: DEFAULT_VIEWPORT.height,
+      show: this.options.headless === true, width: DEFAULT_VIEWPORT.width, height: DEFAULT_VIEWPORT.height,
       useContentSize: true, skipTaskbar: true, backgroundColor: '#000000',
       webPreferences: { sandbox: true, nodeIntegration: false, contextIsolation: true, backgroundThrottling: false },
     });

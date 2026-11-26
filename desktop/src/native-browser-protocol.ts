@@ -40,9 +40,13 @@ export function browserFileChunk(value: unknown): Buffer {
   return bytes;
 }
 
+/** A refusal the provider answers with; `code` names it for the daemon, which translates the known ones. */
 export class BrowserCommandError extends Error {
-  constructor(message: string, public readonly statusCode = 400) { super(message); }
+  constructor(message: string, public readonly statusCode = 400, public readonly code?: string) { super(message); }
 }
+
+/** Code of the refusal of a command that opens a window of its own on a machine with no screen. */
+export const BROWSER_NEEDS_SCREEN = 'browser_signin_needs_screen';
 
 export function profileIdOf(value: unknown): string {
   // macOS/Windows profile directories may be case insensitive: two IDs must never alias.

@@ -69,3 +69,16 @@ test('a stream command goes to the capture, a stop ends the profile streams befo
   await command({ action: 'stop', profileId: 'a' });
   assert.deepEqual(calls, ['media:mediaStart', 'browser:navigate', 'media:close:a', 'browser:stop']);
 });
+
+test('a coded refusal reaches the daemon with its code, an uncoded one without', async () => {
+  const home = await mkdtemp(join(tmpdir(), 'timon-browser-server-'));
+  const provider = await startNativeBrowserServer(home, async (body) => {
+    throw body.action === 'coded' ? new BrowserCommandError('No screen.', 409, 'browser_signin_needs_screen') : new BrowserCommandError('Plain.', 409);
+  });
+  try {
+    const headers = { 'Content-Type': 'application/json', Authorization: `Bearer ${provider.descriptor.token}` };
+    const call = (action: string) => fetch(`${provider.descriptor.origin}/command`, { method: 'POST', headers, body: JSON.stringify({ action }) });
+    assert.deepEqual(await (await call('coded')).json(), { error: 'No screen.', code: 'browser_signin_needs_screen' });
+    assert.deepEqual(await (await call('plain')).json(), { error: 'Plain.' });
+  } finally { await provider.close(); await rm(home, { recursive: true, force: true }); }
+});

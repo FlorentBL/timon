@@ -68,7 +68,8 @@ export async function startNativeBrowserServer(
       response.end(JSON.stringify(result));
     } catch (error) {
       response.statusCode = error instanceof BrowserCommandError ? error.statusCode : 500;
-      response.end(JSON.stringify({ error: error instanceof Error ? error.message : 'Browser command failed.' }));
+      const code = error instanceof BrowserCommandError ? error.code : undefined;
+      response.end(JSON.stringify({ error: error instanceof Error ? error.message : 'Browser command failed.', ...(code ? { code } : {}) }));
     }
   });
   server.requestTimeout = 30_000;
