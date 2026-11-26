@@ -5713,8 +5713,6 @@ async function applyPackagedUpdate({ allowOlder = false } = {}) {
 async function cmdDoctor(argv) {
   if (argv.includes('--report')) return cmdDoctorReport(argv);
   if (argv.includes('--browser')) return cmdDoctorBrowser(argv);
-  // Before `diagnose()` reads the config: only a packaged install has a browser host to look for.
-  await markPackagedForDoctor();
   // A packaged CLI refuses to open data an unapproved update would migrate
   // (db.ts, TODO #535): the findings below, built without the database, still say what to do.
   let doctor;
@@ -5728,6 +5726,9 @@ async function cmdDoctor(argv) {
     };
   }
   const { diagnose, formatDoctor, refreshPinnedIdentities } = doctor;
+  // After the modules loaded, never before: marked, db.ts would refuse a pending update as a daemon
+  // does, without the findings below. Before `diagnose()`: only a packaged install has a browser host.
+  await markPackagedForDoctor();
   // The CLI asks every pinned program again: the daemon's report only reads what it last learned.
   if (typeof refreshPinnedIdentities === 'function') await refreshPinnedIdentities({ fresh: true });
   const report = diagnose();
@@ -5790,9 +5791,18 @@ async function cmdDoctorBrowser(argv) {
     process.stderr.write('timon doctor --browser: --wait takes a number of seconds, from 0 to 600\n');
     process.exit(2);
   }
+  let modules;
+  try {
+    modules = { ...await loadDist('built-in-browser'), ...await loadDist('host/built-in-browser-status') };
+  } catch (e) {
+    // An update waiting for approval: the database stays closed, and the browser unchecked.
+    if (e?.name !== 'PackagedCliUpdatePendingError') throw e;
+    process.stderr.write(`timon doctor --browser: ${e.message}\n`);
+    process.exit(1);
+  }
+  const { builtInBrowserNow, probeBuiltInBrowser, formatBuiltInBrowser } = modules;
+  // After the modules loaded, as in `timon doctor`.
   await markPackagedForDoctor();
-  const { builtInBrowserNow, probeBuiltInBrowser } = await loadDist('built-in-browser');
-  const { formatBuiltInBrowser } = await loadDist('host/built-in-browser-status');
   const deadline = Date.now() + wait * 1000;
   let answers = await probeBuiltInBrowser();
   while (!answers && Date.now() < deadline) {
