@@ -7,6 +7,11 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join, resolve } from 'node:path';
+import { pathToFileURL } from 'node:url';
+import type { ComponentType } from 'react';
 import { waitUntil } from '../../lib/test-wait';
 
 type Stored = { path: string; mode: 'read' | 'write' };
@@ -196,6 +201,56 @@ test('a refused gesture comes back to the occupant with the daemon\'s message, a
     assert.equal(host!.busy, false);
     assert.deepEqual(host!.rows.map((r) => r.path), ['/home/me/notes']);
   } finally {
+    await m.unmount();
+  }
+});
+
+/**
+ * `examples/plugin-agent-folders`, loaded as the platform loads it: plain ESM
+ * whose `react` and `@timon/ui` imports are the platform's own.
+ */
+async function loadExample(): Promise<{ apply: (ctx: unknown) => void; cleanup: () => void }> {
+  const source = readFileSync(resolve(process.cwd(), '..', 'examples', 'plugin-agent-folders', 'lib', 'client.js'), 'utf8');
+  const platform = source
+    .replace(/import React from 'react'\n/, 'const React = globalThis.__foldersTestReact\n')
+    .replace(/import \{([^}]*)\} from '@timon\/ui'\n/, 'const {$1} = globalThis.__foldersTestUi\n');
+  assert.notEqual(platform, source, 'the client still imports react and @timon/ui');
+  const React = await import('react');
+  const { UI_KIT } = await import('@/lib/plugin-host/ui-kit');
+  Object.assign(globalThis, { __foldersTestReact: React, __foldersTestUi: UI_KIT });
+  const dir = mkdtempSync(join(tmpdir(), 'agent-folders-example-'));
+  const file = join(dir, 'client.mjs');
+  writeFileSync(file, platform);
+  const mod = await import(pathToFileURL(file).href) as { apply: (ctx: unknown) => void };
+  return { apply: mod.apply, cleanup: () => rmSync(dir, { recursive: true, force: true }) };
+}
+
+test('the examples/plugin-agent-folders template groups the folders by owner and switches their access with the SDK alone', async () => {
+  const fake = daemon({
+    'projects:acme': [{ path: '/srv/shared', mode: 'read' }],
+    'agents:acme.coder': [{ path: '/home/me/notes', mode: 'read' }],
+  });
+  const m = await mount(fake.fetch);
+  const example = await loadExample();
+  try {
+    const { React, slots, section } = m;
+    example.apply({
+      id: 'example-agent-folders',
+      slots: { register: (options: { slot: string }, Component: ComponentType) => slots.register({ ...options, pluginId: 'example-agent-folders' }, Component) },
+    });
+    await m.render(React.createElement(section.AgentFoldersSection, { agents: ['acme.coder'], project: 'acme', showAgent: true }));
+    await m.until(() => document.querySelectorAll('[data-example-folder]').length === 2, 'the template\'s rows');
+    assert.ok(!document.querySelector('[data-agent-folder]'), 'the product section steps aside');
+    const text = document.querySelector('[data-example-agent-folders]')?.textContent ?? '';
+    assert.ok(text.indexOf('Project acme') < text.indexOf('acme.coder'), 'the project\'s group first');
+
+    const toggle = document.querySelector<HTMLButtonElement>('[data-example-folder="/home/me/notes"] button[aria-pressed]');
+    assert.equal(toggle?.getAttribute('aria-pressed'), 'false');
+    await React.act(async () => { toggle!.click(); });
+    await m.until(() => document.querySelector('[data-example-folder="/home/me/notes"] button[aria-pressed]')?.getAttribute('aria-pressed') === 'true', 'the folder writable');
+    assert.deepEqual(fake.calls.filter((c) => c.method === 'POST').map((c) => c.body), [{ path: '/home/me/notes', mode: 'write' }]);
+  } finally {
+    example.cleanup();
     await m.unmount();
   }
 });
