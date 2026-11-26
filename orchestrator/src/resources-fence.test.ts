@@ -12,16 +12,16 @@ import { EventEmitter } from 'node:events';
 import { PassThrough } from 'node:stream';
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, posix } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { TimonConfigSchema } from './config/schema.js';
 import { findFenceBinary, probeFence, runFenceWitness } from './host/fence.js';
-import { createLandlockFence } from './host/landlock.js';
+import { createLandlockFence, LANDLOCK_FS, type LandlockRenderDeps } from './host/landlock.js';
 import { createSeatbeltFence } from './host/darwin.js';
 import { SANDBOX_EXEC } from './host/seatbelt.js';
 import { createLinuxHost } from './host/linux.js';
 import { hasSystemd } from './host/systemd.js';
-import type { FencePolicy } from './host/isolation.js';
+import { systemWritableFolders, type FencePolicy } from './host/isolation.js';
 import { TIMON_HOME, WORKSPACE_DIR, agentDir } from './paths.js';
 import { configuredAgentCwd } from './agent-config.js';
 import type { HostFence, HostFenceProbe, HostFenceWitness } from './host/types.js';
@@ -710,6 +710,34 @@ const realSkip = !REAL ? 'no timon-fence for this machine (Linux with a C compil
   : !REAL_PROBE?.available ? `no fence on this kernel: ${REAL_PROBE?.reason}`
   : !onPath('nice') || !onPath('ionice') ? 'nice or ionice missing' : false;
 
+/**
+ * A scratch root for a test that runs the real launcher, and the fence over
+ * it. The rendering lists every folder on the way to a refused path, so a
+ * Timon home inside the root brings each ancestor of the root into the
+ * policy: under a crowded `/tmp` (tens of thousands of entries on a working
+ * machine) the policy went past the rule ceiling on one machine and not on
+ * another. The root goes under the runtime folder when there is one, and the
+ * fence reads every folder between `/` and the root as holding the next one
+ * alone: fewer grants only narrow what these tests run under, and the rule
+ * count no longer depends on what else lives there.
+ */
+function realFenceRoot(prefix: string): { root: string; fence: HostFence } {
+  const runtime = process.env.XDG_RUNTIME_DIR;
+  const base = runtime && existsSync(runtime) ? runtime : tmpdir();
+  const root = realpathSync(mkdtempSync(join(base, prefix)));
+  const fs: LandlockRenderDeps = {
+    realpath: LANDLOCK_FS.realpath,
+    list: (dir) => {
+      const rel = posix.relative(dir, root);
+      if (dir === '/' || rel === '' || rel === '..' || rel.startsWith('../')) return LANDLOCK_FS.list(dir);
+      const next = rel.split('/')[0];
+      return LANDLOCK_FS.list(dir)?.filter((entry) => entry.name === next) ?? null;
+    },
+  };
+  const fence = createLandlockFence({ status: () => ({ state: 'ready', binary: REAL as string, abi: REAL_PROBE?.abi ?? 0, seccomp: true }), fs });
+  return { root, fence };
+}
+
 const CHAIN_SCRIPT = String.raw`
 const fs = require('node:fs'), os = require('node:os'), path = require('node:path');
 const [TH] = process.argv.slice(1);
@@ -722,17 +750,13 @@ process.stdout.write(JSON.stringify(out));
 `;
 
 test('the real chain: nice, ionice and timon-fence exec down to the CLI, which keeps its pid and reads nothing private', { skip: realSkip }, async () => {
-  // Not under /tmp when avoidable: every mission writes it, so a home inside it is listed whole.
-  const runtime = process.env.XDG_RUNTIME_DIR;
-  const base = runtime && existsSync(runtime) ? runtime : tmpdir();
-  const root = realpathSync(mkdtempSync(join(base, 'fence-chain-')));
+  const { root, fence } = realFenceRoot('fence-chain-');
   try {
     const home = join(root, 'home');
     const th = join(home, '.timon');
     const cwd = join(th, 'worktrees', 'task-r');
     mkdirSync(cwd, { recursive: true });
     writeFileSync(join(th, 'daemon-token'), 'FAKE-TOKEN');
-    const fence = createLandlockFence({ status: () => ({ state: 'ready', binary: REAL as string, abi: REAL_PROBE?.abi ?? 0, seccomp: true }) });
     const launch = fenceMissionCommand(process.execPath, ['-e', CHAIN_SCRIPT, th], 'unit-real', {
       timonHome: th, home, cwd, missionId: MISSION, platform: 'linux',
     }, { mode: 'enforce', fence, warn: () => {} });
@@ -763,15 +787,12 @@ process.exit(71);
 `;
 
 test('the real launcher: a fenced CLI that imitates its failure does not turn the fence off', { skip: realSkip }, async () => {
-  const runtime = process.env.XDG_RUNTIME_DIR;
-  const base = runtime && existsSync(runtime) ? runtime : tmpdir();
-  const root = realpathSync(mkdtempSync(join(base, 'fence-forge-')));
+  const { root, fence } = realFenceRoot('fence-forge-');
   try {
     const home = join(root, 'home');
     const th = join(home, '.timon');
     const cwd = join(th, 'worktrees', 'task-f');
     mkdirSync(cwd, { recursive: true });
-    const fence = createLandlockFence({ status: () => ({ state: 'ready', binary: REAL as string, abi: REAL_PROBE?.abi ?? 0, seccomp: true }) });
     fence.probe();
     const target = { timonHome: th, home, cwd, missionId: MISSION, platform: 'linux' as const };
     const launch = fenceMissionCommand(process.execPath, ['-e', FORGING_CLI], 'unit-forge', target, { mode: 'enforce', fence, warn: () => {} });
@@ -796,14 +817,23 @@ test('the real launcher: a fenced CLI that imitates its failure does not turn th
 });
 
 test('the real launcher, run as a witness on a policy, answers 0 or 127 and nothing a failure is read from', { skip: realSkip }, async () => {
-  const fence = createLandlockFence({ status: () => ({ state: 'ready', binary: REAL as string, abi: REAL_PROBE?.abi ?? 0, seccomp: true }) });
-  fence.probe();
-  const launch = fenceMissionCommand('/bin/true', [], 'unit-witness', TARGET, { mode: 'enforce', fence, warn: () => {} });
-  assert.ok(launch.fence?.state === 'fenced');
-  const witness = await fence.witness(launch.fence.policyFile);
-  assert.ok(witness.ran && (witness.status === 0 || witness.status === 127), JSON.stringify(witness));
-  assert.equal(fenceWitnessFailure('landlock', witness), null);
-  rmSync(launch.fence.policyFile, { force: true });
+  const { root, fence } = realFenceRoot('fence-witness-real-');
+  try {
+    const home = join(root, 'home');
+    const th = join(home, '.timon');
+    const cwd = join(th, 'worktrees', 'task-w');
+    mkdirSync(cwd, { recursive: true });
+    fence.probe();
+    const launch = fenceMissionCommand('/bin/true', [], 'unit-witness', {
+      timonHome: th, home, cwd, missionId: MISSION, platform: 'linux',
+    }, { mode: 'enforce', fence, warn: () => {} });
+    assert.ok(launch.fence?.state === 'fenced');
+    const witness = await fence.witness(launch.fence.policyFile);
+    assert.ok(witness.ran && (witness.status === 0 || witness.status === 127), JSON.stringify(witness));
+    assert.equal(fenceWitnessFailure('landlock', witness), null);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });
 
 /**
@@ -824,17 +854,19 @@ t('writeOutside', () => fs.writeFileSync(path.join(home, 'elsewhere', 'f'), 'x')
 process.stdout.write(JSON.stringify(out));
 `;
 
-test('the real fence applies the level of the CLI sandbox it replaces: a writing level writes only its working tree, a read-only one nothing', { skip: realSkip }, async () => {
-  const runtime = process.env.XDG_RUNTIME_DIR;
-  const base = runtime && existsSync(runtime) ? runtime : tmpdir();
-  const root = realpathSync(mkdtempSync(join(base, 'fence-nested-')));
+test('the real fence applies the level of the CLI sandbox it replaces: a writing level writes only its working tree, a read-only one nothing', { skip: realSkip }, async (t) => {
+  const { root, fence } = realFenceRoot('fence-nested-');
   try {
+    // Every mission writes `/tmp`: a home inside it is writable by design, so a refused write there proves nothing.
+    if (systemWritableFolders('linux').some((dir) => root.startsWith(`${dir}/`))) {
+      t.skip(`no runtime folder: the scratch home is under a folder every mission writes (${root})`);
+      return;
+    }
     const home = join(root, 'home');
     const th = join(home, '.timon');
     const cwd = join(th, 'worktrees', 'task-n');
     mkdirSync(cwd, { recursive: true });
     mkdirSync(join(home, 'elsewhere'), { recursive: true });
-    const fence = createLandlockFence({ status: () => ({ state: 'ready', binary: REAL as string, abi: REAL_PROBE?.abi ?? 0, seccomp: true }) });
     const run = async (level: string): Promise<Record<string, string>> => {
       const launch = fenceMissionCommand(process.execPath, ['-e', NESTED_SCRIPT, '--', '--sandbox', level, cwd, home], `unit-nested-${level}`, {
         timonHome: th, home, cwd, missionId: MISSION, platform: 'linux',
