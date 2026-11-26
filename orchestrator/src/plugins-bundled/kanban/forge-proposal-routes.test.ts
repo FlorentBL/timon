@@ -435,7 +435,10 @@ test('no agent surface creates or publishes a proposal: no MCP tool, no CLI verb
   // An imported idea declined, duplicated or short of details: the daemon
   // proposes the issue's answer and its closing; a person publishes them.
   const outcome = [join(root, 'src', 'issue-outcome.ts'), join(root, 'src', 'issue-close.ts')];
-  const proposers = [facade, landing, ...branch, conflicts, ...outcome];
+  // A landed job's branch on the remote: the cleanup after a landing proposes
+  // its deletion, a person publishes it (TODO #1210).
+  const remoteBranch = join(root, 'src', 'landing-branch-delete.ts');
+  const proposers = [facade, landing, ...branch, conflicts, ...outcome, remoteBranch];
   const offenders = files.filter((file) => !allowed.has(file) && !proposers.includes(file)
     && /\/forge-proposals\b|forge-proposals\.js|proposeForgeWrite|publishForgeProposal/.test(readFileSync(file, 'utf8')));
   assert.deepEqual(offenders.map((f) => f.slice(root.length)), []);

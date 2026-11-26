@@ -519,7 +519,7 @@ async function trackedLinks(worktreePath: string): Promise<Set<string>> {
  * folder is never deleted with it. A worktree kept after all (git refuses a
  * dirty one) gets its links back from the dispatcher, which re-links on reuse.
  */
-async function unlinkBeforeRemoval(worktreePath: string): Promise<void> {
+export async function unlinkBeforeRemoval(worktreePath: string): Promise<void> {
   if (!existsSync(worktreePath)) return;
   unlinkWorktreeLinks(worktreePath, await trackedLinks(worktreePath));
 }

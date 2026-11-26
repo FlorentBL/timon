@@ -33,6 +33,7 @@ import {
 } from './host/forge.js';
 import { getHost } from './host/index.js';
 import type { ExecResult } from './host/types.js';
+import { cleanConcludedIntegrations, type CleanupDeps } from './integration-cleanup.js';
 import { landIntegration } from './integration-landing.js';
 import { advanceRepairs, type RepairDeps } from './landing-repair.js';
 import { proposeResolutionCommentsOf } from './issue-resolution.js';
@@ -56,6 +57,8 @@ export type PollerDeps = {
   /** What pushing a repair reaches (`landing-repair.ts`); `runners` and
    *  `transport` above by default. */
   repairs?: RepairDeps;
+  /** What the cleanup after a landing reaches (`integration-cleanup.ts`). */
+  cleanup?: CleanupDeps;
   /** What reading the issues of imported ideas reaches (`contributor-landing.ts`). */
   contributors?: ContributorLandingDeps;
 };
@@ -263,7 +266,9 @@ export async function pollOpenIntegrations(deps: PollerDeps = {}): Promise<Map<s
 }
 
 /** Arms the poller; returns its stop. One pass at a time, each one followed
- *  by the imported ideas a contributor's merged pull request closed. */
+ *  by the cleanup of what the jobs concluded so far left behind (off unless
+ *  turned on), then by the imported ideas a contributor's merged pull request
+ *  closed. */
 export function startIntegrationPoller(intervalMs: number = POLL_INTERVAL_MS, deps: PollerDeps = {}): () => void {
   let running = false;
   const pass = (): void => {
@@ -271,6 +276,8 @@ export function startIntegrationPoller(intervalMs: number = POLL_INTERVAL_MS, de
     running = true;
     pollOpenIntegrations(deps)
       .catch((err) => console.error(`[landing-poller] pass failed: ${(err as Error).message}`))
+      .then(() => cleanConcludedIntegrations(deps.cleanup ?? (deps.runners ? { proposals: { runners: deps.runners } } : {})))
+      .catch((err) => console.error(`[integration-cleanup] pass failed: ${(err as Error).message}`))
       .then(() => landContributorClosings(deps.contributors ?? (deps.runners ? { runners: deps.runners } : {})))
       .catch((err) => console.error(`[landing-poller] contributor closings: ${(err as Error).message}`))
       .finally(() => { running = false; });

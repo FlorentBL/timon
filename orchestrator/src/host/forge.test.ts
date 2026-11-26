@@ -2,7 +2,7 @@ import '../test-home.js';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import {
-  actionsJobOf, assertNoForce, CHECK_LOG_TAIL_CHARS, CHECK_LOG_TAIL_LINES, checkLogTail, FORGE_BODY_LIMIT, FORGE_TITLE_LIMIT, githubForge, githubRepoFromUrl, gitTransport, ISSUE_COMMENT_LIMIT, ISSUE_LIST_LIMIT,
+  actionsJobOf, assertNoForce, CHECK_LOG_TAIL_CHARS, deleteBranchArguments, CHECK_LOG_TAIL_LINES, checkLogTail, FORGE_BODY_LIMIT, FORGE_TITLE_LIMIT, githubForge, githubRepoFromUrl, gitTransport, ISSUE_COMMENT_LIMIT, ISSUE_LIST_LIMIT,
   parseGeneralReviews, parsePullRequestBranch, parsePullRequestChecks, GENERAL_REVIEW_LIMIT, pushArguments, pushCommitArguments, redactedOutput, REVIEW_THREAD_BODY_LIMIT, REVIEW_THREAD_LIMIT, type GitRunner,
 } from './forge.js';
 import type { GhRunner } from './gh.js';
@@ -645,4 +645,12 @@ test('closing never reaches gh for an odd target, and a failure is a refusal wit
   assert.ok(!leaked.ok && !leaked.reason.includes('ghp_'));
   const open = JSON.stringify({ html_url: 'https://github.com/a/b/issues/1', state: 'open' });
   assert.equal((await githubForge(null, { gh: recorder({ stdout: open }).run }).closeIssue('a/b', 1, 'not_planned')).ok, false);
+});
+
+test('deleting a remote branch is leased on the commit it must end on, and names nothing else', () => {
+  assert.deepEqual(deleteBranchArguments('git@github.com:acme/app.git', 'feat/x', HEAD),
+    [`--force-with-lease=refs/heads/feat/x:${HEAD}`, '--', 'git@github.com:acme/app.git', ':refs/heads/feat/x']);
+  assert.throws(() => deleteBranchArguments('git@github.com:acme/app.git', '-x', HEAD), /unusual name/);
+  assert.throws(() => deleteBranchArguments('git@github.com:acme/app.git', 'a:b', HEAD), /unusual name/);
+  assert.throws(() => deleteBranchArguments('git@github.com:acme/app.git', 'feat/x', 'HEAD'), /commit it must end on/);
 });

@@ -325,6 +325,10 @@
       "title": "Closing a GitHub issue waits for your approval",
       "body": "Close {target} on GitHub, or leave it open."
     },
+    "forge_branch_delete_pending": {
+      "title": "Deleting a merged branch waits for your approval",
+      "body": "Delete the branch of {target} on GitHub, now merged, or keep it."
+    },
     "landing_repair_pushed": {
       "title": "Repair pushed to {pr}",
       "body": "The repair of {branch} was pushed to its pull request {pr}; GitHub runs its checks again."
