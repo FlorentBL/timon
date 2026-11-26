@@ -146,6 +146,7 @@ Everything below stays in the Timon folder (`~/.timon`, or `%USERPROFILE%\.timon
 | Mission history: your messages, the agents' answers, the tools they ran and what those tools returned, including the content of files they read | the database `timon.db`, and `archive/events.db` if you turned on archiving | 180 days after the mission's last activity, see [Keeping less](#keeping-less) |
 | Raw memory facts: short notes agents take after a mission, before the memory curation turns some into rules | the database, and `agents/<name>/memory/learnings.jsonl` (with `learnings.archive.jsonl`) | forever by default, see [Keeping less](#keeping-less) |
 | Memory rules: the instructions Timon gives your agents | the database | until you delete them |
+| Each agent's event archive: one line per mission event, which nothing reads back on its own | `agents/<name>/memory/log.jsonl` (with `log.1.jsonl`) | at most about twice 64 MB per agent: past `TIMON_AGENT_LOG_MAX_MB` the file becomes `log.1.jsonl`, replacing the previous one; 0 keeps everything |
 | The list of missions, with their first message, title and summary | the database | as long as the Timon folder |
 | A provider's own conversation files (for example Codex's), which let a conversation resume | `provider-runs/` | 30 days after the mission ends (**Provider sessions kept after a mission ends**) |
 | Files attached in chat | the Timon folder | 30 days after the mission ends (**Chat attachments kept after a mission ends**) |

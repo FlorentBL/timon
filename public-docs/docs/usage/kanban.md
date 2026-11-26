@@ -384,6 +384,16 @@ A pending or blocked task that has a worktree shows **Detach the worktree** in i
 
 Timon removes a task's worktree and its local branch once the task is done and its work merged, either automatically (a few minutes after the task closes) or when you run `timon worktree dispose TASK_ID`. Before removing anything it checks the folder itself: the worktree must have no uncommitted change and no untracked file, and its current commit, not the one recorded at the merge, must already be in the merged work, the task's base or the repository's current branch. Every task sharing the folder must be done, and Timon checks again right before Git removes it. Git is never asked to force the removal, and `--force` no longer forces anything. A worktree that fails a check is kept as it is: commit or discard what it holds, and the next pass removes it. `timon worktree dispose` refuses a task that is not done: detach its worktree instead to free the folder and keep its branch.
 
+In a project that lands its jobs through pull requests, the worktrees wait for the job's pull request to be merged. When it is merged on the forge without Timon seeing it, a finished task's folder still goes once its current commit is in the remote's target branch as your last fetch left it (for example `origin/main`), with the same checks and a merge recorded in its chain; its branch is kept. `TIMON_WORKTREE_GC_REMOTE_TARGET` turns this off. A worktree kept after its task is done also loses its build cache: a `.next` folder at its root or one level down, only when Git ignores it, once every task of the worktree is done (`TIMON_WORKTREE_GC_BUILD_CACHE`).
+
+## When the disk is almost full
+
+When less than 3 GB is free where Timon keeps its worktrees, no task starts and no worktree is created: the tasks wait as Pending, and you get one alert. Each task adds a worktree and writes to the database, and a full disk would stop Timon itself. Once you free some space, dispatching resumes on its own and a second notification says so. Set the floor with `TIMON_DISK_MIN_FREE_MB` (in MB, 0 turns it off), for example in `timon.config.json`:
+
+```json
+{ "settings": { "TIMON_DISK_MIN_FREE_MB": 5120 } }
+```
+
 ## Delete a task
 
 Use the task’s delete action and confirm the removal. A Pending or Blocked task

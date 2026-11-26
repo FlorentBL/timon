@@ -19,6 +19,14 @@
     "integration_branch_unavailable": "La branche d’intégration {branch} est indisponible : {detail}. La task n’a pas été lancée, et la branche n’est jamais tirée de la base locale à la place de {baseRef}. Corrigez le remote ou le nom de la branche, puis relancez la task.",
     "task_base_missing": "La base {base} n’existe pas dans le dépôt. La task n’a pas été lancée : une task {type} ne démarre jamais sans sa base. Créez la branche ou changez la base de la task, puis relancez-la.",
     "task_worktree_unavailable": "Aucun worktree pour cette task {type} ({cause}). Elle n’a pas été lancée : dans le dossier de l’agent, elle écrirait dans le checkout que partagent tous les agents. Corrigez la cause, puis relancez la task.",
+    "dispatcher_disk_paused": {
+      "title": "Tasks en pause : le disque est presque plein",
+      "body": "Aucune task ne démarre tant qu’il ne reste que {free} de libre pour {dir}, sous le plancher de {min} (TIMON_DISK_MIN_FREE_MB). Chaque task ajoute un worktree et écrit dans la base ; un disque plein arrête Timon lui-même. Libérez de la place : la distribution reprend d’elle-même."
+    },
+    "dispatcher_disk_resumed": {
+      "title": "Tasks relancées : l’espace libre est revenu",
+      "body": "L’espace libre est repassé au-dessus du plancher (TIMON_DISK_MIN_FREE_MB) : les tasks en attente redémarrent."
+    },
     "review_verdict_unusable": {
       "title": "Review sans verdict exploitable : {title}",
       "body": "La review {taskId} s’est clôturée sans verdict JSON lisible : la chaîne code→review→merge ne peut pas continuer.\n\nLe relecteur a écrit : {excerpt, select, none {(vide)} other {{excerpt}}}\n\nRelancez la review ou tranchez à la main (merge / nouvelle itération de code)."

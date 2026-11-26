@@ -26,6 +26,7 @@ import { execFileHost, getHost, linkDirectory } from './host/index.js';
 import { execTree } from './host/kill-tree.js';
 import { settingNum } from './settings.js';
 import { purgeShell, unlinkWorktreeLinks } from './worktree-shell.js';
+import { diskGate, diskGateMessage, type DiskGate } from './disk-gate.js';
 
 const exec = execFileHost;
 
@@ -218,6 +219,18 @@ export async function headSha(cwd: string): Promise<string | null> {
  * `git worktree add` runs there; the worktree lands
  * in WORKTREES_ROOT/<taskId>.
  */
+/**
+ * Free space where new worktrees land, against `TIMON_DISK_MIN_FREE_MB`. The
+ * dispatcher pauses on it; `createWorktree` refuses on it.
+ */
+export function worktreeDiskGate(free?: (dir: string) => number | null): DiskGate {
+  let floorMb = 0;
+  try {
+    floorMb = settingNum('TIMON_DISK_MIN_FREE_MB');
+  } catch { /* registry unreadable: no floor rather than no work */ }
+  return diskGate([WORKTREES_ROOT, TIMON_HOME], Math.max(0, floorMb) * 1024 * 1024, free);
+}
+
 export async function createWorktree(
   taskId: string,
   repoCwd: string,
@@ -255,6 +268,10 @@ export async function createWorktree(
     console.warn(`[worktree] ${path} holds a checkout that never finished: making it again`);
     await discardHalfMadeWorktree(repoCwd, path);
   }
+  // Only a new checkout: an existing worktree above costs nothing more. A full
+  // disk mid-checkout leaves a half-made folder, then SQLite fails next.
+  const room = worktreeDiskGate();
+  if (!room.ok) throw worktreeError(`no worktree created: ${diskGateMessage(room)}. Free some space, then retry the task.`);
   mkdirSync(WORKTREES_ROOT, { recursive: true });
   const baseRef = base ?? (await currentBranch(repoCwd)) ?? 'HEAD';
   // The branch outlives the folder: an unmounted worktree (dispose, GC, manual
