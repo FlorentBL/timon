@@ -15,6 +15,19 @@ export type AcpMcpServer = {
   env: Array<{ name: string; value: string }>;
 };
 
+/** HTTP MCP server as `session/new.mcpServers` wants it (ACP `McpServerHttp`). Declared only to an
+ *  agent that announced `agentCapabilities.mcpCapabilities.http` at `initialize`. `headers`, like
+ *  `env`, is a list of `{name,value}` pairs. */
+export type AcpMcpServerHttp = {
+  type: 'http';
+  name: string;
+  url: string;
+  headers: Array<{ name: string; value: string }>;
+};
+
+/** Any MCP server a session can be handed. */
+export type AcpSessionMcpServer = AcpMcpServer | AcpMcpServerHttp;
+
 export type AcpUsage = {
   inputTokens: number;
   outputTokens: number;

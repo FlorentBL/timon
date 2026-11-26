@@ -14,7 +14,7 @@
 
 import { CODEX_MCP_APPROVAL_TOML } from './codex-mcp-approval.js';
 import { PACKAGE_CACHE_ENV_NAMES } from './package-cache-env.js';
-import type { AcpMcpServer } from './acp/wire.js';
+import type { AcpMcpServer, AcpSessionMcpServer } from './acp/wire.js';
 
 export type McpLaunchStdio = {
   readonly type: 'stdio';
@@ -161,17 +161,32 @@ export function mcpEnvPairs(env: Readonly<Record<string, string>> | undefined): 
   return Object.entries(env ?? {}).map(([name, value]) => ({ name, value }));
 }
 
+export type AcpMcpOptions = {
+  /**
+   * The agent announced `agentCapabilities.mcpCapabilities.http` at `initialize`: the HTTP servers are
+   * declared too (`McpServerHttp`, checked on opencode 1.19). Absent or false = stdio only, since an
+   * HTTP entry handed to an agent that does not take it fails the whole `session/new`.
+   */
+  readonly http?: boolean;
+};
+
 /**
- * The stdio servers of `session/new.mcpServers`. An HTTP server is returned in
- * `skipped` rather than declared: its ACP shape was not verified on any agent,
- * and a wrong one fails the whole `session/new`, not that server alone.
+ * The servers of `session/new.mcpServers`: the stdio ones, and the HTTP ones when `options.http` says
+ * the agent takes them. A server left out is returned in `skipped`, by name.
  */
-export function serializeAcpMcpServers(servers: readonly McpLaunchServer[]): { servers: AcpMcpServer[]; skipped: string[] } {
-  const out: AcpMcpServer[] = [];
+export function serializeAcpMcpServers(servers: readonly McpLaunchServer[]): { servers: AcpMcpServer[]; skipped: string[] };
+export function serializeAcpMcpServers(servers: readonly McpLaunchServer[], options: AcpMcpOptions): { servers: AcpSessionMcpServer[]; skipped: string[] };
+export function serializeAcpMcpServers(servers: readonly McpLaunchServer[], options: AcpMcpOptions = {}): { servers: AcpSessionMcpServer[]; skipped: string[] } {
+  const out: AcpSessionMcpServer[] = [];
   const skipped: string[] = [];
   for (const s of servers) {
-    if (s.type !== 'stdio') { skipped.push(s.name); continue; }
-    out.push({ name: s.name, command: s.command, args: [...s.args], env: mcpEnvPairs(s.env) });
+    if (s.type === 'stdio') {
+      out.push({ name: s.name, command: s.command, args: [...s.args], env: mcpEnvPairs(s.env) });
+    } else if (options.http === true) {
+      out.push({ type: 'http', name: s.name, url: s.url, headers: mcpEnvPairs(s.headers) });
+    } else {
+      skipped.push(s.name);
+    }
   }
   return { servers: out, skipped };
 }

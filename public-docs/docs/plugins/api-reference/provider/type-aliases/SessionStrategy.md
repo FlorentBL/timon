@@ -9,11 +9,7 @@
 
 ### compact?
 
-> `readonly` `optional` **compact?**: `object`
-
-#### command
-
-> `readonly` **command**: `string`
+> `readonly` `optional` **compact?**: [`NativeCompact`](NativeCompact.md)
 
 ***
 

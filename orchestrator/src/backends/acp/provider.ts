@@ -187,7 +187,7 @@ export function defineProvider(services: AcpProviderServices, spec: AcpAgentSpec
     id: spec.id,
     // The agent is one process for the whole conversation; its exit ends the chat.
     transport: { kind: 'stdio-persistent' },
-    // Marked: the registry then knows this provider declares no HTTP MCP server (`stdio-only-mcp.ts`).
+    // Marked: the registry then knows the daemon cannot count on this provider taking an HTTP MCP server (`stdio-only-mcp.ts`).
     codec: markStdioOnlyMcpCodec({
       kind: 'driver',
       extractSessionId: extractAcpSessionId,
@@ -202,9 +202,14 @@ export function defineProvider(services: AcpProviderServices, spec: AcpAgentSpec
           reasoningEffort: spawn.cfg.reasoningEffort ?? null,
           sessionMode: sessionModeFor(sessionModes, spawn.cfg.permission_mode),
           resumeSession: spawn.resumeSession,
-          // Only the stdio servers are declared: the HTTP shape of ACP was not verified on any agent, and a wrong one
-          // fails the whole `session/new`, not that server alone.
-          mcpServers: async () => serializeAcpMcpServers((await services.mcp(spawn)).servers).servers,
+          // The HTTP servers only to an agent that announced it takes them: a wrong entry fails the whole `session/new`.
+          mcpServers: async (agent) => {
+            const { servers, skipped } = serializeAcpMcpServers((await services.mcp(spawn)).servers, { http: agent.http });
+            if (skipped.length) {
+              console.warn(`[timon] mcp: ${profileId ?? spec.id} announces no HTTP MCP support, left out of the session: ${skipped.join(', ')}`);
+            }
+            return servers;
+          },
           permissionsByAgent,
           profileId: profileId ?? spec.id,
           ...(spec.signIn ? { signIn: spec.signIn } : {}),

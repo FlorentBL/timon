@@ -185,6 +185,14 @@ test('the serializers are pure: the same list gives the same text, with no store
     servers: [{ name: 'mine', command: 'node', args: ['a.mjs'], env: [{ name: 'K', value: 'v' }] }],
     skipped: ['remote'],
   });
+  assert.deepEqual(serializeAcpMcpServers(list, { http: true }), {
+    servers: [
+      { name: 'mine', command: 'node', args: ['a.mjs'], env: [{ name: 'K', value: 'v' }] },
+      { type: 'http', name: 'remote', url: 'https://x.test/mcp', headers: [] },
+    ],
+    skipped: [],
+  });
+  assert.deepEqual(serializeAcpMcpServers(list, { http: false }).skipped, ['remote']);
   assert.deepEqual(mcpEnvPairs(undefined), []);
 });
 
