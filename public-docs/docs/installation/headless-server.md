@@ -141,7 +141,7 @@ Agents browse with the project's built-in browser on a server too, and you watch
 
 On a desktop, the Timon app runs that browser. A server has no app open, so `timon service install` adds a second background service next to the daemon, the **browser host**: the same Timon program, started with no window, that runs only the built-in browser. It is a systemd user service named `timon-browser-<id>`, installed only on Linux, with the deb package, on a machine with no desktop session. A machine with a desktop never gets one: there, the app runs the browser.
 
-It follows the daemon: `timon service stop`, `timon service start`, `timon update apply` and `timon service uninstall` act on both. To see it:
+It follows the daemon: `timon service stop`, `timon service start`, `timon update apply` and `timon service uninstall` act on both. `timon service uninstall` removes the browser host first, and stops there, with both services left in place, if it does not stop: the message names the unit and the command to stop it, then you run the uninstall again. To see it:
 
 ```bash
 timon service status     # a "browser" line: the unit and its state
@@ -180,6 +180,7 @@ Two limits:
 | *This machine runs a Timon version too old for this interface* | The server was not updated | Update the server (section 5), then switch again |
 | `timon update status` still shows the previous version after you installed the new package | The package replaces the installed program, not the service, which still runs the previous release | `timon update apply`, then `timon update status` and `timon update approve <daemon-version>` (section 5) |
 | The built-in browser says *The built-in browser of this server is not running* | The browser host is stopped, failed, turned off or not installed | `timon doctor --browser` names the cause and the command; usually `systemctl --user restart <unit>` (the unit is on the `browser` line of `timon service status`), or `timon service install` |
+| `timon service install` or `start` is refused: *the service timon-browser-… already runs on this data directory* | The browser host's unit was edited, or a drop-in (`systemctl --user edit`) changed what it runs: Timon only accepts the command it writes itself | Remove the drop-in (`systemctl --user revert <unit>`), or run `timon service install --force`, which takes that unit down and writes it again |
 | Screenshots and the live view of the built-in browser show pages with no text | The server has no font | `sudo apt-get install fonts-liberation fonts-noto-core fonts-noto-color-emoji`, then `systemctl --user restart <unit>` |
 | The browser host stays `failed`, and its log says *No usable sandbox* | Chromium's sandbox is refused (Ubuntu 23.10 and later) | See [Linux: no usable sandbox](troubleshooting.md#linux-no-usable-sandbox) |
 | The server's interface asks to approve an update and nothing else works | A new package was installed and the migration is not approved | `timon update status`, then `timon update approve <daemon-version>` on the server |
