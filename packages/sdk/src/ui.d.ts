@@ -2140,6 +2140,68 @@ declare module '@timon/ui' {
     random(): AgentLook;
   } | null;
 
+  /** Whose extra folders a list holds: one agent's, or a whole project's (client API 20). */
+  export type AgentFolderOwner = { kind: 'agent'; name: string } | { kind: 'project'; slug: string };
+  /** One folder of an `agent.folders` section (client API 20). */
+  export type AgentFolderRow = {
+    owner: AgentFolderOwner;
+    /** The full path, as stored. Show it on demand (a title, a menu), not on the row. */
+    path: string;
+    /** Its last segment, the name a row shows. */
+    name: string;
+    mode: 'read' | 'write';
+    /** Why a launch leaves this stored folder out now (the daemon's reason, in English); `null` when applied. */
+    dropped: string | null;
+  };
+  /** The answer of a gesture of `useAgentFolders()`: recorded, or refused with the daemon's message. */
+  export type AgentFoldersResult = { ok: true } | { ok: false; message: string };
+  /** What an `agent.folders` occupant is painted for, and its gestures (client API 20). */
+  export type AgentFoldersValue = {
+    /** The agents whose folders are listed: one on an agent's page, every agent of a project in its settings. */
+    agents: readonly string[];
+    /** The project whose own folders are listed first, in its settings; `null` on an agent's page. */
+    project: string | null;
+    /** Name the owner on each row: the project's list mixes several. */
+    showAgent: boolean;
+    /** The screen's own words for an empty list; `null` for yours. */
+    emptyStatus: string | null;
+    /** To put on your root. */
+    className: string | undefined;
+    /** `loading` until the first read; `error` when it failed (`reload` tries again). */
+    status: 'loading' | 'ready' | 'error';
+    /** Every folder, the project's first, in each list's order. */
+    rows: readonly AgentFolderRow[];
+    /** Whose lists a folder may be added to; empty while nothing is loaded. */
+    owners: readonly AgentFolderOwner[];
+    /** A gesture is running. */
+    busy: boolean;
+    reload(): Promise<void>;
+    /**
+     * Adds a folder to `owner`'s list, or changes its access when the path is
+     * already there. Timon checks the path again (absolute, not the Timon
+     * home nor a credential folder) and says why it refuses.
+     */
+    add(owner: AgentFolderOwner, folder: { path: string; mode: 'read' | 'write' }): Promise<AgentFoldersResult>;
+    /** Changes the access of a folder of `owner`'s list. */
+    setMode(owner: AgentFolderOwner, path: string, mode: 'read' | 'write'): Promise<AgentFoldersResult>;
+    /** Takes a folder out of `owner`'s list. */
+    remove(owner: AgentFolderOwner, path: string): Promise<AgentFoldersResult>;
+    /**
+     * Opens the folder browser of the active machine at `current` and resolves
+     * the folder chosen, or `null` when it was closed (Timon already told the
+     * person when it could not open).
+     */
+    browse(current: string): Promise<string | null>;
+  };
+  /**
+   * An agent's or a project's extra folders, as the `agent.folders` slot
+   * receives them (client API 20): the Workspace tab of the agent's page, and
+   * the project's settings. `null` outside that slot. Timon announces each
+   * change once recorded; a refusal comes back to you in the result, to show
+   * where it fits. A change applies from the agent's next mission.
+   */
+  export function useAgentFolders(): AgentFoldersValue | null;
+
   /**
    * A provider's one status line (client API 16), the same verdict on the list
    * and on its page: green `connected` / `available`, yellow `not-connected` /

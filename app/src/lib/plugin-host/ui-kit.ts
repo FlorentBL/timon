@@ -69,6 +69,7 @@ import { usePageToc } from '@/components/page-toc/page-toc-context';
 import { useAgentMascot } from '@/components/mascot/agent-mascot-context';
 import { useEmailCode } from '@/components/email-code/email-code-context';
 import { useLookStyler } from '@/components/mascot/look-styler/look-styler-context';
+import { useAgentFolders } from '@/components/agent-folders/agent-folders-context';
 import { useProviderPage } from '@/components/provider-page/provider-page-context';
 import { ProviderSection, ProviderSettingRow } from '@/components/provider-page/provider-section';
 import { useProviderRow } from '@/components/provider-list/provider-row-context';
@@ -229,6 +230,9 @@ export const UI_KIT = {
   // The mascot configurator (client API 15, `agent.lookstyler`): the look being edited, the
   // change, the agent's name and role, the states to try, the closed lists and a random look.
   useLookStyler,
+  // An agent's or a project's extra folders (client API 20, `agent.folders`): the rows, whose
+  // lists a folder may join, and the gestures (add, access, remove, the folder browser).
+  useAgentFolders,
   // The page of one provider (client API 16, `settings.provider.section`): the provider on
   // screen, its status, `refresh` and `back`; the frame the product's sections use, and
   // its row (a title and a status at the left, one action and a "…" menu at the right).
