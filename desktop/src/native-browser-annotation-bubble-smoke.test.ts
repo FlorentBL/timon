@@ -7,7 +7,7 @@ import { join } from 'node:path';
 import { promisify } from 'node:util';
 import { Script } from 'node:vm';
 import { SHELL_LOCALES_DIR, writeEngine } from './native-browser-smoke.fixture.js';
-import { smokeElectron } from './electron-binary.fixture.js';
+import { smokeArgs, smokeElectron, smokeEnv } from './electron-binary.fixture.js';
 
 /**
  * The annotation bubble of TODO #481, end to end in a real Electron: the real engine, tab preload,
@@ -240,8 +240,8 @@ async function runSmoke(): Promise<Report> {
     await writeFile(join(root, 'smoke.cjs'), fixture);
     const env: NodeJS.ProcessEnv = { ...process.env, TIMON_HOME: root, TIMON_SMOKE_LOCALES: SHELL_LOCALES_DIR };
     delete env.ELECTRON_RUN_AS_NODE;
-    const { stdout } = await promisify(execFile)(electron, [join(root, 'smoke.cjs')], {
-      env, timeout: 90_000, killSignal: 'SIGKILL', maxBuffer: 4 * 1024 * 1024,
+    const { stdout } = await promisify(execFile)(electron, smokeArgs(join(root, 'smoke.cjs')), {
+      env: smokeEnv(env), timeout: 90_000, killSignal: 'SIGKILL', maxBuffer: 4 * 1024 * 1024,
     }).catch((error) => { throw new Error(`Bubble smoke failed (${error.code ?? error.signal}): ${error.stdout}\n${error.stderr}`); });
     const line = stdout.split('\n').find((candidate) => candidate.startsWith('BUBBLE_REPORT '));
     assert.ok(line, stdout);

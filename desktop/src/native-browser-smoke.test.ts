@@ -8,7 +8,7 @@ import { join } from 'node:path';
 import { promisify } from 'node:util';
 import { runInNewContext, Script } from 'node:vm';
 import { writeEngine } from './native-browser-smoke.fixture.js';
-import { smokeElectron } from './electron-binary.fixture.js';
+import { smokeArgs, smokeElectron, smokeEnv } from './electron-binary.fixture.js';
 
 /** Installed synchronously, before app.whenReady() or any dynamic browser import. */
 const quietElectronErrors = String.raw`
@@ -327,7 +327,7 @@ const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
     await writeFile(join(root, 'bootstrap.cjs'), bootstrap);
     const env = { ...process.env, TIMON_HOME: root };
     delete env.ELECTRON_RUN_AS_NODE;
-    const { stdout } = await promisify(execFile)(electron, [join(root, 'bootstrap.cjs')], { env, timeout: 30_000, killSignal: 'SIGKILL' })
+    const { stdout } = await promisify(execFile)(electron, smokeArgs(join(root, 'bootstrap.cjs')), { env: smokeEnv(env), timeout: 30_000, killSignal: 'SIGKILL' })
       .catch((error) => { throw new Error(`Electron smoke failed (${error.code ?? error.signal}): ${error.stdout}\n${error.stderr}`); });
     assert.match(stdout, /NATIVE_BROWSER_SMOKE_OK/);
   } finally { await rm(root, { recursive: true, force: true }); }

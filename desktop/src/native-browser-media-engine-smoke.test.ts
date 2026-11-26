@@ -7,7 +7,7 @@ import { join } from 'node:path';
 import { promisify } from 'node:util';
 import { Script } from 'node:vm';
 import { writeEngine } from './native-browser-smoke.fixture.js';
-import { smokeElectron } from './electron-binary.fixture.js';
+import { smokeArgs, smokeElectron, smokeEnv } from './electron-binary.fixture.js';
 
 test('real engine WebContentsView streams while hidden and while attached to the desktop panel', {
   skip: process.env.TIMON_ELECTRON_SMOKE !== '1', timeout: 60_000,
@@ -78,8 +78,8 @@ app.exit(0);
     await writeFile(join(home, 'smoke.cjs'), fixture);
     const env = { ...process.env, TIMON_HOME: home };
     delete env.ELECTRON_RUN_AS_NODE;
-    const result = await promisify(execFile)(electron, [join(home, 'bootstrap.cjs')], {
-      env, timeout: 55_000, killSignal: 'SIGKILL', maxBuffer: 2 * 1024 * 1024,
+    const result = await promisify(execFile)(electron, smokeArgs(join(home, 'bootstrap.cjs')), {
+      env: smokeEnv(env), timeout: 55_000, killSignal: 'SIGKILL', maxBuffer: 2 * 1024 * 1024,
     }).catch((error) => { throw new Error(`Engine media smoke failed (${error.code ?? error.signal}): ${error.stdout}\n${error.stderr}`); });
     assert.match(result.stdout, /NATIVE_BROWSER_ENGINE_MEDIA_SMOKE_OK/);
     console.log(result.stdout.trim());

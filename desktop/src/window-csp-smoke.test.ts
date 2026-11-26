@@ -15,7 +15,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { promisify } from 'node:util';
-import { smokeElectron } from './electron-binary.fixture.js';
+import { smokeArgs, smokeElectron, smokeEnv } from './electron-binary.fixture.js';
 
 type CspModule = {
   contentSecurityPolicy(opts: { egressHosts: readonly string[]; dev: boolean; selfHost?: string | null; nonce?: string | null }): string;
@@ -103,8 +103,8 @@ for(let i=0;i<100;i++){const r=await w.webContents.executeJavaScript('window.__d
 fail(new Error('page never finished: '+await w.webContents.executeJavaScript('JSON.stringify({r:window.__r,v:window.violations})')));
 })().catch(fail);
 `);
-    const result = await promisify(execFile)(electron, [join(home, 'smoke.cjs')], {
-      env: { ...process.env, ELECTRON_RUN_AS_NODE: '', TIMON_HOME: home, CSP_SMOKE_URL: appUrl }, timeout: 55_000, maxBuffer: 2 * 1024 * 1024,
+    const result = await promisify(execFile)(electron, smokeArgs(join(home, 'smoke.cjs')), {
+      env: smokeEnv({ ...process.env, ELECTRON_RUN_AS_NODE: '', TIMON_HOME: home, CSP_SMOKE_URL: appUrl }), timeout: 55_000, maxBuffer: 2 * 1024 * 1024,
     }).catch((error) => { throw new Error(`CSP smoke failed (${error.code ?? error.signal}): ${error.stdout}\n${error.stderr}`); });
     const line = /CSP_SMOKE (.*)/.exec(result.stdout)?.[1];
     assert.ok(line, result.stdout);

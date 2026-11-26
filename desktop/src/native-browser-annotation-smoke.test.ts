@@ -7,7 +7,7 @@ import { join } from 'node:path';
 import { promisify } from 'node:util';
 import { Script } from 'node:vm';
 import { writeEngine } from './native-browser-smoke.fixture.js';
-import { smokeElectron } from './electron-binary.fixture.js';
+import { smokeArgs, smokeElectron, smokeEnv } from './electron-binary.fixture.js';
 
 /**
  * Annotate mode end to end under the pinned Electron (TODO #468): the real preload and the real
@@ -204,8 +204,8 @@ test('annotation smoke: the real preload and engine swallow gestures, pick, mask
     await writeFile(join(root, 'smoke.cjs'), fixture);
     const env = { ...process.env, TIMON_HOME: root };
     delete env.ELECTRON_RUN_AS_NODE;
-    const { stdout } = await promisify(execFile)(electron, [join(root, 'smoke.cjs')], {
-      env, timeout: 50_000, killSignal: 'SIGKILL', maxBuffer: 8 * 1024 * 1024,
+    const { stdout } = await promisify(execFile)(electron, smokeArgs(join(root, 'smoke.cjs')), {
+      env: smokeEnv(env), timeout: 50_000, killSignal: 'SIGKILL', maxBuffer: 8 * 1024 * 1024,
     }).catch((error) => { throw new Error(`Annotation smoke failed (${error.code ?? error.signal}): ${error.stdout}\n${error.stderr}`); });
     const line = stdout.split('\n').find((candidate) => candidate.startsWith('ANNOTATION_REPORT '));
     assert.ok(line, stdout);
