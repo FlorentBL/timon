@@ -19,7 +19,10 @@ npm run build && npm start
 
 The smoke tests that start a real Electron are opt-in
 (`TIMON_ELECTRON_SMOKE=1 npm test -- src/<name>-smoke.test.ts`) and stop with
-the install command above when the binary is missing.
+the install command above when the binary is missing. They open windows: add
+`TIMON_ELECTRON_SMOKE_HEADLESS=1` to keep them off your screen (Linux: Electron
+then runs on Chromium's headless Ozone backend, without `DISPLAY` or
+`WAYLAND_DISPLAY`; a shell without a display gets that mode on its own).
 
 `TIMON_HOME` is honoured, so a development shell can point at a throwaway home:
 
