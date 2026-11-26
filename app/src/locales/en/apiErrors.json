@@ -471,6 +471,7 @@
     "browser_refused": "The browser refused this: {detail}",
     "browser_command_failed": "The browser command failed: {detail}",
     "browser_desktop_unavailable": "Open Timon desktop on the host machine to use this browser.",
+    "browser_host_stopped": "The built-in browser of this server is not running. To repair it: {command}",
     "browser_profile_invalid": "This browser profile is invalid.",
     "browser_profile_not_found": "Browser profile not found.",
     "browser_profile_unavailable": "This browser profile is unavailable.",
