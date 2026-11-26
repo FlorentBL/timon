@@ -9,14 +9,16 @@
 import './test-home.js';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
+import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
   MCP_DIR, deleteMcp, getMcp, listMcp, mcpStdioBridgeLaunch, migrateMcpHeadersToVault, missionTransport, presentMcpServer,
   redactMcpServer, resolveLaunchServers, upsertMcp, type McpStoredServer,
 } from './mcp.js';
-import { getSecret } from './secrets/store.js';
-import { resolveMasterKey } from './secrets/key.js';
+import { getSecret, readSecretValue, resetRotationCheck, updateSecret } from './secrets/store.js';
+import { resetMasterKeyCache, resolveMasterKey } from './secrets/key.js';
+import { SECRET_KEY_FILE } from './paths.js';
 import { resetActiveModules, setActiveModules } from './kernel/module-state.js';
 
 resolveMasterKey({ keyring: null });
@@ -148,4 +150,93 @@ test('switching the vault module on again moves what the file kept while it was 
   assert.ok(!logs.includes('env-rearm-secret'));
   assert.equal(mcpStdioBridgeLaunch('env-rearm')?.env.K, 'env-rearm-secret');
   deleteMcp('env-rearm');
+});
+
+/** Runs `fn` as if the account's home were `home`: `os.homedir()` reads these. */
+function underHome<T>(home: string, fn: () => T): T {
+  const saved = { HOME: process.env.HOME, USERPROFILE: process.env.USERPROFILE };
+  process.env.HOME = home;
+  process.env.USERPROFILE = home;
+  try {
+    return fn();
+  } finally {
+    for (const [name, value] of Object.entries(saved)) {
+      if (value === undefined) delete process.env[name];
+      else process.env[name] = value;
+    }
+  }
+}
+
+test('a path under the home is sealed as ~/…, so an archive imported under another home finds it there', () => {
+  const typed = join(homedir(), 'mcp-data', 'db.sqlite');
+  upsertMcp({ id: 'env-path', transport: { ...STDIO, env: { DB: typed, TOKEN: 'env-path-secret' } } });
+  const stored = getMcp('env-path')!;
+  assert.ok(stored.transport.type === 'stdio');
+  const refs = stored.transport.env_secrets!;
+  assert.equal(refs.DB?.home, true);
+  assert.equal(refs.TOKEN?.home, undefined, 'a value that is no path stays as typed');
+  assert.equal(readSecretValue(refs.DB!.secret_id), '~/mcp-data/db.sqlite');
+  assert.equal(mcpStdioBridgeLaunch('env-path')?.env.DB, typed, 'read back where it was typed');
+  const elsewhere = mkdtempSync(join(tmpdir(), 'timon-other-home-'));
+  assert.equal(underHome(elsewhere, () => mcpStdioBridgeLaunch('env-path')?.env.DB), join(elsewhere, 'mcp-data', 'db.sqlite'));
+  assert.equal(mcpStdioBridgeLaunch('env-path')?.env.TOKEN, 'env-path-secret');
+  deleteMcp('env-path');
+});
+
+test('a path sealed before the vault wrote ~/… is rewritten by the migration, once, naming no value', async () => {
+  const typed = join(homedir(), 'old-sealed', 'config.json');
+  upsertMcp({ id: 'env-old-path', transport: { ...STDIO, env: { CONF: typed } } });
+  // As a vault written before this change left it: the absolute value, no flag.
+  const before = getMcp('env-old-path')!;
+  assert.ok(before.transport.type === 'stdio');
+  const ref = before.transport.env_secrets!.CONF!;
+  updateSecret(ref.secret_id, { value: typed });
+  writeFileSync(join(MCP_DIR, 'env-old-path.json'), JSON.stringify({
+    ...before, transport: { ...before.transport, env_secrets: { CONF: { secret_id: ref.secret_id, typed: true } } },
+  }));
+  assert.equal(mcpStdioBridgeLaunch('env-old-path')?.env.CONF, typed, 'an absolute value without the flag reads as it is');
+  const { logs } = await capturingLogs(() => migrateMcpHeadersToVault());
+  assert.ok(!logs.includes(typed));
+  assert.equal(JSON.parse(fileOf('env-old-path')).transport.env_secrets.CONF.home, true);
+  assert.equal(readSecretValue(ref.secret_id), '~/old-sealed/config.json');
+  assert.equal(mcpStdioBridgeLaunch('env-old-path')?.env.CONF, typed);
+  const again = fileOf('env-old-path');
+  await capturingLogs(() => migrateMcpHeadersToVault());
+  assert.equal(fileOf('env-old-path'), again, 'idempotent');
+  deleteMcp('env-old-path');
+});
+
+test('a master key that reads again (keyring unlocked) moves what the file kept meanwhile, without a reboot', async () => {
+  const { apply } = await import('./plugins-bundled/secrets-vault/index.js');
+  const express = (await import('express')).default;
+  const disposers: Array<() => void> = [];
+  const effect = (fn: () => (() => void) | void) => { const off = fn(); if (off) disposers.push(off); };
+  await capturingLogs(() => apply({ http: { router: () => express() }, effect } as never));
+  // A sealed secret: without one, a missing key is a fresh install, not a locked vault.
+  upsertMcp({ id: 'env-probe', transport: { ...STDIO, env: { P: 'probe' } } });
+  const probe = refsOf('env-probe').P!;
+  const key = readFileSync(SECRET_KEY_FILE);
+  unlinkSync(SECRET_KEY_FILE); resetMasterKeyCache(); resetRotationCheck();
+  try {
+    const { logs } = await capturingLogs(() => upsertMcp({ id: 'env-locked', transport: { ...STDIO, env: { K: 'env-locked-secret' } } }));
+    assert.ok(fileOf('env-locked').includes('env-locked-secret'), 'kept in the file while the key is unreadable');
+    assert.ok(!logs.includes('env-locked-secret'));
+  } finally {
+    // The key is back, the cache left as the failure left it: the next read recovers it.
+    writeFileSync(SECRET_KEY_FILE, key, { mode: 0o600 }); resetRotationCheck();
+  }
+  try {
+    const { logs } = await capturingLogs(async () => {
+      readSecretValue(probe);
+      await new Promise((resolve) => setImmediate(resolve));
+    });
+    assert.ok(!fileOf('env-locked').includes('env-locked-secret'), 'moved once the key read again');
+    assert.ok(!logs.includes('env-locked-secret'));
+    assert.match(logs, /env-locked moved into the secrets vault once the master key read again/);
+    assert.equal(mcpStdioBridgeLaunch('env-locked')?.env.K, 'env-locked-secret');
+  } finally {
+    for (const off of disposers) off();
+    deleteMcp('env-locked');
+    deleteMcp('env-probe');
+  }
 });

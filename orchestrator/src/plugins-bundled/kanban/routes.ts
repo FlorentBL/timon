@@ -56,6 +56,7 @@ import { parseTaskCreateBody, type TaskCreateBody } from './task-create-body.js'
 import { countTaskAttachments, publicTaskAttachment, taskAttachmentsWithInherited } from '../../attachments.js';
 import { apiError, type ApiErrorBody } from '../../api-error.js';
 import { pendingPermissionSummaries, type PendingPermissionSummary } from '../../permissions.js';
+import { withLandingBranchLock } from '../../landing-lock.js';
 
 /** `:id` of a series route, resolved by the shared rule (`series-service.ts`). */
 function resolveSeriesParam(req: express.Request): string | null {
@@ -1590,7 +1591,7 @@ export function registerRoutes(app: Router, deps: KanbanRouteDeps = {}): void {
     } });
   });
 
-  app.put('/api/tasks/:id', (req, res) => {
+  app.put('/api/tasks/:id', (req, res, next) => {
     // Identity, then the right, then the shape (TODO #752): a caller refused
     // learns nothing of the body's shape nor of the task's existence.
     if (!requireAuth(req, res)) return;
@@ -1671,81 +1672,96 @@ export function registerRoutes(app: Router, deps: KanbanRouteDeps = {}): void {
     const schedWarning = checkScheduledAtPlausibility(sched.value, Date.now());
     if (schedWarning) console.warn(`[tasks] ${schedWarning}`);
 
-    // ── Writes: every refusal of the request is above. ──
-    // The merge sha goes BEFORE any status transition: the merge guard
-    // (dbApi.updateTaskStatus) refuses DONE on a type='merge' task without
-    // merged_commit_sha. Lets the direct API/MCP paths close in one call.
-    if (sha !== null) {
-      dbApi.setTaskMergedSha(req.params.id, sha);
-      // The gate receives this snapshot, loaded before the SHA was persisted.
-      task.merged_commit_sha = sha;
-    }
-    // Written before the status: a task linked and closed in the same call must
-    // already carry its idea when `task_done` fires.
-    if (todo.value !== undefined) dbApi.setTaskTodoId(req.params.id, todo.value);
-    const nextStatus = normalizeTaskStatusInput(body.status);
-    if (nextStatus && nextStatus !== task.status) {
-      // Terminal status: exactly the same path as `POST /api/tasks/close`
-      // (code gate, transition, process stop). The non-terminal statuses
-      // have neither a gate nor a process to stop.
-      if (nextStatus === 'DONE' || nextStatus === 'BLOCKED') {
-        closeTask(req.params.id, task, nextStatus, {
-          doneComment: body.done_comment ?? undefined,
-          blockedReason: body.blocked_reason ?? undefined,
-          summary: parseSummary(body.done_summary),
-          // Only a browser session: an agent, the CLI or a plugin blocking a
-          // task still hands it to the pilot.
-          byPerson: isPersonAuth(req.auth),
-        });
-      } else {
-        dbApi.updateTaskStatus(req.params.id, nextStatus as Parameters<typeof dbApi.updateTaskStatus>[1], {
-          blockedReason: body.blocked_reason,
-          doneComment: body.done_comment,
+    const writes = (): void => {
+      // ── Writes: every refusal of the request is above. ──
+      // The merge sha goes BEFORE any status transition: the merge guard
+      // (dbApi.updateTaskStatus) refuses DONE on a type='merge' task without
+      // merged_commit_sha. Lets the direct API/MCP paths close in one call.
+      if (sha !== null) {
+        dbApi.setTaskMergedSha(req.params.id, sha);
+        // The gate receives this snapshot, loaded before the SHA was persisted.
+        task.merged_commit_sha = sha;
+      }
+      // Written before the status: a task linked and closed in the same call must
+      // already carry its idea when `task_done` fires.
+      if (todo.value !== undefined) dbApi.setTaskTodoId(req.params.id, todo.value);
+      const nextStatus = normalizeTaskStatusInput(body.status);
+      if (nextStatus && nextStatus !== task.status) {
+        // Terminal status: exactly the same path as `POST /api/tasks/close`
+        // (code gate, transition, process stop). The non-terminal statuses
+        // have neither a gate nor a process to stop.
+        if (nextStatus === 'DONE' || nextStatus === 'BLOCKED') {
+          closeTask(req.params.id, task, nextStatus, {
+            doneComment: body.done_comment ?? undefined,
+            blockedReason: body.blocked_reason ?? undefined,
+            summary: parseSummary(body.done_summary),
+            // Only a browser session: an agent, the CLI or a plugin blocking a
+            // task still hands it to the pilot.
+            byPerson: isPersonAuth(req.auth),
+          });
+        } else {
+          dbApi.updateTaskStatus(req.params.id, nextStatus as Parameters<typeof dbApi.updateTaskStatus>[1], {
+            blockedReason: body.blocked_reason,
+            doneComment: body.done_comment,
+          });
+        }
+      }
+      if (body.title || body.description !== undefined || body.agent_name ||
+          body.priority !== undefined || body.deps !== undefined || 'scheduled_at' in body ||
+          body.clear_scheduled_at === true ||
+          body.clear_fallback === true || body.clear_permission_mode === true ||
+          body.extra_skills !== undefined || body.extra_mcp_servers !== undefined ||
+          body.extra_allowed_tools !== undefined || type !== undefined ||
+          'backend_override' in body || 'model_override' in body || 'permission_mode_override' in body ||
+          'fallback_backend_override' in body || 'fallback_model_override' in body) {
+        dbApi.updateTask(req.params.id, {
+          title: body.title,
+          description: body.description,
+          agentName: body.agent_name,
+          priority: body.priority,
+          deps: body.deps,
+          scheduledAt: sched.value ?? null,
+          clearScheduledAt: body.clear_scheduled_at === true,
+          extraSkills: body.extra_skills,
+          extraMcpServers: body.extra_mcp_servers,
+          extraAllowedTools: body.extra_allowed_tools,
+          type,
+          backendOverride: body.backend_override,
+          modelOverride: body.model_override,
+          fallbackBackendOverride: body.fallback_backend_override,
+          fallbackModelOverride: body.fallback_model_override,
+          clearFallback: body.clear_fallback === true,
+          permissionModeOverride: body.permission_mode_override,
+          clearPermissionMode: body.clear_permission_mode === true,
         });
       }
-    }
-    if (body.title || body.description !== undefined || body.agent_name ||
-        body.priority !== undefined || body.deps !== undefined || 'scheduled_at' in body ||
-        body.clear_scheduled_at === true ||
-        body.clear_fallback === true || body.clear_permission_mode === true ||
-        body.extra_skills !== undefined || body.extra_mcp_servers !== undefined ||
-        body.extra_allowed_tools !== undefined || type !== undefined ||
-        'backend_override' in body || 'model_override' in body || 'permission_mode_override' in body ||
-        'fallback_backend_override' in body || 'fallback_model_override' in body) {
-      dbApi.updateTask(req.params.id, {
-        title: body.title,
-        description: body.description,
-        agentName: body.agent_name,
-        priority: body.priority,
-        deps: body.deps,
-        scheduledAt: sched.value ?? null,
-        clearScheduledAt: body.clear_scheduled_at === true,
-        extraSkills: body.extra_skills,
-        extraMcpServers: body.extra_mcp_servers,
-        extraAllowedTools: body.extra_allowed_tools,
-        type,
-        backendOverride: body.backend_override,
-        modelOverride: body.model_override,
-        fallbackBackendOverride: body.fallback_backend_override,
-        fallbackModelOverride: body.fallback_model_override,
-        clearFallback: body.clear_fallback === true,
-        permissionModeOverride: body.permission_mode_override,
-        clearPermissionMode: body.clear_permission_mode === true,
+      // After `updateTask`, so a `scheduled_at` in the same body cannot bring an
+      // agent's requeue forward past its backoff.
+      if (requeue) {
+        if (requeuer === null) dbApi.resetTaskRequeues(req.params.id);
+        else {
+          const delay = agentRequeueDelayMs(task);
+          if (delay > 0) dbApi.deferTask(req.params.id, Date.now() + delay);
+        }
+      }
+    };
+    // A task based on a landed branch, reopened, waits for a cleanup deleting
+    // that branch to finish (`landing-lock.ts`), or the cleanup reads it
+    // reopened and keeps the branch.
+    const nextStatusForLock = normalizeTaskStatusInput(body.status);
+    const reopens = !!task.base_branch && task.status === 'DONE' && !!nextStatusForLock && nextStatusForLock !== 'DONE';
+    const answer = (): void => {
+      res.json({
+        task: scope.getTask(req.params.id),
+        ...(schedWarning ? { warnings: [schedWarning] } : {}),
       });
+    };
+    if (reopens) {
+      withLandingBranchLock(task.base_branch!, writes).then(answer, next);
+      return;
     }
-    // After `updateTask`, so a `scheduled_at` in the same body cannot bring an
-    // agent's requeue forward past its backoff.
-    if (requeue) {
-      if (requeuer === null) dbApi.resetTaskRequeues(req.params.id);
-      else {
-        const delay = agentRequeueDelayMs(task);
-        if (delay > 0) dbApi.deferTask(req.params.id, Date.now() + delay);
-      }
-    }
-    res.json({
-      task: scope.getTask(req.params.id),
-      ...(schedWarning ? { warnings: [schedWarning] } : {}),
-    });
+    writes();
+    answer();
   });
 
   app.delete('/api/tasks/:id', (req, res) => {

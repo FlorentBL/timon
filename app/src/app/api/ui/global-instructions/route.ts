@@ -12,7 +12,7 @@ export async function GET(): Promise<Response> {
 export async function PUT(req: Request): Promise<Response> {
   const upstream = await relay(`/api/global-instructions`, {
     method: 'PUT',
-    headers: { 'content-type': 'text/plain; charset=utf-8', ...sessionProxyHeaders() },
+    headers: { 'content-type': 'text/plain; charset=utf-8', ...(await sessionProxyHeaders()) },
     body: await req.text(),
     cache: 'no-store',
   });

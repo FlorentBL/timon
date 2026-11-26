@@ -12,6 +12,7 @@ import assert from 'node:assert/strict';
 import { existsSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import test from 'node:test';
+import * as React from 'react';
 import { clientContext } from './plugin-host/loader';
 import { UI_KIT } from './plugin-host/ui-kit';
 import * as dialog from '../components/ui/dialog';
@@ -32,7 +33,7 @@ import { useTodoOpener } from '../plugins-client/kanban/todo-opener';
 import { useFenceGrant } from '../components/chat/fence-grant-card';
 import { useProjectSettings } from '../components/project-settings-slot';
 import { useWidgetAttention, useWidgetCount, useWidgetInFront, useWidgetMenu } from '../components/widget-host/widget-self';
-import { platformModuleExports } from './plugin-host/platform-modules';
+import { PLATFORM_MODULE_SOURCES, platformModuleExports } from './plugin-host/platform-modules';
 import { PLATFORM_MODULES } from './plugin-host/modules';
 
 type Entry = { type: string; arity?: number; since: number };
@@ -233,7 +234,7 @@ test('the Git stack\'s project, the TO DO opener and the project settings row jo
   // A host 18 exports none of them: the github-issues plugin's browser half,
   // which reads all four, declares 19.
   const declarations = readFileSync(join(process.cwd(), '../packages/sdk/src/ui.d.ts'), 'utf8');
-  assert.equal(snapshot.apiVersion, 19);
+  assert.ok(snapshot.apiVersion >= 19);
   assert.equal(UI_KIT.useGitStackProject, useGitStackProject);
   assert.equal(UI_KIT.GitStackProjectPicker, GitStackProjectPicker);
   assert.equal(UI_KIT.useTodoOpener, useTodoOpener);
@@ -266,13 +267,33 @@ test('a widget\'s tab count, dot, menu and front state join wave 19, still unrel
   assert.ok(declarations.includes('export function useWidgetInFront(): boolean;'));
 });
 
-test('the fence card joins wave 19, still unreleased', () => {
-  // A host 18 paints no `chat.fence` card: a plugin that redraws it declares 19.
+test('the fence card belongs to wave 19', () => {
+  // A host 17 paints no `chat.fence` card: a plugin that redraws it declares 19,
+  // which `SLOT_API_VERSIONS` enforces on the daemon side (`plugins/manifest.ts`).
   assert.equal(UI_KIT.useFenceGrant, useFenceGrant);
   assert.ok(platformModuleExports('ui.js').includes('useFenceGrant'));
   assert.equal(snapshot.modules['ui.js']?.useFenceGrant?.since, 19);
   const declarations = readFileSync(join(process.cwd(), '../packages/sdk/src/ui.d.ts'), 'utf8');
   assert.ok(declarations.includes('export function useFenceGrant(): FenceGrantValue | null;'));
+});
+
+test('the platform `react` module hands out the app\'s own React, and its React 19 names open wave 20', () => {
+  // 0.1.10 shipped API 19 without them: a plugin that imports one declares 20,
+  // or a 0.1.10 host loads it and its browser half dies on the missing import.
+  assert.ok(snapshot.apiVersion >= 20);
+  const names = platformModuleExports('react.js').filter((name) => name !== 'default');
+  for (const name of names) {
+    assert.notEqual((React as Record<string, unknown>)[name], undefined, `React 19 has no \`${name}\``);
+  }
+  for (const name of ['use', 'useActionState', 'useOptimistic', 'useTransition', 'useDeferredValue',
+    'startTransition', 'forwardRef', 'useImperativeHandle', 'Children', 'isValidElement']) {
+    assert.ok(names.includes(name), name);
+    assert.equal(snapshot.modules['react.js']?.[name]?.since, 20, name);
+  }
+  // The automatic JSX runtime is not part of the contract: serving it would
+  // widen it for good, and nobody decided that.
+  assert.equal(PLATFORM_MODULE_SOURCES['jsx-runtime.js'], undefined);
+  assert.equal((PLATFORM_MODULES as Record<string, string>)['react/jsx-runtime'], undefined);
 });
 
 /** Platform names a client bundle imports, per module file (`ui.js`, …). */

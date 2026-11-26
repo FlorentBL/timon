@@ -78,6 +78,6 @@ Replies stream into the chat and tool calls appear with their results. **Stop** 
 ## Limitations
 
 - **The permission mode does not switch Antigravity's modes.** Whatever the agent's permission mode, `agy` runs in its default mode, which asks; Timon's cards and classifier decide each request.
-- **HTTP MCP servers are not passed on.** MCP servers you added over HTTP do not reach Antigravity agents.
+- **HTTP MCP servers are not passed on.** MCP servers you added over HTTP do not reach Antigravity agents: Antigravity does not announce that it accepts them, and Timon declares only what an agent announces.
 - **The quota gauge relies on an internal interface of `agy`.** It was checked with `agy` 1.5.9; a later version may change it, and the gauge then shows the quota as unknown until Timon follows.
 - **Checked on Linux only.** Google's installers cover macOS and Windows, but Timon was not tried there yet. Report what you see.

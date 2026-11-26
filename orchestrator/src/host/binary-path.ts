@@ -1,15 +1,19 @@
 import { spawnSync } from 'node:child_process';
-import { accessSync, constants, lstatSync, readdirSync, readFileSync, statSync } from 'node:fs';
+import { accessSync, constants, lstatSync, readdirSync, readFileSync, realpathSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { isAbsolute, join, posix, win32 } from 'node:path';
 import { TIMON_HOME } from '../paths.js';
 import { installedByNpm } from './machine.js';
-import { windowsShimLaunch } from './windows-shell.js';
+import { resolveNpmShim, windowsShimLaunch } from './windows-shell.js';
 import { fencedSystemFolders, missionWritableProblem, pathWithin } from './mission-writable.js';
 import { untrustedPathProblem, type TrustedTreeDeps } from './trusted-tree.js';
-import { declaredBinary } from './declared-binaries.js';
+import { declaredBinaries, declaredBinary } from './declared-binaries.js';
+import { runsOnNode } from './launch-path.js';
 import type { BuiltinDesktopBuild } from '../backends/builtin-declarations.js';
-import { expandDirectory, INSTALL_PLATFORMS, type InstallPlatform } from '../backends/provider-declarations.js';
+import {
+  expandDirectory, INSTALL_PLATFORMS, NPM_NATIVE_PACKAGE_ROOT, NPM_NATIVE_TARGETS,
+  type InstallPlatform, type NpmNativeTarget, type ProviderNpmNative,
+} from '../backends/provider-declarations.js';
 
 export const INSTALLED_BINARIES_FILE = join(TIMON_HOME, 'installed-binaries.json');
 
@@ -35,7 +39,13 @@ export type BinarySearchOptions = {
   /** Stands in for `TIMON_HOME` when telling the folders a mission can write. */
   timonHome?: string;
   /** Owner and mode reads behind the trust of a version manager's `node`, injectable for tests. */
-  pathTrust?: Pick<TrustedTreeDeps, 'uid' | 'lstat' | 'readlink'>;
+  pathTrust?: Pick<TrustedTreeDeps, 'uid' | 'lstat' | 'readlink' | 'privateGroup'>;
+  /** `process.arch` of the machine the search stands for: which native build an npm launcher stands for. */
+  arch?: string;
+  /** Filesystem reads behind an npm launcher's package, injectable for tests. */
+  npmFs?: Partial<NpmNativeFs>;
+  /** Reads the head of a launcher (`runsOnNode`, the npm shim), injectable for tests. */
+  readHead?: (file: string) => string;
 };
 
 export type DirectoryReader = {
@@ -544,8 +554,9 @@ export function findExecutableBinary(name: string, options: BinarySearchOptions 
     ? (candidate: string) => untrustedManagedNode(candidate, roots, platform, home, options.timonHome, options.pathTrust)
     : undefined;
   // npm is asked only once every known location has failed: it costs a process.
-  return firstExecutable(binaryCandidates(name, options), platform, options.timonHome, refused)
+  const found = firstExecutable(binaryCandidates(name, options), platform, options.timonHome, refused)
     ?? firstExecutable(npmPrefixCandidates(name, options), platform, options.timonHome, refused);
+  return found ? preferNpmNative(name, found, options) : null;
 }
 
 /**
@@ -555,9 +566,218 @@ export function findExecutableBinary(name: string, options: BinarySearchOptions 
  */
 export function resolvePinnedBinary(name: string, pin: string, options: BinarySearchOptions = {}): string | null {
   const pinned = findExecutableBinary(pin, options);
-  if (pinned) return pinned;
+  if (pinned) return preferNpmNative(name, pinned, options);
   if (isDesktopBuildPath(name, pin, options)) return findExecutableBinary(name, options);
   return null;
+}
+
+/* ── npm launchers of a native build (C1 `npmNative`) ─────────────────────── */
+
+const HOST_PATH = process.platform === 'win32' ? win32 : posix;
+
+/** Path operations for `sample`'s kind: a Windows drive path is read the Windows way on any host (tests). */
+function pathsFor(platform: NodeJS.Platform, sample: string): typeof posix {
+  return platform === 'win32' && win32.isAbsolute(sample) && !HOST_PATH.isAbsolute(sample) ? win32 : HOST_PATH;
+}
+
+function segmentsOf(path: typeof posix, file: string): string[] {
+  return path.normalize(file).split(/[\\/]+/);
+}
+
+/** Segment equality as the file system compares names: without case on Windows. */
+function sameSegments(platform: NodeJS.Platform, a: readonly string[], b: readonly string[]): boolean {
+  return a.length === b.length && a.every((s, i) => (platform === 'win32' ? s.toLowerCase() === b[i]!.toLowerCase() : s === b[i]));
+}
+
+/** What a launch of a native build needs from the daemon, beside the file itself. */
+export type NpmNativeOrigin = {
+  /** The native executable. */
+  readonly file: string;
+  /** The real folder of the launcher's package (`<…>/node_modules/@openai/codex`). */
+  readonly packageRoot: string;
+  /** Folders to put first on the build's PATH (`extraPath`), those that exist. */
+  readonly extraPath: readonly string[];
+  /** Variables the launcher would have set, `${packageRoot}` replaced. */
+  readonly env: Readonly<Record<string, string>>;
+};
+
+export type NpmNativeFs = {
+  realpath(file: string): string | null;
+  isDirectory(dir: string): boolean;
+  readText(file: string): string | null;
+};
+
+const diskNpmFs: NpmNativeFs = {
+  realpath: (file) => { try { return realpathSync.native(file); } catch { return null; } },
+  isDirectory: (dir) => { try { return statSync(dir).isDirectory(); } catch { return false; } },
+  readText: (file) => {
+    try {
+      if (statSync(file).size > 64 * 1024) return null;
+      return readFileSync(file, 'utf8');
+    } catch { return null; }
+  },
+};
+
+/** `<os>-<arch>` of the machine the search stands for. */
+function npmTarget(platform: NodeJS.Platform, arch: string): NpmNativeTarget | null {
+  const target = `${platform}-${arch}`;
+  return (NPM_NATIVE_TARGETS as readonly string[]).includes(target) ? target as NpmNativeTarget : null;
+}
+
+/**
+ * The package folder `file` sits in: the nearest `node_modules/<package>` above it, whose `package.json`
+ * names `package`. Its real path, or null.
+ */
+function enclosingPackage(file: string, pkg: string, platform: NodeJS.Platform, fs: NpmNativeFs): string | null {
+  const path = pathsFor(platform, file);
+  const pkgSegments = pkg.split('/');
+  const parts = segmentsOf(path, file);
+  // Bounded: a launcher sits a few folders below its package (`bin/codex.js`).
+  for (let end = parts.length - 1; end >= pkgSegments.length + 1 && end >= parts.length - 8; end -= 1) {
+    const tail = parts.slice(end - pkgSegments.length, end);
+    if (!sameSegments(platform, tail, pkgSegments) || !sameSegments(platform, [parts[end - pkgSegments.length - 1]!], ['node_modules'])) continue;
+    const root = parts.slice(0, end).join(path.sep) || path.sep;
+    const manifest = fs.readText(path.join(root, 'package.json'));
+    if (!manifest) return null;
+    try {
+      const parsed: unknown = JSON.parse(manifest);
+      if (!parsed || typeof parsed !== 'object' || (parsed as { name?: unknown }).name !== pkg) return null;
+    } catch { return null; }
+    return fs.realpath(root) ?? root;
+  }
+  return null;
+}
+
+/** The script a resolved launcher runs: the file itself on POSIX, what the npm shim starts on Windows. */
+function launcherScript(launcher: string, platform: NodeJS.Platform, fs: NpmNativeFs, read?: (file: string) => string): string | null {
+  if (platform === 'win32' && /\.(cmd|bat)$/i.test(launcher)) {
+    const target = resolveNpmShim(launcher, read ? { read } : {});
+    if (!target || target.kind !== 'script' || target.runtime !== 'node') return null;
+    return fs.realpath(target.script) ?? target.script;
+  }
+  const real = fs.realpath(launcher) ?? launcher;
+  return runsOnNode(real, platform, read) ? real : null;
+}
+
+/** Where the carrying packages of one target may sit, the platform package first, nested then beside. */
+function carrierCandidates(native: ProviderNpmNative, target: NpmNativeTarget, packageRoot: string, platform: NodeJS.Platform): string[] {
+  const path = pathsFor(platform, packageRoot);
+  const out: string[] = [];
+  if (native.platformPackage) {
+    const platformSegments = native.platformPackage.replaceAll('${target}', target).split('/');
+    out.push(path.join(packageRoot, 'node_modules', ...platformSegments));
+    // Hoisted beside the launcher's package (a local install, pnpm's store): the same `node_modules`.
+    const modules = path.join(packageRoot, ...native.package.split('/').map(() => '..'));
+    out.push(path.join(modules, ...platformSegments));
+  }
+  out.push(packageRoot);
+  return out;
+}
+
+/** The PATH folders and variables of a native build carried by `carrier`. */
+function nativeOrigin(native: ProviderNpmNative, file: string, carrier: string, packageRoot: string, platform: NodeJS.Platform, fs: NpmNativeFs): NpmNativeOrigin {
+  const path = pathsFor(platform, file);
+  const extraPath: string[] = [];
+  if (native.extraPath) {
+    const dir = path.join(path.dirname(file), ...native.extraPath);
+    if (pathWithin(platform, carrier, dir) && fs.isDirectory(dir)) extraPath.push(dir);
+  }
+  const env = Object.fromEntries(Object.entries(native.env ?? {}).map(([name, value]) =>
+    [name, value === NPM_NATIVE_PACKAGE_ROOT ? packageRoot : value]));
+  return { file, packageRoot, extraPath, env };
+}
+
+/**
+ * The native build behind `launcher`, the binary resolved for `name`, when the provider that declares
+ * `name` said its npm launcher carries one (C1 `npmNative`). The launcher only finds that build and starts
+ * it: starting the build directly keeps `node` out of the launch, and version, sign-in, doctor and
+ * missions all run the same file. Null when `launcher` is not that package's Node script, or the build is
+ * missing, not executable, or in a folder a mission writes: the launcher then runs as before.
+ */
+export function npmNativeBehind(name: string, launcher: string, options: BinarySearchOptions = {}): NpmNativeOrigin | null {
+  const native = declaredBinary(name)?.npmNative;
+  if (!native) return null;
+  const platform = options.platform ?? process.platform;
+  const target = npmTarget(declarationOs(platform), options.arch ?? process.arch);
+  const executable = target ? native.executable[target] : undefined;
+  if (!target || !executable) return null;
+  const fs: NpmNativeFs = { ...diskNpmFs, ...options.npmFs };
+  const script = launcherScript(launcher, platform, fs, options.readHead);
+  if (!script) return null;
+  const packageRoot = enclosingPackage(script, native.package, platform, fs);
+  if (!packageRoot) return null;
+  const path = pathsFor(platform, packageRoot);
+  for (const carrier of carrierCandidates(native, target, packageRoot, platform)) {
+    const file = firstExecutable([path.join(carrier, ...executable)], platform, options.timonHome);
+    // A native build is never itself a Node script: that would only be another launcher.
+    if (file && !runsOnNode(file, platform, options.readHead)) return nativeOrigin(native, file, carrier, packageRoot, platform, fs);
+  }
+  return null;
+}
+
+/** `found`, or the native build its npm launcher stands for. */
+function preferNpmNative(name: string, found: string, options: BinarySearchOptions): string {
+  if (isAbsolute(name) || win32.isAbsolute(name)) return found;
+  return npmNativeBehind(name, found, options)?.file ?? found;
+}
+
+/**
+ * The declared native build `file` is, read from its path: the inverse of `npmNativeBehind`, for the
+ * launches that only hold the resolved file (a spawn, a probe). Null for any other file.
+ */
+export function npmNativeOrigin(file: string, options: BinarySearchOptions = {}): NpmNativeOrigin | null {
+  const platform = options.platform ?? process.platform;
+  const target = npmTarget(declarationOs(platform), options.arch ?? process.arch);
+  if (!target) return null;
+  const path = pathsFor(platform, file);
+  if (!path.isAbsolute(file)) return null;
+  const fs: NpmNativeFs = { ...diskNpmFs, ...options.npmFs };
+  const parts = segmentsOf(path, file);
+  for (const declaration of declaredBinaries()) {
+    const native = declaration.npmNative;
+    const executable = native?.executable[target];
+    if (!native || !executable || parts.length <= executable.length) continue;
+    if (!sameSegments(platform, parts.slice(-executable.length), executable)) continue;
+    const carrier = parts.slice(0, -executable.length).join(path.sep) || path.sep;
+    // The carrier is the launcher's package itself, or its platform package nested in it or beside it.
+    const roots = [carrier];
+    if (native.platformPackage) {
+      const platformSegments = native.platformPackage.replaceAll('${target}', target).split('/');
+      const carrierParts = segmentsOf(path, carrier);
+      if (sameSegments(platform, carrierParts.slice(-platformSegments.length), platformSegments)) {
+        const above = carrierParts.slice(0, -platformSegments.length);
+        // `<package>/node_modules/<platform package>`, then `<node_modules>/<package>` beside it.
+        if (sameSegments(platform, above.slice(-1), ['node_modules'])) roots.unshift(above.slice(0, -1).join(path.sep));
+        roots.push(path.join(above.join(path.sep) || path.sep, ...native.package.split('/')));
+      }
+    }
+    for (const root of roots) {
+      const packageRoot = enclosingPackage(path.join(root, 'package.json'), native.package, platform, fs);
+      if (packageRoot) return nativeOrigin(native, file, carrier, packageRoot, platform, fs);
+    }
+  }
+  return null;
+}
+
+/**
+ * `env` as the launcher would have handed it to the native build `file`: its variables set, its folder
+ * of bundled tools first on PATH. The same object when `file` is no declared native build; `undefined`
+ * stands for the daemon's own environment, which is then copied.
+ */
+export function withNpmNativeEnv(env: NodeJS.ProcessEnv | undefined, file: string, options: BinarySearchOptions = {}): NodeJS.ProcessEnv | undefined {
+  const origin = npmNativeOrigin(file, options);
+  if (!origin) return env;
+  const platform = options.platform ?? process.platform;
+  const out: NodeJS.ProcessEnv = { ...(env ?? process.env) };
+  Object.assign(out, origin.env);
+  if (origin.extraPath.length) {
+    const key = platform === 'win32' ? (Object.keys(out).filter((k) => k.toUpperCase() === 'PATH').pop() ?? 'PATH') : 'PATH';
+    const delimiter = platform === 'win32' ? ';' : ':';
+    const listed = (out[key] ?? '').split(delimiter).filter(Boolean);
+    const missing = origin.extraPath.filter((dir) => !listed.some((entry) => sameSegments(platform, [entry.replace(/[\\/]+$/, '')], [dir])));
+    if (missing.length) out[key] = [...missing, ...listed].join(delimiter);
+  }
+  return out;
 }
 
 /** Locations a pin resolution tries, in order — what `timon doctor` reports. */

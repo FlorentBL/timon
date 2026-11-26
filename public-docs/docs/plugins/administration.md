@@ -104,7 +104,7 @@ await ctx.plugins.setEnabled('@timon/telegram', false);
 
 ## System, backup, browser, docs, license
 
-- `ctx.system.health()` — liveness, live missions, resource and memory figures. `doctor()` — the machine report (binaries, capabilities); a superadmin's request, or a job. `logs({ kind: 'daemon' | 'desktop', lines })` — the last lines, newest first, vault values masked, never the prompts log; a superadmin's request only, never a job.
+- `ctx.system.health()` — liveness, live missions, resource and memory figures. `doctor()` — the machine report (binaries, capabilities); a superadmin's request, or a job. From API 20 it also carries `terminal` (`available`, `reason`): whether the built-in terminal can start on this machine, and the loader's error when it cannot; an older daemon's report has no such field. `logs({ kind: 'daemon' | 'desktop', lines })` — the last lines, newest first, vault values masked, never the prompts log; a superadmin's request only, never a job.
 - `ctx.backup.status()` and `enable()` (idempotent; there is no `disable`). Both are a superadmin's request, or a job: the status names where the archives of every account lie.
 - `ctx.browser.list / status / start / stop(project)` — a request sees its account's sessions, a job the ones it started; another's session answers like a missing one. The debugging endpoint of the browser is never returned.
 - `ctx.docs.search(query)` and `ctx.docs.read(route, heading?)` — this version's documentation, offline.

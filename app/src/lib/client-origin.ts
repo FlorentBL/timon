@@ -1,14 +1,14 @@
 /**
  * Origin the client actually reached us on, rebuilt from the request.
  *
- * Why this exists (step 5.9.6). The URL Next hands the middleware is built by
+ * Why this exists (step 5.9.6). The URL Next hands the proxy is built by
  * the SERVER, from its own bind address: `next-server.js:1162` composes
  * `${protocol}://${fetchHostname}:${port}${req.url}`. It can therefore never
  * carry the host the browser typed — `req.nextUrl` says `localhost` (or the
  * bind address) whatever happened on the wire, which is how a browser sitting
  * on `127.0.0.1:3110` was sent to `localhost:3110` before step 5.9.1. And a
  * RELATIVE `Location`, the fix attempted then, never reaches the browser at
- * all: the middleware adapter reparses it with `new NextURL(location, opts)`,
+ * all: the proxy adapter reparses it with `new NextURL(location, opts)`,
  * without a base (`adapter.js:242`), and throws `Invalid URL`.
  *
  * The only witness of the client's own origin is the `Host` header, which a

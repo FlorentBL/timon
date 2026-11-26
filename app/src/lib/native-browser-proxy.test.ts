@@ -16,15 +16,15 @@ test('native browser proxy forwards only the authenticated session cookie', asyn
   globalThis.fetch = async (url, init) => { calls.push({ url: String(url), init }); return Response.json({ available: true }); };
   try {
     const run = (session: string | undefined, work: () => Promise<Response>) => requestAsyncStorage.run({ headers: new Headers(), cookies: { get: (name: string) => name === 'timon_session' && session ? { value: session } : undefined } } as never, work);
-    await run('session-one', () => GET(new Request('http://localhost/api/ui/native-browser/resolve?agent=one'), { params: { path: ['resolve'] } }));
+    await run('session-one', () => GET(new Request('http://localhost/api/ui/native-browser/resolve?agent=one'), { params: Promise.resolve({ path: ['resolve'] }) }));
     assert.equal(new Headers(calls[0]?.init?.headers).get('cookie'), 'timon_session=session-one');
     assert.equal(new Headers(calls[0]?.init?.headers).get('authorization'), null);
     assert.ok(calls[0]?.url.endsWith('/api/native-browser/resolve?agent=one'));
-    await run(undefined, () => POST(new Request('http://localhost/api/ui/native-browser/id/command', { method: 'POST', body: JSON.stringify({ action: 'status' }) }), { params: { path: ['id', 'command'] } }));
+    await run(undefined, () => POST(new Request('http://localhost/api/ui/native-browser/id/command', { method: 'POST', body: JSON.stringify({ action: 'status' }) }), { params: Promise.resolve({ path: ['id', 'command'] }) }));
     assert.equal(new Headers(calls[1]?.init?.headers).get('cookie'), null);
     assert.equal(new Headers(calls[1]?.init?.headers).get('authorization'), null);
     assert.deepEqual(JSON.parse(String(calls[1]?.init?.body)), { action: 'status' });
-    await run('session-one', () => DELETE(new Request('http://localhost/api/ui/native-browser/id/credentials/credential'), { params: { path: ['id', 'credentials', 'credential'] } }));
+    await run('session-one', () => DELETE(new Request('http://localhost/api/ui/native-browser/id/credentials/credential'), { params: Promise.resolve({ path: ['id', 'credentials', 'credential'] }) }));
     assert.equal(calls[2]?.init?.method, 'DELETE');
     assert.equal(new Headers(calls[2]?.init?.headers).get('cookie'), 'timon_session=session-one');
     const downloads: Record<string, unknown>[] = [];
@@ -36,7 +36,7 @@ test('native browser proxy forwards only the authenticated session cookie', asyn
       const data = body.offset === 0 ? 'part1' : 'part2';
       return Response.json({ result: { data: Buffer.from(data).toString('base64'), offset: body.offset, size: 10, name: 'résumé.txt', mimeType: 'text/plain', eof: body.offset !== 0 } }); // french-ok: an accented file name, kept as is
     };
-    const download = await run('session-one', () => GET(new Request('http://localhost/api/ui/native-browser/id/downloads/report?clientId=viewer'), { params: { path: ['id', 'downloads', 'report'] } }));
+    const download = await run('session-one', () => GET(new Request('http://localhost/api/ui/native-browser/id/downloads/report?clientId=viewer'), { params: Promise.resolve({ path: ['id', 'downloads', 'report'] }) }));
     assert.equal(await download.text(), 'part1part2');
     assert.equal(download.headers.get('content-length'), '10');
     assert.match(download.headers.get('content-disposition')!, /attachment.*r%C3%A9sum%C3%A9/);
@@ -63,14 +63,14 @@ test('native browser proxy relays the recording routes (TODO #461) with the sess
     const run = (work: () => Promise<Response>) => requestAsyncStorage.run({ headers: new Headers(), cookies: { get: (name: string) => name === 'timon_session' ? { value: 'session-one' } : undefined } } as never, work);
     const req = (path: string, init?: RequestInit) => new Request(`http://localhost/api/ui/native-browser/${path}`, init);
     const cases: Array<[string, string, () => Promise<Response>, unknown]> = [
-      ['POST', '/api/native-browser/p1/recording/start', () => POST(req('p1/recording/start', { method: 'POST' }), { params: { path: ['p1', 'recording', 'start'] } }), undefined],
-      ['POST', '/api/native-browser/p1/recording/stop', () => POST(req('p1/recording/stop', { method: 'POST', body: '{}' }), { params: { path: ['p1', 'recording', 'stop'] } }), {}],
-      ['GET', '/api/native-browser/p1/recordings', () => GET(req('p1/recordings'), { params: { path: ['p1', 'recordings'] } }), undefined],
-      ['GET', '/api/native-browser/recordings/br-1', () => GET(req('recordings/br-1'), { params: { path: ['recordings', 'br-1'] } }), undefined],
-      ['PATCH', '/api/native-browser/recordings/br-1', () => PATCH(req('recordings/br-1', { method: 'PATCH', body: JSON.stringify({ ops: [{ op: 'mask', step: 2 }] }) }), { params: { path: ['recordings', 'br-1'] } }), { ops: [{ op: 'mask', step: 2 }] }],
-      ['DELETE', '/api/native-browser/recordings/br-1', () => DELETE(req('recordings/br-1', { method: 'DELETE' }), { params: { path: ['recordings', 'br-1'] } }), undefined],
-      ['GET', '/api/native-browser/recordings/br-1/learn-agents', () => GET(req('recordings/br-1/learn-agents'), { params: { path: ['recordings', 'br-1', 'learn-agents'] } }), undefined],
-      ['POST', '/api/native-browser/recordings/br-1/learn', () => POST(req('recordings/br-1/learn', { method: 'POST', body: JSON.stringify({ autoSubmit: false }) }), { params: { path: ['recordings', 'br-1', 'learn'] } }), { autoSubmit: false }],
+      ['POST', '/api/native-browser/p1/recording/start', () => POST(req('p1/recording/start', { method: 'POST' }), { params: Promise.resolve({ path: ['p1', 'recording', 'start'] }) }), undefined],
+      ['POST', '/api/native-browser/p1/recording/stop', () => POST(req('p1/recording/stop', { method: 'POST', body: '{}' }), { params: Promise.resolve({ path: ['p1', 'recording', 'stop'] }) }), {}],
+      ['GET', '/api/native-browser/p1/recordings', () => GET(req('p1/recordings'), { params: Promise.resolve({ path: ['p1', 'recordings'] }) }), undefined],
+      ['GET', '/api/native-browser/recordings/br-1', () => GET(req('recordings/br-1'), { params: Promise.resolve({ path: ['recordings', 'br-1'] }) }), undefined],
+      ['PATCH', '/api/native-browser/recordings/br-1', () => PATCH(req('recordings/br-1', { method: 'PATCH', body: JSON.stringify({ ops: [{ op: 'mask', step: 2 }] }) }), { params: Promise.resolve({ path: ['recordings', 'br-1'] }) }), { ops: [{ op: 'mask', step: 2 }] }],
+      ['DELETE', '/api/native-browser/recordings/br-1', () => DELETE(req('recordings/br-1', { method: 'DELETE' }), { params: Promise.resolve({ path: ['recordings', 'br-1'] }) }), undefined],
+      ['GET', '/api/native-browser/recordings/br-1/learn-agents', () => GET(req('recordings/br-1/learn-agents'), { params: Promise.resolve({ path: ['recordings', 'br-1', 'learn-agents'] }) }), undefined],
+      ['POST', '/api/native-browser/recordings/br-1/learn', () => POST(req('recordings/br-1/learn', { method: 'POST', body: JSON.stringify({ autoSubmit: false }) }), { params: Promise.resolve({ path: ['recordings', 'br-1', 'learn'] }) }), { autoSubmit: false }],
     ];
     for (const [method, path, call, body] of cases) {
       const res = await run(call);
@@ -84,7 +84,7 @@ test('native browser proxy relays the recording routes (TODO #461) with the sess
       assert.deepEqual(sent.init?.body === undefined ? undefined : JSON.parse(String(sent.init.body)), body);
     }
     const before = calls.length;
-    const bad = await run(() => PATCH(req('recordings/br-1', { method: 'PATCH', body: '{oops' }), { params: { path: ['recordings', 'br-1'] } }));
+    const bad = await run(() => PATCH(req('recordings/br-1', { method: 'PATCH', body: '{oops' }), { params: Promise.resolve({ path: ['recordings', 'br-1'] }) }));
     assert.equal(bad.status, 400);
     assert.equal(calls.length, before, 'invalid JSON never reaches the daemon');
   } finally {
@@ -107,7 +107,7 @@ test('native browser proxy relays the annotation routes (TODO #468) with the ses
   try {
     const run = (session: string | undefined, work: () => Promise<Response>) => requestAsyncStorage.run({ headers: new Headers(), cookies: { get: (name: string) => name === 'timon_session' && session ? { value: session } : undefined } } as never, work);
     const req = (path: string, init?: RequestInit) => new Request(`http://localhost/api/ui/native-browser/${path}`, init);
-    const segments = (path: string) => ({ params: { path: path.split('?')[0]!.split('/') } });
+    const segments = (path: string) => ({ params: Promise.resolve({ path: path.split('?')[0]!.split('/') }) });
     const id = 'ba-00000000-0000-4000-8000-000000000468';
     const batch = 'bab-00000000-0000-4000-8000-000000000468';
     const send = { ids: [id], agent: 'timon.coder' };

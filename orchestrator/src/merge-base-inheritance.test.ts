@@ -20,7 +20,8 @@ import { agentDir } from './paths.js';
 import { inheritedBase, resolveWorktree, worktreeDirective } from './dispatcher.js';
 import { runTaskChain } from './task-chain.js';
 import { maybeCreateDocTask } from './doc-task.js';
-import { disposeWorktree, type WorktreeInfo } from './worktree.js';
+import { type WorktreeInfo } from './worktree.js';
+import { forceRemoveTestWorktree } from './worktree-fixture.js';
 await import('../tests/helpers/claude-provider.js');
 
 
@@ -103,7 +104,7 @@ test('review of a code task inherits its base; the merge then inherits the root 
     assert.ok(merge, 'a passing review gets its merge');
     assert.equal(merge.base_branch, 'main');
   } finally {
-    for (const wt of worktrees) await disposeWorktree(wt, true);
+    for (const wt of worktrees) await forceRemoveTestWorktree(wt);
     rmSync(join(repo, '..'), { recursive: true, force: true });
   }
 });
@@ -143,7 +144,7 @@ test('a merge without its own base takes its code task base, not the active bran
     // Started from `main`: the feature branch's commit is not in it.
     assert.equal(git(wt.path, 'log', '--format=%s', '-1'), 'init');
   } finally {
-    for (const wt of worktrees) await disposeWorktree(wt, true);
+    for (const wt of worktrees) await forceRemoveTestWorktree(wt);
     rmSync(join(repo, '..'), { recursive: true, force: true });
   }
 });
@@ -159,7 +160,7 @@ test('no base known anywhere: the merge still falls back on the active branch', 
     worktrees.push(wt);
     assert.equal(wt.base, 'feat/active');
   } finally {
-    for (const wt of worktrees) await disposeWorktree(wt, true);
+    for (const wt of worktrees) await forceRemoveTestWorktree(wt);
     rmSync(join(repo, '..'), { recursive: true, force: true });
   }
 });

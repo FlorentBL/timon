@@ -70,7 +70,7 @@ async function renderTopBar(collapsed: boolean, run: (host: HTMLElement) => void
     const { AppRouterContext } = await import('next/dist/shared/lib/app-router-context.shared-runtime');
     const { PathnameContext, SearchParamsContext } = await import('next/dist/shared/lib/hooks-client-context.shared-runtime');
     const { WorkspaceLayoutProvider } = await import('@/components/workspace-layout-provider');
-    const router = { back() {}, forward() {}, refresh() {}, prefetch() {}, push() {}, replace() {} };
+    const router = { bfcacheId: 'test', back() {}, forward() {}, refresh() {}, prefetch() {}, push() {}, replace() {} };
     const host = document.getElementById('root')!;
     const root = createRoot(host);
     try {

@@ -6,7 +6,7 @@ import '../../test-home.js';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { buildTarGzWithModes, buildZip } from './archive-fixtures.js';
@@ -219,6 +219,78 @@ test('a failed update leaves the working version registered', { skip: !posix }, 
     await assert.rejects(() => service.install('keep'), (e: unknown) => e instanceof AcpRegistryError && e.code === 'checksum');
     assert.equal(isBackendName(profileIdOf('keep')), true);
     assert.equal((await service.list()).agents.find((a) => a.id === 'keep')?.installed?.version, '1.0.0');
+  } finally { service.dispose(); }
+});
+
+test('an install whose state cannot be written is never live, and a failed update keeps the version before it', { skip: !posix || process.getuid?.() === 0 }, async () => {
+  const v1 = tarOf('#!/bin/sh\necho one\n');
+  const v2 = tarOf('#!/bin/sh\necho two\n');
+  const served: Served = new Map([
+    [REGISTRY_URL, registryDoc([agentEntry({ id: 'unsaved', archive: 'https://downloads.example.com/s1.tar.gz', sha256: sha(v1) })])],
+    ['https://downloads.example.com/s1.tar.gz', v1],
+    ['https://downloads.example.com/s2.tar.gz', v2],
+  ]);
+  const live = new Map<string, string>();
+  let clock = 0;
+  const { service, home } = newService(served, {
+    now: () => (clock += 11 * 60_000),
+    register: (agent, command) => { live.set(agent.id, command); return () => { live.delete(agent.id); }; },
+  });
+  const root = join(home, 'providers', 'acp-registry');
+  const base = join(root, 'agents', 'unsaved');
+  const state = () => JSON.parse(readFileSync(join(root, 'state.json'), 'utf8')) as { agents: Record<string, { version: string }> };
+  // A folder the daemon cannot write in: the state file cannot be replaced, everything else can.
+  mkdirSync(join(root, 'tmp'), { recursive: true, mode: 0o700 });
+  mkdirSync(join(root, 'agents'), { recursive: true, mode: 0o700 });
+  mkdirSync(join(root, 'icons'), { recursive: true, mode: 0o700 });
+  try {
+    chmodSync(root, 0o500);
+    await assert.rejects(() => service.install('unsaved'));
+    chmodSync(root, 0o700);
+    assert.equal(live.has('unsaved'), false, 'never registered without a record');
+    assert.equal(existsSync(join(base, '1.0.0')), false, 'no folder left behind');
+    assert.equal(existsSync(join(root, 'state.json')), false);
+
+    await service.install('unsaved');
+    assert.match(live.get('unsaved') ?? '', /1\.0\.0/);
+
+    served.set(REGISTRY_URL, registryDoc([agentEntry({ id: 'unsaved', version: '2.0.0', archive: 'https://downloads.example.com/s2.tar.gz', sha256: sha(v2) })]));
+    chmodSync(root, 0o500);
+    await assert.rejects(() => service.install('unsaved'));
+    chmodSync(root, 0o700);
+    assert.match(live.get('unsaved') ?? '', /1\.0\.0/, 'the working version stays live');
+    assert.equal(state().agents.unsaved?.version, '1.0.0');
+    assert.deepEqual(readdirSync(base), ['1.0.0'], 'the new folder is removed');
+    assert.equal((await service.list()).agents.find((a) => a.id === 'unsaved')?.installed?.version, '1.0.0');
+  } finally {
+    chmodSync(root, 0o700);
+    service.dispose();
+  }
+});
+
+test('a registration that fails after the record is written puts the previous record back', { skip: !posix }, async () => {
+  const v1 = tarOf('#!/bin/sh\necho one\n');
+  const v2 = tarOf('#!/bin/sh\necho two\n');
+  const served: Served = new Map([
+    [REGISTRY_URL, registryDoc([agentEntry({ id: 'refused', archive: 'https://downloads.example.com/r1.tar.gz', sha256: sha(v1) })])],
+    ['https://downloads.example.com/r1.tar.gz', v1],
+    ['https://downloads.example.com/r2.tar.gz', v2],
+  ]);
+  let refuse = false;
+  let clock = 0;
+  const { service, home } = newService(served, {
+    now: () => (clock += 11 * 60_000),
+    register: () => { if (refuse) throw new Error('refused by the registry of providers'); return () => {}; },
+  });
+  const root = join(home, 'providers', 'acp-registry');
+  const state = () => JSON.parse(readFileSync(join(root, 'state.json'), 'utf8')) as { agents: Record<string, { version: string }> };
+  try {
+    await service.install('refused');
+    served.set(REGISTRY_URL, registryDoc([agentEntry({ id: 'refused', version: '2.0.0', archive: 'https://downloads.example.com/r2.tar.gz', sha256: sha(v2) })]));
+    refuse = true;
+    await assert.rejects(() => service.install('refused'), /refused by the registry/);
+    assert.equal(state().agents.refused?.version, '1.0.0');
+    assert.deepEqual(readdirSync(join(root, 'agents', 'refused')), ['1.0.0']);
   } finally { service.dispose(); }
 });
 

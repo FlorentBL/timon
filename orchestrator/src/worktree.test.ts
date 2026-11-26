@@ -6,7 +6,8 @@ import { execFileSync } from 'node:child_process';
 import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { createWorktree, disposeWorktree, parseWorktreeLinks, prepareWorktreeDependencies } from './worktree.js';
+import { createWorktree, parseWorktreeLinks, prepareWorktreeDependencies } from './worktree.js';
+import { forceRemoveTestWorktree } from './worktree-fixture.js';
 import { linkDirectory } from './host/directory-link.js';
 
 for (const kind of ['code', 'merge'] as const) {
@@ -68,7 +69,7 @@ for (const kind of ['code', 'merge'] as const) {
       await prepareWorktreeDependencies(repo, worktree.path);
       assert.equal(existsSync(join(outside, 'node_modules')), false);
     } finally {
-      if (worktree) await disposeWorktree(worktree, true);
+      if (worktree) await forceRemoveTestWorktree(worktree);
       assert.ok(existsSync(join(repo, 'app', 'node_modules', 'fixture-dependency', 'index.js')));
       rmSync(repo, { recursive: true, force: true });
     }
@@ -102,7 +103,7 @@ test('root-only ignore rules do not expose nested dependency links as untracked 
     assert.equal(execFileSync('git', ['-C', worktree.path, 'status', '--porcelain'], { encoding: 'utf8' }), '');
     assert.ok(warnings.some(message => message.includes('dependencies not shared for app: node_modules is not git-ignored')));
   } finally {
-    if (worktree) await disposeWorktree(worktree, true);
+    if (worktree) await forceRemoveTestWorktree(worktree);
     rmSync(repo, { recursive: true, force: true });
   }
 });
@@ -116,7 +117,7 @@ test('repositories without Node packages remain usable', async () => {
     worktree = await createWorktree(randomUUID(), repo, 'main');
     assert.equal(existsSync(join(worktree.path, 'node_modules')), false);
   } finally {
-    if (worktree) await disposeWorktree(worktree, true);
+    if (worktree) await forceRemoveTestWorktree(worktree);
     rmSync(repo, { recursive: true, force: true });
   }
 });
@@ -160,12 +161,12 @@ test('a task worktree links the ignored folders its repository declares, never a
     assert.equal(lstatSync(join(worktree.path, 'cache'), { throwIfNoEntry: false }), undefined);
     assert.equal(existsSync(join(repo, '..', 'escape')), false);
     assert.equal(execFileSync('git', ['-C', worktree.path, 'status', '--porcelain'], { encoding: 'utf8' }), '');
-    await disposeWorktree(worktree, true);
+    await forceRemoveTestWorktree(worktree);
     worktree = undefined;
     // Removing the worktree unlinks the folder; the notes stay in the main clone.
     assert.match(readFileSync(join(repo, 'docs', 'PROGRESS.md'), 'utf8'), /written from the task/);
   } finally {
-    if (worktree) await disposeWorktree(worktree, true);
+    if (worktree) await forceRemoveTestWorktree(worktree);
     rmSync(repo, { recursive: true, force: true });
   }
 });
@@ -196,7 +197,7 @@ test('a declared folder that git does not ignore, or ignores only as a directory
     assert.ok(warnings.some((message) => message.includes('local not linked')));
     assert.equal(execFileSync('git', ['-C', worktree.path, 'status', '--porcelain'], { encoding: 'utf8' }), '');
   } finally {
-    if (worktree) await disposeWorktree(worktree, true);
+    if (worktree) await forceRemoveTestWorktree(worktree);
     rmSync(repo, { recursive: true, force: true });
   }
 });
@@ -242,13 +243,13 @@ test('a declared folder under an untracked ignored parent gets that parent, neve
     assert.equal(existsSync(join(outside, 'deep')), false);
     assert.ok(warnings.some((message) => message.includes('its parent folder resolves outside the worktree')));
 
-    await disposeWorktree(worktree, true);
+    await forceRemoveTestWorktree(worktree);
     worktree = undefined;
     // Removing the worktree removes the link; the skills stay in the main clone.
     assert.equal(readFileSync(join(repo, '.claude', 'skills', 'demo', 'SKILL.md'), 'utf8'), '# demo\n');
     assert.equal(existsSync(outside), true);
   } finally {
-    if (worktree) await disposeWorktree(worktree, true);
+    if (worktree) await forceRemoveTestWorktree(worktree);
     rmSync(repo, { recursive: true, force: true });
     rmSync(outside, { recursive: true, force: true });
   }

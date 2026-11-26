@@ -31,11 +31,15 @@ if (!dev) useStandaloneConfig(process.cwd());
 // The only place Next looks for that server is `httpServer`: hand it a decoy
 // that never listens. HMR in dev goes through `getUpgradeHandler()` below.
 const nextUpgradeDecoy = http.createServer();
-const app = next({ dev, hostname, port, dir: process.cwd(), httpServer: nextUpgradeDecoy });
+// `webpack: true` matches `next build --webpack` (package.json). Without it
+// Next 16 sets `TURBOPACK=auto` for a custom server: dev would compile with
+// Turbopack, which ignores the `webpack()` hook of `next.config.mjs`, and
+// production would pick the Turbopack runtime for a webpack build.
+const app = next({ dev, hostname, port, dir: process.cwd(), httpServer: nextUpgradeDecoy, webpack: true });
 const handle = app.getRequestHandler();
 // Every response, before Next sees the request (TODO #533).
 const windowPolicy = createWindowPolicy({ dev });
-// Here rather than in `middleware.ts`: that one skips `/api/`, the proxy to
+// Here rather than in `proxy.ts`, the login gate: it skips `/api/`, the relay to
 // the daemon, and never sees the terminal's WebSocket upgrades.
 const hostPolicy = createHostPolicyReader(TIMON_HOME);
 

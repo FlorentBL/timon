@@ -23,11 +23,13 @@
  * What `gh` prints reaches a row, an answer or a log only through
  * `redactedOutput`, with the config folder masked as well.
  *
- * Four kinds of write: a comment (`comment`), the update of a pull request's
+ * Five kinds of write: a comment (`comment`), the update of a pull request's
  * branch GitHub performs (`update_branch`, `forge-branch-update.ts`), the
  * commit that resolves a contributor's conflict, pushed fast-forward to their
- * branch (`conflict_push`, `forge-conflicts.ts`), and the closing of an issue
- * declined or duplicated (`close_issue`, `issue-close.ts`). The last three carry a
+ * branch (`conflict_push`, `forge-conflicts.ts`), the closing of an issue
+ * declined or duplicated (`close_issue`, `issue-close.ts`), and the deletion of
+ * a landed job's branch on the remote (`delete_branch`,
+ * `landing-branch-delete.ts`). The last four carry a
  * `payload` the daemon wrote when it prepared them (the head they expect, the
  * commit they push) and run through the executor their module registers
  * (`registerForgeProposalExecutor`); the account check above is the same.
@@ -45,7 +47,7 @@ import type { SshHostResolver } from './host/forge-scratch.js';
 import type { ProjectIntegration } from './project-integration.js';
 import { createNotification, resolveAnchor } from './notifications.js';
 
-export const FORGE_PROPOSAL_KINDS = ['comment', 'update_branch', 'conflict_push', 'close_issue'] as const;
+export const FORGE_PROPOSAL_KINDS = ['comment', 'update_branch', 'conflict_push', 'close_issue', 'delete_branch'] as const;
 export type ForgeProposalKind = (typeof FORGE_PROPOSAL_KINDS)[number];
 
 export const FORGE_PROPOSAL_TARGETS = ['issue', 'pull'] as const;
@@ -491,6 +493,11 @@ function pendingNotice(kind: ForgeProposalKind, target: string) {
       title: 'Closing a GitHub issue waits for your approval',
       body: `Close ${target} on GitHub, or leave it open.`,
       message: daemonMessage('forge_issue_close_pending', { target }),
+    };
+    case 'delete_branch': return {
+      title: 'Deleting a merged branch waits for your approval',
+      body: `Delete the branch of ${target} on GitHub, now merged, or keep it.`,
+      message: daemonMessage('forge_branch_delete_pending', { target }),
     };
   }
 }

@@ -19,6 +19,14 @@
     "integration_branch_unavailable": "La branche d’intégration {branch} est indisponible : {detail}. La task n’a pas été lancée, et la branche n’est jamais tirée de la base locale à la place de {baseRef}. Corrigez le remote ou le nom de la branche, puis relancez la task.",
     "task_base_missing": "La base {base} n’existe pas dans le dépôt. La task n’a pas été lancée : une task {type} ne démarre jamais sans sa base. Créez la branche ou changez la base de la task, puis relancez-la.",
     "task_worktree_unavailable": "Aucun worktree pour cette task {type} ({cause}). Elle n’a pas été lancée : dans le dossier de l’agent, elle écrirait dans le checkout que partagent tous les agents. Corrigez la cause, puis relancez la task.",
+    "dispatcher_disk_paused": {
+      "title": "Tasks en pause : le disque est presque plein",
+      "body": "Aucune task ne démarre tant qu’il ne reste que {free} de libre pour {dir}, sous le plancher de {min} (TIMON_DISK_MIN_FREE_MB). Chaque task ajoute un worktree et écrit dans la base ; un disque plein arrête Timon lui-même. Libérez de la place : la distribution reprend d’elle-même."
+    },
+    "dispatcher_disk_resumed": {
+      "title": "Tasks relancées : l’espace libre est revenu",
+      "body": "L’espace libre est repassé au-dessus du plancher (TIMON_DISK_MIN_FREE_MB) : les tasks en attente redémarrent."
+    },
     "review_verdict_unusable": {
       "title": "Review sans verdict exploitable : {title}",
       "body": "La review {taskId} s’est clôturée sans verdict JSON lisible : la chaîne code→review→merge ne peut pas continuer.\n\nLe relecteur a écrit : {excerpt, select, none {(vide)} other {{excerpt}}}\n\nRelancez la review ou tranchez à la main (merge / nouvelle itération de code)."
@@ -325,6 +333,10 @@
       "title": "La fermeture d'une issue GitHub attend votre accord",
       "body": "Fermez {target} sur GitHub, ou laissez-la ouverte."
     },
+    "forge_branch_delete_pending": {
+      "title": "La suppression d'une branche fusionnée attend votre accord",
+      "body": "Supprimez la branche de {target} sur GitHub, maintenant fusionnée, ou gardez-la."
+    },
     "landing_repair_pushed": {
       "title": "Réparation poussée sur {pr}",
       "body": "La réparation de {branch} a été poussée sur sa pull request {pr} ; GitHub relance ses contrôles."
@@ -348,6 +360,10 @@
     "integration_closed": {
       "title": "{pr, select, none {Branche d'intégration fermée : {branch}} other {Pull request fermée : {branch}}}",
       "body": "{branch} n'a pas atterri dans {target} : rien ne se ferme et les branches sont gardées. Son pilote décide de la suite."
+    },
+    "mcp_server_left_out": {
+      "title": "Serveur MCP `{serverId}` laissé de côté",
+      "body": "Timon n’a pas pu démarrer le serveur MCP `{serverId}` pour cette mission ({cause, select, vault {ses variables sont illisibles dans le coffre de secrets} mission_limit {cette mission fait déjà tourner {max} serveurs MCP relayés} daemon_limit {le daemon fait déjà tourner {max} serveurs MCP relayés} restarts {il a redémarré trop souvent} stopped {son pont a été arrêté} other {{detail}}}) : l’agent tourne sans lui. Ses variables n’ont pas été transmises à l’agent."
     }
   }
 }

@@ -14,7 +14,7 @@
  * remote-machine policy (identity, `Set-Cookie`, auth routes, origin) is
  * applied there, not here.
  */
-import { cookies, headers as requestHeaders, type UnsafeUnwrappedCookies, type UnsafeUnwrappedHeaders } from 'next/headers';
+import { cookies, headers as requestHeaders } from 'next/headers';
 import { machineTarget, relayFetch, targetFor, type RelayOptions } from '../machines/target';
 import { browserOriginHeaders, proxyAuthHeaders, SESSION_COOKIE } from './proxy-auth';
 import { htmlFailureAsJson } from './proxy-errors';
@@ -23,22 +23,22 @@ import { uiDocumentProxyHeaders } from './ui-document-headers';
 /** Session cookie plus the browser's `Origin` / `Sec-Fetch-Site` — safe to
  *  spread onto any Next→daemon fetch that serves a browser. Without the
  *  cookie the origin headers are moot: the daemon has no session to protect. */
-export function sessionProxyHeaders(): Record<string, string> {
-  const auth = proxyAuthHeaders({ sessionToken: sessionTokenFromCookies() });
+export async function sessionProxyHeaders(): Promise<Record<string, string>> {
+  const auth = proxyAuthHeaders({ sessionToken: await sessionTokenFromCookies() });
   if (!auth.cookie) return auth;
-  return { ...auth, ...originHeadersFromRequest() };
+  return { ...auth, ...(await originHeadersFromRequest()) };
 }
 
-function originHeadersFromRequest(): Record<string, string> {
-  const incoming = incomingHeaders();
+async function originHeadersFromRequest(): Promise<Record<string, string>> {
+  const incoming = await incomingHeaders();
   return incoming ? browserOriginHeaders(incoming) : {};
 }
 
-// Synchronous reads on purpose: Next 15 still unwraps `headers()` and
-// `cookies()` in place, and these helpers feed synchronous callers.
-function incomingHeaders(): UnsafeUnwrappedHeaders | null {
+type IncomingHeaders = Awaited<ReturnType<typeof requestHeaders>>;
+
+async function incomingHeaders(): Promise<IncomingHeaders | null> {
   try {
-    return requestHeaders() as unknown as UnsafeUnwrappedHeaders;
+    return await requestHeaders();
   } catch {
     // Outside a request scope (build, tests): nothing to relay.
     return null;
@@ -57,16 +57,16 @@ export interface ProxyTarget {
  *  own body (raw text, bytes) use it instead of a fetch of their own,
  *  so they follow the active machine like every other proxied call. */
 export async function relay(path: string, init: RequestInit, to: ProxyTarget = {}): Promise<globalThis.Response> {
-  const opts: RelayOptions = { incoming: incomingHeaders() };
+  const opts: RelayOptions = { incoming: await incomingHeaders() };
   const target = to.machine === undefined ? await targetFor(path) : await machineTarget(to.machine);
   return relayFetch(target, path, init, opts);
 }
 
-function browserProxyHeaders(): Record<string, string> {
-  const headers = sessionProxyHeaders();
+async function browserProxyHeaders(): Promise<Record<string, string>> {
+  const headers = await sessionProxyHeaders();
   // Session metadata must describe the browser, not Node's fetch client.
   try {
-    const userAgent = (requestHeaders() as unknown as UnsafeUnwrappedHeaders).get('user-agent');
+    const userAgent = (await requestHeaders()).get('user-agent');
     if (userAgent) headers['user-agent'] = userAgent;
   } catch {
     // Outside a request scope (build, tests): skip user-agent relay.
@@ -74,9 +74,9 @@ function browserProxyHeaders(): Record<string, string> {
   return headers;
 }
 
-function sessionTokenFromCookies(): string | undefined {
+async function sessionTokenFromCookies(): Promise<string | undefined> {
   try {
-    return (cookies() as unknown as UnsafeUnwrappedCookies).get(SESSION_COOKIE)?.value;
+    return (await cookies()).get(SESSION_COOKIE)?.value;
   } catch {
     return undefined;
   }
@@ -109,7 +109,7 @@ export async function proxyJson(
 ): Promise<Response> {
   // Next 14's fetch() memoises responses by URL by default; that's poison for
   // a proxy to a stateful service. Force a fresh upstream hit every time.
-  const headers = browserProxyHeaders();
+  const headers = await browserProxyHeaders();
   const init: RequestInit = { method, headers, cache: 'no-store' };
   if (body !== undefined) {
     headers['content-type'] = 'application/json';
@@ -136,7 +136,7 @@ export async function proxyRawBody(
   bodyHeaders: Readonly<Record<string, string>>,
   to: ProxyTarget = {},
 ): Promise<Response> {
-  const headers = { ...browserProxyHeaders(), ...bodyHeaders };
+  const headers = { ...(await browserProxyHeaders()), ...bodyHeaders };
   const init: RequestInit | StreamingInit = body === null
     ? { method, headers, cache: 'no-store' }
     : { method, headers, body, duplex: 'half', cache: 'no-store' };
@@ -180,7 +180,7 @@ async function relayedAnswer(upstream: globalThis.Response, started: number): Pr
  *  JSON-decode the body. Forwards the raw bytes and the upstream content-type. */
 export async function proxyBinary(path: string, opts: { securityHeaders?: boolean } & ProxyTarget = {}): Promise<Response> {
   const upstream = await relay(path, {
-    headers: browserProxyHeaders(),
+    headers: await browserProxyHeaders(),
     cache: 'no-store',
   }, { machine: opts.machine });
   const buf = await upstream.arrayBuffer();
@@ -211,7 +211,7 @@ const MEDIA_HEADERS = [
 /** Streams a chat media file: forwards `Range` so a video can seek, and never
  *  buffers a whole video in memory the way `proxyBinary` does. */
 export async function proxyMedia(path: string, req: Request): Promise<Response> {
-  const headers = browserProxyHeaders();
+  const headers = await browserProxyHeaders();
   const range = req.headers.get('range');
   if (range) headers.range = range;
   const upstream = await relay(path, { headers, cache: 'no-store' });
@@ -227,7 +227,7 @@ export async function proxyMedia(path: string, req: Request): Promise<Response> 
 /** The HTML of a conversation document (ADR-MCPUI D3): session cookie only,
  *  headers through a white list that keeps the daemon's sandboxing CSP. */
 export async function proxyUiDocument(path: string): Promise<Response> {
-  const upstream = await relay(path, { headers: browserProxyHeaders(), cache: 'no-store' });
+  const upstream = await relay(path, { headers: await browserProxyHeaders(), cache: 'no-store' });
   return new Response(upstream.body, { status: upstream.status, headers: uiDocumentProxyHeaders(upstream.headers, upstream.ok) });
 }
 
@@ -276,7 +276,7 @@ export async function proxySse(path: string, request: Request): Promise<Response
     // Data Cache, which waits for the full body before returning. SSE never
     // closes, so the proxy hangs forever and the chat sits on "thinking…".
     upstream = await relay(path, {
-      headers: { accept: 'text/event-stream', ...sessionProxyHeaders() },
+      headers: { accept: 'text/event-stream', ...(await sessionProxyHeaders()) },
       cache: 'no-store',
       signal: upstreamAbort.signal,
     });

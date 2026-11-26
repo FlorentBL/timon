@@ -12,6 +12,7 @@ import { join } from 'node:path';
 import { test } from 'node:test';
 import { db, dbApi } from './db.js';
 import { agentConfig, agentDir } from './paths.js';
+import { setSetting } from './settings.js';
 import { createWorktree } from './worktree.js';
 import { reconcileStaleWorktrees } from './worktree-gc.js';
 
@@ -95,4 +96,59 @@ test('a local chain is unchanged: disposed as soon as it is merged', async () =>
   await reconcileStaleWorktrees();
   assert.equal(existsSync(t.path), false);
   assert.equal(branchExists(t.branch), false);
+});
+
+test("a worktree whose work reached the remote's target goes, its branch stays, without the integration turning 'merged'", async () => {
+  git(repo, 'branch', 'feat/landed-on-forge', 'main');
+  dbApi.recordIntegration({ repo, branch: 'feat/landed-on-forge', remote: 'origin', target: 'main', mode: 'pr' });
+  const t = await mergedTask('feat/landed-on-forge', 'pr');
+
+  await reconcileStaleWorktrees();
+  assert.ok(existsSync(t.path), 'not in origin/main yet: kept');
+
+  // The pull request merged on the forge, then fetched: origin/main holds the work.
+  git(repo, 'update-ref', 'refs/remotes/origin/main', git(repo, 'rev-parse', 'feat/landed-on-forge'));
+  await reconcileStaleWorktrees();
+  assert.equal(existsSync(t.path), false, 'folder removed, residual folder included');
+  assert.ok(branchExists(t.branch), 'branch kept');
+  assert.equal(dbApi.getTask(t.id)?.worktree_path, null);
+  assert.equal(dbApi.getTask(t.id)?.branch_name, t.branch);
+});
+
+test('the remote-target release refuses a dirty worktree, a commit made after the merge, a chain without a merge sha or still running', async () => {
+  git(repo, 'branch', 'feat/landed-guards', 'main');
+  dbApi.recordIntegration({ repo, branch: 'feat/landed-guards', remote: 'origin', target: 'main', mode: 'pr' });
+  const dirty = await mergedTask('feat/landed-guards', 'pr');
+  const late = await mergedTask('feat/landed-guards', 'pr');
+  const noSha = await mergedTask('feat/landed-guards', 'pr');
+  const running = await mergedTask('feat/landed-guards', 'pr');
+  git(repo, 'update-ref', 'refs/remotes/origin/main', git(repo, 'rev-parse', 'feat/landed-guards'));
+
+  writeFileSync(join(dirty.path, 'untracked'), 'x');
+  writeFileSync(join(late.path, 'later'), 'x');
+  git(late.path, 'add', '.');
+  git(late.path, 'commit', '-q', '-m', 'after the merge');
+  db.prepare('UPDATE tasks SET merged_commit_sha = NULL WHERE id = ?').run(noSha.id);
+  // A review of the chain still running: the whole chain must be DONE.
+  dbApi.createTask(randomUUID(), 'review', agent, { type: 'review', deps: [running.id] });
+
+  await reconcileStaleWorktrees();
+  for (const t of [dirty, late, noSha, running]) {
+    assert.ok(existsSync(t.path), `${t.id} kept`);
+    assert.equal(dbApi.getTask(t.id)?.worktree_path, t.path);
+  }
+});
+
+test('the remote-target release is a setting', async () => {
+  git(repo, 'branch', 'feat/landed-off', 'main');
+  dbApi.recordIntegration({ repo, branch: 'feat/landed-off', remote: 'origin', target: 'main', mode: 'pr' });
+  const t = await mergedTask('feat/landed-off', 'pr');
+  git(repo, 'update-ref', 'refs/remotes/origin/main', git(repo, 'rev-parse', 'feat/landed-off'));
+  setSetting('TIMON_WORKTREE_GC_REMOTE_TARGET', 'false');
+  try {
+    await reconcileStaleWorktrees();
+    assert.ok(existsSync(t.path));
+  } finally {
+    setSetting('TIMON_WORKTREE_GC_REMOTE_TARGET', null);
+  }
 });

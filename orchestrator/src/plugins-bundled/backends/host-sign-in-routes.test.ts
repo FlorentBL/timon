@@ -6,7 +6,7 @@
  */
 import { EventEmitter, once } from 'node:events';
 import type { ChildProcess } from 'node:child_process';
-import { existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { PassThrough } from 'node:stream';
@@ -204,7 +204,7 @@ test('the daemon token reads the state but starts no flow: a flow belongs to a b
 });
 
 test('a backend that cannot keep the host sign-in answers 404, and a body is checked', async () => {
-  assert.equal((await call('GET', '/api/backends/host-sign-in/codex', { cookie: admin })).status, 404);
+  assert.equal((await call('GET', '/api/backends/host-sign-in/ollama-cloud', { cookie: admin })).status, 404);
   assert.equal((await call('GET', '/api/backends/host-sign-in/..%2Fclaude', { cookie: admin })).status, 404);
   assert.equal((await call('POST', `${HOST}/login`, { cookie: admin, body: { dir: '/tmp' } })).status, 400);
 });
@@ -299,6 +299,30 @@ test('a code the CLI refuses ends the token flow as rejected', async () => {
   const done = await until(`${HOST}/token`, admin, over);
   assert.equal(done.failure, 'code_rejected');
   assert.equal((await call('POST', `${HOST}/token/code`, { cookie: admin, body: { code: 'two\nlines' } })).status, 400);
+});
+
+// #1211: the pseudo-terminal starts a Node CLI with the `node` the host chose, as a mission does.
+test('the token\'s pseudo-terminal runs a Node CLI on the node the host chose, not on its shebang', { skip: process.platform === 'win32' }, async () => {
+  const root = mkdtempSync(join(tmpdir(), 'timon-token-node-'));
+  const [cliDir, nodeDir] = ['cli', 'node'].map((name) => join(root, name));
+  for (const dir of [cliDir!, nodeDir!]) mkdirSync(dir);
+  const claude = join(cliDir!, 'claude');
+  const node = join(nodeDir!, 'node');
+  writeFileSync(claude, '#!/usr/bin/env node\n', { mode: 0o755 });
+  writeFileSync(node, '', { mode: 0o755 });
+  setLoginOptions({ resolveBin: (name) => name === 'claude' ? claude : name === 'node' ? node : null });
+  try {
+    ptyAnswer = 'token';
+    assert.equal((await call('POST', `${HOST}/token`, { cookie: admin, body: {} })).status, 202);
+    await until(`${HOST}/token`, admin, (l) => l.state !== 'starting');
+    const run = ptyRuns.at(-1)!;
+    assert.equal(run.file, node);
+    assert.deepEqual(run.args, [claude, 'setup-token']);
+    assert.equal((await call('DELETE', `${HOST}/token`, { cookie: admin })).status, 200);
+  } finally {
+    setLoginOptions({ resolveBin: () => null });
+    rmSync(root, { recursive: true, force: true });
+  }
 });
 
 test('without a pseudo-terminal on the host, the token flow says it is unsupported', async () => {

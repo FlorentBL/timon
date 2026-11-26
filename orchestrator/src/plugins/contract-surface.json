@@ -305,6 +305,11 @@
       "arity": 1,
       "since": 3
     },
+    "caller": {
+      "type": "function",
+      "arity": 0,
+      "since": 20
+    },
     "can": {
       "type": "function",
       "arity": 1,
@@ -2635,7 +2640,7 @@
       }
     },
     "NativeCompact": {
-      "since": 19,
+      "since": 20,
       "signature": "NativeCompact",
       "members": {
         "|0": "{ readonly command: string; }",
@@ -2643,7 +2648,7 @@
       }
     },
     "NativeCompactContext": {
-      "since": 19,
+      "since": 20,
       "signature": "NativeCompactContext",
       "members": {
         "missionId": "string",
@@ -2659,7 +2664,7 @@
       }
     },
     "NativeCompactResult": {
-      "since": 19,
+      "since": 20,
       "signature": "NativeCompactResult",
       "members": {
         "metadata?": "Readonly<Record<string, unknown>> | undefined"
@@ -3168,6 +3173,18 @@
         "bypassPermissions"
       ],
       "since": 15
+    },
+    "provider.NPM_NATIVE_TARGETS": {
+      "type": "array",
+      "value": [
+        "linux-x64",
+        "linux-arm64",
+        "darwin-x64",
+        "darwin-arm64",
+        "win32-x64",
+        "win32-arm64"
+      ],
+      "since": 20
     }
   },
   "kitTypes": {
@@ -3696,7 +3713,8 @@
         "searchDirs?": "Readonly<Partial<Record<\"linux\" | \"darwin\" | \"win32\" | \"any\", readonly string[]>>> | undefined",
         "desktopBuilds?": "readonly ProviderDesktopBuild[] | undefined",
         "serviceNeeds?": "readonly (\"longLivedToken\" | \"graphicalSession\")[] | undefined",
-        "identity?": "ProviderBinaryIdentity | undefined"
+        "identity?": "ProviderBinaryIdentity | undefined",
+        "npmNative?": "ProviderNpmNative | undefined"
       }
     },
     "LaunchStrategy": {
@@ -4110,7 +4128,7 @@
       }
     },
     "NativeCompact": {
-      "since": 19,
+      "since": 20,
       "signature": "NativeCompact",
       "members": {
         "|0": "{ readonly command: string; }",
@@ -4118,7 +4136,7 @@
       }
     },
     "NativeCompactContext": {
-      "since": 19,
+      "since": 20,
       "signature": "NativeCompactContext",
       "members": {
         "missionId": "string",
@@ -4134,10 +4152,21 @@
       }
     },
     "NativeCompactResult": {
-      "since": 19,
+      "since": 20,
       "signature": "NativeCompactResult",
       "members": {
         "metadata?": "Readonly<Record<string, unknown>> | undefined"
+      }
+    },
+    "ProviderNpmNative": {
+      "since": 20,
+      "signature": "ProviderNpmNative",
+      "members": {
+        "package": "string",
+        "platformPackage?": "string | undefined",
+        "executable": "Readonly<Partial<Record<\"linux-x64\" | \"linux-arm64\" | \"darwin-x64\" | \"darwin-arm64\" | \"win32-x64\" | \"win32-arm64\", readonly string[]>>>",
+        "extraPath?": "readonly string[] | undefined",
+        "env?": "Readonly<Record<string, string>> | undefined"
       }
     }
   },

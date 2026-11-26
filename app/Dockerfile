@@ -1,4 +1,5 @@
-FROM node:20-bookworm-slim AS build
+# Node 22: Next 16 wants 20.9 or later, and Node 20 left support in April 2026.
+FROM node:22-bookworm-slim AS build
 WORKDIR /app
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -8,15 +9,17 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY package.json package-lock.json ./
 RUN npm ci
 
-COPY tsconfig.json next.config.mjs next-env.d.ts ./
+COPY tsconfig.json tsconfig.build.json next.config.mjs next-env.d.ts ./
 COPY tailwind.config.ts postcss.config.js components.json ./
 COPY src ./src
 COPY public ./public
 COPY scripts ./scripts
+# `npm run build` is `next build --webpack`: Turbopack, the default of
+# Next 16, would ignore the `webpack()` hook of next.config.mjs.
 RUN npm run build
 
 
-FROM node:20-bookworm-slim AS runtime
+FROM node:22-bookworm-slim AS runtime
 WORKDIR /app
 
 RUN apt-get update && apt-get install -y --no-install-recommends \

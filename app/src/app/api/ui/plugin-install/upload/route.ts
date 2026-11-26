@@ -22,7 +22,7 @@ export async function POST(request: Request): Promise<Response> {
   if (body.byteLength > PLUGIN_UPLOAD_MAX_BYTES) return tooLarge();
   const upstream = await relay('/api/plugins/-/install/upload', {
     method: 'POST',
-    headers: { ...sessionProxyHeaders(), 'content-type': 'application/octet-stream' },
+    headers: { ...(await sessionProxyHeaders()), 'content-type': 'application/octet-stream' },
     body,
     cache: 'no-store',
   });

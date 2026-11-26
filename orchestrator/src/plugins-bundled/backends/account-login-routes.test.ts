@@ -55,7 +55,11 @@ const CODE = 'Secr3tAuthCode_abc#St4te-xyz';
 /** Who the next sign-in turns out to be. */
 let nextEmail = 'ada@perso.example';
 let lastCli: FakeCli | null = null;
+/** The program the last login was started with (the CLI, or the `node` running it). */
+let lastSpawned: string | null = null;
 const runs: string[][] = [];
+/** The program each identity probe was started with, in order. */
+const ranWith: string[] = [];
 
 function codexIdToken(email: string): string {
   const part = (value: unknown) => Buffer.from(JSON.stringify(value)).toString('base64url');
@@ -68,8 +72,10 @@ function codexIdToken(email: string): string {
 function fakeSpawn(cmd: string, args: string[], opts: { env: NodeJS.ProcessEnv; cwd: string }): ChildProcess {
   const cli = new FakeCli(args, opts.env);
   lastCli = cli;
+  lastSpawned = cmd;
   setImmediate(() => {
-    if (cmd === 'codex') {
+    // Started by name, or as the script a chosen `node` runs.
+    if (cmd === 'codex' || posix.basename(args[0] ?? '') === 'codex') {
       cli.stdout.write('\u001b[94mhttps://auth.openai.com/codex/device\u001b[0m\n2. Enter this one-time code\n   \u001b[94mABCD-12345\u001b[0m\n');
       return;
     }
@@ -93,8 +99,10 @@ function approveCodex(): void {
   cli.exit(0);
 }
 
-async function fakeRun(_cmd: string, args: string[], env: NodeJS.ProcessEnv) {
-  runs.push(args);
+async function fakeRun(cmd: string, args: string[], env: NodeJS.ProcessEnv) {
+  ranWith.push(cmd);
+  // What the CLI was asked, without the script a chosen `node` runs first.
+  runs.push(args[0]?.startsWith('/') ? args.slice(1) : args);
   const dir = env.CLAUDE_CONFIG_DIR!;
   if (args[1] === 'logout') return { code: 0, stdout: '' };
   if (!existsSync(join(dir, '.credentials.json'))) return { code: 1, stdout: JSON.stringify({ loggedIn: false }) };
@@ -356,12 +364,54 @@ test('codex login gets its own folder and a node on PATH, as a mission does', { 
     await waitingFor(codex, ada);
     assert.deepEqual(lastCli!.env.PATH?.split(posix.delimiter), [cliDir, servicePath, nodeDir],
       'the CLI folder first, the service PATH kept, then the node found elsewhere');
+    assert.equal(lastSpawned, join(nodeDir!, 'node'), 'and the CLI runs on that node (#1211)');
+    assert.equal(lastCli!.args[0], join(cliDir!, 'codex'));
   } finally {
     process.env.PATH = inherited;
     setLoginOptions({ resolveBin: () => null });
     await call('DELETE', `/api/backends/accounts/${codex}/login`, { cookie: ada });
     rmSync(root, { recursive: true, force: true });
   }
+});
+
+// #1211: the login runs outside the fence, so a Node CLI starts with the `node` the host
+// chose, as a mission's does, never through the first `node` its `env node` line finds.
+test('a Node CLI\'s login and its identity probe run on the node the host chose, not on its shebang', { skip: process.platform === 'win32' }, async () => {
+  const root = mkdtempSync(join(tmpdir(), 'timon-login-node-'));
+  const [cliDir, nodeDir] = ['cli', 'node'].map((name) => join(root, name));
+  for (const dir of [cliDir!, nodeDir!]) mkdirSync(dir);
+  const claude = join(cliDir!, 'claude');
+  const node = join(nodeDir!, 'node');
+  writeFileSync(claude, '#!/usr/bin/env node\n', { mode: 0o755 });
+  // A `node` beside the CLI: the one its shebang would take first, which must not run it.
+  writeFileSync(join(cliDir!, 'node'), '', { mode: 0o755 });
+  writeFileSync(node, '', { mode: 0o755 });
+  setLoginOptions({ resolveBin: (name) => name === 'claude' ? claude : name === 'node' ? node : null });
+  const id = await createAccount(ada, { backend: 'claude', name: 'Claude on node' });
+  const probes = ranWith.length;
+  try {
+    nextEmail = 'ada@node.example';
+    const done = await connectClaude(id, ada);
+    assert.equal(done.state, 'connected', JSON.stringify(done));
+    assert.equal(lastSpawned, node, 'the login CLI is started by the chosen node');
+    assert.equal(lastCli!.args[0], claude, 'with the CLI as its script');
+    assert.deepEqual(lastCli!.args.slice(1, 3), ['auth', 'login']);
+    const probed = ranWith.slice(probes);
+    assert.ok(probed.length > 0, 'the identity was probed');
+    assert.ok(probed.every((cmd) => cmd === node), 'every probe runs on the chosen node');
+  } finally {
+    setLoginOptions({ resolveBin: () => null });
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('a native CLI, or one with no node chosen, still starts by its own name', async () => {
+  const id = await createAccount(ada, { backend: 'claude', name: 'Claude by name' });
+  nextEmail = 'ada@byname.example';
+  const done = await connectClaude(id, ada);
+  assert.equal(done.state, 'connected', JSON.stringify(done));
+  assert.equal(lastSpawned, 'claude');
+  assert.deepEqual(lastCli!.args.slice(0, 2), ['auth', 'login']);
 });
 
 test('macOS claude signs in in place; a refused identity is signed out and waits for a reconnect', async () => {

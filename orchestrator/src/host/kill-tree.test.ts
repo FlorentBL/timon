@@ -8,12 +8,15 @@
 import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { spawn, type ChildProcess } from 'node:child_process';
+import { spawn, spawnSync, type ChildProcess } from 'node:child_process';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 process.env.TIMON_HOME = mkdtempSync(join(tmpdir(), 'timon-kill-tree-'));
-const { execTree, killProcessTree, stopProcessGroup, sweepWindowsOrphans, windowsOrphanSweepScript } = await import('./kill-tree.js');
+const {
+  EXEC_TREE_MARK, cleanupReserve, environHoldsEntry, execTree, killProcessTree, markedPidsFromPs, setExecScopeForTest,
+  stopProcessGroup, sweepWindowsOrphans, windowsOrphanSweepScript,
+} = await import('./kill-tree.js');
 const { getHost } = await import('./index.js');
 type ExecResult = import('./types.js').ExecResult;
 
@@ -96,7 +99,10 @@ test('execTree rejects a binary that does not resolve, and answers one that cann
   const broken = join(dir, 'broken');
   writeFileSync(broken, `#!${join(dir, 'no-such-interpreter')}\n`);
   chmodSync(broken, 0o755);
-  assert.deepEqual(await execTree(broken, [], LIMITS), { code: 1, stdout: '', stderr: '' });
+  // Through a scope, `env` is what says it, with its own code.
+  const answer = await execTree(broken, [], LIMITS);
+  assert.notEqual(answer.code, 0);
+  assert.equal(answer.stdout, '');
 });
 
 test('a child left with its output elsewhere is ended too: nothing keeps the pipes open to tell', { skip: !posix }, async () => {
@@ -110,20 +116,94 @@ test('a child left with its output elsewhere is ended too: nothing keeps the pip
   } finally { cleanUp(left); }
 });
 
-test('a child that left the group is not ended, and does not hold the answer', { skip: process.platform !== 'linux' }, async () => {
-  const pidFile = join(dir, 'escaped-pid');
-  // `setsid` forks when it leads its group, so `sh -c` writes the pid that stays.
-  const file = stub('escapes', `setsid sh -c 'echo $$ > "${pidFile}"; exec sleep 8' &\nwhile [ ! -s "${pidFile}" ]; do sleep 0.01; done\necho done`);
-  const started = Date.now();
-  const result = await execTree(file, [], LIMITS);
-  const took = Date.now() - started;
-  const escaped = readPid(pidFile);
-  try {
-    assert.equal(result.code, 0);
-    assert.equal(result.stdout, 'done\n');
-    assert.ok(took < 2_500, `returned after ${took} ms`);
-    assert.ok(running(escaped), 'a process that left on purpose is not ours to end');
-  } finally { cleanUp(escaped); }
+/**
+ * Whether this machine runs a launch in a transient scope: Linux with a user manager that accepts one. CI
+ * has none, and takes the marked sweep both times below.
+ */
+const scopes = process.platform === 'linux'
+  && spawnSync('systemd-run', ['--user', '--scope', '--quiet', '--collect', '--', 'true'], { stdio: 'ignore', timeout: 10_000 }).status === 0;
+
+/**
+ * A descendant that called `setsid()` left the group and the session: no group signal reaches it. Two
+ * shapes: one that keeps the program's stdout (it would hold the answer), and a daemon that forks once
+ * more and lets its parent exit, so that no parent pid leads to it any more. The test never ends them
+ * itself before asserting: `cleanUp` only runs after a failed assertion.
+ */
+for (const way of ['scope', 'mark'] as const) {
+  const skip = !posix ? 'POSIX only' : way === 'scope' && !scopes ? 'no user systemd manager that accepts a scope' : false;
+  test(`a descendant that left the group and the session with setsid is ended too (${way})`, { skip }, async () => {
+    setExecScopeForTest(way === 'scope' ? null : false);
+    const heldPid = join(dir, `setsid-held-${way}`);
+    const daemonPid = join(dir, `setsid-daemon-${way}`);
+    const where = join(dir, `setsid-cgroup-${way}`);
+    for (const file of [heldPid, daemonPid, where]) rmSync(file, { force: true });
+    // `setsid` forks when it leads its group, so `sh -c` writes the pid that stays.
+    const file = stub(`escapes-${way}`, [
+      `setsid sh -c 'echo $$ > "${heldPid}"; exec sleep 8' &`,
+      `setsid sh -c 'sleep 8 >/dev/null 2>&1 </dev/null & echo $! > "${daemonPid}"' </dev/null >/dev/null 2>&1`,
+      `cat /proc/self/cgroup > "${where}" 2>/dev/null`,
+      `while [ ! -s "${heldPid}" ] || [ ! -s "${daemonPid}" ]; do sleep 0.01; done`,
+      'echo done',
+    ].join('\n'));
+    const started = Date.now();
+    let held = 0;
+    let daemon = 0;
+    try {
+      const result = await execTree(file, [], LIMITS);
+      const took = Date.now() - started;
+      held = readPid(heldPid);
+      daemon = readPid(daemonPid);
+      assert.equal(result.code, 0);
+      assert.equal(result.stdout, 'done\n');
+      assert.ok(took < 2_500, `returned after ${took} ms`);
+      if (way === 'scope') assert.match(readFileSync(where, 'utf8'), /-exec-[0-9a-f]{8}\.scope$/m, 'the launch ran in a scope of its own');
+      assert.ok(await stopsRunning(held), `setsid child ${held}, which held stdout, survived`);
+      assert.ok(await stopsRunning(daemon), `double-forked daemon ${daemon} survived`);
+    } finally {
+      setExecScopeForTest(null);
+      cleanUp(held);
+      cleanUp(daemon);
+    }
+  });
+}
+
+test('the scope hands the program the environment it was given, not the bus variables systemd-run needed', { skip: !scopes ? 'no user systemd manager that accepts a scope' : false }, async () => {
+  setExecScopeForTest(null);
+  const file = stub('bus', 'echo "${XDG_RUNTIME_DIR-unset} ${DBUS_SESSION_BUS_ADDRESS-unset} ${INVOCATION_ID-unset} $ASKED"; cat /proc/self/cgroup');
+  const result = await execTree(file, [], { ...LIMITS, env: { ASKED: 'yes', PATH: process.env.PATH ?? '' } });
+  assert.equal(result.code, 0, result.stderr);
+  assert.match(result.stdout, /^unset unset unset yes$/m);
+  const kept = await execTree(file, [], { ...LIMITS, env: { ASKED: 'yes', INVOCATION_ID: 'callers-own', PATH: process.env.PATH ?? '' } });
+  assert.match(kept.stdout, /^unset unset callers-own yes$/m, 'a value the caller gave is given back');
+  assert.match(result.stdout, /-exec-[0-9a-f]{8}\.scope$/m);
+});
+
+test('the mark is a whole environment entry, never a prefix nor a suffix', () => {
+  const entry = `${EXEC_TREE_MARK}=abc`;
+  assert.ok(environHoldsEntry(`${entry}`, entry));
+  assert.ok(environHoldsEntry(`A=1\0${entry}\0B=2\0`, entry));
+  assert.ok(environHoldsEntry(`X=${entry}\0${entry}`, entry), 'a later whole entry still counts');
+  assert.ok(!environHoldsEntry(`${entry}d\0`, entry));
+  assert.ok(!environHoldsEntry(`X${entry}\0`, entry));
+  assert.ok(!environHoldsEntry('', entry));
+});
+
+test('the ps sweep (macOS) reads the mark as a word of the environment printed after the command', () => {
+  const entry = `${EXEC_TREE_MARK}=abc`;
+  const ps = [
+    `  101 /bin/sleep 8 HOME=/Users/x ${entry} PATH=/bin`,
+    `  102 /bin/sleep 8 HOME=/Users/x ${entry}d`,
+    `  103 /bin/sh -c echo ${entry}x`,
+    `  104 /usr/bin/thing ${entry}`,
+    'garbage',
+  ].join('\n');
+  assert.deepEqual(markedPidsFromPs(ps, entry), [101, 104]);
+});
+
+test('the cleanup reserve: a quarter of a short timeout, a second at most', () => {
+  assert.equal(cleanupReserve(300), 75);
+  assert.equal(cleanupReserve(4_000), 1_000);
+  assert.equal(cleanupReserve(600_000), 1_000);
 });
 
 test('the limit stops the program with its group, and says so', { skip: !posix }, async () => {
@@ -136,7 +216,7 @@ test('the limit stops the program with its group, and says so', { skip: !posix }
     assert.equal(result.timedOut, true);
     assert.equal(result.code, 1);
     assert.equal(result.stdout, 'before\n', 'what it printed before the limit is kept');
-    assert.ok(Date.now() - started < 2_500);
+    assert.ok(Date.now() - started < 300 + 200, `one deadline end to end: returned after ${Date.now() - started} ms`);
     assert.ok(await stopsRunning(left), `sleep ${left} survived`);
   } finally { cleanUp(left); }
 });
@@ -383,4 +463,38 @@ test('the sweep never throws: no PowerShell, a refused pid', async () => {
   const failing = { execAsync: () => Promise.reject(new Error('binary "powershell" not found in PATH')) };
   await assert.doesNotReject(sweepWindowsOrphans(failing, 4242, new Date()));
   await assert.doesNotReject(sweepWindowsOrphans({ execAsync: () => Promise.resolve(ANSWERED) }, 0, new Date()));
+});
+
+test('Windows: a sweep that does not answer still ends with the call\'s deadline', { skip: !posix }, async (t) => {
+  const host = getHost();
+  const file = stub('exits-at-once', 'echo done');
+  t.mock.property(host, 'platform', 'win32');
+  let sweepTimeout = 0;
+  t.mock.method(host, 'execAsync', (_name: string, _args: string[], opts: { timeout?: number }) => {
+    sweepTimeout = opts.timeout ?? 0;
+    return new Promise<ExecResult>(() => {});
+  });
+  const warn = t.mock.method(console, 'warn', () => {});
+  const started = Date.now();
+  const result = await execTree(file, [], { ...LIMITS, timeout: 600, sweepOrphans: true });
+  const took = Date.now() - started;
+  assert.equal(result.code, 0);
+  assert.equal(result.stdout, 'done\n');
+  assert.ok(took >= 500 && took < 600 + 200, `returned after ${took} ms, not after the sweep's own 10 s`);
+  assert.ok(sweepTimeout > 0 && sweepTimeout <= 600, `the sweep itself was given ${sweepTimeout} ms`);
+  assert.equal(warn.mock.callCount(), 0, 'not reported as failed while it may still finish');
+});
+
+test('Windows: a sweep that fails is said, not taken for done', { skip: !posix }, async (t) => {
+  const host = getHost();
+  const file = stub('exits-at-once-too', 'echo done');
+  t.mock.property(host, 'platform', 'win32');
+  t.mock.method(host, 'execAsync', () => Promise.resolve({ code: 1, stdout: '', stderr: 'Access denied' }));
+  const warn = t.mock.method(console, 'warn', () => {});
+  const result = await execTree(file, [], { ...LIMITS, sweepOrphans: true });
+  assert.equal(result.code, 0);
+  assert.equal(warn.mock.callCount(), 1);
+  assert.match(String(warn.mock.calls[0]!.arguments[0]), /could not sweep what process \d+ left running/);
+  assert.equal(await sweepWindowsOrphans({ execAsync: () => Promise.resolve({ code: 0, stdout: '', stderr: '', timedOut: true }) }, 4242, new Date()), false);
+  assert.equal(await sweepWindowsOrphans({ execAsync: () => Promise.resolve(ANSWERED) }, 4242, new Date()), true);
 });

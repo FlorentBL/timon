@@ -8,21 +8,23 @@ const refused = (error: string) => new Response(JSON.stringify({ error }), { sta
 /** A file outside the agent's folder, opened after the user confirmed a link in
  *  the chat. The daemon decides who may (`files:external`); this only forwards
  *  the session. */
-export async function GET(req: Request, { params }: { params: { name: string } }): Promise<Response> {
+export async function GET(req: Request, props: { params: Promise<{ name: string }> }): Promise<Response> {
+  const params = await props.params;
   const path = new URL(req.url).searchParams.get('path') ?? '';
   if (!path) return refused('path required');
   return proxyJson('GET', `/api/agents/${encodeURIComponent(params.name)}/files/external?path=${encodeURIComponent(path)}`);
 }
 
 /** Save with a text/plain body, as the in-folder route does. */
-export async function PUT(req: Request, { params }: { params: { name: string } }): Promise<Response> {
+export async function PUT(req: Request, props: { params: Promise<{ name: string }> }): Promise<Response> {
+  const params = await props.params;
   const path = new URL(req.url).searchParams.get('path') ?? '';
   if (!path) return refused('path required');
   const upstream = await relay(
     `/api/agents/${encodeURIComponent(params.name)}/files/external?path=${encodeURIComponent(path)}`,
     {
       method: 'PUT',
-      headers: { 'content-type': 'text/plain; charset=utf-8', ...sessionProxyHeaders() },
+      headers: { 'content-type': 'text/plain; charset=utf-8', ...(await sessionProxyHeaders()) },
       body: await req.text(),
       cache: 'no-store',
     },

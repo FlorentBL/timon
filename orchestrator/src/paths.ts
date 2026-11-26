@@ -249,9 +249,10 @@ export const ZONES = {
 
 export type Zone = keyof typeof ZONES;
 
-/** Exception to the zoning: in `agents/<name>/memory/`, this file is
- *  archive (tens of MB per agent), everything else is config. */
-export const AGENT_ARCHIVE_FILES = ['log.jsonl'] as const;
+/** Exception to the zoning: in `agents/<name>/memory/`, these files are
+ *  archive (tens of MB per agent, `log.1.jsonl` being the rotated one of
+ *  `agent-log.ts`), everything else is config. */
+export const AGENT_ARCHIVE_FILES = ['log.jsonl', 'log.1.jsonl'] as const;
 
 /** Absolute path → portable: `/home/user/x` becomes `~/x`. Idempotent.
  *  The rest of the path is written with `/`: an export made on Windows must

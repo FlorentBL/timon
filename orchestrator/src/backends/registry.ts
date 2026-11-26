@@ -1069,8 +1069,9 @@ export function profileDeclarations(id: string): ProviderDeclarations | undefine
 /**
  * Whether the agent of backend `id` can be handed an MCP server over HTTP (an account instance
  * reads its backend's). False for a provider whose codec is the daemon's ACP driver, which
- * declares the stdio servers only: the daemon then leaves a stdio server with variables to the
- * agent instead of running it behind the relay, where the agent would never see it.
+ * declares an HTTP server only to an agent that announces it at `initialize`, too late for this
+ * choice: the daemon then leaves a stdio server with variables to the agent instead of running it
+ * behind the relay, where an agent that takes no HTTP server would never see it.
  * True for anything else, an unknown id included.
  */
 export function backendTakesHttpMcp(id: string): boolean {

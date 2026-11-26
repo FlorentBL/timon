@@ -22,7 +22,16 @@ export type ExecResult = {
    *  answer. A caller that reads a failure as a fact needs the difference. */
   timedOut?: boolean;
 };
-export type SpawnOpts = SpawnOptions;
+export type SpawnOpts = SpawnOptions & {
+  /**
+   * Linux with a user systemd manager: the name of a transient scope
+   * (`systemd-run --user --scope`) to start the command in. Everything it
+   * starts stays in that cgroup, `setsid` included, so the caller can end it
+   * all at once (`kill-tree.ts`). Only for a caller that checked the manager
+   * accepts scopes: elsewhere it is ignored.
+   */
+  scope?: string;
+};
 
 /**
  * OS keyring, under a single service name (`timon`). Optional on purpose: the

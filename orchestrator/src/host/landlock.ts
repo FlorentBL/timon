@@ -131,6 +131,11 @@ export function renderLandlockPolicy(policy: IsolationFencePolicy, deps: Landloc
       const child = posix.join(dir, name);
       if (holes.includes(child)) continue;
       if (kind === 'link') continue;
+      // A folder listed at a higher level is rendered by its own walk, which
+      // reaches all this one would (rw carries every right of ro). Walking it
+      // here too lists it twice: `/tmp` holding the Timon home cost twice its
+      // entry count, past the ceiling on a machine whose `/tmp` is crowded.
+      if (RANK[levels.get(child) ?? 'none'] > RANK[level]) continue;
       const deeper = holes.filter((hole) => strictlyWithin(child, hole));
       if (deeper.length === 0) push(level, child);
       else if (kind === 'dir') emit(child, level, deeper);

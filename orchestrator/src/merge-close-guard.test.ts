@@ -20,7 +20,8 @@ import { writeRoles } from './projects.js';
 import { bus } from './bus.js';
 import { reconcileOrphanedTasks, resolveWorktree, watchMissionComplete } from './dispatcher.js';
 import { runVerificationChain } from './verification-loop.js';
-import { disposeWorktree, type WorktreeInfo } from './worktree.js';
+import { type WorktreeInfo } from './worktree.js';
+import { forceRemoveTestWorktree } from './worktree-fixture.js';
 import { registerRoutes } from './plugins-bundled/kanban/routes.js';
 import { registerRoutes as registerCodeRoutes } from './plugins-bundled/kanban-code/routes.js';
 import { createDaemonAuthMiddleware } from './plugins-bundled/http/auth.js';
@@ -311,7 +312,7 @@ test('a full code task already merged by its coder gets a review of its own comm
     // The base's work came in through the refresh merge: not this coder's.
     assert.doesNotMatch(brief, /other-task\.txt/);
   } finally {
-    await disposeWorktree(wt, true);
+    await forceRemoveTestWorktree(wt);
   }
 });
 
@@ -324,7 +325,7 @@ test('a full code task already merged whose start cannot be found is refused DON
     assert.equal(r.json.code, 'branch_unreviewable');
     assert.notEqual(dbApi.getTask(task.id)!.status, 'DONE');
   } finally {
-    await disposeWorktree(wt, true);
+    await forceRemoveTestWorktree(wt);
   }
 });
 
@@ -399,7 +400,7 @@ test('an automatic close of a full code task already merged with no known start 
     assert.match(after.blocked_reason ?? '', /Code guard: branch .* is already contained in main/);
   } finally {
     stop();
-    await disposeWorktree(wt, true);
+    await forceRemoveTestWorktree(wt);
   }
 });
 
@@ -411,7 +412,7 @@ test('an automatic close of a full code task already merged whose start is known
     assert.equal(dbApi.getTask(task.id)!.status, 'DONE');
   } finally {
     stop();
-    await disposeWorktree(wt, true);
+    await forceRemoveTestWorktree(wt);
   }
 });
 

@@ -17,7 +17,7 @@ import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
 import { PassThrough } from 'node:stream';
 import { tmpdir } from 'node:os';
-import { existsSync, mkdirSync, readFileSync, statSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import type { ChildProcessWithoutNullStreams } from 'node:child_process';
 import { pathKeyOf } from '../host/launch-path.js';
@@ -86,7 +86,9 @@ upsertMcp({ id: 'witness-user-http', transport: { type: 'http', url: 'https://mc
 
 /** What the plugin's code saw, as JSON it could have kept. */
 const seen = {
-  plans: [] as string[], envs: [] as string[], strangerError: null as unknown, mode: 'stdin' as 'stdin' | 'argv' | 'env' | 'scratch' | 'media',
+  plans: [] as string[], envs: [] as string[], strangerError: null as unknown, mode: 'stdin' as 'stdin' | 'argv' | 'env' | 'scratch' | 'media' | 'link',
+  /** In `link` mode: the file the provider links into its mission's folder, and how that went. */
+  link: { target: '', method: null as unknown, error: null as unknown },
   scratch: null as null | { path: string; file: string; writeError: unknown; linkError: unknown },
   media: null as null | { adopted: unknown[]; synchronous: unknown[]; strangerSync: unknown; textAsPng: unknown[]; outside: unknown; stranger: unknown; since: number; missionId: string },
 };
@@ -130,6 +132,11 @@ const dialect: Dialect = {
       try { await stranger_ctx.provider.media.adopt(opts.missionId, dir.resolve('out'), since); } catch (error) { stranger = error; }
       ctx.provider.media.allowShow(opts.missionId, dir.resolve('out'));
       seen.media = { adopted, synchronous, strangerSync, textAsPng: again, outside, stranger, since, missionId: opts.missionId };
+      return { cmd: profile.cmd, args: [], env: { ...profile.env }, cwd: opts.cfg.cwd, initialStdin: null };
+    }
+    if (seen.mode === 'link') {
+      const dir = await ctx.provider.scratch.mission(opts);
+      try { seen.link.method = dir.link(seen.link.target, 'auth.json'); } catch (error) { seen.link.error = error; }
       return { cmd: profile.cmd, args: [], env: { ...profile.env }, cwd: opts.cfg.cwd, initialStdin: null };
     }
     if (seen.mode === 'scratch') {
@@ -546,6 +553,58 @@ test('S3: another plugin cannot open the folder of a mission that is not on its 
     assert.ok(refusal instanceof PluginPolicyError);
   } finally {
     (dialect as { buildSpawn: Dialect['buildSpawn'] }).buildSpawn = original;
+  }
+});
+
+// The host's sign-in Timon keeps for a profile lives among the account folders (`backend-accounts/host<id>`),
+// and the profile id must fit an account id for that: no dash.
+registerProfile(OWNER, { id: 'acmehost', label: 'Acme host', vendor: 'Acme', dialect: 'acme-lines', models: [], defaultModel: null });
+upsertAgent({ name: 'acme.host', system_prompt: 'witness — does nothing.', config: { backend: 'acmehost', cwd: tmpdir(), skills: [], memory_scope: 'NONE' } });
+/** Another provider, on a backend of its own, reaching for the session Acme's host sign-in keeps. */
+const strangerLink = { target: '', method: null as unknown, error: null as unknown };
+registerDialect('other-provider', 'other-lines', {
+  ...dialect,
+  async buildSpawn(opts, profile) {
+    const dir = await stranger.provider.scratch.mission(opts);
+    try { strangerLink.method = dir.link(strangerLink.target, 'auth.json'); } catch (error) { strangerLink.error = error; }
+    return { cmd: profile.cmd, args: [], env: { ...profile.env }, cwd: opts.cfg.cwd, initialStdin: null };
+  },
+});
+registerProfile('other-provider', { id: 'otherhost', label: 'Other', vendor: 'Other', dialect: 'other-lines', models: [], defaultModel: null });
+upsertAgent({ name: 'other.host', system_prompt: 'witness — does nothing.', config: { backend: 'otherhost', cwd: tmpdir(), skills: [], memory_scope: 'NONE' } });
+
+test('S3: the folder of the host sign-in Timon keeps opens to the owner\'s link, only while it is kept, never to another provider', async () => {
+  const { hostSignInDir, recordHostSignIn, forgetHostSignIn } = await import('../backends/host-sign-in.js');
+  const { ScratchPathError } = await import('../backends/scratch-dir.js');
+  const kept = hostSignInDir('acmehost');
+  mkdirSync(kept, { recursive: true });
+  const auth = join(kept, 'auth.json');
+  writeFileSync(auth, '{"witness":true}');
+  seen.mode = 'link';
+  seen.link = { target: auth, method: null, error: null };
+  try {
+    // A folder lying there is not a session Timon keeps: nothing is opened.
+    let run = await launch('acme.host');
+    run.dispose();
+    assert.ok(seen.link.error instanceof ScratchPathError && /not under a credential folder/.test((seen.link.error as Error).message),
+      `no kept session, no link: ${String(seen.link.error)}`);
+
+    recordHostSignIn('acmehost', { key: 'witness@example.test', label: 'witness@example.test' });
+    seen.link = { target: auth, method: null, error: null };
+    run = await launch('acme.host');
+    run.dispose();
+    assert.equal(seen.link.error, null, `the owner links the kept session: ${String(seen.link.error)}`);
+    assert.ok(['symlink', 'hardlink', 'copy'].includes(String(seen.link.method)));
+
+    strangerLink.target = auth;
+    run = await launch('other.host');
+    run.dispose();
+    assert.equal(strangerLink.method, null, 'another provider links nothing');
+    assert.ok(strangerLink.error instanceof ScratchPathError && /not under a credential folder/.test((strangerLink.error as Error).message),
+      `another provider is refused: ${String(strangerLink.error)}`);
+  } finally {
+    forgetHostSignIn('acmehost');
+    seen.mode = 'stdin';
   }
 });
 

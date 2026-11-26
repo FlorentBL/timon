@@ -13,6 +13,7 @@ import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, rmSync, symli
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createWorktree, disposeWorktree, releaseWorktreeFolder, type WorktreeInfo } from './worktree.js';
+import { forceRemoveTestWorktree } from './worktree-fixture.js';
 import { linkDirectory } from './host/directory-link.js';
 
 const WITNESSES = [
@@ -55,7 +56,6 @@ function assertWitnessesIntact(repo: string): void {
 
 const removals: Array<[string, (info: WorktreeInfo) => Promise<void>]> = [
   ['disposeWorktree', (info) => disposeWorktree(info)],
-  ['disposeWorktree with force', (info) => disposeWorktree(info, true)],
   ['releaseWorktreeFolder', (info) => releaseWorktreeFolder(info.path)],
 ];
 
@@ -87,7 +87,7 @@ for (const [name, remove] of removals) {
       assertWitnessesIntact(repo);
     } finally {
       chmodSync(locked, 0o755);
-      await disposeWorktree(info, true);
+      await forceRemoveTestWorktree(info);
       cleanup();
     }
   });
@@ -103,7 +103,7 @@ test('a dirty worktree git refuses to remove gets its links back', async () => {
     }
     assertWitnessesIntact(repo);
   } finally {
-    await disposeWorktree(info, true);
+    await forceRemoveTestWorktree(info);
     cleanup();
   }
 });

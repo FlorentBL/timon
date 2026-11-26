@@ -111,7 +111,7 @@ test('rendered install flow: list, sheet with disclaimer, install on click only,
       const path = href.slice('/api/ui/plugin-install/'.length).split('/');
       steps.push(`${init?.method ?? 'GET'} ${path.join('/')}`);
       const request = new Request(`http://localhost${href}`, init);
-      const params = { params: { path } };
+      const params = { params: Promise.resolve({ path }) };
       const method = (init?.method ?? 'GET') as 'GET' | 'POST' | 'DELETE';
       return session(() => route[method](request, params));
     }

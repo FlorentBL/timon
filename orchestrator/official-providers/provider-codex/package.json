@@ -69,6 +69,23 @@
                 "folderPattern": "^[0-9a-f]+$"
               }
             ],
+            "npmNative": {
+              "package": "@openai/codex",
+              "platformPackage": "@openai/codex-${target}",
+              "executable": {
+                "linux-x64": ["vendor", "x86_64-unknown-linux-musl", "bin", "codex"],
+                "linux-arm64": ["vendor", "aarch64-unknown-linux-musl", "bin", "codex"],
+                "darwin-x64": ["vendor", "x86_64-apple-darwin", "bin", "codex"],
+                "darwin-arm64": ["vendor", "aarch64-apple-darwin", "bin", "codex"],
+                "win32-x64": ["vendor", "x86_64-pc-windows-msvc", "bin", "codex.exe"],
+                "win32-arm64": ["vendor", "aarch64-pc-windows-msvc", "bin", "codex.exe"]
+              },
+              "extraPath": ["..", "codex-path"],
+              "env": {
+                "CODEX_MANAGED_BY_NPM": "1",
+                "CODEX_MANAGED_PACKAGE_ROOT": "${packageRoot}"
+              }
+            },
             "standaloneInstaller": {
               "label": "Codex",
               "posix": "curl -fsSL https://chatgpt.com/codex/install.sh | sh",

@@ -15,16 +15,18 @@
  *   2. The builder commits in the branch
  *   3. The reviewer reads it (always in the same worktree, shared through deps)
  *   4. The merger merges the branch into the base + gets the sha → setTaskMergedSha
- *   5. The merger calls disposeWorktree → the local branch is deleted,
- *      the worktree dir is unmounted. The DB events and the sha remain the audit.
+ *   5. The merger, or the GC later, removes it through removeWorktreeGuarded:
+ *      the worktree dir is unmounted and the local branch deleted, once both
+ *      are merged. The DB events and the sha remain the audit.
  */
 import { existsSync, lstatSync, mkdirSync, readFileSync, realpathSync, rmSync, statSync } from 'node:fs';
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { TIMON_HOME } from './paths.js';
-import { execFileHost, linkDirectory } from './host/index.js';
+import { execFileHost, getHost, linkDirectory } from './host/index.js';
 import { execTree } from './host/kill-tree.js';
 import { settingNum } from './settings.js';
 import { purgeShell, unlinkWorktreeLinks } from './worktree-shell.js';
+import { diskGate, diskGateMessage, type DiskGate } from './disk-gate.js';
 
 const exec = execFileHost;
 
@@ -217,6 +219,18 @@ export async function headSha(cwd: string): Promise<string | null> {
  * `git worktree add` runs there; the worktree lands
  * in WORKTREES_ROOT/<taskId>.
  */
+/**
+ * Free space where new worktrees land, against `TIMON_DISK_MIN_FREE_MB`. The
+ * dispatcher pauses on it; `createWorktree` refuses on it.
+ */
+export function worktreeDiskGate(free?: (dir: string) => number | null): DiskGate {
+  let floorMb = 0;
+  try {
+    floorMb = settingNum('TIMON_DISK_MIN_FREE_MB');
+  } catch { /* registry unreadable: no floor rather than no work */ }
+  return diskGate([WORKTREES_ROOT, TIMON_HOME], Math.max(0, floorMb) * 1024 * 1024, free);
+}
+
 export async function createWorktree(
   taskId: string,
   repoCwd: string,
@@ -254,6 +268,10 @@ export async function createWorktree(
     console.warn(`[worktree] ${path} holds a checkout that never finished: making it again`);
     await discardHalfMadeWorktree(repoCwd, path);
   }
+  // Only a new checkout: an existing worktree above costs nothing more. A full
+  // disk mid-checkout leaves a half-made folder, then SQLite fails next.
+  const room = worktreeDiskGate();
+  if (!room.ok) throw worktreeError(`no worktree created: ${diskGateMessage(room)}. Free some space, then retry the task.`);
   mkdirSync(WORKTREES_ROOT, { recursive: true });
   const baseRef = base ?? (await currentBranch(repoCwd)) ?? 'HEAD';
   // The branch outlives the folder: an unmounted worktree (dispose, GC, manual
@@ -518,7 +536,7 @@ async function trackedLinks(worktreePath: string): Promise<Set<string>> {
  * folder is never deleted with it. A worktree kept after all (git refuses a
  * dirty one) gets its links back from the dispatcher, which re-links on reuse.
  */
-async function unlinkBeforeRemoval(worktreePath: string): Promise<void> {
+export async function unlinkBeforeRemoval(worktreePath: string): Promise<void> {
   if (!existsSync(worktreePath)) return;
   unlinkWorktreeLinks(worktreePath, await trackedLinks(worktreePath));
 }
@@ -546,41 +564,187 @@ export async function releaseWorktreeFolder(path: string): Promise<void> {
   purgeShell(WORKTREES_ROOT, path, 0, Date.now());
 }
 
-/**
- * Unmounts a worktree and deletes its local branch. Called by the merger
- * agent after a successful merge (or manually through `timon worktree dispose`
- * on abandon). The trace of the session stays in events + the possible
- * Codex rollouts — that is on purpose.
- *
- * `force = true` ignores the `worktree remove` errors (case of a dirty
- * or already partly deleted worktree), never a shared link that could not be
- * removed first: that one throws, and the folder and the branch both stay.
- */
-export async function disposeWorktree(
-  info: WorktreeInfo,
-  force = false,
-): Promise<void> {
-  await unlinkBeforeRemoval(info.path);
+/** A git command's exit code and output, without throwing: the guards tell "no" (1) from "cannot say". */
+async function gitProbe(cwd: string, args: string[]): Promise<{ code: number; stdout: string; timedOut: boolean }> {
   try {
-    const args = ['-C', info.sourceRepo, 'worktree', 'remove'];
-    if (force) args.push('--force');
-    args.push(info.path);
-    await exec('git', args, { timeout: 15_000 });
-  } catch (err) {
-    if (!force) {
-      // Git refused (uncommitted work): the worktree stays, and may still be in use, so it gets its links back.
-      await prepareWorktreeDependencies(info.sourceRepo, info.path);
-      throw err;
-    }
-  }
-  // Branch -D (forced, it was already merged if we get here).
-  try {
-    await exec('git', ['-C', info.sourceRepo, 'branch', '-D', info.branch], { timeout: 5_000 });
+    const r = await getHost().execAsync('git', ['-C', cwd, ...args], { timeout: 30_000, windowsHide: true, maxBuffer: 16 * 1024 * 1024 });
+    return { code: r.code, stdout: r.stdout, timedOut: Boolean(r.timedOut) };
   } catch {
-    /* branch already deleted or conflict — no big deal, the merge sha is in the DB */
+    return { code: -1, stdout: '', timedOut: false };
   }
-  // Every removal path goes through here, so the shell is purged at the
-  // source. No grace: git has just let go of this folder. A failed remove
-  // leaves its `.git`, which purgeShell refuses to touch.
-  purgeShell(WORKTREES_ROOT, info.path, 0, Date.now());
+}
+
+const COMMIT_SHA = /^[0-9a-f]{40,64}$/;
+
+async function commitOf(cwd: string, ref: string): Promise<string | null> {
+  const r = await gitProbe(cwd, ['rev-parse', '--verify', '--quiet', `${ref}^{commit}`]);
+  const sha = r.stdout.trim();
+  return r.code === 0 && COMMIT_SHA.test(sha) ? sha : null;
+}
+
+/** The repository's shared git directory, resolved through links; null when git cannot say. */
+async function commonDirOf(cwd: string): Promise<string | null> {
+  const r = await gitProbe(cwd, ['rev-parse', '--path-format=absolute', '--git-common-dir']);
+  const dir = r.stdout.trim();
+  if (r.code !== 0 || !dir) return null;
+  try { return realpathSync(dir); } catch { return resolve(dir); }
+}
+
+/**
+ * Is `sha` in one of `holders` (refs resolved in `repo`, whose `HEAD` is the
+ * main checkout's)? A holder git does not know is skipped; `unknown` when git
+ * could not answer for one it knows.
+ */
+async function containedIn(repo: string, sha: string, holders: readonly string[]): Promise<'yes' | 'no' | 'unknown'> {
+  let unknown = false;
+  for (const holder of holders) {
+    const target = await commitOf(repo, holder);
+    if (!target) continue;
+    const r = await gitProbe(repo, ['merge-base', '--is-ancestor', sha, target]);
+    if (r.code === 0 && !r.timedOut) return 'yes';
+    if (r.code !== 1 || r.timedOut) unknown = true;
+  }
+  return unknown ? 'unknown' : 'no';
+}
+
+/** Why a guarded removal kept something. `retry`: the next pass may decide otherwise without anyone acting. */
+export type RemovalRefusal = { reason: string; retry: boolean };
+
+/**
+ * Is the worktree clean (nothing uncommitted, untracked files included) and
+ * its real HEAD in a holder? Never the sha a merge recorded: a commit made
+ * since is work.
+ */
+async function worktreeDisposable(path: string, repo: string, holders: readonly string[]): Promise<RemovalRefusal | null> {
+  const status = await gitProbe(path, ['status', '--porcelain', '--untracked-files=all', '--ignore-submodules=none']);
+  if (status.code !== 0 || status.timedOut) return { reason: 'git cannot read its state', retry: true };
+  if (status.stdout.trim() !== '') return { reason: 'it holds changes never committed', retry: false };
+  const head = await commitOf(path, 'HEAD');
+  if (!head) return { reason: 'git cannot read its HEAD', retry: true };
+  const contained = await containedIn(repo, head, holders);
+  if (contained === 'unknown') return { reason: 'git cannot tell whether its HEAD is merged', retry: true };
+  if (contained === 'no') return { reason: `its HEAD ${head.slice(0, 12)} is not merged into ${holders.join(', ')}`, retry: false };
+  return null;
+}
+
+/** What {@link removeWorktreeGuarded} should check and who it takes the folder from. */
+export type GuardedRemoval = {
+  path: string;
+  /** The main repository the worktree belongs to: its `HEAD` is a holder, and git runs there. */
+  sourceRepo: string;
+  /** Refs or shas: the worktree's HEAD, and the branch's tip, must be in one of them. */
+  holders: readonly string[];
+  /** Local branch deleted after the folder, only while its tip is in a holder. Absent: kept. */
+  branch?: string | null;
+  /**
+   * Takes the folder from whoever records it (the tasks in the database), in
+   * one transaction that reads them again. Returns how to give it back after a
+   * refusal, or null when someone still needs it.
+   */
+  claim?: () => (() => void) | null;
+  /** Asked again right before git removes the folder and before the branch goes: false keeps both. */
+  stillClaimed?: () => boolean;
+  /** Folder its leftovers may be purged from. */
+  root?: string;
+};
+
+export type GuardedRemovalResult =
+  | { ok: true; folder: 'removed' | 'absent'; branch: 'deleted' | 'absent' | 'kept' | 'untouched'; branchReason?: string }
+  | ({ ok: false } & RemovalRefusal);
+
+/**
+ * The one way a task worktree is deleted. Every path that removes one (the GC,
+ * `timon worktree dispose`, a merger's cleanup) goes through these guards,
+ * because a fresh worktree has no commit of its own and git calls it merged:
+ * that is how a live task lost its worktree on 2026-09-20.
+ *
+ * - the folder belongs to `sourceRepo`;
+ * - `git status --porcelain` is empty, untracked files included;
+ * - the worktree's real HEAD is in a holder;
+ * - `claim` takes it from its owners, reading them again, before anything goes;
+ * - after the shared links are removed, `stillClaimed` and the two checks
+ *   above run again, as late as possible, then `git worktree remove` WITHOUT
+ *   `--force`, so git refuses a folder that changed in between.
+ *
+ * What a guard or git refused stays, gets its links and its owners back. The
+ * branch goes last, under the same containment guard; `git branch -D` itself
+ * refuses a branch checked out anywhere.
+ */
+export async function removeWorktreeGuarded(r: GuardedRemoval): Promise<GuardedRemovalResult> {
+  const root = r.root ?? WORKTREES_ROOT;
+  let folder: 'removed' | 'absent' = 'absent';
+  if (existsSync(r.path)) {
+    const own = await commonDirOf(r.path);
+    if (!own) return { ok: false, reason: 'it is not a git worktree', retry: false };
+    if (own !== (await commonDirOf(r.sourceRepo))) return { ok: false, reason: `it is not a worktree of ${r.sourceRepo}`, retry: false };
+    const refused = await worktreeDisposable(r.path, r.sourceRepo, r.holders);
+    if (refused) return { ok: false, ...refused };
+    const giveBack = r.claim ? r.claim() : () => undefined;
+    if (!giveBack) return { ok: false, reason: 'a task that is not DONE still uses it', retry: true };
+    const late: { refusal: RemovalRefusal | null } = { refusal: null };
+    try {
+      await unlinkBeforeRemoval(r.path);
+      if (r.stillClaimed && !r.stillClaimed()) late.refusal = { reason: 'a task was reopened before its removal', retry: true };
+      else late.refusal = await worktreeDisposable(r.path, r.sourceRepo, r.holders);
+      if (late.refusal) throw new Error(late.refusal.reason);
+      // From the common dir, never from inside the folder: Windows locks a process's current directory.
+      await exec('git', ['-C', own, 'worktree', 'remove', r.path], { timeout: 15_000 });
+    } catch (err) {
+      giveBack();
+      if (existsSync(r.path)) await prepareWorktreeDependencies(r.sourceRepo, r.path);
+      return { ok: false, ...(late.refusal ?? { reason: (err as Error).message.split('\n')[0] ?? 'git refused', retry: false }) };
+    }
+    // No grace: git has just let go of this folder. A failed remove leaves its `.git`, which purgeShell refuses to touch.
+    purgeShell(root, r.path, 0, Date.now());
+    folder = 'removed';
+  } else if (r.claim && !r.claim()) {
+    return { ok: false, reason: 'a task that is not DONE still records it', retry: true };
+  }
+
+  if (!r.branch) return { ok: true, folder, branch: 'untouched' };
+  const branch = await deleteBranchGuarded(r.sourceRepo, r.branch, r.holders, r.stillClaimed);
+  return branch.branch === 'kept'
+    ? { ok: true, folder, branch: 'kept', branchReason: branch.reason }
+    : { ok: true, folder, branch: branch.branch };
+}
+
+/**
+ * Deletes a local branch only while its tip is in one of `holders` and
+ * `stillClaimed` (asked last) agrees. `git branch -D` refuses a branch checked
+ * out in any working directory, the user's own included.
+ */
+export async function deleteBranchGuarded(
+  repo: string,
+  branch: string,
+  holders: readonly string[],
+  stillClaimed?: () => boolean,
+): Promise<{ branch: 'deleted' | 'absent' } | { branch: 'kept'; reason: string }> {
+  const tip = await commitOf(repo, `refs/heads/${branch}`);
+  if (!tip) return { branch: 'absent' };
+  const contained = await containedIn(repo, tip, holders);
+  if (contained !== 'yes') {
+    return { branch: 'kept', reason: contained === 'no' ? `its tip ${tip.slice(0, 12)} is not merged` : 'git cannot tell whether its tip is merged' };
+  }
+  if (stillClaimed && !stillClaimed()) return { branch: 'kept', reason: 'a task was reopened' };
+  try {
+    await exec('git', ['-C', repo, 'branch', '-D', branch], { timeout: 5_000 });
+  } catch (err) {
+    return { branch: 'kept', reason: (err as Error).message.split('\n')[0] ?? 'git refused' };
+  }
+  return { branch: 'deleted' };
+}
+
+/**
+ * Unmounts a worktree and deletes its local branch, under the guards of
+ * {@link removeWorktreeGuarded}: the worktree's HEAD and the branch's tip must
+ * be in `info.base` or the repository's HEAD. Throws when the folder is kept.
+ */
+export async function disposeWorktree(info: WorktreeInfo): Promise<void> {
+  const result = await removeWorktreeGuarded({
+    path: info.path,
+    sourceRepo: info.sourceRepo,
+    holders: [info.base, 'HEAD'],
+    branch: info.branch,
+  });
+  if (!result.ok) throw new Error(`worktree ${info.path} kept: ${result.reason}`);
 }

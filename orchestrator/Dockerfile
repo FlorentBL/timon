@@ -2,7 +2,9 @@
 # two provider CLIs we spawn (Claude Code, OpenAI Codex) so per-agent
 # `backend: claude|codex` config can pick either.
 
-FROM node:20-bookworm-slim AS build
+# Node 22, like the app image and the desktop package: Node 20 left
+# support in April 2026.
+FROM node:22-bookworm-slim AS build
 WORKDIR /app
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -17,7 +19,7 @@ COPY src ./src
 RUN npm run build && npm prune --omit=dev
 
 
-FROM node:20-bookworm-slim AS runtime
+FROM node:22-bookworm-slim AS runtime
 WORKDIR /app
 
 # Runtime deps + both provider CLIs. Codex ships native binaries via

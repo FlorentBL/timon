@@ -3,13 +3,14 @@ import {
   spawn as nodeSpawn,
   spawnSync,
   type ChildProcess,
+  type SpawnOptions,
 } from 'node:child_process';
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join, posix, win32 } from 'node:path';
 import type { TimonConfig } from '../config/schema.js';
 import { TIMON_HOME } from '../paths.js';
 import type { Capability, ExecOpts, ExecResult, Host, SpawnOpts } from './types.js';
-import { findExecutableBinary, resolvePinnedBinary, type BinarySearchOptions } from './binary-path.js';
+import { findExecutableBinary, resolvePinnedBinary, withNpmNativeEnv, type BinarySearchOptions } from './binary-path.js';
 import { containersSuppression } from './containers-policy.js';
 import { spawnDetachedGeneric } from './detached.js';
 import { inspectListenPort } from './listen-port.js';
@@ -63,6 +64,35 @@ function resultOf(r: ReturnType<typeof spawnSync>): ExecResult {
     code: r.status ?? (r.error ? 1 : 0),
     stdout: typeof r.stdout === 'string' ? r.stdout : r.stdout?.toString() ?? '',
     stderr: typeof r.stderr === 'string' ? r.stderr : r.stderr?.toString() ?? r.error?.message ?? '',
+  };
+}
+
+/** What `systemd-run --user` needs to find the user manager, which a narrowed environment may lack. */
+const USER_BUS_KEYS = ['XDG_RUNTIME_DIR', 'DBUS_SESSION_BUS_ADDRESS'] as const;
+/** What systemd sets for the command it runs in a unit. */
+const UNIT_SET_KEYS = ['INVOCATION_ID', 'SYSTEMD_EXEC_PID'] as const;
+
+/**
+ * Linux: starts the command inside the transient scope `unit` (`SpawnOpts.scope`). A scope runs the command
+ * in place, so the pid, the pipes and the exit code stay the command's. `env` stands between the two so
+ * that the command gets the environment its caller chose and nothing else: the bus variables lent to
+ * `systemd-run` from the daemon's own environment are taken back, and what systemd sets for a unit is taken
+ * off, or given back its caller's value. Only names and those values go on the command line, never a secret.
+ */
+export function scopedSpawn(unit: string, bin: (name: string) => string): (file: string, args: readonly string[], opts: SpawnOptions) => ChildProcess {
+  // Never a throw here (see `spawn`): a name that does not resolve reaches the `error` event as ENOENT.
+  const find = (name: string): string => { try { return bin(name); } catch { return name; } };
+  return (file, args, opts) => {
+    const chosen: NodeJS.ProcessEnv = opts.env ?? process.env;
+    const env: NodeJS.ProcessEnv = { ...chosen };
+    const lent = USER_BUS_KEYS.filter((key) => chosen[key] === undefined && process.env[key] !== undefined);
+    for (const key of lent) env[key] = process.env[key];
+    // `env [-u NAME]... -- [NAME=VALUE]... COMMAND`: the assignments come after `--`.
+    const unset = [...lent, ...UNIT_SET_KEYS.filter((key) => chosen[key] === undefined)].flatMap((key) => ['-u', key]);
+    const given = UNIT_SET_KEYS.filter((key) => chosen[key] !== undefined).map((key) => `${key}=${chosen[key]}`);
+    return nodeSpawn(find('systemd-run'), [
+      '--user', '--scope', '--quiet', '--collect', `--unit=${unit}`, '--', find('env'), ...unset, '--', ...given, file, ...args,
+    ], { ...opts, env });
   };
 }
 
@@ -166,16 +196,21 @@ export function createGenericHost(
     return finishGitCall(args, opts, parseGitConfigList(r.stdout, scoped), parseSubmoduleNames(outputs));
   };
 
+  // The native build behind an npm launcher (C1 `npmNative`) gets what the launcher would have given it.
+  const nativeOpts = <O extends { env?: NodeJS.ProcessEnv | undefined }>(file: string, opts: O): O => {
+    const env = withNpmNativeEnv(opts.env, file, binaryOptions);
+    return env === opts.env ? opts : { ...opts, env };
+  };
   const exec = (name: string, args: string[], opts: ExecOpts = {}) => {
     const file = bin(name);
-    const call = name === 'git' ? gitCallSync(file, args, opts) : { args, opts };
+    const call = name === 'git' ? gitCallSync(file, args, opts) : { args, opts: nativeOpts(file, opts) };
     if ('failed' in call) return call.failed;
     const l = launch(file, call.args);
     return resultOf(spawnSync(l.file, l.args, { ...call.opts, ...l.extra, encoding: 'utf8' }));
   };
   const execAsync = async (name: string, args: string[], opts: ExecOpts = {}): Promise<ExecResult> => {
     const file = bin(name);
-    const call = name === 'git' ? await gitCallAsync(file, args, opts) : { args, opts };
+    const call = name === 'git' ? await gitCallAsync(file, args, opts) : { args, opts: nativeOpts(file, opts) };
     if ('failed' in call) return call.failed;
     const l = launch(file, call.args);
     return execFileResult(l.file, l.args, { ...call.opts, ...l.extra });
@@ -184,7 +219,9 @@ export function createGenericHost(
   // (agent.ts first of all) rely on the child's `error` event to
   // finalise cleanly. Unresolved binary → a path that cannot exist is passed
   // and node reports the ENOENT through that channel.
-  const spawn = (name: string, args: string[], opts: SpawnOpts = {}): ChildProcess => {
+  const spawn = (name: string, args: string[], spawnOpts: SpawnOpts = {}): ChildProcess => {
+    const { scope, ...opts } = spawnOpts;
+    const start = scope && process.platform === 'linux' ? scopedSpawn(scope, bin) : nodeSpawn;
     let resolved: string | null = null;
     try { resolved = bin(name); } catch { /* ENOENT through the `error` event */ }
     if (resolved === null) {
@@ -204,13 +241,14 @@ export function createGenericHost(
         console.error(`[git] refused: ${call.failed.stderr.trim()}`);
         const refusal = ['--no-pager', ...fixedGitConfig().flatMap((pair) => ['-c', pair]), 'rev-parse', '--verify', 'refs/timon/git-refused'];
         const l = launch(resolved, refusal);
-        return nodeSpawn(l.file, l.args, { ...opts, env: neutralGitEnv(opts.env ?? process.env), ...l.extra });
+        return start(l.file, l.args, { ...opts, env: neutralGitEnv(opts.env ?? process.env), ...l.extra });
       }
       const l = launch(resolved, call.args);
-      return nodeSpawn(l.file, l.args, { ...opts, env: call.opts.env, ...l.extra });
+      return start(l.file, l.args, { ...opts, env: call.opts.env, ...l.extra });
     }
     const l = launch(resolved, args);
-    return nodeSpawn(l.file, l.args, { ...(opts.env ? { ...opts, env: opts.env } : opts), ...l.extra });
+    const native = nativeOpts(resolved, opts);
+    return start(l.file, l.args, { ...(native.env ? { ...native, env: native.env } : native), ...l.extra });
   };
 
   const unitsDir = join(TIMON_HOME, 'tmp', 'units');

@@ -16,7 +16,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
 import { PassThrough } from 'node:stream';
-import { chmodSync, copyFileSync, mkdirSync, mkdtempSync, realpathSync, renameSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { type BigIntStats, chmodSync, copyFileSync, mkdirSync, mkdtempSync, realpathSync, renameSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { delimiter, join } from 'node:path';
 import type { ChildProcessWithoutNullStreams } from 'node:child_process';
@@ -367,6 +367,38 @@ test('REFUSAL: a mission whose program is swapped after the check starts nothing
   assert.equal((await launches('fx.auth-third')).error, null, 'the next launch checks the file as it is now');
 });
 
+test('REFUSAL: a program under the checked inode that is no longer the checked file starts nothing (TODO #1212)', async () => {
+  allowExec('acme-auth');
+  const host = getHost();
+  const originalBin = host.bin;
+  const before = statSync(agentFile, { bigint: true });
+  const swapped: { stat: BigIntStats | null; count: number } = { stat: null, count: 0 };
+  // ext4 hands a freed inode to the next file created: a path replaced twice can lead to another file
+  // under the very device and inode that were checked. Rewriting the file in place gives that state
+  // deterministically, on every file system. As in the test above, the lookup that lands between the
+  // check and the spawn is the one that matters, so every lookup but `node`'s writes another file.
+  host.bin = ((name: string) => {
+    if (name !== 'node') {
+      swapped.count += 1;
+      const echo = 'x'.repeat(swapped.count);
+      writeFileSync(agentFile, posix ? `#!/bin/sh\necho ${echo}\nexit 0\n` : `@echo ${echo}\r\n@exit /b 0\r\n`);
+      swapped.stat = statSync(agentFile, { bigint: true });
+    }
+    return originalBin.call(host, name);
+  }) as typeof host.bin;
+  try {
+    const { started, error } = await launches('fx.auth-third');
+    assert.ok(swapped.stat, 'the program was replaced between the check and the spawn');
+    assert.equal(swapped.stat.dev, before.dev);
+    assert.equal(swapped.stat.ino, before.ino, 'same device and inode: the identity alone would let it through');
+    assert.deepEqual(started, []);
+    assert.match(String(error), /no longer is the file checked for this launch/);
+  } finally {
+    host.bin = originalBin;
+  }
+  assert.equal((await launches('fx.auth-third')).error, null, 'the next launch checks the file as it is now');
+});
+
 /* ── Typed provenance: what the daemon installed ─────────────────────────── */
 
 test('a program the daemon installed launches as itself, and only it — withdrawn with its registration', async () => {
@@ -419,6 +451,59 @@ test('a third party\'s profile without a command runs the official dialect\'s pr
     assert.deepEqual(refused.started, []);
   } finally {
     forced.cmd = null;
+    allowExec('acme-auth');
+  }
+});
+
+test('an npm launcher authorized by its path also authorizes the native build the daemon starts in its place (C1 npmNative)', { skip: !posix }, async () => {
+  // `<root>/npm/bin/acme-npm` links to the package's Node launcher; the native build sits in the package.
+  const pkg = join(root, 'npm', 'lib', 'node_modules', 'acme-npm-cli');
+  mkdirSync(join(pkg, 'bin'), { recursive: true });
+  writeFileSync(join(pkg, 'package.json'), JSON.stringify({ name: 'acme-npm-cli' }));
+  const launcher = join(pkg, 'bin', 'acme.js');
+  writeFileSync(launcher, '#!/usr/bin/env node\n');
+  chmodSync(launcher, 0o755);
+  const native = join(pkg, 'dist', 'acme-npm');
+  mkdirSync(join(native, '..'), { recursive: true });
+  writeFileSync(native, '#!/bin/sh\nexit 0\n');
+  chmodSync(native, 0o755);
+  const npmBin = join(root, 'npm', 'bin');
+  mkdirSync(npmBin, { recursive: true });
+  symlinkSync(launcher, join(npmBin, 'acme-npm'));
+  const previousPath = process.env.PATH;
+  process.env.PATH = `${npmBin}${delimiter}${previousPath ?? ''}`;
+  // Registration asks for the name; each launch then asks for the file.
+  allowExec('acme-auth', 'acme-npm');
+  const ctx = pluginContext('fx-auth-npm-plugin', 'acme-npm', false);
+  const def = definition('fx-auth-npm', 'acme-npm');
+  ctx.provider.registerProvider({ ...def, declares: { binary: { names: ['acme-npm'], npmNative: {
+    package: 'acme-npm-cli', executable: { [`${process.platform}-${process.arch}`]: ['dist', 'acme-npm'] }, env: { ACME_MANAGED_BY_NPM: '1' },
+  } } } });
+  ctx.backends.registerProfile(profileOf('fx-auth-npm-profile', 'fx-auth-npm'));
+  upsertAgent({ name: 'fx.auth-npm', system_prompt: 'witness — does nothing.', config: { backend: 'fx-auth-npm-profile', cwd: tmpdir(), skills: [], memory_scope: 'NONE' } });
+  const host = getHost();
+  const original = host.spawn;
+  const seen: Array<{ cmd: string; env: NodeJS.ProcessEnv | undefined }> = [];
+  host.spawn = ((cmd: string, _args: string[], opts?: { env?: NodeJS.ProcessEnv }) => {
+    seen.push({ cmd, env: opts?.env });
+    const child = fakeChild(); setImmediate(() => child.kill()); return child;
+  }) as typeof host.spawn;
+  try {
+    assert.equal(host.bin('acme-npm'), native);
+    allowExec(launcher);
+    let error: unknown = null;
+    try { await spawnAgent('fx.auth-npm', 'ping'); } catch (err) { error = err; }
+    assert.equal(error, null, String(error));
+    assert.deepEqual(seen.map((s) => s.cmd), [native]);
+    assert.equal(seen[0]?.env?.ACME_MANAGED_BY_NPM, '1');
+    // The authorization of another file authorizes neither.
+    seen.length = 0;
+    allowExec(elsewhere);
+    try { await spawnAgent('fx.auth-npm', 'ping'); } catch { /* refused */ }
+    assert.deepEqual(seen, []);
+  } finally {
+    host.spawn = original;
+    process.env.PATH = previousPath;
     allowExec('acme-auth');
   }
 });

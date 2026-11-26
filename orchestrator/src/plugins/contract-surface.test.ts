@@ -127,7 +127,7 @@ const KIT_TYPE_NAMES: Record<'provider' | 'testing', readonly string[]> = {
     'ProviderAccount', 'ProviderAccountContext', 'ProviderAccountsDeclaration', 'ProviderLoginDriver', 'ProviderHostSignInDeclaration',
     'ProviderTokenDriver', 'AcpAgentSpec', 'AcpSignIn',
     'AcpExtensionHandler', 'AcpExtensionCards', 'AcpCardQuestion', 'AcpCardOption', 'AcpCardAnswer', 'AcpCardOutcome',
-    'AcpPlanApproval', 'AcpPlanVerdict', 'ProviderBinaryIdentity', 'ProviderUnverified',
+    'AcpPlanApproval', 'AcpPlanVerdict', 'ProviderBinaryIdentity', 'ProviderUnverified', 'ProviderNpmNative',
     'NativeCompact', 'NativeCompactContext', 'NativeCompactResult'],
   testing: ['ConformanceCheck', 'ConformanceContext', 'LineExpectation', 'RemoteExpectation', 'TestFn', 'BoundProfile',
     'FakeCli', 'FakeCliOptions', 'ReplayResult', 'Chunking', 'ProviderContextOptions', 'LoggedLine',

@@ -6,7 +6,8 @@ export const dynamic = 'force-dynamic';
 /** Bytes of a file the Files widget can preview (image, video, PDF, Office).
  *  Streamed through `proxyMedia` so a video seeks and nothing is buffered; the
  *  daemon decides what may leave and under which headers. */
-export async function GET(req: Request, { params }: { params: { name: string } }): Promise<Response> {
+export async function GET(req: Request, props: { params: Promise<{ name: string }> }): Promise<Response> {
+  const params = await props.params;
   const url = new URL(req.url);
   const path = url.searchParams.get('path') ?? '';
   if (!path) {

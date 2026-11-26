@@ -267,6 +267,7 @@ test('SUG-0063: a plugin installed from a folder (link) travels in the export an
   // Agent log: left out without --with-archive, whatever the path separator.
   mkdirSync(join(home, 'agents', 'a', 'memory'), { recursive: true });
   writeFileSync(join(home, 'agents', 'a', 'memory', 'log.jsonl'), '{}\n');
+  writeFileSync(join(home, 'agents', 'a', 'memory', 'log.1.jsonl'), '{}\n');
   writeFileSync(join(home, 'agents', 'a', 'memory', 'learnings.jsonl'), '{}\n');
 
   const out = join(mkdtempSync(join(tmpdir(), 'timon-export-link-archive-')), 'export.tar.gz');
@@ -274,6 +275,7 @@ test('SUG-0063: a plugin installed from a folder (link) travels in the export an
   const listing = execFileSync('tar', ['-tzf', out], { encoding: 'utf8' });
   assert.ok(listing.includes('plugins/node_modules/@acme/local'), 'the link is in the archive');
   assert.ok(!listing.includes('memory/log.jsonl'));
+  assert.ok(!listing.includes('memory/log.1.jsonl'), 'the rotated archive stays out too');
   assert.ok(listing.includes('memory/learnings.jsonl'));
 
   const to = mkdtempSync(join(tmpdir(), 'timon-import-link-'));

@@ -53,7 +53,7 @@ function onRemote<T>(fn: () => Promise<T>): Promise<T> {
 
 test('the bundle of a plugin is the local daemon’s, whatever the active machine', async () => {
   const { GET } = await import('../../app/api/ui/plugin-bundles/[id]/route');
-  const res = await onRemote(() => GET(new Request('http://app.test/api/ui/plugin-bundles/hello?rev=r1'), { params: { id: 'hello' } }));
+  const res = await onRemote(() => GET(new Request('http://app.test/api/ui/plugin-bundles/hello?rev=r1'), { params: Promise.resolve({ id: 'hello' }) }));
   assert.equal(res.status, 200);
   assert.deepEqual(urls, [`${LOCAL}/plugins/hello/client.js?rev=r1`]);
 });

@@ -425,14 +425,13 @@ export class AcpRegistryService {
       const iconFile = this.paths.iconFile(agent.id);
       const iconSvg = icon.kind === 'svg' ? icon.svg : icon.kind === 'unreachable' ? readIcon(iconFile) : null;
       try {
-        this.swapIn(next, program, iconSvg);
+        this.commit(state, next, program, iconSvg);
       } catch (err) {
         // Nothing points at the new folder: do not leave it behind.
         if (current?.version !== agent.version) rmSync(final, { recursive: true, force: true });
         throw err;
       }
       this.health.set(agent.id, 'ok');
-      writeState(this.paths, { ...state, [agent.id]: next });
       try {
         if (icon.kind === 'svg') writeIcon(iconFile, icon.svg);
         else if (icon.kind !== 'unreachable') rmSync(iconFile, { force: true });
@@ -477,8 +476,7 @@ export class AcpRegistryService {
       }
       if (JSON.stringify(methods) !== JSON.stringify(agent.authMethods ?? null)) {
         const next: InstalledAgent = { ...agent, authMethods: methods };
-        this.swapIn(next, program);
-        writeState(this.paths, { ...state, [agent.id]: next });
+        this.commit(state, next, program);
       }
       return { methods: authMethodViews(methods, program) };
     });
@@ -520,6 +518,25 @@ export class AcpRegistryService {
       this.live.set(agent.id, this.register(agent, command, icon));
     } finally {
       end();
+    }
+  }
+
+  /**
+   * Records the agent, then makes it live. The record comes first: an agent registered but never written down would
+   * run until the next restart and then vanish, with a catalogue that disagrees with what missions can use. When the
+   * registration fails after the write, the previous record is put back.
+   */
+  private commit(state: Record<string, InstalledAgent>, agent: InstalledAgent, command: string, icon?: string | null): void {
+    writeState(this.paths, { ...state, [agent.id]: agent });
+    try {
+      this.swapIn(agent, command, icon);
+    } catch (err) {
+      try {
+        writeState(this.paths, state);
+      } catch {
+        console.warn(`[acp-registry] ${agent.id}: the previous record could not be put back`);
+      }
+      throw err;
     }
   }
 

@@ -95,7 +95,7 @@ async function mountMenu(run: (ctx: {
     });
     const orders: Layout[] = [];
     const hidden: string[] = [...(options.hidden ?? [])];
-    const router = { back() {}, forward() {}, refresh() {}, prefetch() {}, push() {}, replace() {} };
+    const router = { bfcacheId: 'test', back() {}, forward() {}, refresh() {}, prefetch() {}, push() {}, replace() {} };
     const host = document.getElementById('root')!;
     const root = createRoot(host);
     const until = (condition: () => boolean, what: string) => waitUntil(React.act, condition, what);

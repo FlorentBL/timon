@@ -114,6 +114,27 @@ test('the query string and encoded segments are kept', async () => {
   assert.equal(call(0).url, '/api/plugins/hermes-gateway/by%20name/x?state=ok&q=a%20b');
 });
 
+// Next 16 hands a route its params as a promise: the route must await them
+// before it builds the daemon path, or every segment reads as undefined.
+test('the route handlers await their params before relaying', async () => {
+  const routeModule = await import('../../app/api/ui/plugins/[id]/[...path]/route');
+  const props = () => ({ params: Promise.resolve({ id: 'hermes-gateway', path: ['by name', 'x'] }) });
+  const res = await routeModule.GET(new Request(`${url}?q=1`), props());
+  assert.equal(res.status, 200);
+  await routeModule.POST(new Request(url, { method: 'POST', body: '{"a":1}' }), props());
+  await routeModule.PUT(new Request(url, { method: 'PUT' }), props());
+  await routeModule.PATCH(new Request(url, { method: 'PATCH' }), props());
+  await routeModule.DELETE(new Request(url, { method: 'DELETE' }), props());
+  assert.deepEqual(seen.map((s) => `${s.method} ${s.url}`), [
+    'GET /api/plugins/hermes-gateway/by%20name/x?q=1',
+    'POST /api/plugins/hermes-gateway/by%20name/x',
+    'PUT /api/plugins/hermes-gateway/by%20name/x',
+    'PATCH /api/plugins/hermes-gateway/by%20name/x',
+    'DELETE /api/plugins/hermes-gateway/by%20name/x',
+  ]);
+  assert.deepEqual(JSON.parse(call(1).body), { a: 1 });
+});
+
 // ── Binary bodies (an archive sent by a plugin's browser half) ─────────────
 
 const stageParams = { id: 'agent-import', path: ['stage'] };

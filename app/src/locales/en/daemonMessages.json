@@ -19,6 +19,14 @@
     "integration_branch_unavailable": "Integration branch {branch} is unavailable: {detail}. The task was not started, and the branch is never cut from the local base instead of {baseRef}. Fix the remote or the branch name, then retry the task.",
     "task_base_missing": "Base {base} does not exist in the repository. The task was not started: a {type} task never runs without its base. Create the branch or change the task's base, then retry it.",
     "task_worktree_unavailable": "No worktree for this {type} task ({cause}). It was not started: in the agent's own folder it would write to the checkout every agent shares. Fix the cause, then retry the task.",
+    "dispatcher_disk_paused": {
+      "title": "Tasks paused: the disk is almost full",
+      "body": "No task starts while only {free} is free for {dir}, under the floor of {min} (TIMON_DISK_MIN_FREE_MB). Each task adds a worktree and writes to the database; a full disk stops Timon itself. Free some space: dispatching resumes on its own."
+    },
+    "dispatcher_disk_resumed": {
+      "title": "Tasks resumed: free space is back",
+      "body": "Free space is back above the floor (TIMON_DISK_MIN_FREE_MB): waiting tasks start again."
+    },
     "review_verdict_unusable": {
       "title": "Review with no usable verdict: {title}",
       "body": "Review {taskId} closed without a parsable JSON verdict, so the code→review→merge chain cannot continue.\n\nThe reviewer wrote: {excerpt, select, none {(empty)} other {{excerpt}}}\n\nRe-trigger the review or decide manually (merge / new code iteration)."
@@ -325,6 +333,10 @@
       "title": "Closing a GitHub issue waits for your approval",
       "body": "Close {target} on GitHub, or leave it open."
     },
+    "forge_branch_delete_pending": {
+      "title": "Deleting a merged branch waits for your approval",
+      "body": "Delete the branch of {target} on GitHub, now merged, or keep it."
+    },
     "landing_repair_pushed": {
       "title": "Repair pushed to {pr}",
       "body": "The repair of {branch} was pushed to its pull request {pr}; GitHub runs its checks again."
@@ -348,6 +360,10 @@
     "integration_closed": {
       "title": "{pr, select, none {Integration branch closed: {branch}} other {Pull request closed: {branch}}}",
       "body": "{branch} did not land in {target}: nothing closes and the branches are kept. Its pilot decides what comes next."
+    },
+    "mcp_server_left_out": {
+      "title": "MCP server `{serverId}` left out",
+      "body": "Timon could not start the MCP server `{serverId}` for this mission ({cause, select, vault {its variables cannot be read from the secrets vault} mission_limit {this mission already runs {max} bridged MCP servers} daemon_limit {the daemon already runs {max} bridged MCP servers} restarts {it restarted too often} stopped {its bridge was stopped} other {{detail}}}), so the agent runs without it. Its variables were not handed to the agent."
     }
   }
 }

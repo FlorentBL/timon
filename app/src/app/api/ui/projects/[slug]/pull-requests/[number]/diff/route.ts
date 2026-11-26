@@ -6,8 +6,9 @@ export const dynamic = 'force-dynamic';
 /** The diff of a pull request, as text read from the forge. */
 export async function GET(
   _req: Request,
-  { params }: { params: { slug: string; number: string } },
+  props: { params: Promise<{ slug: string; number: string }> }
 ): Promise<Response> {
+  const params = await props.params;
   return proxyJson(
     'GET',
     `/api/projects/${encodeURIComponent(params.slug)}/pull-requests/${encodeURIComponent(params.number)}/diff`,

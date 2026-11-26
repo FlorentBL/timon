@@ -128,11 +128,18 @@ import { reservedRouteSegment } from './reserved-routes.js';
  * provider profile folder first, so they all moved to 19
  * (docs/SDK-COMPAT.md §118-§120, §129).
  *
- * 20 — `ctx.fetchPublicImage`, an image from any public host for a plugin
- * that cannot know its hosts in advance (a mail's images and avatars), under
- * the sensitive `http:public-images` permission and the operator's
- * `pluginPolicy.publicImages`. API 19 shipped in 0.1.10, so a new member opens
- * a new wave; a manifest declaring the permission must declare 20.
+ * 20 — the platform `react` module re-exports React 19's named APIs (`use`,
+ * `useActionState`, `useOptimistic`, `useTransition`, `useDeferredValue`,
+ * `startTransition`, `forwardRef`, `useImperativeHandle`, `Children`,
+ * `isValidElement`), in the browser only. API 19 shipped in 0.1.10, so a new
+ * export opens a new wave: a plugin importing one of them declares 20, and a
+ * host 19 refuses it instead of loading a browser half that dies on the
+ * missing import (docs/SDK-COMPAT.md §131). The same wave adds
+ * `ctx.fetchPublicImage`, an image from any public host for a plugin that
+ * cannot know its hosts in advance (a mail's images and avatars), under the
+ * sensitive `http:public-images` permission and the operator's
+ * `pluginPolicy.publicImages`; a manifest declaring the permission must
+ * declare 20.
  */
 export const PLUGIN_API_VERSION = 20;
 
@@ -165,6 +172,7 @@ export const SLOT_API_VERSIONS: Readonly<Record<string, number>> = Object.freeze
   'kanban.job.dialog': 19,
   'forge.publish.dialog': 19,
   'project.settings': 19,
+  'chat.fence': 19,
 });
 
 /** A public path relative to the plugin prefix: lowercase segments or `:name` parameters, never a wildcard. */

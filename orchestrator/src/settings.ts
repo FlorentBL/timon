@@ -56,6 +56,13 @@ export type SettingDef = {
    */
   min?: number;
   max?: number;
+  /**
+   * Not offered in the interface nor writable through the settings API: the
+   * value comes from the environment or `timon.config.json` only, and a value
+   * stored in the database is ignored. For a feature that is not safe enough
+   * to sit behind a toggle anyone can flip.
+   */
+  hidden?: boolean;
 };
 
 export type SettingSource = 'env' | 'config' | 'db' | 'default';
@@ -221,6 +228,12 @@ export const SETTINGS: SettingDef[] = [
   { key: 'TIMON_RESOURCE_GUARD_ENABLED', type: 'bool', default: true, group: 'Resources',
     label: 'Confine missions (systemd scope)',
     description: "Launches each mission in its own systemd scope (slice timon-missions.slice) with a memory ceiling, nice and ionice inherited by all of its processes — including an ffmpeg started three levels down. Disabling it makes the machine vulnerable to a heavy generation again." },
+  { key: 'TIMON_DISK_MIN_FREE_MB', type: 'int', default: 3072, group: 'Resources', unit: 'MB', min: 0,
+    label: 'Free space floor for starting tasks',
+    description: "Below this much free space where Timon keeps its worktrees, no task starts and no worktree is created: the tasks wait, and you get one alert. Each task adds a worktree and writes to the database, and a full disk stops Timon itself. Dispatching resumes on its own once space is back. 0 = no floor." },
+  { key: 'TIMON_AGENT_LOG_MAX_MB', type: 'int', default: 64, group: 'Resources', unit: 'MB', min: 0,
+    label: "Size cap of an agent's event archive",
+    description: "Every agent appends its missions' events to memory/log.jsonl. Past this size the file becomes log.1.jsonl (replacing the previous one) and a new one starts, so an agent keeps at most twice this on disk. 0 = no cap." },
   { key: 'TIMON_DAY_START_HOUR', type: 'int', default: 8, group: 'Resources', unit: 'h', min: 0, max: 23,
     label: 'Start of the day (local)',
     description: "Start of the window where you work on the machine: missions are throttled then. From 0 to 23." },
@@ -295,9 +308,21 @@ export const SETTINGS: SettingDef[] = [
   { key: 'TIMON_WORKTREE_GC_ENABLED', type: 'bool', default: true, group: 'Worktrees',
     label: 'Automatic worktree cleanup',
     description: "Deletes the worktree and branch of a DONE task whose work is already integrated into the base. A branch that is not integrated is NEVER deleted, whatever the age of the task." },
+  // Hidden while its reactivation waits for a maintainer's decision (TODO
+  // #1210): a toggle in Settings would invite turning on a cleanup that
+  // deletes a branch and a worktree by itself.
+  { key: 'TIMON_INTEGRATION_CLEANUP_ENABLED', type: 'bool', default: false, group: 'Worktrees', hidden: true,
+    label: 'Cleanup after a job lands',
+    description: "Experimental, off by default, env or config only. Once a job's integration branch has landed, removes the branch and the worktree its sequential agent coded in, when both are proven in the target, and proposes the deletion of its remote copy for a person to approve. Task worktrees are left to the worktree cleanup." },
   { key: 'TIMON_WORKTREE_GC_GRACE_MIN', type: 'int', default: 30, group: 'Worktrees', unit: 'min',
     label: 'Grace before cleanup', advanced: true,
     description: "Delay after a task closes before its worktree becomes a candidate. Gives the merger and the following doc task time to work in it." },
+  { key: 'TIMON_WORKTREE_GC_REMOTE_TARGET', type: 'bool', default: true, group: 'Worktrees',
+    label: "Free worktrees already in the remote's target", advanced: true,
+    description: "A job that lands through a pull request keeps its worktrees until Timon sees the pull request merged. When the pull request is merged on the forge outside Timon, that never happens: with this setting, the folder of a finished task goes as soon as its work is in the remote's target branch as the last fetch left it (origin/main), clean and with a merge recorded. Its branch is kept." },
+  { key: 'TIMON_WORKTREE_GC_BUILD_CACHE', type: 'bool', default: true, group: 'Worktrees',
+    label: 'Remove build caches of finished worktrees', advanced: true,
+    description: "A worktree kept after its task is done (its job has not landed yet, or it holds unmerged work) still carries the build output written in it, such as a Next.js .next folder of several hundred MB. With this setting, such a folder goes once every task of the worktree is done, only when git ignores it." },
   { key: 'TIMON_WORKTREE_ADD_STALL_MS', type: 'int', default: 120_000, group: 'Worktrees', unit: 'ms', min: 10_000,
     label: 'Worktree creation without progress', advanced: true,
     description: "2 min by default. Creating a task's worktree may take as long as git keeps reporting its checkout progress, as on a large repository or a disk slowed down by an antivirus. Past this delay without any progress, git and the processes it started are stopped, the half-made worktree is removed (its branch is kept) and the task is blocked with the reason." },
@@ -690,7 +715,7 @@ function buildCache(): Map<string, ResolvedSetting> {
     let value: ResolvedSetting['value'] = def.default;
     let source: SettingSource = 'default';
 
-    if (dbValue !== null) {
+    if (dbValue !== null && !def.hidden) {
       const parsed = parse(def.type, dbValue);
       if (parsed !== null) { value = parsed; source = 'db'; }
     }
@@ -761,6 +786,7 @@ function outOfRange(def: SettingDef, value: boolean | number | string): string |
 export function setSetting(key: string, raw: string | null): { ok: true } | { ok: false; error: string } {
   const def = BY_KEY.get(key);
   if (!def) return { ok: false, error: `unknown setting: ${key}` };
+  if (def.hidden) return { ok: false, error: `${key} is set through the environment or timon.config.json only` };
   if (raw === null) {
     dbApi.deleteSetting(key);
     invalidateSettingsCache();
@@ -778,5 +804,5 @@ export function setSetting(key: string, raw: string | null): { ok: true } | { ok
 }
 
 export function settingGroups(): string[] {
-  return [...new Set(SETTINGS.map((s) => s.group))];
+  return [...new Set(SETTINGS.filter((s) => !s.hidden).map((s) => s.group))];
 }

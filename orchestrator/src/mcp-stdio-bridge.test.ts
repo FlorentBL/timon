@@ -23,7 +23,8 @@ import { createMcpRelayMiddleware } from './mcp-relay-server.js';
 import { MCP_RELAY_HEADER, mcpRelayLaunchTarget } from './mcp-relay.js';
 import { serializeCodexMcpToml, serializeGrokMcpToml, serializeMcpJson } from './backends/mcp-serialize.js';
 import { StdioBridgeManager, MAX_BRIDGES_PER_MISSION, type StdioBridgeSpec } from './mcp-stdio-bridge.js';
-import { startStdioBridge, startStdioBridgeLifecycle, stdioBridges } from './mcp-stdio-bridges.js';
+import { leftOutMessage, startStdioBridge, startStdioBridgeLifecycle, stdioBridges } from './mcp-stdio-bridges.js';
+import { decodeDaemonMessage } from './daemon-message.js';
 import { resolveMasterKey } from './secrets/key.js';
 
 resolveMasterKey({ keyring: null });
@@ -292,6 +293,34 @@ test('the daemon\'s own bridge, through the host: started at launch, in the miss
     assert.equal(stdioBridges.get('m-life', 'secret-stdio'), undefined);
   } finally {
     stop();
+  }
+});
+
+test('a server left out raises a notice the webview translates, naming no variable', async () => {
+  upsertMcp({ id: 'gone-stdio', transport: { type: 'stdio', command: join(dir, 'missing-binary'), args: [], env: { BRIDGE_SECRET: SECRET } } });
+  dbApi.createMission('m-gone', 'alice', 'left out');
+  const launch = mcpStdioBridgeLaunch('gone-stdio')!;
+  assert.equal(await startStdioBridge('m-gone', 'alice', { id: 'gone-stdio', target: launch.target }, CWD), false);
+  const card = dbApi.listNotifications({ limit: 50 }).find((n) => n.title === 'MCP server gone-stdio left out');
+  assert.ok(card, 'the notice is written');
+  const code = decodeDaemonMessage(card.message_code);
+  assert.equal(code?.code, 'mcp_server_left_out');
+  assert.equal(code?.params.serverId, 'gone-stdio');
+  assert.equal(code?.params.cause, 'start');
+  assert.ok(!JSON.stringify(card).includes(SECRET));
+});
+
+test('each reason of a left-out server maps to a cause the locales name', () => {
+  const cases: Array<[string, string, number]> = [
+    ['its variables cannot be read from the secrets vault', 'vault', 0],
+    ['this mission already runs 8 bridged MCP servers', 'mission_limit', 8],
+    ['the daemon already runs 48 bridged MCP servers', 'daemon_limit', 48],
+    ['restarted too often', 'restarts', 0],
+    ['stopped', 'stopped', 0],
+    ['EACCES', 'start', 0],
+  ];
+  for (const [reason, cause, max] of cases) {
+    assert.deepEqual(leftOutMessage('s', reason).params, { serverId: 's', cause, max, detail: reason });
   }
 });
 

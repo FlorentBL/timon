@@ -27,7 +27,7 @@ const {
   blockIfBaseUnavailable, blockIfSharedCheckout, inheritedIntegration, pipelineDirective, resolveWorktree,
 } = await import('./dispatcher.js');
 const { runVerificationChain } = await import('./verification-loop.js');
-const { disposeWorktree } = await import('./worktree.js');
+const { forceRemoveTestWorktree } = await import('./worktree-fixture.js');
 const { decodeDaemonMessage } = await import('./daemon-message.js');
 await import('../tests/helpers/claude-provider.js');
 
@@ -124,7 +124,7 @@ test('integration branch: created from the remote, recorded, and the worktree st
       assert.equal(await blockIfBaseUnavailable(dbApi.getTask(task.id)!), false);
       assert.equal(dbApi.getIntegration(repo, 'feat/topic')?.id, row.id);
     } finally {
-      await disposeWorktree(wt, true);
+      await forceRemoveTestWorktree(wt);
     }
   } finally {
     cleanup();

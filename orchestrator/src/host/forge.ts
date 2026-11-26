@@ -1481,6 +1481,37 @@ export function gitTransport(repo: string, runners: ForgeRunners = {}): GitTrans
   };
 }
 
+/**
+ * The words after `git push` that delete `branch` on the remote at `url`, and
+ * only while it still ends on `sha`: the one deletion this module builds, for
+ * the branch of a landed job a person approved (`landing-branch-delete.ts`).
+ * The lease names the exact commit, so a branch someone pushed to since is
+ * refused, never deleted; no other ref is touched.
+ */
+export function deleteBranchArguments(url: string, branch: string, sha: string): string[] {
+  if (!plainBranch(branch)) throw new Error('refusing to delete a branch with an unusual name');
+  if (!COMMIT_SHA.test(sha)) throw new Error('refusing to delete a branch without the commit it must end on');
+  return [`--force-with-lease=refs/heads/${branch}:${sha}`, '--', url, `:refs/heads/${branch}`];
+}
+
+/** Deletes `branch` on the remote at `url` while it still ends on `sha`. */
+export async function deleteRemoteBranch(
+  repo: string, url: string, branch: string, sha: string, runners: ForgeRunners = {},
+): Promise<GitNetworkOutcome> {
+  let args: string[];
+  try { args = deleteBranchArguments(url, branch, sha); } catch (err) {
+    return { ok: false, code: 'failed', reason: (err as Error).message };
+  }
+  const git = runners.git ?? hostGit;
+  let result: ExecResult;
+  try {
+    result = await git(['-C', repo, 'push', ...args], { env: networkEnv(), timeout: NETWORK_TIMEOUT_MS, windowsHide: true });
+  } catch (err) {
+    result = { code: 1, stdout: '', stderr: (err as Error).message };
+  }
+  return result.code === 0 ? { ok: true } : failure(result, 'the deletion of the remote branch');
+}
+
 // Shared with the reader of a pull request's whole page (`forge-pull-view.ts`),
 // so both read the forge's answers with the same bounds.
 export {

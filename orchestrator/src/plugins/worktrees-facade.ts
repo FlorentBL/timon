@@ -77,7 +77,7 @@ export function worktreesFor(scope: WorktreeCallerScope): ScopedWorktrees {
       return view(scopedDb(viewer).getTask(task.id)!);
     },
 
-    async dispose(taskId, opts = {}) {
+    async dispose(taskId) {
       active();
       const task = taskOf(taskId);
       if (!task) throw new PluginWorktreeError('not_found', `task not found: ${String(taskId)}`);
@@ -85,7 +85,8 @@ export function worktreesFor(scope: WorktreeCallerScope): ScopedWorktrees {
       if (task.status !== 'DONE' || !task.merged_commit_sha) {
         throw new PluginWorktreeError('conflict', 'the task is not DONE and merged: disposing its worktree would destroy unmerged work');
       }
-      return guard(() => disposeTaskWorktree(task, opts.force === true));
+      // `opts.force` stays in the contract for older plugins and is ignored: nothing is forced.
+      return guard(() => disposeTaskWorktree(task));
     },
   };
 }

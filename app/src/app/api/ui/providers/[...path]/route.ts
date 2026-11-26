@@ -16,7 +16,7 @@ import { proxyJson } from '@/lib/ui/proxy';
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
-type Params = { params: { path: string[] } };
+type Params = { params: Promise<{ path: string[] }> };
 const DAEMON = '/api/plugins/-/providers';
 const PLUGIN_ID = /^[a-z0-9-]{3,40}$/;
 const AGENT_ID = /^[a-z0-9][a-z0-9-]{0,63}$/;
@@ -24,7 +24,8 @@ const AGENT_ID = /^[a-z0-9][a-z0-9-]{0,63}$/;
 const PROVIDER_ID = /^[A-Za-z0-9][A-Za-z0-9._:@-]{0,200}$/;
 const notFound = (): Response => Response.json({ error: 'not found' }, { status: 404 });
 
-export async function GET(request: Request, { params }: Params): Promise<Response> {
+export async function GET(request: Request, props: Params): Promise<Response> {
+  const params = await props.params;
   const path = params.path.join('/');
   if (path === 'list') return proxyJson('GET', DAEMON);
   const [head, id, ...rest] = params.path;
@@ -39,7 +40,8 @@ export async function GET(request: Request, { params }: Params): Promise<Respons
   return notFound();
 }
 
-export async function POST(request: Request, { params }: Params): Promise<Response> {
+export async function POST(request: Request, props: Params): Promise<Response> {
+  const params = await props.params;
   const [head, tail, ...rest] = params.path;
   const body: unknown = await request.json().catch(() => undefined);
   if (body === undefined) return Response.json({ error: 'invalid-body' }, { status: 400 });
@@ -55,7 +57,8 @@ export async function POST(request: Request, { params }: Params): Promise<Respon
   return notFound();
 }
 
-export async function DELETE(_request: Request, { params }: Params): Promise<Response> {
+export async function DELETE(_request: Request, props: Params): Promise<Response> {
+  const params = await props.params;
   const [head, agent, ...rest] = params.path;
   if (head !== 'acp-registry' || !agent || !AGENT_ID.test(agent) || rest.length > 0) return notFound();
   const response = await proxyJson('DELETE', `${DAEMON}/acp-registry/${agent}`);

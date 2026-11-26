@@ -2064,6 +2064,17 @@ if (!integrationCols.includes('notified_state')) {
   db.exec(`ALTER TABLE integrations ADD COLUMN notified_state TEXT`);
   db.exec(`UPDATE integrations SET notified_state = state WHERE state IN ('merged', 'closed')`);
 }
+// When what a concluded integration left behind was dealt with
+// (`integration-cleanup.ts`): its local branch and the worktree its pilot coded
+// in, removed or kept for good by a guard. Rows concluded before the column
+// count as not cleaned: the same guards decide for them. NULL = not yet.
+if (!integrationCols.includes('cleaned_at')) db.exec(`ALTER TABLE integrations ADD COLUMN cleaned_at INTEGER`);
+// The cleanup's reservation: set before any of its effects, so two passes
+// (two pollers, a reload during a pass) never both delete; a reservation older
+// than `INTEGRATION_CLEANUP_LEASE_MS` belongs to a pass that died and is taken
+// over.
+if (!integrationCols.includes('cleanup_started_at')) db.exec(`ALTER TABLE integrations ADD COLUMN cleanup_started_at INTEGER`);
+if (!integrationCols.includes('cleanup_token')) db.exec(`ALTER TABLE integrations ADD COLUMN cleanup_token TEXT`);
 // The relecture of a contributor's pull request (`external-pr-review.ts`): one
 // row per pull request, the latest one. 'draft' holds the brief the person
 // reads before sending it; 'running' names the reviewer's mission; 'done' or
@@ -2567,6 +2578,11 @@ export type IntegrationRow = {
   landed_at: number | null;
   /** Outcome the series pilot was told about (see the `notified_state` migration). */
   notified_state?: string | null;
+  /** Leftovers dealt with after the landing (see the `cleaned_at` migration). */
+  cleaned_at?: number | null;
+  /** The cleanup's reservation (see the `cleanup_started_at` migration). */
+  cleanup_started_at?: number | null;
+  cleanup_token?: string | null;
   created_at: number;
   updated_at: number;
 };
@@ -3225,6 +3241,24 @@ const setTaskWorktreeStmt = db.prepare(
 const clearTaskWorktreeStmt = db.prepare(
   `UPDATE tasks SET worktree_path = NULL, branch_name = NULL WHERE id = ?`,
 );
+// A guarded removal (`removeWorktreeGuarded`) takes the folder from every task
+// naming it, only while all of them are DONE: the dispatcher reads
+// `worktree_path` to reuse a folder, so a task reopened afterwards finds none
+// and never starts in a folder being deleted. `updated_at` is not touched (see
+// `clearTaskWorktreeStmt`).
+const openTasksOnWorktreeStmt = db.prepare(
+  `SELECT COUNT(*) AS n FROM tasks WHERE worktree_path = ? AND status != 'DONE'`,
+);
+const doneTasksOnWorktreeStmt = db.prepare(`SELECT id FROM tasks WHERE worktree_path = ? AND status = 'DONE'`);
+const detachDoneTaskWorktreeStmt = db.prepare(
+  `UPDATE tasks SET worktree_path = NULL WHERE id = ? AND status = 'DONE' AND worktree_path = ?`,
+);
+const restoreTaskWorktreeStmt = db.prepare(
+  `UPDATE tasks SET worktree_path = ? WHERE id = ? AND worktree_path IS NULL`,
+);
+const forgetTaskBranchStmt = db.prepare(
+  `UPDATE tasks SET branch_name = NULL WHERE id = ? AND worktree_path IS NULL AND branch_name = ?`,
+);
 // The branch stays recorded: it still holds the task's commits.
 const detachTaskWorktreeStmt = db.prepare(
   `UPDATE tasks SET worktree_path = NULL, updated_at = ? WHERE id = ?`,
@@ -3352,6 +3386,26 @@ const listOpenIntegrationsStmt = db.prepare(
 // and a branch never opened has no pull request to close.
 const markIntegrationClosedStmt = db.prepare(
   `UPDATE integrations SET state = 'closed', updated_at = ? WHERE id = ? AND state = 'open'`,
+);
+const listIntegrationsToCleanStmt = db.prepare(
+  `SELECT * FROM integrations
+    WHERE cleaned_at IS NULL AND ((state = 'merged' AND landed_at IS NOT NULL) OR state = 'closed')
+    ORDER BY repo ASC, updated_at ASC`,
+);
+const markIntegrationCleanedStmt = db.prepare(
+  `UPDATE integrations SET cleaned_at = ?, cleanup_started_at = NULL, cleanup_token = NULL
+    WHERE id = ? AND state IN ('merged', 'closed') AND cleaned_at IS NULL AND cleanup_token IS ?`,
+);
+const claimIntegrationCleanupStmt = db.prepare(
+  `UPDATE integrations SET cleanup_started_at = ?, cleanup_token = ?
+    WHERE id = ? AND cleaned_at IS NULL AND state IN ('merged', 'closed')
+      AND (cleanup_token IS NULL OR cleanup_started_at IS NULL OR cleanup_started_at < ?)`,
+);
+const releaseIntegrationCleanupStmt = db.prepare(
+  `UPDATE integrations SET cleanup_started_at = NULL, cleanup_token = NULL WHERE id = ? AND cleanup_token = ?`,
+);
+const ownsIntegrationCleanupStmt = db.prepare(
+  `SELECT 1 FROM integrations WHERE id = ? AND cleanup_token = ? AND cleaned_at IS NULL`,
 );
 const touchIntegrationPolledStmt = db.prepare(`UPDATE integrations SET last_polled_at = ? WHERE id = ?`);
 const claimIntegrationNoticeStmt = db.prepare(`
@@ -5849,6 +5903,33 @@ export const dbApi = {
   clearTaskWorktree(id: string): void {
     clearTaskWorktreeStmt.run(id);
   },
+  /**
+   * Detaches `path` from every task naming it, only while all of them are DONE
+   * and `taskId` is one of them. Returns the ids detached (to give the folder
+   * back after a refused removal), or null when nothing was detached.
+   */
+  detachDoneTaskWorktree(taskId: string, path: string): string[] | null {
+    return db.transaction((): string[] | null => {
+      if ((openTasksOnWorktreeStmt.get(path) as { n: number }).n > 0) return null;
+      const ids = (doneTasksOnWorktreeStmt.all(path) as { id: string }[]).map((r) => r.id);
+      if (!ids.includes(taskId)) return null;
+      for (const id of ids) detachDoneTaskWorktreeStmt.run(id, path);
+      return ids;
+    }).immediate();
+  },
+  /** True while `path` is named by at least one task and every task naming it is DONE. */
+  worktreeOwnedOnlyByDone(path: string): boolean {
+    if ((openTasksOnWorktreeStmt.get(path) as { n: number }).n > 0) return false;
+    return (doneTasksOnWorktreeStmt.all(path) as { id: string }[]).length > 0;
+  },
+  /** Gives `path` back to the tasks a refused removal detached it from. */
+  restoreTaskWorktree(ids: string[], path: string): void {
+    db.transaction(() => { for (const id of ids) restoreTaskWorktreeStmt.run(path, id); })();
+  },
+  /** Forgets a deleted task branch, once the task's worktree is detached. */
+  forgetTaskBranch(id: string, branch: string): void {
+    forgetTaskBranchStmt.run(id, branch);
+  },
   /** Drops the worktree folder's path, keeps `branch_name` / `base_branch`. */
   detachTaskWorktree(id: string): void {
     detachTaskWorktreeStmt.run(Date.now(), id);
@@ -6051,6 +6132,27 @@ export const dbApi = {
   /** Hands a failed landing replay back to the reconciliation. */
   releaseIntegrationLanding(id: string): void {
     if (releaseIntegrationLandingStmt.run(Date.now(), id).changes === 1) publishIntegrationChange(id, ['landed']);
+  },
+  /** Landed (or closed) integrations whose leftovers were not dealt with yet. */
+  listIntegrationsToClean(): IntegrationRow[] {
+    return listIntegrationsToCleanStmt.all() as IntegrationRow[];
+  },
+  /** Records that the leftovers of a concluded integration were dealt with,
+   *  by the pass holding `token` (null: a row nobody reserved). */
+  markIntegrationCleaned(id: string, token: string | null = null): boolean {
+    return markIntegrationCleanedStmt.run(Date.now(), id, token).changes > 0;
+  },
+  /** Reserves the cleanup of a concluded integration for the pass holding
+   *  `token`; false while another pass holds a reservation newer than `staleBefore`. */
+  claimIntegrationCleanup(id: string, token: string, now: number, staleBefore: number): boolean {
+    return claimIntegrationCleanupStmt.run(now, token, id, staleBefore).changes > 0;
+  },
+  releaseIntegrationCleanup(id: string, token: string): void {
+    releaseIntegrationCleanupStmt.run(id, token);
+  },
+  /** True while the pass holding `token` still holds the reservation. */
+  ownsIntegrationCleanup(id: string, token: string): boolean {
+    return ownsIntegrationCleanupStmt.get(id, token) !== undefined;
   },
   /** Merged integrations whose landing was never replayed. */
   listUnlandedIntegrations(): IntegrationRow[] {
@@ -8713,16 +8815,24 @@ export const dbApi = {
       `INSERT INTO workspaces (slug, name, color, lead_agent, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)`,
     ).run(row.slug, row.name, row.color, row.lead_agent, now, now);
   },
-  updateWorkspace(slug: string, fields: Partial<Pick<WorkspaceRow, 'name' | 'color' | 'lead_agent'>>): void {
+  /** Updates the pole and, in the same transaction, sets the tag of the
+   *  `retag` projects to `fields.name` (a rename that would orphan them). */
+  updateWorkspace(slug: string, fields: Partial<Pick<WorkspaceRow, 'name' | 'color' | 'lead_agent'>>, retag: readonly string[] = []): void {
     const cur = this.getWorkspaceRow(slug);
     if (!cur) return;
-    db.prepare(`UPDATE workspaces SET name=?, color=?, lead_agent=?, updated_at=? WHERE slug=?`).run(
-      fields.name ?? cur.name,
-      fields.color === undefined ? cur.color : fields.color,
-      fields.lead_agent === undefined ? cur.lead_agent : fields.lead_agent,
-      Date.now(),
-      slug,
-    );
+    const name = fields.name ?? cur.name;
+    db.transaction(() => {
+      const now = Date.now();
+      db.prepare(`UPDATE workspaces SET name=?, color=?, lead_agent=?, updated_at=? WHERE slug=?`).run(
+        name,
+        fields.color === undefined ? cur.color : fields.color,
+        fields.lead_agent === undefined ? cur.lead_agent : fields.lead_agent,
+        now,
+        slug,
+      );
+      const setTag = db.prepare(`UPDATE projects SET workspace = ?, updated_at = ? WHERE slug = ?`);
+      for (const p of retag) setTag.run(name, now, p);
+    })();
   },
   /** Removes the pole and detaches the given projects (they keep existing). */
   deleteWorkspace(slug: string, projectSlugs: readonly string[]): void {

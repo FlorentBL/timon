@@ -8,17 +8,19 @@ import { proxyJson } from '@/lib/ui/proxy';
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
-type Ctx = { params: { slug: string } };
+type Ctx = { params: Promise<{ slug: string }> };
 
 const base = (slug: string) => `/api/projects/${encodeURIComponent(slug)}/forge-proposals`;
 
-export async function GET(req: Request, { params }: Ctx): Promise<Response> {
+export async function GET(req: Request, props: Ctx): Promise<Response> {
+  const params = await props.params;
   const state = new URL(req.url).searchParams.get('state');
   const suffix = state === null ? '' : `?${new URLSearchParams({ state })}`;
   return proxyJson('GET', `${base(params.slug)}${suffix}`);
 }
 
-export async function POST(req: Request, { params }: Ctx): Promise<Response> {
+export async function POST(req: Request, props: Ctx): Promise<Response> {
+  const params = await props.params;
   const body: unknown = await req.json().catch(() => ({}));
   return proxyJson('POST', base(params.slug), body);
 }

@@ -248,7 +248,17 @@ does not contact the provider or verify whether a session has expired.
 
 ## Codex fails with "env: node: No such file or directory"
 
-Codex installed with npm runs on Node.js. Timon launches it with the folder it
+Codex installed with npm is a small Node.js launcher that only starts the native
+Codex program shipped in the same npm package (`@openai/codex-<os>-<arch>`).
+Timon starts that native program directly, for missions, sign-in, the version
+check and `timon doctor` alike, with the variables the launcher would have set
+(`CODEX_MANAGED_BY_NPM`, `CODEX_MANAGED_PACKAGE_ROOT`): such a Codex needs no
+Node.js. `timon doctor` and the provider page then show the native program's path,
+inside the npm package. When the native program is missing (an install made with
+`--omit=optional`, or an older Codex whose package is laid out differently), Timon
+runs the launcher, and what follows applies.
+
+Another CLI installed with npm runs on Node.js. Timon launches it with the folder it
 was found in and with the Node.js it finds on the machine: the PATH, then the
 places version managers keep it without telling a background service (nvm,
 fnm, mise, asdf, Volta, nvm-windows, Homebrew, `~/.local/bin`). When the
@@ -257,7 +267,10 @@ machine has none, Timon lends the CLI the Node.js it runs on itself.
 A Node.js found under a version manager is skipped when another account could
 have replaced it: on Linux and macOS, the file or one of the folders above it,
 up to the version manager's own folder, belongs to another user or is writable
-by its group or by everyone (`chmod go-w` on that folder fixes it); on Windows,
+by its group or by everyone (`chmod go-w` on that folder fixes it), except a
+group write bit on your own folder whose group is your private group (the one
+named after you, with no other member, as a `002` umask leaves fnm's folders on
+Ubuntu), which is accepted; on Windows,
 a version manager folder outside your user profile (`FNM_DIR` or `VOLTA_HOME`
 set to `D:\fnm`, say). The Node.js Timon runs on is lent only while it is the
 very file Timon started from, or a file only an administrator or Timon's own

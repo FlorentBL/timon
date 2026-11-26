@@ -66,7 +66,7 @@ export type {
   PluginTask, PluginTaskDoneInput, PluginTaskErrorCode, PluginTaskFilter, PluginTaskInput,
   PluginTaskLink, PluginTaskLinkInput, PluginTaskPatch,
 } from '../../../orchestrator/src/plugins/contract/tasks.js';
-export type { PluginUser } from '../../../orchestrator/src/plugins/contract/core.js';
+export type { PluginCaller, PluginUser } from '../../../orchestrator/src/plugins/contract/core.js';
 export type { UsageCollector, UsageEntry } from '../../../orchestrator/src/plugins/contract/usage.js';
 
 /**

@@ -9,15 +9,20 @@
  *   - Authorization code flow with PKCE S256 (RFC 7636).
  *   - Refresh tokens.
  *
- * Pending PKCE state (code_verifier) lives in memory: it is a secret, and
- * the round-trip lasts the few seconds the user takes to click "Authorize".
- * A restart mid-flow loses it, and the callback page then says to start again.
- * A state that was used is remembered a while longer, so a callback the
+ * A pending flow (its code_verifier is a secret) lives in memory and, sealed
+ * under the vault's master key, in the database (`mcp-oauth-pending.ts`): a
+ * restart between "Connect" and "Authorize" no longer loses it. Without a
+ * vault it stays in memory only, and the callback page then says to start
+ * again. A state that was used is remembered a while longer, so a callback the
  * browser replays (a double navigation on the consent page) is told what
  * already happened instead of "unknown state".
  */
 import { createHash, randomBytes } from 'node:crypto';
 import type { OAuthClient, OAuthMetadata, OAuthTokens } from './plugins/contract/mcp-servers.js';
+import {
+  clearPendingFlowsForTests, dropPendingFlow, forgetPendingFlows, pendingFlowHashes, pendingStateHash,
+  reapPendingFlows, savePendingFlow, takePendingFlow, type PendingFlowHeader,
+} from './mcp-oauth-pending.js';
 export type { OAuthClient, OAuthMetadata, OAuthTokens } from './plugins/contract/mcp-servers.js';
 
 export type PendingAuth = {
@@ -100,16 +105,41 @@ function returnOf(p: OAuthReturn): OAuthReturn {
   };
 }
 
+/** The return of a stored row: its page only when it is one of `OAUTH_RETURN_PATHS`. */
+function returnOfHeader(h: PendingFlowHeader): OAuthReturn {
+  const path = oauthReturnPath(h.return_path);
+  return { ...(h.return_to ? { return_to: h.return_to } : {}), ...(path ? { return_path: path } : {}) };
+}
+
+/**
+ * States whose stored row expired before this process saw their callback,
+ * keyed by state hash: the row is gone, the state itself was never stored, so
+ * a late callback finds its server and app here by hashing what it brings.
+ */
+const EXPIRED_ROWS = new Map<string, UsedState>();
+
 function reapPending(): void {
   const now = Date.now();
+  const reapedHere = new Set<string>();
   for (const [k, v] of PENDING) {
     if (now - v.created_at <= PENDING_TTL_MS) continue;
     PENDING.delete(k);
+    reapedHere.add(pendingStateHash(k));
     // Kept a while as expired, so a late callback still links back to its app.
     remember(k, { mcp_id: v.mcp_id, outcome: 'expired', used_at: v.created_at + PENDING_TTL_MS, ...returnOf(v) });
   }
+  for (const { hash, header } of reapPendingFlows(now - PENDING_TTL_MS)) {
+    // Its state is already remembered above: same flow, same cutoff.
+    if (reapedHere.has(hash)) continue;
+    EXPIRED_ROWS.delete(hash);
+    EXPIRED_ROWS.set(hash, { mcp_id: header.mcp_id, outcome: 'expired', used_at: header.created_at + PENDING_TTL_MS, ...returnOfHeader(header) });
+  }
+  capOldest(EXPIRED_ROWS, USED_MAX);
   for (const [k, v] of USED) {
     if (now - v.used_at > USED_STATE_TTL_MS) USED.delete(k);
+  }
+  for (const [k, v] of EXPIRED_ROWS) {
+    if (now - v.used_at > USED_STATE_TTL_MS) EXPIRED_ROWS.delete(k);
   }
 }
 
@@ -117,16 +147,32 @@ export function putPending(state: string, p: PendingAuth): void {
   reapPending();
   PENDING.set(state, p);
   capOldest(PENDING, PENDING_MAX);
+  // Sealed in the database too, so a restart before the callback keeps it.
+  savePendingFlow(state, p, PENDING_MAX);
 }
 
 /** The pending flow of `state`, once: the state is then kept as used (`usedState`). */
 export function takePending(state: string): PendingAuth | null {
   reapPending();
-  const v = PENDING.get(state);
+  const v = PENDING.get(state) ?? fromStore(state);
   if (!v) return null;
   PENDING.delete(state);
+  dropPendingFlow(state);
   remember(state, { mcp_id: v.mcp_id, outcome: 'in_progress', used_at: Date.now(), ...returnOf(v) });
   return v;
+}
+
+/** The flow a previous process stored for `state`; a row the vault cannot open counts as expired. */
+function fromStore(state: string): PendingAuth | null {
+  const taken = takePendingFlow(state);
+  if (!taken) return null;
+  if (taken.kind === 'unreadable') {
+    remember(state, { mcp_id: taken.header.mcp_id, outcome: 'expired', used_at: Date.now(), ...returnOfHeader(taken.header) });
+    return null;
+  }
+  const { return_path, ...flow } = taken.flow;
+  const path = oauthReturnPath(return_path);
+  return { ...flow, ...(path ? { return_path: path } : {}) };
 }
 
 /** Record how the exchange of a used state ended, for a replayed callback. */
@@ -138,7 +184,7 @@ export function settleState(state: string, outcome: Exclude<UsedStateOutcome, 'i
 /** A state this daemon issued whose flow is over, within `USED_STATE_TTL_MS`. */
 export function usedState(state: string): UsedState | null {
   reapPending();
-  return USED.get(state) ?? null;
+  return USED.get(state) ?? EXPIRED_ROWS.get(pendingStateHash(state)) ?? null;
 }
 
 /**
@@ -157,17 +203,28 @@ export function oauthState(mcpId: string): string {
 export function forgetOAuthFlows(mcpId: string): void {
   for (const [k, v] of PENDING) if (v.mcp_id === mcpId) PENDING.delete(k);
   for (const [k, v] of USED) if (v.mcp_id === mcpId) USED.delete(k);
+  for (const [k, v] of EXPIRED_ROWS) if (v.mcp_id === mcpId) EXPIRED_ROWS.delete(k);
+  forgetPendingFlows(mcpId);
 }
 
-/** Test hook: how many flows each table holds. */
+/** Test hook: how many flows each table holds, a flow both in memory and stored counting once. */
 export function oauthFlowCountsForTests(): { pending: number; used: number } {
-  return { pending: PENDING.size, used: USED.size };
+  const pending = new Set(pendingFlowHashes());
+  for (const state of PENDING.keys()) pending.add(pendingStateHash(state));
+  return { pending: pending.size, used: USED.size + EXPIRED_ROWS.size };
 }
 
-/** Test hook: forget every flow, as a restart of the daemon does. */
+/** Test hook: forget every flow, stored ones included, as a fresh install has none. */
 export function resetOAuthFlowsForTests(): void {
+  restartOAuthFlowsForTests();
+  clearPendingFlowsForTests();
+}
+
+/** Test hook: forget what this process holds in memory, as a restart of the daemon does. */
+export function restartOAuthFlowsForTests(): void {
   PENDING.clear();
   USED.clear();
+  EXPIRED_ROWS.clear();
 }
 
 function b64url(buf: Buffer): string {

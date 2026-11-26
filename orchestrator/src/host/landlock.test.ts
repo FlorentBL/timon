@@ -257,6 +257,33 @@ test('the release the daemon runs from becomes one read-only rule, the other rel
   }
 });
 
+test('a writable folder holding the Timon home is listed once, by its own walk, not again at the level of the root', { skip: LINUX_FIXTURES }, () => {
+  const scratch = '/tmp/run';
+  const crowded = Array.from({ length: 40 }, (_, i) => `other-${i}`);
+  const inTmp = tree({
+    '/': ['usr', 'tmp', 'dev', 'home'],
+    '/home': ['u'],
+    [HOME]: ['code'],
+    '/tmp': ['run', ...crowded],
+    [scratch]: ['.timon'],
+    [`${scratch}/.timon`]: ['daemon-token', 'worktrees'],
+    [`${scratch}/.timon/worktrees`]: ['task-1'],
+    '/dev': ['null'],
+  });
+  const policy = resolveFence(cfg(), {
+    timonHome: `${scratch}/.timon`, home: HOME, platform: 'linux', cwd: `${scratch}/.timon/worktrees/task-1`,
+    missionId: MISSION, realpath: inTmp.realpath,
+  });
+  const rules = renderLandlockPolicy(policy, inTmp);
+  assertFaithful(policy, rules, inTmp.paths);
+  assert.equal(landlockLevel(rules, '/tmp/other-3'), 'rw');
+  assert.equal(landlockLevel(rules, `${scratch}/.timon/daemon-token`), 'none');
+  assert.ok(!rules.readOnly.some((path) => path.startsWith('/tmp/')), 'the root\'s walk leaves /tmp to its own');
+  assert.equal(rules.readWrite.filter((path) => path.startsWith('/tmp/other-')).length, crowded.length);
+  // Twice the entries of /tmp would not fit; once does.
+  assert.doesNotThrow(() => renderLandlockPolicy(policy, { ...inTmp, maxRules: crowded.length + 20 }));
+});
+
 test('a policy needing more rules than the ceiling is refused, not truncated', () => {
   assert.throws(() => renderLandlockPolicy(fakePolicy(), { ...FAKE, maxRules: 5 }), LandlockRenderError);
   assert.throws(() => renderLandlockPolicy(resolveFence(cfg({ filesystem: 'off' }), { timonHome: TH }), FAKE), /off/);

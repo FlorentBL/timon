@@ -102,7 +102,7 @@ test('Triggers page: tabs, deep link, loopback notice and the /routines redirect
     await suite.test('/routines lands on the Routines tab of /triggers', async () => {
       const replaced: string[] = [];
       const router = {
-        back() {}, forward() {}, refresh() {}, prefetch() {},
+        bfcacheId: 'test', back() {}, forward() {}, refresh() {}, prefetch() {},
         push(href: string) { replaced.push(`push:${href}`); },
         replace(href: string) { replaced.push(href); },
       };

@@ -5,10 +5,8 @@ export const dynamic = 'force-dynamic';
 
 /** Extra stills of an installed plugin (`timon.screenshots`). Index and `rev`
  *  come from `/api/plugins`, never from a caller-built path. */
-export async function GET(
-  request: Request,
-  { params }: { params: { id: string; n: string } },
-): Promise<Response> {
+export async function GET(request: Request, props: { params: Promise<{ id: string; n: string }> }): Promise<Response> {
+  const params = await props.params;
   if (!/^\d+$/.test(params.n)) return new Response('Not found', { status: 404 });
   const rev = new URL(request.url).searchParams.get('rev');
   const query = rev ? `?rev=${encodeURIComponent(rev)}` : '';

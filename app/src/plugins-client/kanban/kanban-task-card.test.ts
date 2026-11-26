@@ -59,7 +59,7 @@ async function mount() {
   setLocale('en');
   const { KanbanTaskCard } = await import('./kanban-task-card');
 
-  const router = { back() {}, forward() {}, refresh() {}, prefetch() {}, push() {}, replace() {} };
+  const router = { bfcacheId: 'test', back() {}, forward() {}, refresh() {}, prefetch() {}, push() {}, replace() {} };
   const root = createRoot(document.getElementById('root')!);
   const gestures: string[] = [];
   const render = async (t: Task, extra: Partial<ComponentProps<typeof Card>> = {}) => {

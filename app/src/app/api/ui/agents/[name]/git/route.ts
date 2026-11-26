@@ -3,7 +3,8 @@ import { proxyJson } from '@/lib/ui/proxy';
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
-export async function GET(req: Request, { params }: { params: { name: string } }): Promise<Response> {
+export async function GET(req: Request, props: { params: Promise<{ name: string }> }): Promise<Response> {
+  const params = await props.params;
   // Only `slug` is forwarded: the daemon refuses any other query field.
   const slug = new URL(req.url).searchParams.get('slug');
   const qs = slug ? `?${new URLSearchParams({ slug })}` : '';

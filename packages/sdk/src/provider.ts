@@ -86,11 +86,11 @@ export type {
 export type {
   ProviderAuthStatus, ProviderBinaryDeclaration, ProviderBinaryIdentity, ProviderBrand, ProviderUnverified, UnverifiedSubject, ProviderDeclarations, ProviderDesktopBuild,
   ProviderAccountsDeclaration, ProviderHostSignInDeclaration, ProviderInstallPlan, ProviderLoginDriver, ProviderLoginIdentity, ProviderLoginPrompt,
-  ProviderTokenDriver,
+  ProviderTokenDriver, ProviderNpmNative, NpmNativeTarget,
   ProviderLoginRun, ProviderServiceNeed, InstallPlatform, PackageManagerName, TemplateContext,
 } from '../../../orchestrator/src/backends/provider-declarations.js';
 export {
-  BINARY_IDENTITY_MAX_PATTERN, INSTALL_PLATFORMS, MAX_BRAND_SVG_BYTES, PACKAGE_MANAGERS, SERVICE_NEEDS, UNVERIFIED_NOTE_MAX_CHARS,
+  BINARY_IDENTITY_MAX_PATTERN, INSTALL_PLATFORMS, MAX_BRAND_SVG_BYTES, NPM_NATIVE_TARGETS, PACKAGE_MANAGERS, SERVICE_NEEDS, UNVERIFIED_NOTE_MAX_CHARS,
   UNVERIFIED_SUBJECTS,
 } from '../../../orchestrator/src/backends/provider-declarations.js';
 export { MODEL_TIERS } from '../../../orchestrator/src/backends/catalog-model.js';

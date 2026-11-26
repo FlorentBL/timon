@@ -249,6 +249,8 @@ Before a mission starts the program, and before `ctx.provider.binary` runs it
 against `pattern`, where `^` and `$` match a line. A program that does not match is
 refused, and the person reads which file it was, the first line it printed and your
 `expected` sentence. The answer is remembered per file until the file changes.
+The mission then starts the very file that answered: replaced, or reached through a
+link that moved, between the check and the launch, it is not started.
 Keep the pattern simple: a test that runs past 250 ms (nested repetitions such as
 `(a+)+` can backtrack without end) is stopped and the program refused, and a program
 still running after 5 seconds is killed.
@@ -296,6 +298,49 @@ Make sure your program answers the identity question on its own:
   runtime the shim names. Any other file (`.bat`, `.com`, another kind of `.cmd`)
   is refused without being run;
 - whatever it starts is ended with it, on every system.
+
+### A CLI published on npm as a launcher of a native build
+
+Some CLIs are published on npm as a short Node.js script whose only job is to find
+the native program shipped in the package (or in a per-platform package installed
+as an optional dependency) and start it. Declare that build in
+`declares.binary.npmNative`, and Timon starts the native program itself: no
+Node.js is needed on the machine, and missions, sign-in, `ctx.provider.binary`
+(`version`, `probe`, `serve`, `converse`) and `timon doctor` all run the same file.
+
+```js
+binary: {
+  names: ['acme'],
+  npmNative: {
+    package: '@acme/cli',                     // the package whose `bin` is the launcher
+    platformPackage: '@acme/cli-${target}',   // optional: the package that carries the build
+    executable: {                             // per `<os>-<arch>`, the path inside that package
+      'linux-x64': ['vendor', 'x86_64-unknown-linux-musl', 'acme'],
+      'darwin-arm64': ['vendor', 'aarch64-apple-darwin', 'acme'],
+      'win32-x64': ['vendor', 'x86_64-pc-windows-msvc', 'acme.exe'],
+    },
+    extraPath: ['..', 'tools'],               // optional: put first on the build's PATH
+    env: { ACME_MANAGED_BY_NPM: '1', ACME_PACKAGE_ROOT: '${packageRoot}' },
+  },
+},
+```
+
+- The swap only happens when the program found for your name is a Node.js script
+  inside `node_modules/<package>` (on Windows, the npm `.cmd` shim of one) whose
+  `package.json` names `package`. The build is looked for in the platform package
+  nested in that package's `node_modules`, then beside it, then in the package
+  itself. A target you do not list, or a build that is missing, not executable or
+  in a folder a mission can write, keeps the launcher.
+- `executable` and `extraPath` are plain path segments (no `/`); only `extraPath`
+  may go up with `..`, and it must stay inside the package that carries the build.
+- `env` reproduces what the launcher sets: at most 8 upper-case names, each a plain
+  word or `${packageRoot}` (the real folder of `package`). The loader, Node.js,
+  `PATH`, the home and Timon's own variables are refused.
+- An operator who authorized your launcher by its path (`pluginPolicy.exec.allow`)
+  has authorized the build it starts: the launch check accepts it.
+- `npmNative` needs API 20 and is additive: a Timon that does not know it ignores
+  it and runs the launcher, as before. Its type is `ProviderNpmNative` in
+  `@timon-ai/sdk/provider`.
 
 ### Updating a provider
 
@@ -797,7 +842,7 @@ strategies (`session`, `permission`, `limits`, `mcp`, `usage`, `models`, `reason
 
 | `declares.` | Read by |
 | --- | --- |
-| `binary` — names, install plan per OS (`none` is an honest blank), folders to search (`~`, `${VARIABLE}`; `A\|B` lists alternatives, the first one that can be expanded wins), desktop-app builds | the host adapter: finding the program, installing it. The providers shipped with Timon are declared the same way |
+| `binary` — names, install plan per OS (`none` is an honest blank), folders to search (`~`, `${VARIABLE}`; `A\|B` lists alternatives, the first one that can be expanded wins), desktop-app builds, the native build behind an npm launcher (`npmNative`, see below) | the host adapter: finding the program, installing it. The providers shipped with Timon are declared the same way |
 | `credentialDirs` — folders (relative to the home) holding the CLI's sign-in; also listed in your manifest as `provider.credentialDirs` | missions of **other** backends cannot read them; the install screen shows them. Never `.ssh`, `.aws`, `.config`… (the user's own credential stores, their parents, bare containers) nor another built-in backend's folder |
 | `passthroughEnv` — non-secret variables the CLI needs (its home or config folder) | copied into the process; a name that reads like a credential is refused |
 | `modelCache` — `{ slugs(), levels() }`, two synchronous readers of the models the CLI lists for the signed-in account | the model catalogue (the profile's own list serves when they return `null`) |

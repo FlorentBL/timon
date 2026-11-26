@@ -11,7 +11,7 @@ export async function PUT(req: Request): Promise<Response> {
   const body = await req.text();
   const upstream = await relay(`/api/dreams/instructions`, {
     method: 'PUT',
-    headers: { 'content-type': 'text/plain; charset=utf-8', ...sessionProxyHeaders() },
+    headers: { 'content-type': 'text/plain; charset=utf-8', ...(await sessionProxyHeaders()) },
     body,
     cache: 'no-store',
   });

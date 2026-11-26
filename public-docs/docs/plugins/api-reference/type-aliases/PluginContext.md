@@ -987,6 +987,26 @@ readonly [`PluginBrowserRecordingOp`](PluginBrowserRecordingOp.md)[]
 
 ***
 
+### fetchPublicImage?
+
+> `readonly` `optional` **fetchPublicImage?**: (`url`, `options?`) => `Promise`\<[`PluginPublicImage`](PluginPublicImage.md)\>
+
+#### Parameters
+
+##### url
+
+`string` \| `URL`
+
+##### options?
+
+[`PluginPublicImageOptions`](PluginPublicImageOptions.md)
+
+#### Returns
+
+`Promise`\<[`PluginPublicImage`](PluginPublicImage.md)\>
+
+***
+
 ### forge
 
 > **forge**: `object`
@@ -2840,6 +2860,16 @@ readonly [`PluginTaskLinkInput`](PluginTaskLinkInput.md)[]
 #### Returns
 
 `void`
+
+***
+
+### caller()
+
+> **caller**(): [`PluginCaller`](PluginCaller.md) \| `undefined`
+
+#### Returns
+
+[`PluginCaller`](PluginCaller.md) \| `undefined`
 
 ***
 

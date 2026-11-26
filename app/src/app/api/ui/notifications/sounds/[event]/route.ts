@@ -13,14 +13,15 @@ export const dynamic = 'force-dynamic';
 const MAX_BYTES = 1024 * 1024;
 const EVENT = /^(taskStarted|taskDone|taskBlocked|approval|missionDone)$/;
 
-type Ctx = { params: { event: string } };
+type Ctx = { params: Promise<{ event: string }> };
 
 const bad = (status: number, error: string): Response => Response.json({ error }, { status });
 
-export async function GET(_req: Request, { params }: Ctx): Promise<Response> {
+export async function GET(_req: Request, props: Ctx): Promise<Response> {
+  const params = await props.params;
   if (!EVENT.test(params.event)) return bad(404, 'not_found');
   const upstream = await relay(`/api/notifications/sounds/${params.event}`, {
-    headers: sessionProxyHeaders(),
+    headers: await sessionProxyHeaders(),
     cache: 'no-store',
   });
   if (!upstream.ok) return bad(upstream.status, 'not_found');
@@ -34,7 +35,8 @@ export async function GET(_req: Request, { params }: Ctx): Promise<Response> {
   });
 }
 
-export async function PUT(request: Request, { params }: Ctx): Promise<Response> {
+export async function PUT(request: Request, props: Ctx): Promise<Response> {
+  const params = await props.params;
   if (!EVENT.test(params.event)) return bad(404, 'not_found');
   const declared = Number(request.headers.get('content-length') ?? '0');
   if (Number.isFinite(declared) && declared > MAX_BYTES) return bad(413, 'too_large');
@@ -44,7 +46,7 @@ export async function PUT(request: Request, { params }: Ctx): Promise<Response> 
   const upstream = await relay(`/api/notifications/sounds/${params.event}`, {
     method: 'PUT',
     headers: {
-      ...sessionProxyHeaders(),
+      ...(await sessionProxyHeaders()),
       'content-type': 'application/octet-stream',
       ...(name ? { 'x-sound-name': name } : {}),
     },
@@ -62,7 +64,8 @@ export async function PUT(request: Request, { params }: Ctx): Promise<Response> 
   });
 }
 
-export async function DELETE(_req: Request, { params }: Ctx): Promise<Response> {
+export async function DELETE(_req: Request, props: Ctx): Promise<Response> {
+  const params = await props.params;
   if (!EVENT.test(params.event)) return bad(404, 'not_found');
   return proxyJson('DELETE', `/api/notifications/sounds/${params.event}`, undefined);
 }

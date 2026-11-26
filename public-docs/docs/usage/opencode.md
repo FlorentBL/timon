@@ -37,7 +37,7 @@ If opencode does not take the model or thinking level a mission asks for, the mi
 
 **opencode decides its own tool permissions.** Timon shows no Allow / Deny card for it and cannot restrict what it does inside your project. opencode refuses, for example, a write outside the project folder on its own, without asking. The agent editor flags this with a "manages its own permissions" badge and greys out the permission mode, which opencode ignores. To change what opencode may do, edit the `permission` key of its `opencode.json` configuration file (see opencode's documentation on permissions). Choose opencode for an agent you are comfortable letting work with opencode's own rules.
 
-Replies stream into the chat, tool calls appear with their results, and the model's reasoning shows as a collapsed **Reasoning** block. **Stop** in a chat ends the current turn and keeps the conversation; the next message continues in the same opencode session, including after Timon restarts. Timon's own tools (Kanban, questions, missions, memory) and the stdio MCP servers configured for the agent reach opencode.
+Replies stream into the chat, tool calls appear with their results, and the model's reasoning shows as a collapsed **Reasoning** block. **Stop** in a chat ends the current turn and keeps the conversation; the next message continues in the same opencode session, including after Timon restarts. Timon's own tools (Kanban, questions, missions, memory) and the MCP servers configured for the agent, stdio or HTTP, reach opencode.
 
 **Compacting a conversation** and its summary when you switch it to another model run on the agent's own model, as does Dreaming for an opencode agent: Timon starts opencode for a short session with none of Timon's tools, then stops it. Each run leaves one session in opencode's own history. opencode decides its own tool permissions there too, as in a mission. Conversation titles are not generated with opencode: Timon uses another of your backends, or keeps the first message as the title.
 
@@ -50,7 +50,6 @@ opencode's sign-in, configuration and sessions stay where your own opencode keep
 ## Limitations
 
 - **Permissions are opencode's.** No Allow / Deny cards, and the agent's permission mode does not narrow what opencode may do: set them in the `permission` key of `opencode.json`.
-- **HTTP MCP servers are not passed on.** MCP servers you added over HTTP do not reach opencode agents.
 - **No live model switch.** A model change applies from the next session.
 - **No quota gauge.** Timon does not display your remaining usage with opencode's providers.
 - **Not yet tried on every setup.** Windows and macOS installs in particular have had little testing; report what you see.
