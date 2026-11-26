@@ -33,7 +33,15 @@ export type ToolCallProps = {
    *  essentially every shell call. */
   intent?: string;
   result?: { html: string; isError: boolean };
+  /** The turn ended before the result came (killed, cut, restarted). Only
+   *  meaningful without a result: a late one wins. */
+  interrupted?: boolean;
 };
+
+/** Over without an answer: the call says it was cut short, never that it runs. */
+function isCutShort({ interrupted, result }: Pick<ToolCallProps, 'interrupted' | 'result'>): boolean {
+  return interrupted === true && !result;
+}
 
 /** `Task` / `Agent` burn the parent's context — the name is painted as a
  *  warning wherever it appears, stacked included. */
@@ -53,9 +61,17 @@ function isBadTool(name?: string): boolean {
  * created, say — and showing it would label the chip with the payload instead
  * of the call. Same guard as the running-tools bar.
  */
-function chipTooltip({ name, title, intent }: Pick<ToolCallProps, 'name' | 'title' | 'intent'>): string {
+function chipTooltip({ name, title, intent, interrupted, result }: Pick<ToolCallProps, 'name' | 'title' | 'intent' | 'interrupted' | 'result'>): string {
   const written = name?.startsWith('mcp__') ? null : intent?.trim();
-  return written || toolLabel(name, title);
+  const label = written || toolLabel(name, title);
+  return isCutShort({ interrupted, result }) ? t('chatCards.toolInterruptedLabel', { label }) : label;
+}
+
+/** Status badge of a call: its error, or that it was cut short. */
+function ToolBadge({ interrupted, result }: Pick<ToolCallProps, 'interrupted' | 'result'>) {
+  if (result?.isError) return <span className="tool-result-badge">{t('chatCards.toolError')}</span>;
+  if (isCutShort({ interrupted, result })) return <span className="tool-interrupted-badge">{t('chatCards.toolInterrupted')}</span>;
+  return null;
 }
 
 function ToolBody({ headHtml, result }: Pick<ToolCallProps, 'headHtml' | 'result'>) {
@@ -67,7 +83,7 @@ function ToolBody({ headHtml, result }: Pick<ToolCallProps, 'headHtml' | 'result
   );
 }
 
-export function ToolCall({ name, title, icon: Icon, headHtml, result, mode = 'dropdown' }: ToolCallProps & {
+export function ToolCall({ name, title, icon: Icon, headHtml, result, interrupted, mode = 'dropdown' }: ToolCallProps & {
   mode?: ToolCallsMode;
 }) {
   return (
@@ -78,7 +94,7 @@ export function ToolCall({ name, title, icon: Icon, headHtml, result, mode = 'dr
         <ChevronRight className="tool-summary-chevron size-3 shrink-0" aria-hidden />
         <Icon className="size-3.5 shrink-0" aria-hidden />
         <span className="tool-summary-name">{toolLabel(name, title)}</span>
-        {result?.isError && <span className="tool-result-badge">{t('chatCards.toolError')}</span>}
+        <ToolBadge interrupted={interrupted} result={result} />
       </summary>
       <ToolBody headHtml={headHtml} result={result} />
     </details>
@@ -158,6 +174,7 @@ export function ToolCallStack({ tools, running = [], live = false }: {
                       id === openId && 'tool-chip-open',
                       isBadTool(name) && 'tool-chip-bad',
                       result?.isError && 'tool-chip-error',
+                      isCutShort(tool) && 'tool-chip-interrupted',
                     )}
                   >
                     <Icon className="size-3.5" aria-hidden />
@@ -206,7 +223,7 @@ export function ToolCallStack({ tools, running = [], live = false }: {
         <div className="tool-stack-open">
           <div className="tool-stack-open-name">
             {toolLabel(open.name, open.title)}
-            {open.result?.isError && <span className="tool-result-badge">{t('chatCards.toolError')}</span>}
+            <ToolBadge interrupted={open.interrupted} result={open.result} />
           </div>
           <ToolBody headHtml={open.headHtml} result={open.result} />
         </div>

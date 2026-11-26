@@ -381,7 +381,32 @@ type ToolUse = {
     text: string;
     isError: boolean;
   };
+  /** The turn that made this call ended before its result came: killed,
+   *  cut, restarted. Client-side only, set where a turn ends
+   *  (`interruptUnfinishedTools`); a result that arrives later wins. */
+  interrupted?: boolean;
 };
+
+/** A call over without an answer: shown cut short, never as running. */
+function isCutShort(tool: ToolUse): boolean {
+  return tool.interrupted === true && !tool.result;
+}
+
+/** `messages` with every call still waiting for its result marked as cut
+ *  short. Called where a turn ends: nothing of it is in flight after that,
+ *  and a call it left unanswered would otherwise read as running — with a
+ *  timer counting from its old start — as soon as the next turn raises the
+ *  indicator (TODO #748). A message from the person is NOT such a point: it
+ *  can be sent while a call runs. Same array when nothing changes. */
+function interruptUnfinishedTools(messages: Msg[]): Msg[] {
+  let changed = false;
+  const next = messages.map((m) => {
+    if (m.role !== 'agent' || !m.tools?.some((t) => !t.result && !t.interrupted)) return m;
+    changed = true;
+    return { ...m, tools: m.tools.map((t) => (t.result || t.interrupted ? t : { ...t, interrupted: true })) };
+  });
+  return changed ? next : messages;
+}
 
 /** Who pushed a `user` event when it was not the human — daemon field
  *  `payload.origin` (orchestrator/src/user-origin.ts). Absent = typed in
@@ -2926,6 +2951,9 @@ export function ChatClient({
         // authoritative.
         const preparing = detail.turn_preparing === true;
         setThinking(Boolean(detail.turn_active) || preparing);
+        // No turn running, even one being prepared: nothing the replay left
+        // unanswered is in flight. Queued after the replay's own updates.
+        if (!detail.turn_active) setMessages(interruptUnfinishedTools);
         activeMissionId.current = missionId;
         pinMissionInUrl(missionId, owner);
         freshStart.current = false;
@@ -3591,6 +3619,7 @@ export function ChatClient({
     if (meta.type === 'turn_retry_abandoned' || payload.type === 'turn_retry_abandoned') {
       showRetryLine(lineOnAbandoned(retryLineRef.current?.line ?? null, payload, providerNameRef.current), meta.timestamp);
       turnSeq.current += 1;
+      setMessages(interruptUnfinishedTools);
       setThinking(false);
       setThinkingHint(null);
       return;
@@ -3610,6 +3639,8 @@ export function ChatClient({
       // A turn that ends here closes its bubble just like `result` does:
       // without the bump, the next one would keep writing into it.
       turnSeq.current += 1;
+      // Steered included: the calls in flight were cut with the turn.
+      setMessages(interruptUnfinishedTools);
       // A steered turn is cut to go on at once: the agent is still at work.
       if ((payload as TurnInterruptedPayload).reason === 'steered') return;
       setThinking(false);
@@ -3654,6 +3685,7 @@ export function ChatClient({
       });
       if (fenceRefusalEndsTurn(refusal)) {
         turnSeq.current += 1;
+        setMessages(interruptUnfinishedTools);
         setThinking(false);
         setThinkingHint(null);
       }
@@ -4156,6 +4188,8 @@ export function ChatClient({
       if (typeof replay === 'number') {
         showRetryLine(lineOnReplayStarted(retryLineRef.current?.line ?? null, replay, providerNameRef.current), meta.timestamp);
         turnSeq.current += 1;
+        // The dropped attempt is over: its calls start again from scratch.
+        setMessages(interruptUnfinishedTools);
         setThinking(true);
         return;
       }
@@ -4406,8 +4440,10 @@ export function ChatClient({
       const retryLine = lineOnResult(retryLineRef.current?.line ?? null, payload, providerNameRef.current);
       if (retryLine) showRetryLine(retryLine, meta.timestamp);
       const replaying = retryLine?.state === 'replaying';
-      // The turn is over: it closes the bubble it was filling.
+      // The turn is over: it closes the bubble it was filling, and the calls
+      // it left unanswered.
       turnSeq.current += 1;
+      setMessages(interruptUnfinishedTools);
       // A turn Timon replays is not over: the agent will speak again.
       setThinking(replaying);
       setThinkingHint(null);
@@ -4658,6 +4694,9 @@ export function ChatClient({
     // provisional bubble orphaned at the bottom of the thread.
     es.addEventListener('turn_complete', () => {
       resetStream();
+      // The process is done with this turn: whatever it left unanswered is
+      // over, even when its `result` never reached the stream.
+      setMessages(interruptUnfinishedTools);
       // The agent may have committed, switched branch or merged: every Git
       // read on screen catches up now, not at the next stray event.
       invalidateGit();
@@ -4681,6 +4720,7 @@ export function ChatClient({
       // A turn that ends here closes its bubble just like `result` does:
       // without the bump, the next one would keep writing into it.
       turnSeq.current += 1;
+      setMessages(interruptUnfinishedTools);
       setThinking(false);
       setThinkingHint(null);
       // Mission closed but still resumable in place (/send → respawn with
@@ -4745,6 +4785,7 @@ export function ChatClient({
         // behind this indicator must not wait for a `turn_complete` to come. On a
         // mission gone it fails and says so, and the next send starts a new one.
         turnSeq.current += 1;
+        setMessages(interruptUnfinishedTools);
         setThinking(false);
         setThinkingHint(null);
         void flushQueuedTurn();
@@ -4790,6 +4831,7 @@ export function ChatClient({
         // A turn that ends here closes its bubble just like `result` does:
         // without the bump, the next one would keep writing into it.
         turnSeq.current += 1;
+        setMessages(interruptUnfinishedTools);
         setThinking(false);
         setThinkingHint(null);
       }
@@ -4800,6 +4842,7 @@ export function ChatClient({
       // A turn that ends here closes its bubble just like `result` does:
       // without the bump, the next one would keep writing into it.
       turnSeq.current += 1;
+      setMessages(interruptUnfinishedTools);
       setThinking(false);
       setThinkingHint(null);
     } finally {
@@ -5656,7 +5699,9 @@ export function ChatClient({
       const m = messages[i]!;
       if (m.role !== 'agent') continue;
       if (!m.tools?.length) return [];
-      return m.tools.filter((t) => !t.result);
+      // A call a finished turn left unanswered is not running, whatever
+      // the indicator says about the turn after it (TODO #748).
+      return m.tools.filter((t) => !t.result && !t.interrupted);
     }
     return [];
   }, [messages, thinking]);
@@ -5674,7 +5719,10 @@ export function ChatClient({
     // tool_result and the model's next token nothing is running, and the
     // stricter test would hand the wait back to the "thinking" bubble for
     // those seconds — the extra bubble, blinking once per round-trip.
-    return last?.role === 'agent' && (last.tools?.length ?? 0) > 0 ? last.id : null;
+    // A bubble holding a cut call belongs to a turn that is over: the one
+    // being prepared or starting will write its own.
+    if (last?.role !== 'agent' || !last.tools?.length) return null;
+    return last.tools.some(isCutShort) ? null : last.id;
   }, [messages, thinking]);
 
   /** Stacked shows the running call INSIDE the bubble, with its own timer.
@@ -6669,6 +6717,9 @@ export function ChatClient({
           transform: scale(1.12);
           z-index: 1;
         }
+        /* Cut short: the outline breaks, the colour stays, so hover still
+           lights it like any other chip. */
+        .chat-bubble .tool-chip-interrupted { border-style: dashed; }
         .chat-bubble .tool-chip-bad { color: hsl(var(--destructive)); }
         .chat-bubble .tool-chip-error {
           border-color: hsl(var(--destructive) / 0.6);
@@ -6885,6 +6936,17 @@ export function ChatClient({
           text-transform: uppercase;
           letter-spacing: 0.04em;
         }
+        /* Not an error: the turn ended first. A quiet tag, not the red one. */
+        .chat-bubble .tool-interrupted-badge {
+          display: inline-block;
+          padding: 1px 6px;
+          border-radius: calc(var(--radius) * 0.4);
+          background: hsl(var(--muted));
+          color: hsl(var(--muted-foreground));
+          font: 600 10px var(--font-sans), system-ui, sans-serif;
+          text-transform: uppercase;
+          letter-spacing: 0.04em;
+        }
         .chat-bubble .tool-result-empty {
           color: hsl(var(--muted-foreground));
           font-style: italic;
@@ -7006,7 +7068,7 @@ function MessageBody({
   // field, not an intent, so the name stands alone there.
   const runningInline: RunningTool[] = live && msg.tools?.length
     ? msg.tools
-        .filter((tool) => !tool.result)
+        .filter((tool) => !tool.result && !tool.interrupted)
         .map((tool) => ({
           id: tool.id,
           name: toolLabel(tool.name, tool.title),
