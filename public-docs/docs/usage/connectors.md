@@ -43,7 +43,7 @@ A program that runs on your machine (a `stdio` server) with environment variable
 
 Agents on opencode and Hermes do not receive a remote server that Timon relays, since they only load programs they start themselves.
 
-When a server signs in with OAuth, the secret the publisher gives Timon at registration is kept in the secrets vault too.
+When a server signs in with OAuth, the secret the publisher gives Timon at registration is kept in the secrets vault too. A sign-in you started stays open for 10 minutes, even if Timon restarts in the meantime: it is kept sealed in the secrets vault until the publisher sends you back. If the vault is switched off, a restart cancels it and you start the sign-in again.
 
 ## What a connector receives
 

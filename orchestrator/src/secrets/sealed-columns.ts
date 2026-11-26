@@ -39,10 +39,16 @@ export function triggerOutboundSecretIdentity(triggerId: string): SecretIdentity
   return { secretId: `trigger:${triggerId}`, name: 'OUTBOUND_SECRET' };
 }
 
+/** Identity an MCP authorization waiting for its callback is sealed for (`mcp-oauth-pending.ts`). */
+export function mcpOAuthPendingIdentity(stateHash: string): SecretIdentity {
+  return { secretId: `mcp-oauth-pending:${stateHash}`, name: 'PENDING_FLOW' };
+}
+
 export const SEALED_COLUMNS: readonly SealedColumn[] = [
   { table: 'machines', key: 'id', column: 'token_enc', identity: machineTokenIdentity },
   { table: 'triggers', key: 'id', column: 'secret', identity: triggerSecretIdentity },
   { table: 'triggers', key: 'id', column: 'outbound_secret', identity: triggerOutboundSecretIdentity },
+  { table: 'mcp_oauth_pending', key: 'state_hash', column: 'flow', identity: mcpOAuthPendingIdentity },
 ];
 
 export type SealedColumnRow = { spec: SealedColumn; key: string; envelope: string };
