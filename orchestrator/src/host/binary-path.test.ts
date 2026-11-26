@@ -19,7 +19,7 @@ test('the Codex CLI embedded in the ChatGPT app is a macOS candidate', { skip: P
   assert.ok(codex.includes('/Users/sam/Applications/ChatGPT.app/Contents/Resources/codex'));
 });
 
-import { chmodSync, existsSync, mkdtempSync, mkdirSync, readdirSync, realpathSync, symlinkSync, writeFileSync, rmSync } from 'node:fs';
+import { chmodSync, existsSync, mkdtempSync, mkdirSync, readdirSync, realpathSync, statSync, symlinkSync, writeFileSync, rmSync } from 'node:fs';
 import { diskTrustStat, untrustedPathProblem, type TrustStat } from './trusted-tree.js';
 import { tmpdir } from 'node:os';
 import { join, sep } from 'node:path';
@@ -826,6 +826,15 @@ test('#1102 review: a node under a manager root another account can write is pas
   assert.equal(findExecutableBinary('node', options), earlier);
   chmodSync(node, 0o755);
   assert.equal(findExecutableBinary('node', options), earlier ?? node);
+  // #1202: the same group bits, the group being the account's private one, as a 002 umask leaves them.
+  const privateTrust = { ...pathTrust, privateGroup: () => statSync(root).gid };
+  const privateOptions = { ...options, pathTrust: privateTrust };
+  for (const file of [root, join(root, 'node-versions'), node]) chmodSync(file, 0o775);
+  assert.equal(untrustedPathProblem(node, privateTrust), null);
+  assert.equal(findExecutableBinary('node', privateOptions), earlier ?? node);
+  chmodSync(root, 0o777);
+  assert.match(untrustedPathProblem(node, privateTrust) ?? '', /writable by its group or by others/);
+  assert.equal(findExecutableBinary('node', privateOptions), earlier);
 });
 
 test('#1102 review: a link out of the manager root into another account\'s folder is refused', { skip: process.platform === 'win32' && 'POSIX links and owners' }, (t) => {
