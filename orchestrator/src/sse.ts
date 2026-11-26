@@ -102,10 +102,14 @@ export function turnDoneStamp(ev: object): number {
 /**
  * Permission cards travel in an `event` frame, which the agent views do not
  * parse: they listen for these names to refetch an agent's state at once,
- * instead of waiting for their next poll. Same body for every stream, so the
- * alias is cached on the bus event like the frame it echoes.
+ * instead of waiting for their next poll. A lengthened auto-deny delay is one
+ * of them: the Kanban board and a task's detail show that deadline. Same body
+ * for every stream, so the alias is cached on the bus event like the frame it
+ * echoes.
  */
-const PERMISSION_STATE_TYPES: ReadonlySet<string> = new Set(['permission_request', 'permission_resolved', 'permission_expired']);
+const PERMISSION_STATE_TYPES: ReadonlySet<string> = new Set([
+  'permission_request', 'permission_resolved', 'permission_expired', 'permission_timeout_adapted',
+]);
 const permissionAliases = new WeakMap<object, object>();
 function permissionAlias(ev: { type: string; missionId: string }): object {
   let alias = permissionAliases.get(ev);
