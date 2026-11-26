@@ -81,3 +81,18 @@ test('a network or system error names neither a file of this machine nor the add
     return true;
   });
 });
+
+test('a download that fails with something other than an Error still says why', async () => {
+  const fetchFn = serve({ 'https://x.example/a': () => new Response(new ReadableStream({ start: (stream) => stream.error('reset by https://x.example/a?token=abc') })) });
+  await assert.rejects(() => downloadVerified('https://x.example/a', dest(), { maxBytes: 100, fetchFn }), (err: unknown) => {
+    assert.ok(err instanceof DownloadError);
+    assert.equal(err.message, 'download failed: reset by <address>');
+    return true;
+  });
+  const silent: Fetcher = async () => { throw undefined; };
+  await assert.rejects(() => downloadVerified('https://x.example/a', dest(), { maxBytes: 100, fetchFn: silent }), (err: unknown) => {
+    assert.ok(err instanceof DownloadError);
+    assert.equal(err.message, 'download failed: undefined');
+    return true;
+  });
+});

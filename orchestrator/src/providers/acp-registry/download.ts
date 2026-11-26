@@ -36,9 +36,10 @@ export type DownloadOptions = {
  * quote the address, whose query or userinfo can hold a credential.
  */
 function reasonOf(err: unknown): string {
-  const { code, syscall, message } = err as NodeJS.ErrnoException;
+  // A stream may reject with something that is not an Error: its text is still the reason.
+  const { code, syscall, message } = (err instanceof Error ? err : {}) as Partial<NodeJS.ErrnoException>;
   if (syscall) return code ?? 'system error';
-  return message.replace(/\b[a-z][a-z0-9+.-]*:\/\/\S+/gi, '<address>');
+  return String(message ?? err).replace(/\b[a-z][a-z0-9+.-]*:\/\/\S+/gi, '<address>');
 }
 
 function assertHttps(url: string): URL {

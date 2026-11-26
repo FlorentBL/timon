@@ -162,6 +162,17 @@ test('a sha256 that does not match refuses the install, logs why and leaves no f
   assert.deepEqual(existsSync(join(home, 'providers', 'acp-registry', 'tmp')) ? readdirSync(join(home, 'providers', 'acp-registry', 'tmp')) : [], []);
 });
 
+test('a download that fails is logged with its code', { skip: !posix }, async (t) => {
+  const served: Served = new Map([
+    [REGISTRY_URL, registryDoc([agentEntry({ id: 'gone', archive: 'https://downloads.example.com/gone.tar.gz', sha256: 'a'.repeat(64) })])],
+  ]);
+  const { service, home } = newService(served);
+  const warnings = await warningsOf(t, () => assert.rejects(() => service.install('gone'), (e: unknown) => e instanceof AcpRegistryError && e.code === 'download-failed'));
+  assert.equal(warnings.length, 1);
+  assert.ok(warnings[0]!.startsWith('[acp-registry] install gone@1.0.0 failed (download-failed): '), warnings[0]);
+  assert.equal(warnings[0]!.includes(home), false, 'no path of this machine');
+});
+
 test('a hostile archive is refused after the hash passed, and a registry cmd cannot leave the folder', { skip: !posix }, async (t) => {
   const evil = buildTarGzWithModes([{ path: '../escape', data: 'x' }]);
   const noCmd = tarOf('#!/bin/sh\n');
