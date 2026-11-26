@@ -204,7 +204,7 @@ test('the daemon token reads the state but starts no flow: a flow belongs to a b
 });
 
 test('a backend that cannot keep the host sign-in answers 404, and a body is checked', async () => {
-  assert.equal((await call('GET', '/api/backends/host-sign-in/codex', { cookie: admin })).status, 404);
+  assert.equal((await call('GET', '/api/backends/host-sign-in/ollama-cloud', { cookie: admin })).status, 404);
   assert.equal((await call('GET', '/api/backends/host-sign-in/..%2Fclaude', { cookie: admin })).status, 404);
   assert.equal((await call('POST', `${HOST}/login`, { cookie: admin, body: { dir: '/tmp' } })).status, 400);
 });

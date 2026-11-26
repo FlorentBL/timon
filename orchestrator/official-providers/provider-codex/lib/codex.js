@@ -418,11 +418,14 @@ export function createCodexProvider(services, log) {
             const env = { ...base, ...profile.env };
             let apiKey;
             // A subscription account (TODO #52) runs on its own sign-in only: no key
-            // from the environment may stand in for it, nor the host's login.
+            // from the environment may stand in for it, nor the host's login. The base
+            // profile carries an account too when Timon keeps the host's sign-in.
             const account = services.account.of(profile);
             const accountAuth = account ? join(account.configDir, 'auth.json') : undefined;
             if (account && !existsSync(accountAuth)) {
-                throw new Error(`The codex account "${account.name}" is not signed in yet: sign it in before running missions on it.`);
+                throw new Error(profile.id.includes('@')
+                    ? `The codex account "${account.name}" is not signed in yet: sign it in before running missions on it.`
+                    : 'The Codex sign-in kept by Timon is missing: sign in again from the Codex page (Settings, Providers).');
             }
             // A missing local login is a configuration error before any CLI starts,
             // not a provider bounce: it must not trip the shared backend breaker.
@@ -671,7 +674,10 @@ export function createCodexProvider(services, log) {
             },
             // The models the CLI lists for the signed-in account, read from the file it keeps beside its login.
             modelCache: { slugs: codexAccountSlugs, levels: codexAccountLevels },
-            accounts: { login: codexLoginDriver },
+            // The host's own sign-in can be kept by Timon too (`accounts.host`): signed in from the browser with
+            // the accounts' driver, into a folder of Timon's, whose `auth.json` the base profile's missions then
+            // link instead of `~/.codex`'s. No long-lived token: the ChatGPT sign-in refreshes itself.
+            accounts: { login: codexLoginDriver, host: {} },
             // An endpoint that speaks the OpenAI Responses API is reached through this CLI.
             protocols: ['openai-responses'],
         },
