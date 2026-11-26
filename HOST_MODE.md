@@ -83,6 +83,60 @@ Then the data migration still waits for `timon update approve <version>`.
 installed CLI. Windows is not concerned: its scheduled task runs from the
 installation folder, which the installer replaces.
 
+### The browser host: a second unit on a Linux server
+
+The built-in browser lives in the desktop app (`desktop/src/native-browser.ts`).
+On a Linux server nobody opens the app, so `timon service install` writes a
+second systemd user unit, `timon-browser-<instanceId>`, which runs the same
+program as `timon-desktop --browser-host`: Electron with no Timon window, no
+tray, no update screen, only the browser engine, its capture and the bridge the
+daemon reaches it through (`desktop/src/browser-host*.ts`). Linux has no X
+server there: the host relaunches itself with `--ozone-platform=headless`
+(Electron 45; Electron 33 crashed in that mode) and shows its tab windows,
+since `capturePage` refuses a window that was never shown.
+
+When it is written (`orchestrator/src/host/browser-host-service.ts`):
+
+- Linux, with the deb package installed. The unit starts the package's
+  `/opt/Timon/timon-desktop`, not the staged copy under `desktop-runtime/`:
+  Chromium's sandbox (the setuid helper, or the AppArmor profile, both tied to
+  that path) only works from where the system installed it. With an AppImage,
+  nothing is written.
+- No desktop session: neither `DISPLAY` nor `WAYLAND_DISPLAY` in the shell or in
+  `systemctl --user show-environment`, and no active `display-manager.service`.
+  On a machine with a desktop the app runs the browser, and an install or update
+  removes a browser unit left from before.
+- The `TIMON_BROWSER_HOST_SERVICE` setting is on (the default). It resolves like
+  any registry setting, without loading the database layer: environment, then
+  `settings` in `timon.config.json`, then the settings table read only, then the
+  default. Turned off, the next install or update removes the unit.
+
+Its life follows the daemon's: `timon service stop`, `start`, `uninstall` and
+`timon update apply` act on both units; `timon service status` shows it on a
+`browser` line (`browserHost` in `--json`). A browser unit that fails to start
+is reported, never fatal to the daemon's install. `servicesSharingHome` skips
+`timon-browser-*` units, so the browser unit is never taken for a second daemon.
+
+The unit starts the host through a small launcher run by the package's Node
+(`orchestrator/src/host/browser-host-launcher.ts`): when Chromium has no usable
+sandbox (Ubuntu 23.10+ without the deb's AppArmor profile, and a helper that is
+not setuid root), Electron dies before its first line of JavaScript, so only a
+parent can read the FATAL line, print the repair and exit with **78**, which
+the unit lists in `RestartPreventExitStatus` instead of restarting in a loop.
+Other exits restart with the daemon's backoff; it stops on `SIGTERM`.
+
+One browser per data directory: the host takes the desktop app's single-instance
+lock (the browser profiles do not tolerate two Chromium). If the app opens on
+the same machine, it wins: the host hands over and exits with 75, and waits to
+serve again until the app quits.
+
+What a person sees of all this: `timon doctor --browser`
+(`orchestrator/src/host/built-in-browser-status.ts`) names who provides the
+browser and, when nobody does, why and the command that repairs it; `install.sh`
+adds fonts to a server that has none (without them every capture and the live
+view render pages with no text) and runs that check after installing the
+service. User documentation: `public-docs/docs/installation/headless-server.md`.
+
 ## Running it in the foreground instead
 
 For development, when you want the daemon attached to a terminal:
