@@ -15,6 +15,7 @@ const {
   testIdentityPattern,
 } = await import('./binary-identity.js');
 const { setDeclaredBinariesSource } = await import('../host/declared-binaries.js');
+const { EXEC_TREE_MARK } = await import('../host/kill-tree.js');
 const { binaryIdentityProblem, declarationProblems } = await import('./provider-declarations.js');
 
 const posix = process.platform !== 'win32';
@@ -301,7 +302,8 @@ test('the probe runs in an empty folder of its own, removed afterwards, and with
   assert.match(cwd!, /timon-identity-/);
   assert.equal(entries!.trim(), '0', 'an empty folder');
   assert.equal(existsSync(cwd!), false, 'removed once the program is done');
-  const allowed = new Set(['PATH', 'HOME', 'USERPROFILE', 'SystemRoot', 'TEMP', 'TMP', 'LANG', 'PWD', 'SHLVL', '_', 'OLDPWD']);
+  // `EXEC_TREE_MARK`: where no scope holds the launch, the random mark by which `execTree` finds what it left.
+  const allowed = new Set(['PATH', 'HOME', 'USERPROFILE', 'SystemRoot', 'TEMP', 'TMP', 'LANG', 'PWD', 'SHLVL', '_', 'OLDPWD', EXEC_TREE_MARK]);
   assert.deepEqual(names!.trim().split(' ').filter((name) => name && !allowed.has(name)), [], 'only the listed variables, and what sh adds');
 });
 
