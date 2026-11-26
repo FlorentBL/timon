@@ -160,3 +160,22 @@ test('an accord that put a blocked Kanban task back in the queue says so', async
   await w.until(() => Boolean(document.querySelector('[data-fence-grant-requeued]')), 'the requeue to show');
   assert.match(document.body.textContent ?? '', /The task is back in the queue/);
 });
+
+test('a reload replays "the task is back in the queue" from the recorded answer (TODO #1189)', async (t) => {
+  // What the thread does on a reload: the stored `fence_refused`, then the stored
+  // `fence_grant_resolved`, through the same parsers as the live events.
+  const recorded = { type: 'fence_grant_resolved', id: 'refusal-1', status: 'allowed', path: '/home/u/.cache/tool', mode: 'write', scope: 'agent', project: null, requeued: true, resolvedAt: 1 };
+  const replayed = applyFenceGrantResolution(view(), parseFenceGrantResolution(recorded)!);
+  assert.equal(replayed.requeued, true);
+  const w = await mount(t);
+  await w.render(replayed);
+  assert.ok(document.querySelector('[data-fence-grant-state="allowed"]'));
+  assert.match(document.body.textContent ?? '', /The task is back in the queue/);
+  // An answer recorded before the requeue was kept says nothing about the task.
+  const older = applyFenceGrantResolution(view(), parseFenceGrantResolution({ ...recorded, requeued: undefined })!);
+  assert.equal(older.requeued, null);
+  await w.render(older);
+  assert.ok(!document.querySelector('[data-fence-grant-requeued]'));
+  // A refusal never says it, whatever the payload claims.
+  assert.equal(applyFenceGrantResolution(view(), parseFenceGrantResolution({ ...recorded, status: 'refused' })!).requeued, null);
+});

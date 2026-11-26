@@ -50,6 +50,8 @@ export type FenceGrantResolution = {
   status: Exclude<FenceGrantStatus, 'pending'>;
   scope?: FenceGrantScope | null;
   project?: string | null;
+  /** Recorded since TODO #1189: the accord put back the blocked Kanban task, so a reload says it again. */
+  requeued?: boolean;
 };
 
 // eslint-disable-next-line no-control-regex
@@ -104,7 +106,7 @@ export function parseFenceGrantResolution(raw: unknown): FenceGrantResolution | 
   if (!id || (p.status !== 'allowed' && p.status !== 'refused')) return null;
   const scope = p.scope === 'agent' || p.scope === 'project' ? p.scope : null;
   const project = typeof p.project === 'string' && PROJECT_SLUG.test(p.project) ? p.project : null;
-  return { id, status: p.status, scope, project };
+  return { id, status: p.status, scope, project, ...(p.requeued === true ? { requeued: true } : {}) };
 }
 
 /** The card once answered; an answer never goes back to pending. */
@@ -115,6 +117,8 @@ export function applyFenceGrantResolution(view: FenceGrantView, resolution: Fenc
     status: resolution.status,
     scope: resolution.status === 'allowed' ? resolution.scope ?? 'agent' : null,
     ...(resolution.scope === 'project' && resolution.project ? { project: resolution.project } : {}),
+    // An answer recorded before TODO #1189 says nothing about the task: unknown, not "not requeued".
+    ...(resolution.status === 'allowed' && resolution.requeued === true ? { requeued: true } : {}),
   };
 }
 
@@ -146,7 +150,7 @@ export async function answerFenceGrant(
   if (res.ok && resolution) {
     return {
       ok: true,
-      view: { ...applyFenceGrantResolution(view, resolution), relaunched: body?.relaunched === true, requeued: body?.requeued === true },
+      view: { ...applyFenceGrantResolution(view, resolution), relaunched: body?.relaunched === true, requeued: body?.requeued === true || resolution.requeued === true },
     };
   }
   if (res.status === 409 && resolution) return { ok: true, view: applyFenceGrantResolution(view, resolution) };
