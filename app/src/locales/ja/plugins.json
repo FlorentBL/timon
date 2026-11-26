@@ -432,6 +432,7 @@
       "archive": "アーカイブは安全でないとして拒否されました。",
       "command-missing": "レジストリが指定するプログラムがアーカイブにありません。",
       "definition-refused": "Timon はこのエージェントを拒否しました: 説明内容に矛盾があります。",
+      "withReason": "{sentence}（{reason}）",
       "authorize-failed": "プログラムを承認できませんでした。詳細は Timon のログにあります。",
       "failed": "操作に失敗しました。詳細は Timon のログにあります。"
     }

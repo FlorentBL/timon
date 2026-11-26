@@ -65,6 +65,15 @@ test('daemon codes map to sentences; an unknown one keeps the daemon message', (
   assert.match(providerErrorMessage(500, '', ''), /HTTP 500/);
 });
 
+test('a refused catalogue install keeps the daemon reason after the sentence', () => {
+  for (const code of ['archive', 'checksum', 'download-failed', 'command-missing', 'definition-refused']) {
+    const sentence = t(`providersSettings.errors.${code}`);
+    assert.equal(providerErrorMessage(502, code, 'the daemon says why'), `${sentence} (the daemon says why)`);
+    assert.equal(providerErrorMessage(502, code, ''), sentence);
+  }
+  assert.equal(providerErrorMessage(409, 'already-installed', 'x'), t('providersSettings.errors.already-installed'));
+});
+
 test('a catalogue agent reads in one line: what runs here, what is offered, and the pastille it deserves', () => {
   const line = (over: Partial<AcpAgent>) => {
     const { tone, key, vars } = acpStateLine(agent(over));
