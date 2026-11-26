@@ -537,6 +537,10 @@
       "label": "Log the full system prompt",
       "description": "Debug: very verbose. Written to prompts-<day>.log in the tmp folder of the Timon home, not to the daemon log."
     },
+    "TIMON_BROWSER_HOST_SERVICE": {
+      "label": "Built-in browser service on a server",
+      "description": "Linux, installed package, no desktop session (a server): installing the background service also installs a second one that runs the built-in browser with no window, so agents can browse with the app closed. Off: it is not installed, and the next service install or update removes it. Never installed on a machine with a desktop, where the Timon app runs the browser."
+    },
     "TIMON_ORCH_URL": {
       "label": "Orchestrator URL for agents",
       "description": "Injected into TIMON MCPs launched in missions."
