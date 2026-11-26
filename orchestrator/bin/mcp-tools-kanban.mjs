@@ -94,10 +94,10 @@ export const tools = [
     title: 'Dispose of a task worktree',
     description:
       'Unmounts a task\'s worktree and deletes its local branch (CLI `timon worktree dispose`). ' +
-      'Only after the task is DONE and merged: disposing a live task destroys the coder\'s uncommitted work.',
+      'Only for a DONE task whose worktree is clean and whose HEAD is merged: anything else is refused and kept.',
     inputSchema: {
       type: 'object',
-      properties: { task_id: id('Task'), force: { type: 'boolean' } },
+      properties: { task_id: id('Task'), force: { type: 'boolean', description: 'Ignored, kept for older callers: a removal is never forced.' } },
       required: ['task_id'],
     },
   },
