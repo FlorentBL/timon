@@ -15,8 +15,9 @@
  * when a mission's process starts.
  *
  * `AgentFoldersSection` is the host that reads and writes the lists;
- * `ProductAgentFolders` the product's painting, which reads the host's
- * context (`useAgentFolders()`) like any replacement would.
+ * `ProductAgentFolders` the product's painting, default occupant of the
+ * `agent.folders` slot, which reads the host's context (`useAgentFolders()`)
+ * like any replacement would.
  */
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactElement } from 'react';
 import { AlertTriangle, Copy, Lock, PenLine, Plus, Trash2 } from 'lucide-react';
@@ -29,6 +30,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { ProviderSection, ProviderSettingRow } from '@/components/provider-page/provider-section';
 import { reportDirectoryPick, useDirectoryPicker } from '@/components/directory-browser';
 import { copyToClipboard } from '@/lib/clipboard';
+import { SlotSingle, useSlotEntries } from '@/lib/plugin-host/render';
+import { AGENT_FOLDERS_SLOT } from '@/lib/plugin-host/slots';
 import { t } from '@/lib/i18n';
 import {
   addFolder, AgentFoldersError, fetchFolders, folderName, folderOwnerKey, isAbsoluteFolder, removeFolder,
@@ -67,6 +70,8 @@ export function AgentFoldersSection({ agents, project = null, showAgent = false,
   const [status, setStatus] = useState<'loading' | 'ready' | 'forbidden' | 'error'>('loading');
   const [busy, setBusy] = useState(false);
   const picker = useDirectoryPicker();
+  // An empty slot (a page the bundled halves do not reach) still gets the product's section.
+  const claimed = useSlotEntries(AGENT_FOLDERS_SLOT).length > 0;
   // `key` stands for `agents` and `project`: a new array of the same names must not reload.
   const key = `${project ?? ''}\n${agents.join('\n')}`;
   const named = useRef(agents);
@@ -151,7 +156,7 @@ export function AgentFoldersSection({ agents, project = null, showAgent = false,
 
   return (
     <AgentFoldersProvider value={value}>
-      <ProductAgentFolders />
+      {claimed ? <SlotSingle name={AGENT_FOLDERS_SLOT} /> : <ProductAgentFolders />}
       {picker.dialog}
     </AgentFoldersProvider>
   );

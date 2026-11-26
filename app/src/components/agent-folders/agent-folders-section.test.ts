@@ -1,8 +1,9 @@
 /**
- * An agent's or a project's extra folders: the host (`AgentFoldersSection`)
- * reads the lists and runs the gestures, the product's section paints them
- * from `useAgentFolders()`, and a person who may not read the agents gets
- * nothing painted.
+ * An agent's or a project's extra folders and their slot `agent.folders`: the
+ * host (`AgentFoldersSection`) reads the lists and runs the gestures, the
+ * product's section paints them from `useAgentFolders()`, a plugin that takes
+ * the slot replaces it on every host and calls the same gestures, and a person
+ * who may not read the agents gets nothing painted.
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -53,8 +54,12 @@ async function mount(fake: typeof globalThis.fetch) {
   const { setLocale, getLocale } = await import('@/lib/i18n');
   const previousLocale = getLocale();
   setLocale('en');
+  const slots = await import('@/lib/plugin-host/slots');
+  slots.resetSlotsForTests();
   const section = await import('./agent-folders-section');
   const context = await import('./agent-folders-context');
+  // The product's section, registered the way the bundled half of `@timon/agents` mounts it.
+  slots.register({ slot: slots.AGENT_FOLDERS_SLOT, pluginId: '@timon/agents', fallback: true }, section.ProductAgentFolders);
 
   const root = createRoot(document.getElementById('root')!);
   const render = async (element: React.ReactElement) => {
@@ -63,6 +68,7 @@ async function mount(fake: typeof globalThis.fetch) {
   const until = (condition: () => boolean, what: string) => waitUntil(React.act, condition, what);
   const unmount = async () => {
     await React.act(async () => { root.unmount(); });
+    slots.resetSlotsForTests();
     setLocale(previousLocale);
     dom.window.close();
     for (const [k, descriptor] of saved) {
@@ -70,7 +76,7 @@ async function mount(fake: typeof globalThis.fetch) {
       else delete (globalThis as Record<string, unknown>)[k];
     }
   };
-  return { React, section, context, render, until, unmount };
+  return { React, slots, section, context, render, until, unmount };
 }
 
 const rowTexts = (): string[] => Array.from(document.querySelectorAll('[data-agent-folder]')).map((row) => row.textContent ?? '');
@@ -119,6 +125,76 @@ test('a person who may not read the agent\'s folders gets nothing painted', asyn
     await m.render(m.React.createElement(m.section.AgentFoldersSection, { agents: ['secret'] }));
     await m.until(() => fake.calls.length > 0 && document.querySelector('section[aria-busy]') === null, 'the read refused');
     assert.equal(document.getElementById('root')?.innerHTML, '');
+  } finally {
+    await m.unmount();
+  }
+});
+
+test('a plugin that takes `agent.folders` replaces the section, reads its host and writes through it; removed, the product section is back', async () => {
+  const fake = daemon({ 'projects:acme': [], 'agents:acme.coder': [{ path: '/home/me/notes', mode: 'read' }] });
+  const m = await mount(fake.fetch);
+  try {
+    const { React, slots, section, context } = m;
+    let host: ReturnType<typeof context.useAgentFolders> = null;
+    const off = slots.register({ slot: slots.AGENT_FOLDERS_SLOT, pluginId: 'acme-folders' }, function FolderList() {
+      host = context.useAgentFolders();
+      if (!host || host.status !== 'ready') return null;
+      return React.createElement('ul', { 'data-plugin-folders': '', className: host.className },
+        host.rows.map((row) => React.createElement('li', { key: `${row.owner.kind}:${row.path}` }, `${row.name}:${row.mode}`)));
+    });
+    await m.render(React.createElement(section.AgentFoldersSection, { agents: ['acme.coder'], project: 'acme', showAgent: true, className: 'mt-4' }));
+    await m.until(() => document.querySelector('[data-plugin-folders] li') !== null, 'the plugin list');
+    assert.ok(!document.querySelector('[data-agent-folder]'), 'the product section steps aside');
+    assert.equal(document.querySelector('[data-plugin-folders]')?.className, 'mt-4');
+    const ready = () => host!;
+    assert.deepEqual(ready().agents, ['acme.coder']);
+    assert.equal(ready().project, 'acme');
+    assert.equal(ready().showAgent, true);
+    assert.equal(ready().emptyStatus, null);
+    assert.deepEqual(ready().owners, [{ kind: 'project', slug: 'acme' }, { kind: 'agent', name: 'acme.coder' }]);
+    assert.deepEqual(ready().rows, [{ owner: { kind: 'agent', name: 'acme.coder' }, path: '/home/me/notes', name: 'notes', mode: 'read', dropped: null }]);
+
+    // The gestures go to the daemon's one door, and the host's lists follow.
+    let result = await React.act(async () => ready().setMode({ kind: 'agent', name: 'acme.coder' }, '/home/me/notes', 'write'));
+    assert.deepEqual(result, { ok: true });
+    await m.until(() => document.querySelector('[data-plugin-folders] li')?.textContent === 'notes:write', 'the new access');
+    result = await React.act(async () => ready().add({ kind: 'project', slug: 'acme' }, { path: '/srv/shared', mode: 'read' }));
+    assert.deepEqual(result, { ok: true });
+    await m.until(() => ready().rows.length === 2 && ready().rows[0]!.owner.kind === 'project', 'the project\'s folder first');
+    result = await React.act(async () => ready().remove({ kind: 'agent', name: 'acme.coder' }, '/home/me/notes'));
+    assert.deepEqual(result, { ok: true });
+    await m.until(() => ready().rows.length === 1, 'the folder gone');
+    assert.deepEqual(fake.calls.filter((c) => c.method !== 'GET').map((c) => `${c.method} ${c.url} ${JSON.stringify(c.body)}`), [
+      'POST /api/ui/agents/acme.coder/extra-dirs {"path":"/home/me/notes","mode":"write"}',
+      'POST /api/ui/projects/acme/extra-dirs {"path":"/srv/shared","mode":"read"}',
+      'DELETE /api/ui/agents/acme.coder/extra-dirs {"path":"/home/me/notes"}',
+    ]);
+
+    await React.act(async () => { off(); });
+    await m.until(() => document.querySelector('[data-agent-folder="/srv/shared"]') !== null, 'the product section again');
+    assert.ok(!document.querySelector('[data-plugin-folders]'));
+  } finally {
+    await m.unmount();
+  }
+});
+
+test('a refused gesture comes back to the occupant with the daemon\'s message, and nothing changes', async () => {
+  const fake = daemon({ 'agents:solo': [{ path: '/home/me/notes', mode: 'read' }] }, { refuse: 'This folder holds credentials.' });
+  const m = await mount(fake.fetch);
+  try {
+    const { React, slots, section, context } = m;
+    let host: ReturnType<typeof context.useAgentFolders> = null;
+    slots.register({ slot: slots.AGENT_FOLDERS_SLOT, pluginId: 'acme-folders' }, function Probe() {
+      host = context.useAgentFolders();
+      return null;
+    });
+    await m.render(React.createElement(section.AgentFoldersSection, { agents: ['solo'] }));
+    await m.until(() => host?.status === 'ready', 'the lists read');
+    const result = await React.act(async () => host!.add({ kind: 'agent', name: 'solo' }, { path: '/home/me/.ssh', mode: 'read' }));
+    assert.equal(result.ok, false);
+    assert.match(result.ok ? '' : result.message, /credentials/);
+    assert.equal(host!.busy, false);
+    assert.deepEqual(host!.rows.map((r) => r.path), ['/home/me/notes']);
   } finally {
     await m.unmount();
   }
