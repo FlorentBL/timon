@@ -52,3 +52,25 @@ export async function detectDesktopSession(
   } catch { /* probe unavailable → unknown */ }
   return 'unknown';
 }
+
+/** A synchronous command runner, `ServiceOpts.exec` shaped. */
+export type SessionExec = (name: string, args: string[]) => { code: number; stdout: string; stderr: string };
+
+/**
+ * Linux: does this machine have a desktop session, now or at its next login? The installing
+ * shell's own variables are not enough: an SSH login to a workstation has no DISPLAY either.
+ * The user's systemd manager holds the variables a graphical login exported to it, and a
+ * running display manager means a login screen, hence a desktop. Any one signal is enough;
+ * a probe that cannot run says nothing, and a server answers no to all three.
+ */
+export function linuxGraphicalSession(env: NodeJS.ProcessEnv, exec: SessionExec): boolean {
+  if (env.DISPLAY || env.WAYLAND_DISPLAY) return true;
+  const ask = (args: string[]): string => {
+    try {
+      const result = exec('systemctl', args);
+      return result.code === 0 ? result.stdout : '';
+    } catch { return ''; }
+  };
+  if (/^(?:DISPLAY|WAYLAND_DISPLAY)=\S/m.test(ask(['--user', 'show-environment']))) return true;
+  return ask(['is-active', 'display-manager.service']).trim() === 'active';
+}

@@ -22,6 +22,17 @@ export function packagedUnit(home: string): string {
 export function ownLinuxUnit(sourceUnit: string, home: string, env: NodeJS.ProcessEnv = process.env): string {
   return env.TIMON_DESKTOP_SERVICE === '1' ? packagedUnit(home) : sourceUnit;
 }
+/**
+ * The companion unit of a Linux server with no screen: the built-in browser run by
+ * `timon-desktop --browser-host` (`browser-host-service.ts`). Not a daemon: it opens no
+ * database and serves no port, so the checks that look for a second daemon skip it.
+ */
+export function browserHostUnit(home: string): string {
+  return `timon-browser-${instanceId(home)}`;
+}
+export function isBrowserHostUnit(name: string): boolean {
+  return /^timon-browser-[0-9a-f]{24}$/.test(name);
+}
 export function runtimeDir(home: string): string { return join(home, 'desktop-runtime'); }
 export function packagedReleaseId(version = process.env.TIMON_DESKTOP_VERSION ?? 'current'): string {
   const readable = version.trim().replace(/[^A-Za-z0-9._-]+/g, '-').slice(0, 48) || 'unknown';
@@ -51,6 +62,24 @@ function rawFilesystem(): typeof nodeFs {
  * storage failure (`storage-failure.ts`) bounds the loop there.
  */
 export const PACKAGED_RESTART_BACKOFF = 'RestartSteps=10\nRestartMaxDelaySec=300\n';
+
+/**
+ * The browser host's unit. `--browser-host` exits 75 when the app with a screen took the browser
+ * over (started again, it waits for the app to quit: `on-failure` is meant to restart it) and 78
+ * when it can never run here, which a restart would not change. The executable is the installed
+ * package's, not a copy under `desktop-runtime`: Chromium's sandbox helper only works from the
+ * package the system installed (setuid root, or an AppArmor profile that names its path).
+ */
+export function renderBrowserHostUnit(home: string, executable: string): string {
+  return '[Unit]\nDescription=Timon built-in browser (no screen)\nAfter=network.target\n'
+    // A package removed without `timon service uninstall`: the unit stays inactive instead of
+    // failing to start every few minutes.
+    + `ConditionPathExists=${executable.replaceAll('%', '%%')}\n\n`
+    + `[Service]\nType=simple\nEnvironment=${quote(`TIMON_HOME=${home}`)}\nUnsetEnvironment=ELECTRON_RUN_AS_NODE\n`
+    + `ExecStart=${execQuote(executable)} --browser-host\n`
+    + `Restart=on-failure\nRestartSec=2\n${PACKAGED_RESTART_BACKOFF}RestartPreventExitStatus=78\n`
+    + 'KillSignal=SIGTERM\nKillMode=control-group\nTimeoutStopSec=30\n\n[Install]\nWantedBy=default.target\n';
+}
 
 function execQuote(value: string): string { return quote(value).replaceAll('$', '$$'); }
 

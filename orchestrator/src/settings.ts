@@ -26,6 +26,7 @@
 import { dbApi } from './db.js';
 import { config } from './config/load.js';
 import { memoryPresetSettings, resourceMemoryInfo } from './resource-memory-presets.js';
+import { BROWSER_HOST_SETTING } from './host/browser-host-service.js';
 
 export type SettingType = 'bool' | 'int' | 'float' | 'string';
 
@@ -550,6 +551,11 @@ export const SETTINGS: SettingDef[] = [
   // invisible from the UI and impossible to take along in an export. They
   // joined the registry in P0.3. Defaults reproduce EXACTLY the historical
   // default at the read site.
+  // Read by `timon service install` and the update runner through
+  // `browser-host-service.ts`, in the same order, without this module (no database there).
+  { key: BROWSER_HOST_SETTING, type: 'bool', default: true, group: 'Infra', advanced: true,
+    label: 'Built-in browser service on a server',
+    description: "Linux, installed package, no desktop session (a server): installing the background service also installs a second one that runs the built-in browser with no window, so agents can browse with the app closed. Off: it is not installed, and the next service install or update removes it. Never installed on a machine with a desktop, where the Timon app runs the browser." },
   { key: 'TIMON_ORCH_URL', type: 'string', default: 'http://localhost:3000', group: 'Infra', advanced: true,
     label: 'Orchestrator URL for agents',
     description: "Injected into TIMON MCPs launched in missions." },

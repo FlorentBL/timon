@@ -38,7 +38,8 @@
 import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, isAbsolute, join, posix, relative, resolve, sep, win32 as winPath } from 'node:path';
-import { runtimeDir } from './packaged-service.js';
+import { browserHostUnit, runtimeDir } from './packaged-service.js';
+import type { BrowserHostService } from './browser-host-service.js';
 import type { ExecResult } from './types.js';
 import { isBundledNode, packagedRuntime } from './bundled-node.js';
 import { readServiceSessionMode, serviceS4uRefusedPath, sessionModeSupported, writeServiceSessionMode, type ServiceSessionMode } from './service-session-mode.js';
@@ -89,6 +90,9 @@ export type ServiceOpts = {
   dryRun?: boolean;
   /** Packaged instances use an isolated unit and a durable Electron runtime. */
   unitName?: string;
+  /** Linux packaged: the built-in browser's own unit, for a server with no screen
+   *  (`browser-host-service.ts`). Absent: no host is installed, one in place is left as found. */
+  browserHost?: BrowserHostService;
   unitContent?: string;
   /** Exact previous packaged template, used only to repair its invalid directory syntax. */
   legacyUnitContent?: string;
@@ -188,6 +192,8 @@ export type ServiceResult = {
    * other services at logout: the onboarding says so before the click.
    */
   lingering?: boolean;
+  /** Linux `status` only: the built-in browser's unit next to the daemon, when one is installed. */
+  browserHost?: { unit: string; state: string };
   reason?: string;
 };
 
@@ -2362,6 +2368,8 @@ export function removeServiceDefinition(opts: ServiceOpts): ServiceResult {
   if (opts.platform === 'linux') {
     file = unitPath(opts.homeDir, opts.unitName);
     stop = run(opts, lines, 'systemctl', ['--user', 'disable', '--now', opts.unitName ?? LINUX_UNIT]);
+    // Written by the same install: a browser host with no daemon to serve has nothing to do.
+    removeBrowserHost(opts, lines, null);
   } else {
     return { ok: false, code: 1, lines, reason: `nothing to remove on ${opts.platform}` };
   }
@@ -2424,6 +2432,89 @@ function applyLingerOnInstall(opts: ServiceOpts, lines: string[]): void {
     : `lingering could not be turned off (${res.stderr.trim() || `exit ${res.code}`}): Timon keeps running after you log out`);
 }
 
+/* ─── The built-in browser's unit, next to a Linux daemon (`browser-host-service.ts`) ──── */
+
+/** The browser host's unit file of this home, when one is installed. */
+function installedBrowserHost(opts: ServiceOpts): { unit: string; file: string } | null {
+  if (opts.platform !== 'linux') return null;
+  const unit = browserHostUnit(opts.timonHome);
+  const file = unitPath(opts.homeDir, unit);
+  return existsSync(file) ? { unit, file } : null;
+}
+
+/** Stops, disables and deletes the browser host's unit. The daemon's own reload follows, or `reload` asks for one. */
+function removeBrowserHost(opts: ServiceOpts, lines: string[], why: string | null, reload = false): void {
+  const installed = installedBrowserHost(opts);
+  if (!installed) return;
+  run(opts, lines, 'systemctl', ['--user', 'disable', '--now', installed.unit]);
+  if (opts.dryRun) {
+    lines.push(`(dry-run) would remove ${installed.file}`);
+  } else {
+    rmSync(installed.file, { force: true });
+    lines.push(`removed ${installed.file}`);
+  }
+  if (reload) run(opts, lines, 'systemctl', ['--user', 'daemon-reload']);
+  if (why) lines.push(`built-in browser service removed (${installed.unit}): ${why}`);
+}
+
+/**
+ * After the daemon's unit was installed: the browser host's unit, written and started when
+ * this machine wants one, removed when it no longer does (a desktop session appeared, the
+ * setting was turned off). Its failure is a line, never the install's: the daemon serves
+ * without it, as it always did.
+ */
+function syncBrowserHost(opts: ServiceOpts, lines: string[]): void {
+  const host = opts.browserHost;
+  if (!host) return;
+  const refusal = host.refusal();
+  if (refusal !== null || host.unitContent === null) {
+    if (installedBrowserHost(opts)) removeBrowserHost(opts, lines, refusal, true);
+    else lines.push(`built-in browser service: not installed, ${refusal ?? 'no executable to run'}`);
+    return;
+  }
+  const file = unitPath(opts.homeDir, host.unitName);
+  const previous = readIfExists(file);
+  write(file, host.unitContent, opts.dryRun ?? false, lines);
+  const reload = run(opts, lines, 'systemctl', ['--user', 'daemon-reload']);
+  let res = reload.code === 0 ? run(opts, lines, 'systemctl', ['--user', 'enable', '--now', host.unitName]) : reload;
+  // `enable --now` leaves a running host on its previous command line; an update apply
+  // restarts it on the package now installed.
+  if (res.code === 0 && previous !== null && (previous !== host.unitContent || opts.restart || opts.replacing)) {
+    res = run(opts, lines, 'systemctl', ['--user', 'restart', host.unitName]);
+  }
+  lines.push(res.code !== 0
+    ? `built-in browser service could not be started (${host.unitName}): ${res.stderr.trim() || `exit ${res.code}`}`
+    : opts.dryRun ? `(dry-run) would install the built-in browser service (${host.unitName})`
+      : `built-in browser service installed (${host.unitName}): agents can browse with no screen`);
+}
+
+/** The desktop's own removal of the Linux service (`desktop-uninstall-service.ts`): the host goes with it. */
+export function removeBrowserHostService(opts: ServiceOpts): string[] {
+  const lines: string[] = [];
+  removeBrowserHost(opts, lines, null, true);
+  return lines;
+}
+
+/** `stop` / `start` of the browser host with its daemon. Not its own gesture's failure: a line. */
+function browserHostGesture(opts: ServiceOpts, lines: string[], verb: 'stop' | 'start'): void {
+  const installed = installedBrowserHost(opts);
+  if (!installed) return;
+  const res = run(opts, lines, 'systemctl', ['--user', verb, installed.unit]);
+  if (res.code !== 0) lines.push(`built-in browser service did not ${verb} (${installed.unit}): ${res.stderr.trim() || `exit ${res.code}`}`);
+}
+
+function browserHostStatus(opts: ServiceOpts): { unit: string; state: string } | null {
+  const installed = installedBrowserHost(opts);
+  if (!installed) return null;
+  let state = 'unknown';
+  try {
+    const res = opts.exec('systemctl', ['--user', 'show', installed.unit, '--property=ActiveState']);
+    const value = /^ActiveState=(\S+)/m.exec(res.stdout)?.[1];
+    if (res.code === 0 && value) state = value;
+  } catch { /* unknown */ }
+  return { unit: installed.unit, state };
+}
+
 export function installService(opts: ServiceOpts): ServiceResult {
   if (opts.platform === 'linux' && !opts.dryRun) {
     let status = linuxService(opts);
@@ -2469,6 +2560,7 @@ export function installService(opts: ServiceOpts): ServiceResult {
   lines.push(!ok ? `systemctl refused: ${res.stderr.trim()}`
     : opts.dryRun ? `(dry-run) would install the service (${opts.unitName ?? LINUX_UNIT})`
       : `service installed (${opts.unitName ?? LINUX_UNIT})`);
+  if (ok) syncBrowserHost(opts, lines);
   return { ok, code: ok ? 0 : 1, lines };
 }
 
@@ -2486,6 +2578,7 @@ export function uninstallService(opts: ServiceOpts): ServiceResult {
     if (!res.ok) return res;
   } else {
     run(opts, lines, 'systemctl', ['--user', 'disable', '--now', opts.unitName ?? LINUX_UNIT]);
+    removeBrowserHost(opts, lines, null);
     const file = unitPath(opts.homeDir, opts.unitName);
     if (!opts.dryRun) {
       rmSync(file, { force: true });
@@ -2566,6 +2659,11 @@ export function statusService(opts: ServiceOpts): ServiceResult {
   if (opts.platform === 'linux' && !res.reason) {
     const lingering = lingerEnabled(opts);
     if (lingering !== null) res.lingering = lingering;
+    const browser = browserHostStatus(opts);
+    if (browser) {
+      res.browserHost = browser;
+      res.lines.push(`browser   : ${browser.unit} (${browser.state})`);
+    }
   }
   if (res.installed) {
     // Windows: read from the shape `statusWindows` already queried, not twice.
@@ -2638,6 +2736,7 @@ function stopLinux(opts: ServiceOpts, lines: string[]): ServiceResult {
   // `stop`, not `disable --now`: the unit stays enabled, so a boot still starts it.
   const res = run(opts, lines, 'systemctl', ['--user', 'stop', unit]);
   if (res.code !== 0) return { ok: false, code: 1, lines, reason: res.stderr.trim() || 'systemd could not stop the service' };
+  browserHostGesture(opts, lines, 'stop');
   writeStoppedMarker(opts, lines);
   lines.push(`service stopped (${unit}): it starts again at the next boot, when you open Timon, or with timon service start`);
   return { ok: true, code: 0, lines };
@@ -2649,6 +2748,7 @@ function startLinux(opts: ServiceOpts, lines: string[]): ServiceResult {
   const unit = opts.unitName ?? LINUX_UNIT;
   const res = run(opts, lines, 'systemctl', ['--user', 'start', unit]);
   if (res.code !== 0) return { ok: false, code: 1, lines, reason: res.stderr.trim() || 'systemd could not start the service' };
+  browserHostGesture(opts, lines, 'start');
   clearStoppedMarker(opts);
   lines.push(`service started (${unit})`);
   return { ok: true, code: 0, lines };

@@ -4,7 +4,7 @@ import { existsSync, readFileSync, rmSync } from 'node:fs';
 import { resolve, win32 } from 'node:path';
 import { homeOfTask } from './orphan-services.js';
 import {
-  MACOS_LABEL, WINDOWS_TASK, launchDaemonPath, plistPath, stopInstallationProcessesStep, stopLauncherStep, unitPath, uninstallService, type ServiceOpts,
+  MACOS_LABEL, WINDOWS_TASK, launchDaemonPath, plistPath, removeBrowserHostService, stopInstallationProcessesStep, stopLauncherStep, unitPath, uninstallService, type ServiceOpts,
 } from './service-install.js';
 
 function sameHome(actual: string, expected: string): void {
@@ -66,6 +66,8 @@ export function removeDesktopService(opts: ServiceOpts): void {
     }
     rmSync(file, { force: true });
     checked('systemctl', ['--user', 'daemon-reload']);
+    // The browser host the daemon served has nothing left to do.
+    try { removeBrowserHostService(opts); } catch { /* best effort, the daemon is already gone */ }
     return;
   } else if (opts.platform === 'win32') {
     // Query through PowerShell so "missing task" is distinct from permission
