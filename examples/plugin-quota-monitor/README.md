@@ -36,6 +36,17 @@ props.
 The plugin's own routes (`ctx.router()`, mounted on
 `/api/plugins/quota-monitor/`): `/all`, `/history`, `/providers`.
 
+## Another person signs in
+
+The browser half is not loaded again when the account signed in on the page
+changes, and `ctx.usage.list()` answers for the caller's own accounts. So the
+store that feeds both surfaces listens to `onAccountChange` from `@timon/ui`
+(client API 20): it drops what it read, ignores a reading still in flight for
+the previous account, and reads again. The manifest stays at API 17: the
+signal is read from the module as a namespace (`import * as platform`) and
+tested before use, so an older Timon still loads the plugin and simply waits
+for its next poll.
+
 ## Try it
 
 ```bash

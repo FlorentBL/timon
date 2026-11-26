@@ -43,7 +43,7 @@ export const PLATFORM_MODULE_SOURCES: Record<string, string> = {
     + 'formatDate=u.formatDate,formatTime=u.formatTime,formatDateTime=u.formatDateTime,formatNumber=u.formatNumber,formatPercent=u.formatPercent,formatBytes=u.formatBytes,formatRelativeTime=u.formatRelativeTime,formatAgeShort=u.formatAgeShort,formatList=u.formatList,compareText=u.compareText,useAppCard=u.useAppCard,useMcpTab=u.useMcpTab,apiErrorMessage=u.apiErrorMessage,parseApiError=u.parseApiError,'
     + 'BoardCard=u.BoardCard,DetailShell=u.DetailShell,DetailFrame=u.DetailFrame,useKanbanCard=u.useKanbanCard,useTodoForm=u.useTodoForm,useJobDialog=u.useJobDialog,usePublishDialog=u.usePublishDialog,useGitStackProject=u.useGitStackProject,GitStackProjectPicker=u.GitStackProjectPicker,useTodoOpener=u.useTodoOpener,useProjectSettings=u.useProjectSettings,useWidgetCount=u.useWidgetCount,useWidgetAttention=u.useWidgetAttention,useWidgetMenu=u.useWidgetMenu,useWidgetInFront=u.useWidgetInFront,usePageToc=u.usePageToc,useAgentMascot=u.useAgentMascot,useEmailCode=u.useEmailCode,useLookStyler=u.useLookStyler,'
     + 'useProviderPage=u.useProviderPage,ProviderSection=u.ProviderSection,ProviderSettingRow=u.ProviderSettingRow,useProviderRow=u.useProviderRow,ProviderRow=u.ProviderRow,'
-    + 'useNotices=u.useNotices,useNotice=u.useNotice,useUpdateDialog=u.useUpdateDialog;',
+    + 'useNotices=u.useNotices,useNotice=u.useNotice,useUpdateDialog=u.useUpdateDialog,onAccountChange=u.onAccountChange;',
   'api.js': 'export const api=globalThis.__TIMON_PLATFORM__.api;',
   'theme.js': 'export const theme=globalThis.__TIMON_PLATFORM__.theme;',
   'navigate.js': 'export const navigate=globalThis.__TIMON_PLATFORM__.navigate;',

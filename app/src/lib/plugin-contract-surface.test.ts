@@ -33,6 +33,7 @@ import { useTodoOpener } from '../plugins-client/kanban/todo-opener';
 import { useFenceGrant } from '../components/chat/fence-grant-card';
 import { useProjectSettings } from '../components/project-settings-slot';
 import { useWidgetAttention, useWidgetCount, useWidgetInFront, useWidgetMenu } from '../components/widget-host/widget-self';
+import { onAccountSwitch } from './account-change';
 import { PLATFORM_MODULE_SOURCES, platformModuleExports } from './plugin-host/platform-modules';
 import { PLATFORM_MODULES } from './plugin-host/modules';
 
@@ -275,6 +276,16 @@ test('the fence card belongs to wave 19', () => {
   assert.equal(snapshot.modules['ui.js']?.useFenceGrant?.since, 19);
   const declarations = readFileSync(join(process.cwd(), '../packages/sdk/src/ui.d.ts'), 'utf8');
   assert.ok(declarations.includes('export function useFenceGrant(): FenceGrantValue | null;'));
+});
+
+test('the signal of a change of account opens in wave 20, with no id for the plugin', () => {
+  // 0.1.11 shipped API 19 without it: a plugin importing it by name declares 20.
+  assert.ok(snapshot.apiVersion >= 20);
+  assert.equal(UI_KIT.onAccountChange, onAccountSwitch);
+  assert.ok(platformModuleExports('ui.js').includes('onAccountChange'));
+  assert.equal(snapshot.modules['ui.js']?.onAccountChange?.since, 20);
+  const declarations = readFileSync(join(process.cwd(), '../packages/sdk/src/ui.d.ts'), 'utf8');
+  assert.ok(declarations.includes('export function onAccountChange(listener: () => void): () => void;'));
 });
 
 test('the platform `react` module hands out the app\'s own React, and its React 19 names open wave 20', () => {
