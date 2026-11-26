@@ -92,7 +92,7 @@ import { NativeBrowserEngine } from './native-browser.js';
 import { sessionAnnotationRoutes } from './native-browser-bubble.js';
 import { startRendererDiagnostic } from './renderer-diagnostic.js';
 import { NativeBrowserMedia } from './native-browser-media.js';
-import { startNativeBrowserServer } from './native-browser-server.js';
+import { providerCommand, startNativeBrowserServer } from './native-browser-server.js';
 import { APP_INFO_CHANNEL, canReadAppInfo } from './app-info.js';
 import { machineForDetachedWindow, OPEN_WINDOW_CHANNEL, parseOpenWindowRequest } from './window-open.js';
 import { createDesktopSpeech, type DesktopSpeech } from './speech-desktop.js';
@@ -1656,11 +1656,7 @@ async function main(): Promise<void> {
     locale: () => uiLocale(),
   });
   browserMedia = new NativeBrowserMedia(desktopHome, profileId => nativeBrowser!.mediaSource(profileId));
-  const browserProvider = await startNativeBrowserServer(desktopHome, (body) => {
-    if (typeof body.action === 'string' && body.action.startsWith('media')) return browserMedia!.command(body);
-    if (body.action === 'stop' && typeof body.profileId === 'string') browserMedia!.closeProfile(body.profileId);
-    return nativeBrowser!.command(body);
-  });
+  const browserProvider = await startNativeBrowserServer(desktopHome, providerCommand(() => ({ browser: nativeBrowser!, media: browserMedia! })));
   stopBrowserProvider = browserProvider.close;
   const restoreId = await offerDataRestore(cfg.home);
   // Asked before anything reads the revision file: a task deleted outside

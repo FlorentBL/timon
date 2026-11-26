@@ -12,6 +12,23 @@ export interface NativeBrowserProviderDescriptor {
   pid: number;
 }
 
+/** What the provider dispatches to: the engine, and the capture of its tabs. */
+export interface ProviderTargets {
+  browser: { command(body: Record<string, unknown>): Promise<unknown> };
+  media: { command(body: Record<string, unknown>): Promise<unknown>; closeProfile(profileId: string): void };
+}
+
+/** One command of the daemon: a stream command goes to the capture, every other to the engine. */
+export function providerCommand(targets: () => ProviderTargets): (body: Record<string, unknown>) => Promise<unknown> {
+  return (body) => {
+    const { browser, media } = targets();
+    if (typeof body.action === 'string' && body.action.startsWith('media')) return media.command(body);
+    // A stopped profile ends its streams first: they would capture a closed tab.
+    if (body.action === 'stop' && typeof body.profileId === 'string') media.closeProfile(body.profileId);
+    return browser.command(body);
+  };
+}
+
 async function readCommand(request: IncomingMessage): Promise<Record<string, unknown>> {
   if (!request.headers['content-type']?.startsWith('application/json')) {
     throw new BrowserCommandError('Expected application/json.', 415);
