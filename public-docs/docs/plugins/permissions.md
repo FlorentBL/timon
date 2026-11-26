@@ -181,11 +181,9 @@ Inside a plugin route, mission, task and TO DO operations are scoped to that cal
 
 `ctx.user()` names the account. It does not say whether a person is at the screen: an agent's mission acts with the account of the person who launched it, and the CLI acts as the administrator. **`ctx.caller()`** answers that, inside a route handler:
 
-| `ctx.caller()?.kind` | The request came from |
-|---|---|
-| `'person'` | someone signed in at a screen (a browser session, or a paired device relaying one) |
-| `'mission'` | an agent's mission, with the token Timon gave it |
-| `'service'` | any other credential: the CLI and the MCP servers, a plugin's or a system token |
+- `{ kind: 'person' }`: someone signed in at a screen (a browser session, or a paired device relaying one).
+- `{ kind: 'mission' }`: an agent's mission, with the token Timon gave it.
+- `{ kind: 'service' }`: any other credential: the CLI and the MCP servers, a plugin's or a system token.
 
 It returns `undefined` where `ctx.user()` has no request to read (a background job, an event handler, a webhook delivery), and for the anonymous request of a machine with no account yet. It carries no id and no token. Use it to keep a gesture for a person, an import or an approval for instance:
 
