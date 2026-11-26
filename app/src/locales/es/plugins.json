@@ -432,6 +432,7 @@
       "archive": "El archivo se rechazó por no ser seguro.",
       "command-missing": "El programa indicado por el registro no está en el archivo.",
       "definition-refused": "Timon rechazó este agente: su descripción se contradice.",
+      "withReason": "{sentence} ({reason})",
       "authorize-failed": "No se pudo autorizar el programa. El registro de Timon tiene los detalles.",
       "failed": "La operación falló. El registro de Timon tiene los detalles."
     }

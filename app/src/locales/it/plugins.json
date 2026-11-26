@@ -432,6 +432,7 @@
       "archive": "L’archivio è stato rifiutato perché non sicuro.",
       "command-missing": "Il programma indicato dal registro non è nell’archivio.",
       "definition-refused": "Timon ha rifiutato questo agente: la sua descrizione è contraddittoria.",
+      "withReason": "{sentence} ({reason})",
       "authorize-failed": "Impossibile autorizzare il programma. Il log di Timon ha i dettagli.",
       "failed": "L’operazione non è riuscita. Il log di Timon ha i dettagli."
     }

@@ -432,6 +432,7 @@
       "archive": "Das Archiv wurde als unsicher abgelehnt.",
       "command-missing": "Das von der Registry genannte Programm ist nicht im Archiv.",
       "definition-refused": "Timon hat diesen Agenten abgelehnt: Seine Beschreibung widerspricht sich.",
+      "withReason": "{sentence} ({reason})",
       "authorize-failed": "Das Programm konnte nicht autorisiert werden. Das Timon-Log enthält die Details.",
       "failed": "Der Vorgang ist fehlgeschlagen. Das Timon-Log enthält die Details."
     }

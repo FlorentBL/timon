@@ -432,6 +432,7 @@
       "archive": "Het archief is als onveilig geweigerd.",
       "command-missing": "Het programma dat het register noemt, staat niet in het archief.",
       "definition-refused": "Timon heeft deze agent geweigerd: zijn beschrijving spreekt zichzelf tegen.",
+      "withReason": "{sentence} ({reason})",
       "authorize-failed": "Het programma kon niet worden geautoriseerd. Het Timon-log bevat de details.",
       "failed": "De bewerking is mislukt. Het Timon-log bevat de details."
     }

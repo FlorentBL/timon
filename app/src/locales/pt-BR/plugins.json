@@ -432,6 +432,7 @@
       "archive": "O arquivo foi recusado por ser inseguro.",
       "command-missing": "O programa indicado pelo registro não está no arquivo.",
       "definition-refused": "O Timon recusou este agente: a descrição dele se contradiz.",
+      "withReason": "{sentence} ({reason})",
       "authorize-failed": "Não foi possível autorizar o programa. O log do Timon tem os detalhes.",
       "failed": "A operação falhou. O log do Timon tem os detalhes."
     }

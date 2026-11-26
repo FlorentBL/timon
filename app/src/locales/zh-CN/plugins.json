@@ -442,6 +442,7 @@
       "archive": "压缩包存在安全风险，已被拒绝。",
       "command-missing": "压缩包中没有注册表指定的程序。",
       "definition-refused": "Timon 拒绝了此智能体：其描述内容相互矛盾。",
+      "withReason": "{sentence}（{reason}）",
       "authorize-failed": "无法授权此程序。详情请查看 Timon 日志。",
       "failed": "操作失败。详情请查看 Timon 日志。"
     }
