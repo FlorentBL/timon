@@ -78,6 +78,27 @@
   !define TIMON_SERVICE_PAUSE_FAILED 6
 !endif
 
+; The service's daemon stops cleanly on a request file (host/stop-request.ts):
+; taskkill runs no handler, and the next start read the update as
+; an unknown exit. The installer writes it once the pause script runs, so that
+; the task is disabled while the daemon leaves, and only when it runs as the
+; user: an elevated write into a folder the user controls can be pointed
+; elsewhere with a junction. Elevated (a per-machine install, UAC off), it
+; writes nothing and the pause ends the daemon by force, as before. The file
+; carries no secret: whoever can write there can already end the daemon.
+!macro timonRequestStop
+  ${If} $6 != ""
+    CreateDirectory "$3\run"
+    ClearErrors
+    FileOpen $5 "$3\run\stop-request" w
+    ${IfNot} ${Errors}
+      FileWrite $5 "installer$\r$\n"
+      FileClose $5
+    ${EndIf}
+    ClearErrors
+  ${EndIf}
+!macroend
+
 !macro timonPauseService
   Push $0
   Push $1
@@ -85,6 +106,7 @@
   Push $3
   Push $4
   Push $5
+  Push $6
   ; An update's uninstaller runs after the installer already paused it; under
   ; /S nothing may prompt. One exception: the update Timon starts from its own
   ; window (/S --updated --force-run --timon-app-update, update-installer.ts).
@@ -125,18 +147,24 @@
       ${If} $3 == ""
         StrCpy $3 "$PROFILE\.timon"
       ${EndIf}
+      StrCpy $6 ""
+      ${IfNot} ${UAC_IsAdmin}
+        StrCpy $6 " -StopRequested"
+      ${EndIf}
       ${Do}
         System::Call 'kernel32::GetCurrentProcessId() i .r0'
-        ${StdUtils.ExecShellWaitEx} $1 $2 "$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" "runas" '-NoProfile -NonInteractive -ExecutionPolicy Bypass -WindowStyle Hidden -File "$PLUGINSDIR\timon-service-pause.ps1" -InstallerPid $0 -Exe "${APP_EXECUTABLE_FILENAME}" -InstallDir "$INSTDIR" -TimonHome "$3"'
+        ${StdUtils.ExecShellWaitEx} $1 $2 "$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" "runas" '-NoProfile -NonInteractive -ExecutionPolicy Bypass -WindowStyle Hidden -File "$PLUGINSDIR\timon-service-pause.ps1" -InstallerPid $0 -Exe "${APP_EXECUTABLE_FILENAME}" -InstallDir "$INSTDIR" -TimonHome "$3"$6'
         ${If} $1 == "ok"
+          !insertmacro timonRequestStop
           ${StdUtils.WaitForProcEx} $0 $2
         ${Else}
           ; Refused elevation (a standard account on a managed PC, 21/10/2026):
           ; the same script, unelevated, still pauses the user's own Interactive
           ; task and ends the daemon in the user's session. A session-0 S4U
           ; service is out of its reach, and the script says so.
-          ${StdUtils.ExecShellWaitEx} $1 $2 "$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" "open" '-NoProfile -NonInteractive -ExecutionPolicy Bypass -WindowStyle Hidden -File "$PLUGINSDIR\timon-service-pause.ps1" -InstallerPid $0 -Exe "${APP_EXECUTABLE_FILENAME}" -InstallDir "$INSTDIR" -TimonHome "$3"'
+          ${StdUtils.ExecShellWaitEx} $1 $2 "$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" "open" '-NoProfile -NonInteractive -ExecutionPolicy Bypass -WindowStyle Hidden -File "$PLUGINSDIR\timon-service-pause.ps1" -InstallerPid $0 -Exe "${APP_EXECUTABLE_FILENAME}" -InstallDir "$INSTDIR" -TimonHome "$3"$6'
           ${If} $1 == "ok"
+            !insertmacro timonRequestStop
             ${StdUtils.WaitForProcEx} $0 $2
           ${EndIf}
         ${EndIf}
@@ -183,6 +211,7 @@
       ${Loop}
     ${EndIf}
   ${EndIf}
+  Pop $6
   Pop $5
   Pop $4
   Pop $3

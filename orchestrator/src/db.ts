@@ -3346,10 +3346,13 @@ const markIntegrationOpenStmt = db.prepare(`
 `);
 // Only from 'closed': the landing gesture opened a new pull request for a job
 // whose previous one was closed without a merge. The closing's notice is
-// forgotten, so a second closing is told again.
+// forgotten, so a second closing is told again. So is the closing's cleanup:
+// it only gave back the pilot's worktree, and the branch still has to go once
+// the new pull request lands; a pass still running on the closed row loses its
+// reservation and stops before its effect.
 const markIntegrationReopenedStmt = db.prepare(`
   UPDATE integrations SET state = 'open', pr_number = ?, pr_url = ?, head_sha = ?, checks = NULL,
-    notified_state = NULL, updated_at = ?
+    notified_state = NULL, cleaned_at = NULL, cleanup_started_at = NULL, cleanup_token = NULL, updated_at = ?
   WHERE id = ? AND state = 'closed'
 `);
 // A pushed repair moves the head the poller compares with the target; the
