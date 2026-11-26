@@ -113,6 +113,12 @@ export type DoctorReport = {
    */
   terminal?: { available: boolean; reason: string | null };
   /**
+   * The built-in browser: who provides it on this machine and, when nobody does or something
+   * degrades it, why and the command that repairs it. A warning, never a blocker: a web-only
+   * install has no browser and still works. Optional: reports built before it lack it.
+   */
+  builtInBrowser?: BuiltInBrowserReport;
+  /**
    * Mission isolation: whether the kernel fences a mission launched now
    * (`host/fence.ts`, `resources.ts` `hostFenceStatus`), and what a launch does
    * when it cannot. `tampered` is apart from `unsupported` on purpose: the
@@ -174,6 +180,31 @@ export type DoctorReport = {
   /** What prevents TIMON from working at all. */
   blockers: string[];
   ok: boolean;
+};
+
+/** Why the built-in browser is missing or degraded (`host/built-in-browser-status.ts`). */
+export type BuiltInBrowserProblemId =
+  | 'stale-provider' | 'host-turned-off' | 'host-appimage' | 'desktop-missing' | 'host-unit-missing'
+  | 'host-unit-stopped' | 'host-not-ready' | 'desktop-closed' | 'no-provider' | 'no-fonts' | 'no-sandbox';
+
+export type BuiltInBrowserProblem = {
+  id: BuiltInBrowserProblemId;
+  /** True when it keeps the browser away; false when the browser runs, degraded. */
+  blocking: boolean;
+  /** English, for the CLI, the log and the agents. */
+  message: string;
+  /** The command, or the gesture, that repairs it; `null` when there is none to give. */
+  fix: string | null;
+};
+
+export type BuiltInBrowserReport = {
+  /** Who provides it now: the desktop app, the browser host of a server, or nobody. */
+  provider: 'desktop' | 'host' | 'none';
+  /** A Linux machine with no desktop session, where only the browser host can provide it. */
+  server: boolean;
+  /** The browser host's systemd unit, when this install has one. */
+  unit: string | null;
+  problems: BuiltInBrowserProblem[];
 };
 
 export type BinaryReport = {

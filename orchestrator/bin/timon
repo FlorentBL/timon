@@ -1194,6 +1194,8 @@ Resources (anti-saturation guard for the machine):
   timon backup status [--json]               state, next run, archives under backups/
   timon doctor [--json]                      binaries, host capabilities, config
   timon doctor --report [--save F]           diagnostic report to paste in a support request
+  timon doctor --browser [--wait S] [--json] does the built-in browser answer? if not, why and the
+                                             command that repairs it; waits up to S seconds (exit 1: no)
   timon logs [--desktop|--prompts|--supervisor] [-n N]
                                              newest log lines first (default: daemon, 100)
 
@@ -5710,6 +5712,7 @@ async function applyPackagedUpdate({ allowOlder = false } = {}) {
  *  which isn't necessarily the one running a daemon. */
 async function cmdDoctor(argv) {
   if (argv.includes('--report')) return cmdDoctorReport(argv);
+  if (argv.includes('--browser')) return cmdDoctorBrowser(argv);
   // A packaged CLI refuses to open data an unapproved update would migrate
   // (db.ts, TODO #535): the findings below, built without the database, still say what to do.
   let doctor;
@@ -5723,6 +5726,9 @@ async function cmdDoctor(argv) {
     };
   }
   const { diagnose, formatDoctor, refreshPinnedIdentities } = doctor;
+  // After the modules loaded, never before: marked, db.ts would refuse a pending update as a daemon
+  // does, without the findings below. Before `diagnose()`: only a packaged install has a browser host.
+  await markPackagedForDoctor();
   // The CLI asks every pinned program again: the daemon's report only reads what it last learned.
   if (typeof refreshPinnedIdentities === 'function') await refreshPinnedIdentities({ fresh: true });
   const report = diagnose();
@@ -5760,6 +5766,59 @@ async function cmdDoctor(argv) {
       : '\nFindings: none detected.\n');
   }
   if (!report.ok) process.exit(1);
+}
+
+/** The packaged CLI's marker, as `timon service` sets it. Nothing to mark from a source checkout. */
+async function markPackagedForDoctor() {
+  try {
+    const { markPackagedCli } = await loadDist('host/service-environment');
+    const { timonVersion } = await loadDist('data-version');
+    const { TIMON_HOME } = await loadDist('paths');
+    markPackagedCli(process.env, process.versions, timonVersion(), TIMON_HOME);
+  } catch { /* An older build: the report reads the service as a source checkout. */ }
+}
+
+/**
+ * `timon doctor --browser [--wait <seconds>] [--json]`: does the built-in browser answer, and if
+ * not, why and the command that repairs it. Asks the provider itself, not the daemon: right after
+ * `timon service install` the daemon may not listen yet. Exit 0 when it answers, 1 otherwise.
+ */
+async function cmdDoctorBrowser(argv) {
+  const args = argv.slice();
+  const rawWait = takeFlag(args, 'wait');
+  const wait = rawWait === undefined ? 0 : Number(rawWait);
+  if (!Number.isFinite(wait) || wait < 0 || wait > 600) {
+    process.stderr.write('timon doctor --browser: --wait takes a number of seconds, from 0 to 600\n');
+    process.exit(2);
+  }
+  let modules;
+  try {
+    modules = { ...await loadDist('built-in-browser'), ...await loadDist('host/built-in-browser-status') };
+  } catch (e) {
+    // An update waiting for approval: the database stays closed, and the browser unchecked.
+    if (e?.name !== 'PackagedCliUpdatePendingError') throw e;
+    process.stderr.write(`timon doctor --browser: ${e.message}\n`);
+    process.exit(1);
+  }
+  const { builtInBrowserNow, probeBuiltInBrowser, formatBuiltInBrowser } = modules;
+  // After the modules loaded, as in `timon doctor`.
+  await markPackagedForDoctor();
+  const deadline = Date.now() + wait * 1000;
+  let answers = await probeBuiltInBrowser();
+  while (!answers && Date.now() < deadline) {
+    await new Promise((resolve) => setTimeout(resolve, 2000));
+    answers = await probeBuiltInBrowser();
+  }
+  const report = builtInBrowserNow();
+  if (args.includes('--json')) {
+    process.stdout.write(JSON.stringify({ ...report, answers }, null, 2) + '\n');
+  } else {
+    const lines = formatBuiltInBrowser(report);
+    // A live process that does not answer: the report found nothing wrong, the probe did.
+    if (!answers && report.provider !== 'none') lines.push('  its provider runs but does not answer' + (report.unit ? `  →  systemctl --user restart ${report.unit}` : ''));
+    process.stdout.write(lines.join('\n') + '\n');
+  }
+  if (!answers) process.exit(1);
 }
 
 /** `timon doctor`'s fence coverage, read from the local daemon; `why` says why it is missing. */

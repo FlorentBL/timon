@@ -108,13 +108,21 @@ export function chromeCapability(detect: () => ChromeDetection = detectChromeBin
     : { available: false, reason: detection.reason, message: chromeMissingMessage(detection.reason) };
 }
 
-export async function nativeBrowserCapabilities(detect?: () => ChromeDetection): Promise<{
-  available: boolean; reason?: string; chrome: ChromeCapability;
+export type NativeBrowserCapabilities = {
+  available: boolean;
+  /** The refusal in English; `refusal` is the same, coded for the webview to translate. */
+  reason?: string; refusal?: ApiErrorBody;
+  chrome: ChromeCapability;
   media?: { webrtc: boolean; encoded: boolean; iceServers: unknown[] };
-}> {
+};
+
+export async function nativeBrowserCapabilities(detect?: () => ChromeDetection): Promise<NativeBrowserCapabilities> {
   const chrome = chromeCapability(detect);
   try {
     await callNativeBrowser('_probe', { action: 'status' }, { timeoutMs: 1500 });
     return { available: true, chrome, media: { webrtc: true, encoded: true, iceServers: [] } };
-  } catch (error) { return { available: false, reason: (error as Error).message, chrome }; }
+  } catch (error) {
+    const refusal = browserErrorBody(error);
+    return { available: false, reason: refusal.error, refusal, chrome };
+  }
 }

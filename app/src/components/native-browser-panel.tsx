@@ -27,7 +27,7 @@ import { useIslandGesture } from '@/lib/island-drag';
 import { useNativeViewsCovered } from '@/lib/native-view-cover';
 
 export { BROWSER_ISLAND_KEY, BROWSER_ISLAND_TYPE, NativeBrowserPanel } from './native-browser-opener';
-import { apiErrorMessage } from '@/lib/api-error';
+import { apiErrorMessage, apiErrorMessageOrNull } from '@/lib/api-error';
 
 const button = 'rounded-md p-1.5 text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-40';
 const menuButton = 'flex w-full items-center gap-2 rounded-md px-2 py-2 text-left text-xs hover:bg-muted disabled:opacity-40';
@@ -41,11 +41,12 @@ export function useNativeBrowserCapability(): { available: boolean; error: strin
   useEffect(() => {
     const controller = new AbortController();
     setError(null);
-    void nativeBrowserRequest<{ available: boolean; reason?: string }>('capabilities', undefined, controller.signal)
+    void nativeBrowserRequest<{ available: boolean; reason?: string; refusal?: unknown }>('capabilities', undefined, controller.signal)
       .then((value) => {
         if (controller.signal.aborted) return;
         if (value.available) setProvider('native');
-        else { setProvider('checking'); setError(value.reason || t('browserPanel.native.unavailable')); }
+        // The coded refusal says who should run the browser here (the app, or a server's browser host) in the reader's language.
+        else { setProvider('checking'); setError(apiErrorMessageOrNull(value.refusal) || value.reason || t('browserPanel.native.unavailable')); }
       })
       .catch((err) => { if (!controller.signal.aborted) setError((err as Error).message); });
     return () => controller.abort();

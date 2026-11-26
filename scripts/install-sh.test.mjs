@@ -371,3 +371,132 @@ test('outside the test hooks, only the pinned manifest and key are read', { skip
   assert.equal(r.status, 1);
   assert.match(r.stderr, /unknown option: --bogus/);
 });
+
+/** Writes an executable shell script into `bin`. */
+function tool(bin, name, body) {
+  writeFileSync(join(bin, name), `#!/bin/sh\n${body}\n`);
+  chmodSync(join(bin, name), 0o755);
+}
+
+/**
+ * A server where nothing real is installed: sudo runs its command, apt-get and timon only write
+ * what they were asked into `calls.log`, apt-cache knows the fonts of `known`, and the font
+ * folders are `fonts` (empty: no font).
+ */
+function fakeServer(ctx, { known = ['fonts-liberation', 'fonts-noto-core', 'fonts-noto-color-emoji'], withFont = false, doctor = 0, oldCli = false } = {}) {
+  const bin = join(ctx.dir, 'fake-bin');
+  mkdirSync(bin, { recursive: true });
+  const log = join(ctx.dir, 'calls.log');
+  writeFileSync(log, '');
+  const fonts = join(ctx.dir, 'fonts');
+  mkdirSync(join(fonts, 'truetype'), { recursive: true });
+  if (withFont) writeFileSync(join(fonts, 'truetype', 'DejaVuSans.ttf'), '');
+  tool(bin, 'sudo', 'exec "$@"');
+  tool(bin, 'apt-get', `echo "apt-get $*" >>'${log}'`);
+  tool(bin, 'apt-cache', `case " ${known.join(' ')} " in *" $2 "*) exit 0 ;; esac\nexit 100`);
+  tool(bin, 'timon', [
+    `echo "timon $*" >>'${log}'`,
+    'case "$1" in',
+    `  help) echo '  timon init'; ${oldCli ? '' : "echo '  timon doctor --browser [--wait S] [--json]'"} ;;`,
+    `  doctor) echo 'built-in browser  UNAVAILABLE'; echo '  the browser host service is stopped  →  systemctl --user restart timon-browser-x'; exit ${doctor} ;;`,
+    'esac',
+  ].join('\n'));
+  return {
+    log,
+    env: { PATH: `${bin}:${process.env.PATH}`, TIMON_INSTALL_TIMON_BIN: join(bin, 'timon'), TIMON_INSTALL_FONT_DIRS: fonts },
+  };
+}
+
+/** A signed manifest whose deb is a real local file, so the run goes past the download. */
+function debManifest(key) {
+  const dir = mkdtempSync(join(tmpdir(), 'timon-install-deb-'));
+  const deb = Buffer.from('a genuine deb');
+  const file = join(dir, 'timon-desktop_0.2.0_amd64.deb');
+  writeFileSync(file, deb);
+  const now = new Date();
+  const payload = {
+    schema: 1, issuedAt: now.toISOString(), expiresAt: new Date(now.getTime() + 86_400_000).toISOString(),
+    channels: { stable: entry('0.2.0', { 'linux-x64-deb': { name: 'timon-desktop_0.2.0_amd64.deb', url: pathToFileURL(file).href, size: deb.length, sha256: sha(deb) } }) },
+  };
+  return { dir, ctx: setup(envelopeOf(payload, key), key) };
+}
+
+const asRoot = typeof process.getuid === 'function' && process.getuid() === 0 && 'the service branch runs for an account that is not root';
+
+test('a server with no font gets the fonts its distribution knows, in the plan and in the same apt-get', { skip: skip || asRoot }, () => {
+  const key = pair();
+  const { dir, ctx } = debManifest(key);
+  try {
+    const fake = fakeServer(ctx, { known: ['fonts-liberation', 'fonts-noto-core'] });
+    const plan = run(ctx, key, ['--dry-run', '--format', 'deb', '--server'], fake.env);
+    assert.equal(plan.code, 0, plan.err);
+    assert.match(plan.out, /fonts: +fonts-liberation fonts-noto-core \(this server has none/);
+    assert.doesNotMatch(plan.out, /fonts-noto-color-emoji|fonts-noto-cjk/);
+    assert.match(plan.out, /then: +timon service install \(background service and built-in browser\)/);
+
+    const r = run(ctx, key, ['--format', 'deb', '--server'], fake.env);
+    assert.equal(r.code, 0, r.err);
+    const calls = readFileSync(fake.log, 'utf8');
+    assert.match(calls, /^apt-get install -y \S+timon-desktop_0\.2\.0_amd64\.deb fonts-liberation fonts-noto-core$/m);
+  } finally {
+    rmSync(ctx.dir, { recursive: true, force: true });
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('a server that has a font, or a machine with a screen, installs no font', { skip: skip || asRoot }, () => {
+  const key = pair();
+  const { dir, ctx } = debManifest(key);
+  try {
+    const fake = fakeServer(ctx, { withFont: true });
+    const server = run(ctx, key, ['--format', 'deb', '--server'], fake.env);
+    assert.equal(server.code, 0, server.err);
+    assert.doesNotMatch(server.out, /fonts:/);
+    assert.match(readFileSync(fake.log, 'utf8'), /^apt-get install -y \S+\.deb$/m);
+
+    const bare = fakeServer(ctx);
+    const desktop = run(ctx, key, ['--dry-run', '--format', 'deb'], { ...bare.env, DISPLAY: ':0' });
+    assert.equal(desktop.code, 0, desktop.err);
+    assert.doesNotMatch(desktop.out, /fonts:/);
+  } finally {
+    rmSync(ctx.dir, { recursive: true, force: true });
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('after the service install, the built-in browser is checked through timon and announced', { skip: skip || asRoot }, () => {
+  const key = pair();
+  const { dir, ctx } = debManifest(key);
+  try {
+    const ready = fakeServer(ctx);
+    const r = run(ctx, key, ['--format', 'deb', '--server'], ready.env);
+    assert.equal(r.code, 0, r.err);
+    const calls = readFileSync(ready.log, 'utf8');
+    assert.match(calls, /^timon service install$/m);
+    assert.match(calls, /^timon doctor --browser --wait 60$/m);
+    assert.ok(calls.indexOf('timon service install') < calls.indexOf('timon doctor --browser'), 'checked after the install');
+    assert.match(r.out, /The built-in browser is ready: agents can browse with no screen\./);
+    assert.match(r.out, /create your account/);
+
+    const down = fakeServer(ctx, { doctor: 1 });
+    const failed = run(ctx, key, ['--format', 'deb', '--server'], down.env);
+    assert.equal(failed.code, 0, 'a browser that does not answer does not fail the install');
+    assert.match(failed.err, /the built-in browser does not answer:/);
+    assert.match(failed.err, /systemctl --user restart timon-browser-x/);
+    assert.match(failed.err, /check it again with: timon doctor --browser/);
+    assert.doesNotMatch(failed.out, /is ready/);
+
+    const old = fakeServer(ctx, { oldCli: true });
+    const older = run(ctx, key, ['--format', 'deb', '--server'], old.env);
+    assert.equal(older.code, 0, older.err);
+    assert.doesNotMatch(readFileSync(old.log, 'utf8'), /doctor/, 'an older package has no check to run');
+    assert.doesNotMatch(older.out, /Checking the built-in browser|is ready/);
+
+    const none = fakeServer(ctx);
+    run(ctx, key, ['--format', 'deb', '--server', '--no-service'], none.env);
+    assert.doesNotMatch(readFileSync(none.log, 'utf8'), /service install|doctor/);
+  } finally {
+    rmSync(ctx.dir, { recursive: true, force: true });
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
