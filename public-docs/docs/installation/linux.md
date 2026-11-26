@@ -13,11 +13,13 @@ Timon runs on Linux on x86-64 processors only. Linux on ARM (aarch64, arm64), su
 curl -fsSL https://timon-ai.com/install.sh | sh
 ```
 
-It installs the deb package on Debian and Ubuntu (it asks for your password once, for `apt`) and the AppImage in `~/Applications` elsewhere. On a machine without a display, it also installs the background service and ends on `timon init`; see [Run Timon on a headless server](headless-server.md). On an ARM machine it stops before installing anything, with `no Timon package for linux-arm64`. Options and checks: [Install with one command](overview.md#install-with-one-command).
+It installs the deb package on Debian and Ubuntu (it asks for your password once, for `apt`) and the AppImage in `~/Applications` elsewhere. On a machine without a display, it also installs the background service, with a second one that runs the built-in browser, adds fonts if the server has none, and ends on `timon init`; see [Run Timon on a headless server](headless-server.md). On an ARM machine it stops before installing anything, with `no Timon package for linux-arm64`. Options and checks: [Install with one command](overview.md#install-with-one-command).
 
 ## Desktop package
 
 Use the supplied deb package, recommended during beta: it also installs the `timon` terminal command without requiring Node.js. AppImage remains portable and does not install a global CLI. Open Timon and follow [First run](first-run.md). The setup flow checks tools and installs a systemd user service so that agent work can continue after the window closes.
+
+On Ubuntu 23.10 and later (24.04 included), the deb package also installs an AppArmor profile, `/etc/apparmor.d/timon-desktop`. These releases only let programs with a profile create the sandbox Chromium isolates pages in; the profile grants that single right to `/opt/Timon/timon-desktop`, and removing the package removes it. If Timon still refuses to open with a sandbox message, see [Linux: no usable sandbox](troubleshooting.md#linux-no-usable-sandbox).
 
 Spell checking is off in the desktop app on Linux: it would need dictionaries downloaded from Google on first launch, and the app makes no request you did not ask for. On Windows and macOS the system's own spell checker is used, with nothing downloaded. A right click in a text field of the desktop app opens **Cut**, **Copy**, **Paste** and **Select All** on every system (only **Paste** and **Select All** in a password field), with the spelling suggestions of a misspelled word on Windows and macOS.
 

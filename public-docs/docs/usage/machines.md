@@ -56,7 +56,7 @@ So does **the account you act as there**: the screen layout (widgets, islands, c
 
 **Light or dark mode** follows the machine too, like its primary colour: each machine keeps its own, so with several desktop windows one can be light and another dark. Switching the mode in a window changes it for that machine only. A machine where you never chose one shows this computer's mode until you do.
 
-The **built-in browser** of a project, opened from a browser or the installed web app, shows and drives the browser of the active machine, as it does on this computer. That machine must have the Timon desktop app running, since the desktop app runs the built-in browser. In the desktop app's own window, see [Known limits](#known-limits).
+The **built-in browser** of a project, opened from a browser or the installed web app, shows and drives the browser of the active machine, as it does on this computer. On a machine with a desktop, the Timon app must be running there, since it runs the built-in browser; a Linux server runs it in a background service of its own (see [Run Timon on a headless server](../installation/headless-server.md#6-the-built-in-browser-on-a-server)). In the desktop app's own window, see [Known limits](#known-limits).
 
 ### What stays on this computer
 
@@ -109,7 +109,7 @@ window stays a viewer.
 
 The browser follows the machine selected in each window. On another machine it
 uses live video, as in the web app; Timon's desktop app must be running on that
-machine. If the local native view cannot open, the panel also uses live video.
+machine, or, on a Linux server, its browser service. If the local native view cannot open, the panel also uses live video.
 
 ## Known limits
 
