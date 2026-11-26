@@ -8815,16 +8815,24 @@ export const dbApi = {
       `INSERT INTO workspaces (slug, name, color, lead_agent, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)`,
     ).run(row.slug, row.name, row.color, row.lead_agent, now, now);
   },
-  updateWorkspace(slug: string, fields: Partial<Pick<WorkspaceRow, 'name' | 'color' | 'lead_agent'>>): void {
+  /** Updates the pole and, in the same transaction, sets the tag of the
+   *  `retag` projects to `fields.name` (a rename that would orphan them). */
+  updateWorkspace(slug: string, fields: Partial<Pick<WorkspaceRow, 'name' | 'color' | 'lead_agent'>>, retag: readonly string[] = []): void {
     const cur = this.getWorkspaceRow(slug);
     if (!cur) return;
-    db.prepare(`UPDATE workspaces SET name=?, color=?, lead_agent=?, updated_at=? WHERE slug=?`).run(
-      fields.name ?? cur.name,
-      fields.color === undefined ? cur.color : fields.color,
-      fields.lead_agent === undefined ? cur.lead_agent : fields.lead_agent,
-      Date.now(),
-      slug,
-    );
+    const name = fields.name ?? cur.name;
+    db.transaction(() => {
+      const now = Date.now();
+      db.prepare(`UPDATE workspaces SET name=?, color=?, lead_agent=?, updated_at=? WHERE slug=?`).run(
+        name,
+        fields.color === undefined ? cur.color : fields.color,
+        fields.lead_agent === undefined ? cur.lead_agent : fields.lead_agent,
+        now,
+        slug,
+      );
+      const setTag = db.prepare(`UPDATE projects SET workspace = ?, updated_at = ? WHERE slug = ?`);
+      for (const p of retag) setTag.run(name, now, p);
+    })();
   },
   /** Removes the pole and detaches the given projects (they keep existing). */
   deleteWorkspace(slug: string, projectSlugs: readonly string[]): void {
