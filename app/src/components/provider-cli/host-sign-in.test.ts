@@ -254,8 +254,15 @@ test('recovery: the "Desktop app — sign in" card signs in in the app, its inst
     assert.equal(commandShown('/Applications/Claude.app/claude'), false);
     assert.doesNotMatch(card.textContent ?? '', /open a NEW terminal/);
 
+    // No path in permanence (TODO #1198): where the program lives is one menu item away.
+    assert.doesNotMatch(card.textContent ?? '', /Found at/);
     const items = await openRowMenu(m, card);
-    assert.deepEqual(items.map((i) => i.textContent), ['Install', 'Show the sign-in command']);
+    // The install item says it adds the standalone CLI, next to the desktop app.
+    assert.deepEqual(items.map((i) => i.textContent), ['Install the standalone CLI', 'Show the sign-in command', 'Show where it is installed']);
+    await m.click(items.find((i) => i.textContent === 'Show where it is installed'));
+    await m.until(() => /Found at \/Applications\/Claude\.app\/claude/.test(card.textContent ?? ''), 'the path, on demand');
+    await m.click(Array.from(card.querySelectorAll('[data-cli-path] button')).find((b) => b.textContent === 'Hide'));
+    await m.until(() => !/Found at/.test(card.textContent ?? ''), 'the path folded again');
 
     await m.click(offer('login'));
     await m.until(() => dialog()?.getAttribute('data-host-sign-in') === 'login', 'the sign-in dialog');
@@ -284,8 +291,9 @@ test('recovery: a CLI Timon cannot sign in hands its command to a terminal, and 
     assert.equal(commandShown('/usr/bin/claude'), false, 'handed over: not shown');
 
     // Nothing else in sight: the command is one menu item away.
+    assert.doesNotMatch(card.textContent ?? '', /Found at/);
     const items = await openRowMenu(m, card);
-    assert.deepEqual(items.map((i) => i.textContent), ['Show the sign-in command']);
+    assert.deepEqual(items.map((i) => i.textContent), ['Show the sign-in command', 'Show where it is installed']);
   } finally {
     await m.unmount();
   }
@@ -307,7 +315,8 @@ test('recovery: a command Timon could neither type nor copy unfolds, for a termi
     await m.until(() => commandShown(command), 'the command, unfolded');
     assert.deepEqual(m.typed, []);
     assert.match(card.textContent ?? '', /Timon could not copy the command/);
-    assert.ok(!card.querySelector('button[data-row-menu]'), 'nothing left in the menu');
+    const items = await openRowMenu(m, card);
+    assert.deepEqual(items.map((i) => i.textContent), ['Show where it is installed'], 'only the path left in the menu');
   } finally {
     await m.unmount();
   }
