@@ -64,3 +64,20 @@ test('an HTTP error is reported without a partial file', async () => {
   await assert.rejects(() => downloadVerified('https://x.example/gone', file, { maxBytes: 100, fetchFn: serve({}) }), refused('http'));
   assert.equal(existsSync(file), false);
 });
+
+test('a network or system error names neither a file of this machine nor the address', async () => {
+  const quoting: Fetcher = async () => { throw new TypeError('Failed to parse https://user:secret@x.example/a?token=abc'); };
+  await assert.rejects(() => downloadVerified('https://x.example/a', dest(), { maxBytes: 100, fetchFn: quoting }), (err: unknown) => {
+    assert.ok(err instanceof DownloadError);
+    assert.equal(err.message, 'download failed: Failed to parse <address>');
+    return true;
+  });
+  // What a failing disk write says: the file system's message quotes the path.
+  const system = Object.assign(new Error("ENOSPC: no space left on device, write '/home/someone/file'"), { code: 'ENOSPC', syscall: 'write' });
+  const fetchFn = serve({ 'https://x.example/a': () => new Response(new ReadableStream({ start: (stream) => stream.error(system) })) });
+  await assert.rejects(() => downloadVerified('https://x.example/a', dest(), { maxBytes: 100, fetchFn }), (err: unknown) => {
+    assert.ok(err instanceof DownloadError);
+    assert.equal(err.message, 'download failed: ENOSPC');
+    return true;
+  });
+});

@@ -351,6 +351,25 @@ export class AcpRegistryService {
       throw new AcpRegistryError('already-installed', `${agent.name} ${agent.version} is already installed and intact`, 409);
     }
 
+    try {
+      return await this.fetchAndCommit(agent, support, state);
+    } catch (err) {
+      // The route answers a refusal without logging it: this line is the only trace support can read afterwards.
+      // 4xx refusals are the expected answers to a request, not a failure to investigate.
+      if (err instanceof AcpRegistryError && err.status >= 500) {
+        // One line, whatever the registry's text holds (an agent name may carry a line break).
+        const reason = err.message.replace(/[\u0000-\u001f\u007f\u2028\u2029]+/g, ' ');
+        console.warn(`[acp-registry] install ${agent.id}@${agent.version} failed (${err.code}): ${reason}`);
+      }
+      throw err;
+    }
+  }
+
+  /** The download, the checks and the swap of one accepted install; `state` is what was recorded before it. */
+  private async fetchAndCommit(
+    agent: RegistryAgent, support: Extract<AgentSupport, { supported: true }>, state: Record<string, InstalledAgent>,
+  ): Promise<AgentView> {
+    const current = state[agent.id];
     mkdirSync(this.paths.tmp, { recursive: true, mode: 0o700 });
     const work = join(this.paths.tmp, randomBytes(8).toString('hex'));
     const final = this.paths.versionDir(agent.id, agent.version);

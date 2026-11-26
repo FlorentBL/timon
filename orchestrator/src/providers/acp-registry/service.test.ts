@@ -3,7 +3,7 @@
  * registry document and the archives; the profile registry is the real one.
  */
 import '../../test-home.js';
-import { test } from 'node:test';
+import { test, type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
@@ -136,21 +136,33 @@ test('the longest id the registry schema accepts (64 characters) is still instal
   } finally { service.dispose(); }
 });
 
-test('a sha256 that does not match refuses the install and leaves no file', { skip: !posix }, async () => {
+/** The warnings written while `run` runs. */
+async function warningsOf(t: TestContext, run: () => Promise<unknown>): Promise<string[]> {
+  const warn = t.mock.method(console, 'warn', () => {});
+  try {
+    await run();
+    return warn.mock.calls.map((call) => call.arguments.join(' '));
+  } finally { warn.mock.restore(); }
+}
+
+test('a sha256 that does not match refuses the install, logs why and leaves no file', { skip: !posix }, async (t) => {
   const archive = tarOf('#!/bin/sh\n');
   const served: Served = new Map([
     [REGISTRY_URL, registryDoc([agentEntry({ id: 'bad-hash', archive: 'https://downloads.example.com/bad.tar.gz', sha256: 'a'.repeat(64) })])],
     ['https://downloads.example.com/bad.tar.gz', archive],
   ]);
   const { service, home } = newService(served);
-  await assert.rejects(() => service.install('bad-hash'), (e: unknown) => e instanceof AcpRegistryError && e.code === 'checksum');
+  const warnings = await warningsOf(t, () => assert.rejects(() => service.install('bad-hash'), (e: unknown) => e instanceof AcpRegistryError && e.code === 'checksum'));
+  assert.equal(warnings.length, 1);
+  assert.match(warnings[0]!, /^\[acp-registry\] install bad-hash@1\.0\.0 failed \(checksum\): .*sha256/);
+  assert.equal(warnings[0]!.includes(home), false, 'no path of this machine');
   assert.equal(isBackendName(profileIdOf('bad-hash')), false);
   const agents = join(home, 'providers', 'acp-registry', 'agents');
   assert.equal(existsSync(agents) ? readdirSync(agents).length : 0, 0);
   assert.deepEqual(existsSync(join(home, 'providers', 'acp-registry', 'tmp')) ? readdirSync(join(home, 'providers', 'acp-registry', 'tmp')) : [], []);
 });
 
-test('a hostile archive is refused after the hash passed, and a registry cmd cannot leave the folder', { skip: !posix }, async () => {
+test('a hostile archive is refused after the hash passed, and a registry cmd cannot leave the folder', { skip: !posix }, async (t) => {
   const evil = buildTarGzWithModes([{ path: '../escape', data: 'x' }]);
   const noCmd = tarOf('#!/bin/sh\n');
   const served: Served = new Map([
@@ -162,10 +174,16 @@ test('a hostile archive is refused after the hash passed, and a registry cmd can
     ['https://downloads.example.com/evil.tar.gz', evil],
     ['https://downloads.example.com/ok.tar.gz', noCmd],
   ]);
-  const { service } = newService(served);
-  await assert.rejects(() => service.install('evil'), (e: unknown) => e instanceof AcpRegistryError && e.code === 'archive');
-  await assert.rejects(() => service.install('wrong-cmd'), (e: unknown) => e instanceof AcpRegistryError && e.code === 'command-missing');
-  await assert.rejects(() => service.install('absent-cmd'), (e: unknown) => e instanceof AcpRegistryError && e.code === 'command-missing');
+  const { service, home } = newService(served);
+  const refusals = [['evil', 'archive'], ['wrong-cmd', 'command-missing'], ['absent-cmd', 'command-missing']] as const;
+  for (const [id, code] of refusals) {
+    const warnings = await warningsOf(t, () => assert.rejects(() => service.install(id), (e: unknown) => e instanceof AcpRegistryError && e.code === code));
+    assert.equal(warnings.length, 1);
+    assert.ok(warnings[0]!.startsWith(`[acp-registry] install ${id}@1.0.0 failed (${code}): `), warnings[0]);
+    assert.equal(warnings[0]!.includes(home), false, 'no path of this machine');
+  }
+  const expected = await warningsOf(t, () => assert.rejects(() => service.install('nobody'), (e: unknown) => e instanceof AcpRegistryError && e.code === 'unknown-agent'));
+  assert.deepEqual(expected, [], 'an expected refusal is not logged');
   for (const id of ['evil', 'wrong-cmd', 'absent-cmd']) assert.equal(isBackendName(profileIdOf(id)), false);
 });
 
