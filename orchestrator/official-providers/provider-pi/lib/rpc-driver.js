@@ -271,7 +271,10 @@ export class RpcSessionDriver {
     const turn = this.openTurn(false);
     const sendImages = Boolean(images?.length) && this.sessionInfo.capabilities.image;
     /** @type {PiRecord} */
-    const command = { type: 'prompt', message: text };
+    // Pi can still be streaming when no turn is open here (a turn given up on, a run whose
+    // `agent_start` is not read yet): a bare prompt is then refused as "already processing" and
+    // the user's message is lost. `followUp` is ignored by an idle Pi and queues it on a busy one.
+    const command = { type: 'prompt', message: text, streamingBehavior: 'followUp' };
     if (images?.length && !sendImages) {
       // The note comes first: the message is what the model answers, so it stays the last thing it reads.
       command.message = `[${images.length} image(s) not sent: the selected model does not accept images]\n\n${text}`;
