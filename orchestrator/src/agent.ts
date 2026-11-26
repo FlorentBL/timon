@@ -119,6 +119,7 @@ import { backendOwnerPlugin, backendTrust, type BackendTrust } from './backends/
 import { DEFAULT_BACKEND_CAPABILITIES } from './backends/types.js';
 import { BUILTIN_DECLARATIONS } from './backends/builtin-declarations.js';
 import { checkDaemonNode, chooseLaunchNode, launchInterpreter, NoTrustedNodeError, withLaunchPath, type DaemonNodeCheck } from './host/launch-path.js';
+import { withNpmNativeEnv } from './host/binary-path.js';
 import { missionProcessDir, trackMissionProcess } from './host/mission-processes.js';
 import { closeLaunchSeal, openLaunchSeal } from './backends/launch-seal.js';
 import { assertSpawnPinned, buildSealedSpawn } from './backends/sealed-spawn.js';
@@ -2090,7 +2091,7 @@ async function spawnMissionProcess(
   // under nvm or `%APPDATA%\npm` runs `env node`, and the CLI starts Timon's MCP servers
   // as `node <script>` — with the service's PATH, neither found one (tester report, macOS).
   // From the resolved binary, never `launch.cmd`: under the resource guard that is the wrapper.
-  const procEnv = withLaunchPath(missionEnv({
+  const launchEnv = withLaunchPath(missionEnv({
     missionId,
     agentName,
     specEnv: spec.env,
@@ -2107,6 +2108,8 @@ async function spawnMissionProcess(
     // The same `node` the CLI is started with, for the MCP servers it starts as `node <script>`.
     node,
   });
+  // A native build started in place of its npm launcher (C1 `npmNative`) gets what the launcher gave it.
+  const procEnv = withNpmNativeEnv(launchEnv, backendBin) ?? launchEnv;
   if (launch.fence?.state === 'fenced') {
     // A `mktemp` lands in the mission's own folder, not in a /tmp every other
     // mission shares. And a CLI that updates itself writes where the fence

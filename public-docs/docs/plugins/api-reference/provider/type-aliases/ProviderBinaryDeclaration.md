@@ -31,6 +31,12 @@
 
 ***
 
+### npmNative?
+
+> `readonly` `optional` **npmNative?**: [`ProviderNpmNative`](ProviderNpmNative.md)
+
+***
+
 ### searchDirs?
 
 > `readonly` `optional` **searchDirs?**: `Readonly`\<`Partial`\<`Record`\<[`InstallPlatform`](InstallPlatform.md) \| `"any"`, readonly `string`[]\>\>\>
