@@ -29,6 +29,10 @@ export type BrowserHostService = {
   unitName: string;
   /** `null` when this package cannot run the host; `refusal` says why. */
   unitContent: string | null;
+  /** The installed package's `timon-desktop` the unit runs; `null` from an AppImage. */
+  executable: string | null;
+  /** The setting, read now: `timon doctor` tells a host turned off from one that died. */
+  enabled: () => boolean;
   /**
    * Why the host must not run here, `null` to install it. Called at install time only: it may
    * ask systemd, which a status or an options build must not pay for.
@@ -124,6 +128,8 @@ export function browserHostService(opts: ServiceOpts, input: {
   return {
     unitName: browserHostUnit(opts.timonHome),
     unitContent: desktop ? renderBrowserHostUnit(opts.timonHome, desktop) : null,
+    executable: desktop,
+    enabled: () => browserHostEnabled(input),
     refusal: () => {
       if (!browserHostEnabled(input)) return `turned off (${BROWSER_HOST_SETTING})`;
       if (linuxGraphicalSession(input.env, opts.exec)) return 'this machine has a desktop session, where the Timon app runs the browser';

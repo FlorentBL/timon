@@ -108,7 +108,8 @@ import { licenseState, setLicenseState } from './license/runtime.js';
 import { whiteLabelAllowed } from './license/capabilities.js';
 import { createBetaGate } from './license/beta-gate.js';
 import { createMcpRelayMiddleware } from './mcp-relay-server.js';
-import { kernelBootSummary, pluginFailureNotification } from './kernel/boot-report.js';
+import { builtInBrowserBootLines, kernelBootSummary, pluginFailureNotification } from './kernel/boot-report.js';
+import { builtInBrowserNow } from './built-in-browser.js';
 
 
 /**
@@ -357,6 +358,11 @@ export async function boot(opts: { listen?: boolean; catalog?: readonly ModuleDe
         server.on('upgrade', (req, socket, head) => ctx.http.handleUpgrade(req, socket, head));
       }
       console.log(`[timon] orchestrator (kernel) listening on http://localhost:${port}`);
+      // The app and the browser host start beside the daemon: give them time to offer the browser.
+      setTimeout(() => {
+        try { for (const line of builtInBrowserBootLines(builtInBrowserNow())) console.log(line); }
+        catch (e) { console.warn(`[browser] the built-in browser could not be checked: ${(e as Error).message}`); }
+      }, BROWSER_BOOT_REPORT_DELAY_MS).unref();
     }, (error: NodeJS.ErrnoException) => {
       // Say who holds the port: a service crash-looping on EADDRINUSE is otherwise undiagnosable.
       void (error.code === 'EADDRINUSE' ? inspectListenPort(host, listenHostsFor(listenHost)[0]!, port) : Promise.resolve(undefined))
@@ -369,6 +375,9 @@ export async function boot(opts: { listen?: boolean; catalog?: readonly ModuleDe
   }
   return ctx;
 }
+
+/** How long after the listen the start-up log says who provides the built-in browser. */
+const BROWSER_BOOT_REPORT_DELAY_MS = 30_000;
 
 /**
  * A failing third-party plugin must show: the daemon carries on, but the human

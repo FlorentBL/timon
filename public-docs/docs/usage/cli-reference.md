@@ -447,6 +447,8 @@ Resources (anti-saturation guard for the machine):
   timon backup status [--json]               state, next run, archives under backups/
   timon doctor [--json]                      binaries, host capabilities, config
   timon doctor --report [--save F]           diagnostic report to paste in a support request
+  timon doctor --browser [--wait S] [--json] does the built-in browser answer? if not, why and the
+                                             command that repairs it; waits up to S seconds (exit 1: no)
   timon logs [--desktop|--prompts|--supervisor] [-n N]
                                              newest log lines first (default: daemon, 100)
 

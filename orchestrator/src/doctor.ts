@@ -50,6 +50,8 @@ import type { ProviderBinaryIdentity } from './backends/provider-declarations.js
 import { declaredBinary } from './host/declared-binaries.js';
 import { usableProviders } from './backends/usable.js';
 import { isRemoteDialect } from './backends/types.js';
+import { builtInBrowserNow } from './built-in-browser.js';
+import { formatBuiltInBrowser } from './host/built-in-browser-status.js';
 import type { DoctorReport, BinaryReport, BinaryProvider, ProviderAuthReport } from './plugins/contract/system.js';
 export type { DoctorReport, BinaryReport, BinaryProvider, ProviderAuthReport } from './plugins/contract/system.js';
 
@@ -263,6 +265,10 @@ export function diagnose(): DoctorReport {
 
   const { report: missionIsolation, blocker: isolationBlocker } = missionIsolationNow(cfg);
 
+  let builtInBrowser: DoctorReport['builtInBrowser'];
+  // A browser that cannot be read is no reason to lose the rest of the report.
+  try { builtInBrowser = builtInBrowserNow(); } catch { builtInBrowser = undefined; }
+
   const free = freeBytes(TIMON_HOME);
   const storage = { path: TIMON_HOME, freeBytes: free, low: free !== null && free < LOW_DISK_BYTES };
 
@@ -305,6 +311,7 @@ export function diagnose(): DoctorReport {
     docker,
     display,
     terminal: nodePtyStatus(),
+    ...(builtInBrowser ? { builtInBrowser } : {}),
     missionIsolation,
     storage,
     mainSeat: doctorMainSeat(),
@@ -515,6 +522,7 @@ export function formatDoctor(r: DoctorReport): string {
     `docker           ${r.docker.usable ? `usable — ${r.docker.detail}` : `unusable — ${r.docker.detail}`}`,
     `graphical session ${r.display ?? 'none (DISPLAY/WAYLAND_DISPLAY empty)'}`,
     ...(r.terminal ? [`built-in terminal ${r.terminal.available ? 'available' : `UNAVAILABLE — ${r.terminal.reason ?? 'node-pty did not load'}`}`] : []),
+    ...(r.builtInBrowser ? formatBuiltInBrowser(r.builtInBrowser) : []),
     `mission isolation ${r.missionIsolation.message}`,
     ...r.missionIsolation.gaps.map((gap) => `  ${gap}`),
   );
@@ -536,6 +544,12 @@ export function formatDoctor(r: DoctorReport): string {
   }
   if (r.terminal && !r.terminal.available) {
     lines.push('', 'WARNING:', `  - the built-in terminal cannot start: ${r.terminal.reason ?? 'node-pty did not load'}`);
+  }
+  // A server's browser is what its agents browse with: a missing one is said again where it shows.
+  const browserProblems = r.builtInBrowser?.server ? r.builtInBrowser.problems : r.builtInBrowser?.problems.filter((p) => !p.blocking) ?? [];
+  if (browserProblems.length) {
+    lines.push('', 'WARNING:');
+    for (const p of browserProblems) lines.push(`  - built-in browser: ${p.message}${p.fix ? `  →  ${p.fix}` : ''}`);
   }
   if (r.blockers.length) {
     lines.push('', 'BLOCKING:');
