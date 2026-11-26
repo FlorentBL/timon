@@ -10,6 +10,10 @@
  * The rewrite is textual and bounded to the fields listed here: we do not read
  * the whole JSON again looking for paths. A wrong `cwd` breaks an
  * agent loudly; a memo rewritten askew goes unnoticed.
+ *
+ * A variable sealed in the vault (`env_secrets`) is out of reach here: the
+ * vault already holds a path under the home as `~/…` and expands it when read
+ * (`McpHeaderSecret.home`, `mcp.ts`).
  */
 import { readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';

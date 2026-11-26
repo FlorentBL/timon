@@ -19,7 +19,7 @@ import {
   existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync,
 } from 'node:fs';
 import { join } from 'node:path';
-import { TIMON_HOME } from './paths.js';
+import { TIMON_HOME, expandPath, portablePath } from './paths.js';
 import { isInjectedMcpServer, isInjectedMcpStubId } from './injected-mcp.js';
 import {
   serializeCodexMcpToml, serializeGrokMcpToml, serializeMcpJson, type McpLaunchServer,
@@ -28,7 +28,7 @@ import { forgetOAuthFlows, OAuthRefreshError, refreshTokens } from './oauth.js';
 import { mcpHostAddressRefusal } from './mcp-url-guard.js';
 import { pinnedLaunchTarget } from './mcp-launch-proxy.js';
 import { vaultEnabled } from './secrets/availability.js';
-import { SecretStoreError, createSecret, deleteSecret, readSecretValue } from './secrets/store.js';
+import { SecretStoreError, createSecret, deleteSecret, readSecretValue, updateSecret } from './secrets/store.js';
 import { mcpRelayRoute } from './mcp-relay-route.js';
 import {
   McpOAuthVaultUnavailableError, forgetMcpOAuthTokens, mcpOAuthVaultAvailable, readMcpOAuthClientSecret, readMcpOAuthTokens,
@@ -49,6 +49,12 @@ export type McpHeaderSecret = {
    *  replaced or removed like any header. Absent: a key the daemon set itself
    *  (an Apps connector), which no reader is shown and only the daemon replaces. */
   typed?: true;
+  /** `true` (a variable only): the vault holds a path under the home written
+   *  `~/…`, expanded when read, so that `timon export` / `timon import` carry it
+   *  to another home as they carry the paths of the server's file
+   *  (`portability.ts` cannot read the vault). Harmless on an absolute value,
+   *  which expanding leaves as it is. */
+  home?: true;
 };
 
 /**
@@ -711,10 +717,11 @@ function sealHeaders(id: string, headers: Record<string, string>, kind: VaultKin
   if (!vaultEnabled()) return { failure: 'the secrets vault is switched off' };
   const refs: Record<string, McpHeaderSecret> = {};
   try {
-    for (const [header, value] of Object.entries(headers)) {
+    for (const [header, typed] of Object.entries(headers)) {
       const what = kind === 'env' ? 'variable' : 'header';
+      const value = kind === 'env' ? portablePath(typed) : typed;
       const secret = createSecret({ name: headerSecretName(id, header, kind), value, note: `MCP server ${id}: ${what} ${header}` });
-      refs[header] = { secret_id: secret.id, typed: true };
+      refs[header] = { secret_id: secret.id, typed: true, ...(value !== typed ? { home: true as const } : {}) };
       if (readSecretValue(secret.id) !== value) return abandon(refs, 'the vault did not give the value back');
     }
     return { refs };
@@ -787,6 +794,7 @@ export function migrateMcpHeadersToVault(): { moved: string[]; kept: string[] } 
       s = readFileRecord(id);
       if (!moved.includes(id)) moved.push(id);
     }
+    if (s && portableSealedPaths(s)) s = readFileRecord(id);
     if (!s || (s.transport.type !== 'http' && s.transport.type !== 'stdio')) continue;
     const kind: VaultKind = s.transport.type === 'stdio' ? 'env' : 'header';
     const clear = (s.transport.type === 'stdio' ? s.transport.env : s.transport.headers) ?? {};
@@ -813,6 +821,37 @@ export function migrateMcpHeadersToVault(): { moved: string[]; kept: string[] } 
     if (!moved.includes(id)) moved.push(id);
   }
   return { moved, kept };
+}
+
+/**
+ * Variables sealed before the vault wrote a path under the home as `~/…`
+ * (TODO #1181): rewritten so that the next `timon export` carries them to
+ * another home. The file takes the flag first: a run cut between the two
+ * leaves an absolute value under a flag that expanding leaves as it is.
+ * `true` when the file changed. Names no value, logs nothing.
+ */
+function portableSealedPaths(s: McpStoredServer): boolean {
+  if (s.transport.type !== 'stdio' || !vaultEnabled()) return false;
+  const pending: Array<{ key: string; ref: McpHeaderSecret; portable: string }> = [];
+  for (const [key, ref] of Object.entries(s.transport.env_secrets ?? {})) {
+    if (ref.home) continue;
+    let value: string;
+    try { value = readSecretValue(ref.secret_id); } catch { continue; }
+    const portable = portablePath(value);
+    if (portable !== value) pending.push({ key, ref, portable });
+  }
+  if (!pending.length) return false;
+  const refs = { ...s.transport.env_secrets };
+  for (const { key, ref } of pending) refs[key] = { ...ref, home: true };
+  try {
+    writeFileRecord({ ...s, transport: { ...s.transport, env_secrets: refs } });
+  } catch {
+    return false;
+  }
+  for (const { ref, portable } of pending) {
+    try { updateSecret(ref.secret_id, { value: portable }); } catch { /* the flag leaves the absolute value as it is */ }
+  }
+  return true;
 }
 
 function headerSecretIds(s: McpStoredServer | null): string[] {
@@ -963,7 +1002,11 @@ function vaultHeaders(id: string, transport: McpStoredHttpConfig): Record<string
  */
 function stdioEnv(id: string, transport: McpStoredStdioConfig): Record<string, string> | null {
   const fromVault = vaultHeaders(id, { type: 'http', url: '', header_secrets: transport.env_secrets });
-  return fromVault ? { ...(transport.env ?? {}), ...fromVault } : null;
+  if (!fromVault) return null;
+  for (const [key, ref] of Object.entries(transport.env_secrets ?? {})) {
+    if (ref.home && fromVault[key] !== undefined) fromVault[key] = expandPath(fromVault[key]);
+  }
+  return { ...(transport.env ?? {}), ...fromVault };
 }
 
 /**
