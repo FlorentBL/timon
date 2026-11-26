@@ -5881,6 +5881,11 @@ export const dbApi = {
       return ids;
     }).immediate();
   },
+  /** True while `path` is named by at least one task and every task naming it is DONE. */
+  worktreeOwnedOnlyByDone(path: string): boolean {
+    if ((openTasksOnWorktreeStmt.get(path) as { n: number }).n > 0) return false;
+    return (doneTasksOnWorktreeStmt.all(path) as { id: string }[]).length > 0;
+  },
   /** Gives `path` back to the tasks a refused removal detached it from. */
   restoreTaskWorktree(ids: string[], path: string): void {
     db.transaction(() => { for (const id of ids) restoreTaskWorktreeStmt.run(path, id); })();

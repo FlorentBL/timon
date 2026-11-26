@@ -48,6 +48,7 @@ import { WORKTREES_ROOT, currentBranch, deleteBranchGuarded, removeWorktreeGuard
 import { disposeDoneTaskWorktree, taskHolders } from './worktree-service.js';
 import { classifyOrphan, isWithinGrace } from './worktree-gc-guards.js';
 import { purgeShell, sweepShells } from './worktree-shell.js';
+import { removeBuildCaches } from './worktree-build-cache.js';
 import { execFileHost } from './host/index.js';
 import { hasLanded, integrationOfTask } from './chain-landing.js';
 
@@ -287,6 +288,29 @@ async function collectOrphans(known: Set<string>, graceMs: number, now: number):
 }
 
 /**
+ * Build caches (`.next`) of the worktrees the passes above kept, once every
+ * task naming the folder is DONE and past the grace: the folder stays for its
+ * landing or its unmerged work, the cache git ignores does not.
+ */
+async function collectBuildCaches(graceMs: number, now: number): Promise<number> {
+  if (!settingBool('TIMON_WORKTREE_GC_BUILD_CACHE')) return 0;
+  const owners = new Map<string, TaskRow[]>();
+  for (const t of dbApi.listTasks()) {
+    if (!t.worktree_path) continue;
+    owners.set(t.worktree_path, [...(owners.get(t.worktree_path) ?? []), t]);
+  }
+  let removed = 0;
+  for (const [path, tasks] of owners) {
+    if (tasks.some((t) => t.status !== 'DONE' || now - t.updated_at < graceMs)) continue;
+    if (!existsSync(path)) continue;
+    const gone = await removeBuildCaches(path, () => dbApi.worktreeOwnedOnlyByDone(path));
+    for (const dir of gone) console.log(`[worktree-gc] build cache removed: ${dir}`);
+    removed += gone.length;
+  }
+  return removed;
+}
+
+/**
  * Reconciliation rule: "a DONE task whose work is integrated no longer has
  * a worktree or a branch".
  *
@@ -306,6 +330,7 @@ export async function reconcileStaleWorktrees(): Promise<void> {
   const fromTasks = await collectFromTasks(graceMs, now);
   const detached = await collectDetachedBranches(graceMs, now);
   const orphans = await collectOrphans(known, graceMs, now);
+  await collectBuildCaches(graceMs, now);
 
   // The two passes above start from the database, and a shell is precisely
   // what the database forgot: `clearTaskWorktree` drops the path once the
