@@ -50,7 +50,7 @@ export function createClaudeProvider(services, token, usage, options = {}) {
  const { streamJsonUser, partialTextDelta } = runtime.streamJson;
  const { extractInitSessionId, providerRetryEvent } = runtime.events;
  const { streamJsonSpans } = runtime.spans;
- const { getClaudeUsage, getClaudeAccountUsage, claudeAuthStatus } = usage;
+ const { getClaudeUsage, getClaudeAccountUsage, rememberAccountKeychain, claudeAuthStatus } = usage;
  const { claudeSpawnEnv, readClaudeToken } = token;
 const CONTROL_TIMEOUT_MS = 10_000;
 const pendingControl = new Map();
@@ -175,6 +175,9 @@ const legacy = {
             if (outcome !== 'none' && outcome !== 'moved' && outcome !== 'unfenced') {
                 log?.warn(`[provider-claude] the sign-in of account ${account.id} stays in the macOS keychain (${outcome}): a fenced mission may fail to renew it`);
             }
+            // The gauge reads the account's folder and cannot ask the keychain outside a launch: an
+            // entry left there (no fence on this Mac) would keep it on "still in the keychain" for good.
+            if (entry && outcome !== 'none' && outcome !== 'moved') rememberAccountKeychain(account.configDir, await entry.read());
         }
         let env = account ? claudeAccountEnv(account.configDir) : claudeSpawnEnv(profile.env);
         // The base profile on an account is the host's own sign-in, kept by Timon in a folder of its
