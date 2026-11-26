@@ -93,11 +93,47 @@ export type MasterKeyOptions = {
 
 let cached: Buffer | null = null;
 let fallbackLogged = false;
+// Set when a resolution failed (a locked keyring, a missing file): the next key
+// adopted is a recovery, which what waited for the vault is told of.
+let failedSinceAdopt = false;
+const recoveryListeners = new Set<() => void>();
 
 /** Test seam: `paths.ts` freezes at import, the cache must not outlive a case. */
 export function resetMasterKeyCache(): void {
   cached = null;
   fallbackLogged = false;
+  failedSinceAdopt = false;
+}
+
+/**
+ * Calls `listener` each time the master key becomes readable again after a
+ * resolution failed: a keyring unlocked once the session opens, a key file put
+ * back (TODO #1181). Run after the current task, never inside the read that
+ * recovered it. Returns the unsubscribe.
+ */
+export function onMasterKeyRecovered(listener: () => void): () => void {
+  recoveryListeners.add(listener);
+  return () => { recoveryListeners.delete(listener); };
+}
+
+function noteRecovery(): void {
+  if (!failedSinceAdopt) return;
+  failedSinceAdopt = false;
+  for (const listener of recoveryListeners) {
+    setImmediate(() => {
+      try { listener(); } catch (err) { console.warn(`[secrets] a master key recovery listener failed (${(err as Error).name})`); }
+    });
+  }
+}
+
+/** Runs a resolution, remembering a failure so that the next success counts as a recovery. */
+function noteFailure<T>(resolve: () => T): T {
+  try {
+    return resolve();
+  } catch (err) {
+    failedSinceAdopt = true;
+    throw err;
+  }
 }
 
 function keyringOf(opts: MasterKeyOptions): Keyring | undefined {
@@ -281,6 +317,7 @@ function pickLiveKey(
 
 function adopt(key: Buffer): Buffer {
   cached = key;
+  noteRecovery();
   return key;
 }
 
@@ -477,6 +514,10 @@ function createMasterKey(): Buffer {
  */
 export function resolveMasterKey(opts: MasterKeyOptions = {}): Buffer {
   if (cached) return cached;
+  return noteFailure(() => resolveOrCreate(opts));
+}
+
+function resolveOrCreate(opts: MasterKeyOptions): Buffer {
   const existing = resolveExisting(opts);
   if (existing) return existing;
   if (opts.hasEncryptedSecrets?.() === true) {
@@ -498,7 +539,9 @@ export function resolveMasterKey(opts: MasterKeyOptions = {}): Buffer {
 /** Read-only resolution, for callers that must not create anything. */
 export function requireMasterKey(opts: MasterKeyOptions = {}): Buffer {
   if (cached) return cached;
-  const key = resolveExisting(opts);
-  if (!key) throw new SecretKeyError('absent', `no master key in the OS keyring nor in ${SECRET_KEY_FILE}`);
-  return key;
+  return noteFailure(() => {
+    const key = resolveExisting(opts);
+    if (!key) throw new SecretKeyError('absent', `no master key in the OS keyring nor in ${SECRET_KEY_FILE}`);
+    return key;
+  });
 }

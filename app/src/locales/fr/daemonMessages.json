@@ -360,6 +360,10 @@
     "integration_closed": {
       "title": "{pr, select, none {Branche d'intégration fermée : {branch}} other {Pull request fermée : {branch}}}",
       "body": "{branch} n'a pas atterri dans {target} : rien ne se ferme et les branches sont gardées. Son pilote décide de la suite."
+    },
+    "mcp_server_left_out": {
+      "title": "Serveur MCP `{serverId}` laissé de côté",
+      "body": "Timon n’a pas pu démarrer le serveur MCP `{serverId}` pour cette mission ({cause, select, vault {ses variables sont illisibles dans le coffre de secrets} mission_limit {cette mission fait déjà tourner {max} serveurs MCP relayés} daemon_limit {le daemon fait déjà tourner {max} serveurs MCP relayés} restarts {il a redémarré trop souvent} stopped {son pont a été arrêté} other {{detail}}}) : l’agent tourne sans lui. Ses variables n’ont pas été transmises à l’agent."
     }
   }
 }
