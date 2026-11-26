@@ -80,6 +80,47 @@ export type ProviderBinaryDeclaration = {
    * what it printed otherwise. Absent = the name is trusted, as before.
    */
   readonly identity?: ProviderBinaryIdentity;
+  /**
+   * The program is published on npm as a Node launcher that only starts a native build shipped in its
+   * package (Codex): when the resolved binary is that launcher, the daemon starts the native build
+   * instead, for missions, sign-in, version and doctor alike. Absent = the resolved file runs as found.
+   */
+  readonly npmNative?: ProviderNpmNative;
+};
+
+/** `<os>-<arch>` of the machine, as Node names them: the key of `ProviderNpmNative.executable`. */
+export const NPM_NATIVE_TARGETS = ['linux-x64', 'linux-arm64', 'darwin-x64', 'darwin-arm64', 'win32-x64', 'win32-arm64'] as const;
+export type NpmNativeTarget = (typeof NPM_NATIVE_TARGETS)[number];
+
+/**
+ * Where an npm launcher's native build sits, and what the launcher gives it. The swap happens only when
+ * the resolved binary is a Node script (or, on Windows, the npm shim of one) inside
+ * `node_modules/<package>`, and the native file exists there, is executable and is not a folder a mission
+ * writes; otherwise the launcher runs as before.
+ */
+export type ProviderNpmNative = {
+  /** The npm package whose `bin` is the launcher (`@openai/codex`). */
+  readonly package: string;
+  /**
+   * The package that carries the native build of one target, installed as an optional dependency of
+   * `package` (nested in its `node_modules`, or beside it): `${target}` stands for the key of `executable`
+   * (`@openai/codex-${target}`). Absent, or not installed: the build is looked for in `package` itself.
+   */
+  readonly platformPackage?: string;
+  /** Per target, the native executable's path inside the package that carries it, one plain segment each. A target not listed keeps the launcher. */
+  readonly executable: Readonly<Partial<Record<NpmNativeTarget, readonly string[]>>>;
+  /**
+   * A folder the launcher puts first on the build's PATH (the tools it bundles), relative to the native
+   * executable's folder, one segment each, `..` allowed (`['..', 'codex-path']`). It must stay inside
+   * the package that carries the build; a folder that does not exist is skipped.
+   */
+  readonly extraPath?: readonly string[];
+  /**
+   * Variables the launcher sets for the build (`CODEX_MANAGED_BY_NPM: '1'`): upper-case names, plain
+   * values, or `${packageRoot}` for the real folder of `package`. At most 8; the loader, the PATH, the
+   * home and Timon's own variables are refused.
+   */
+  readonly env?: Readonly<Record<string, string>>;
 };
 
 /**
@@ -492,6 +533,64 @@ export function binaryProblems(binary: unknown): string[] {
   if (binary.identity !== undefined) {
     const why = binaryIdentityProblem(binary.identity);
     if (why) problems.push(why);
+  }
+  if (binary.npmNative !== undefined) problems.push(...npmNativeProblems(binary.npmNative));
+  return problems;
+}
+
+const NPM_PACKAGE_NAME = /^(@[a-z0-9][a-z0-9._-]*\/)?[a-z0-9][a-z0-9._-]*$/;
+/** What a `npmNative.env` value may hold besides the package root: a plain word, never a path or a shell construct. */
+const NPM_NATIVE_ENV_VALUE = /^[A-Za-z0-9_.:-]{1,64}$/;
+/** The value replaced by the real folder of the launcher's package. */
+export const NPM_NATIVE_PACKAGE_ROOT = '${packageRoot}';
+/**
+ * Variables the daemon starts the build without anything a declaration may set: what loads code into it
+ * (the dynamic loader, Node's options), where it looks for programs and files, and Timon's own names.
+ */
+const NPM_NATIVE_ENV_REFUSED = /^(?:LD_|DYLD_|NODE_|TIMON_|PKOS_)|^(?:PATH|HOME|USERPROFILE|TMPDIR|TEMP|TMP|SHELL|COMSPEC|PATHEXT|SYSTEMROOT)$/;
+
+/** A path of plain segments inside a package: no separator, no `.` or empty segment, `..` only where `allowUp`. */
+function segmentsProblem(value: unknown, allowUp: boolean): boolean {
+  return !stringList(value) || value.length === 0 || value.length > 8
+    || value.some((s) => s === '' || s === '.' || s.includes('/') || s.includes('\\') || s.includes(':') || (!allowUp && s === '..'));
+}
+
+/** What is wrong with `declares.binary.npmNative`; empty = fine. */
+export function npmNativeProblems(value: unknown): string[] {
+  const where = '`declares.binary.npmNative`';
+  const at = (field: string): string => `\`declares.binary.npmNative.${field}\``;
+  if (!isRecord(value)) return [`${where} must be \`{ package, executable, platformPackage?, extraPath?, env? }\``];
+  const problems: string[] = [];
+  if (typeof value.package !== 'string' || value.package.length > 214 || !NPM_PACKAGE_NAME.test(value.package)) {
+    problems.push(`${at('package')} must be an npm package name`);
+  }
+  if (value.platformPackage !== undefined) {
+    const sample = typeof value.platformPackage === 'string' ? value.platformPackage.replaceAll('${target}', 'linux-x64') : null;
+    if (!sample || !(value.platformPackage as string).includes('${target}') || sample.length > 214 || !NPM_PACKAGE_NAME.test(sample)) {
+      problems.push(`${at('platformPackage')} must be an npm package name holding \`\${target}\` (\`@scope/cli-\${target}\`)`);
+    }
+  }
+  if (!isRecord(value.executable) || Object.keys(value.executable).length === 0) {
+    problems.push(`${at('executable')} must map a target (${NPM_NATIVE_TARGETS.join(', ')}) to a path`);
+  } else {
+    for (const [target, path] of Object.entries(value.executable)) {
+      if (!(NPM_NATIVE_TARGETS as readonly string[]).includes(target)) problems.push(`${at('executable')}: \`${target}\` is not a target (${NPM_NATIVE_TARGETS.join(', ')})`);
+      else if (segmentsProblem(path, false)) problems.push(`${at(`executable.${target}`)} must be the path inside the package, 1 to 8 plain segments`);
+    }
+  }
+  if (value.extraPath !== undefined && segmentsProblem(value.extraPath, true)) {
+    problems.push(`${at('extraPath')} must be a folder relative to the executable's, 1 to 8 plain segments (\`..\` allowed)`);
+  }
+  if (value.env !== undefined) {
+    if (!isRecord(value.env) || Object.keys(value.env).length > 8) problems.push(`${at('env')} must map at most 8 variables to values`);
+    else {
+      for (const [name, val] of Object.entries(value.env)) {
+        if (!/^[A-Z][A-Z0-9_]{0,63}$/.test(name) || NPM_NATIVE_ENV_REFUSED.test(name)) problems.push(`${at('env')}: \`${name}\` is not a variable a declaration may set`);
+        else if (typeof val !== 'string' || (val !== NPM_NATIVE_PACKAGE_ROOT && !NPM_NATIVE_ENV_VALUE.test(val))) {
+          problems.push(`${at(`env.${name}`)} must be a plain word or \`${NPM_NATIVE_PACKAGE_ROOT}\``);
+        }
+      }
+    }
   }
   return problems;
 }
