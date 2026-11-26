@@ -13,9 +13,9 @@ import type { AddressInfo } from 'node:net';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { createRequire } from 'node:module';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { promisify } from 'node:util';
+import { smokeArgs, smokeElectron, smokeEnv } from './electron-binary.fixture.js';
 
 type CspModule = {
   contentSecurityPolicy(opts: { egressHosts: readonly string[]; dev: boolean; selfHost?: string | null; nonce?: string | null }): string;
@@ -67,7 +67,7 @@ test('the window policy leaves no way out to an undeclared origin, in Chromium',
   const appSrc = join(fileURLToPath(new URL('.', import.meta.url)), '..', '..', 'app', 'src', 'lib', 'content-security-policy.ts');
   const csp = (await import(pathToFileURL(appSrc).href)) as CspModule;
   const home = await mkdtemp(join(tmpdir(), 'timon-csp-smoke-'));
-  const electron = createRequire(import.meta.url)('electron') as string;
+  const electron = smokeElectron();
 
   // The origin nothing may reach: any TCP connection counts.
   const reached: string[] = [];
@@ -103,8 +103,8 @@ for(let i=0;i<100;i++){const r=await w.webContents.executeJavaScript('window.__d
 fail(new Error('page never finished: '+await w.webContents.executeJavaScript('JSON.stringify({r:window.__r,v:window.violations})')));
 })().catch(fail);
 `);
-    const result = await promisify(execFile)(electron, [join(home, 'smoke.cjs')], {
-      env: { ...process.env, ELECTRON_RUN_AS_NODE: '', TIMON_HOME: home, CSP_SMOKE_URL: appUrl }, timeout: 55_000, maxBuffer: 2 * 1024 * 1024,
+    const result = await promisify(execFile)(electron, smokeArgs(join(home, 'smoke.cjs')), {
+      env: smokeEnv({ ...process.env, ELECTRON_RUN_AS_NODE: '', TIMON_HOME: home, CSP_SMOKE_URL: appUrl }), timeout: 55_000, maxBuffer: 2 * 1024 * 1024,
     }).catch((error) => { throw new Error(`CSP smoke failed (${error.code ?? error.signal}): ${error.stdout}\n${error.stderr}`); });
     const line = /CSP_SMOKE (.*)/.exec(result.stdout)?.[1];
     assert.ok(line, result.stdout);

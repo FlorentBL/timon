@@ -3,12 +3,12 @@ import test from 'node:test';
 import { execFile } from 'node:child_process';
 import { EventEmitter } from 'node:events';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
-import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
 import { runInNewContext, Script } from 'node:vm';
 import { writeEngine } from './native-browser-smoke.fixture.js';
+import { smokeArgs, smokeElectron, smokeEnv } from './electron-binary.fixture.js';
 
 /** Installed synchronously, before app.whenReady() or any dynamic browser import. */
 const quietElectronErrors = String.raw`
@@ -73,7 +73,7 @@ test('real hidden Chromium isolates profiles, captures and accepts input after n
   skip: process.env.TIMON_ELECTRON_SMOKE !== '1', timeout: 45_000,
 }, async () => {
   const root = await mkdtemp(join(tmpdir(), 'timon-native-browser-smoke-'));
-  const electron = createRequire(import.meta.url)('electron') as string;
+  const electron = smokeElectron();
   try {
     await writeEngine(root);
     await writeFile(join(root, 'smoke.cjs'), `
@@ -327,7 +327,7 @@ const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
     await writeFile(join(root, 'bootstrap.cjs'), bootstrap);
     const env = { ...process.env, TIMON_HOME: root };
     delete env.ELECTRON_RUN_AS_NODE;
-    const { stdout } = await promisify(execFile)(electron, [join(root, 'bootstrap.cjs')], { env, timeout: 30_000, killSignal: 'SIGKILL' })
+    const { stdout } = await promisify(execFile)(electron, smokeArgs(join(root, 'bootstrap.cjs')), { env: smokeEnv(env), timeout: 30_000, killSignal: 'SIGKILL' })
       .catch((error) => { throw new Error(`Electron smoke failed (${error.code ?? error.signal}): ${error.stdout}\n${error.stderr}`); });
     assert.match(stdout, /NATIVE_BROWSER_SMOKE_OK/);
   } finally { await rm(root, { recursive: true, force: true }); }

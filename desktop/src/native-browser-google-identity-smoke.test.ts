@@ -2,12 +2,12 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { execFile } from 'node:child_process';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
-import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
 import { Script } from 'node:vm';
 import { writeEngine } from './native-browser-smoke.fixture.js';
+import { smokeArgs, smokeElectron, smokeEnv } from './electron-binary.fixture.js';
 
 /**
  * A site's "Sign in with Google" popup, against stand-ins served inside the profile's session
@@ -138,14 +138,14 @@ test('Google\'s sign-in host sees a versionless UA and Electron\'s hints, in a p
   skip: process.env.TIMON_ELECTRON_SMOKE !== '1', timeout: 60_000,
 }, async () => {
   const root = await mkdtemp(join(tmpdir(), 'timon-native-browser-google-identity-'));
-  const electron = createRequire(import.meta.url)('electron') as string;
+  const electron = smokeElectron();
   try {
     await writeEngine(root);
     new Script(fixture, { filename: 'smoke.cjs' });
     await writeFile(join(root, 'smoke.cjs'), fixture);
     const env: NodeJS.ProcessEnv = { ...process.env, TIMON_HOME: root };
     delete env.ELECTRON_RUN_AS_NODE;
-    const { stdout } = await promisify(execFile)(electron, [join(root, 'smoke.cjs')], { env, timeout: 45_000, killSignal: 'SIGKILL' })
+    const { stdout } = await promisify(execFile)(electron, smokeArgs(join(root, 'smoke.cjs')), { env: smokeEnv(env), timeout: 45_000, killSignal: 'SIGKILL' })
       .catch((error: { code?: string; signal?: string; stdout?: string; stderr?: string }) => {
         throw new Error(`Electron smoke failed (${error.code ?? error.signal}): ${error.stdout}\n${error.stderr}`);
       });

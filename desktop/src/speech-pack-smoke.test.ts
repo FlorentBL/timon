@@ -13,8 +13,8 @@ import type { AddressInfo } from 'node:net';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { createRequire } from 'node:module';
 import { promisify } from 'node:util';
+import { smokeArgs, smokeElectron, smokeEnv } from './electron-binary.fixture.js';
 
 const PACK_PATH = '/api/ui/plugins/acme/-/dictation-models';
 
@@ -22,7 +22,7 @@ test('the main process reads a pack with the window\'s session cookie, and follo
   skip: process.env.TIMON_ELECTRON_SMOKE !== '1', timeout: 60_000,
 }, async () => {
   const home = await mkdtemp(join(tmpdir(), 'timon-pack-smoke-'));
-  const electron = createRequire(import.meta.url)('electron') as string;
+  const electron = smokeElectron();
   const cookies: (string | undefined)[] = [];
   const trapped: string[] = [];
   const app = http.createServer((req, res) => {
@@ -62,8 +62,8 @@ console.log('PACK_SMOKE '+JSON.stringify(out));
 app.exit(0);
 })().catch(fail);
 `);
-    const result = await promisify(execFile)(electron, [join(home, 'smoke.cjs')], {
-      env: { ...process.env, ELECTRON_RUN_AS_NODE: '', TIMON_HOME: home, PACK_SMOKE_ORIGIN: origin }, timeout: 55_000, maxBuffer: 2 * 1024 * 1024,
+    const result = await promisify(execFile)(electron, smokeArgs(join(home, 'smoke.cjs')), {
+      env: smokeEnv({ ...process.env, ELECTRON_RUN_AS_NODE: '', TIMON_HOME: home, PACK_SMOKE_ORIGIN: origin }), timeout: 55_000, maxBuffer: 2 * 1024 * 1024,
     }).catch((error) => { throw new Error(`pack smoke failed (${error.code ?? error.signal}): ${error.stdout}\n${error.stderr}`); });
     const line = /PACK_SMOKE (.*)/.exec(result.stdout)?.[1];
     assert.ok(line, result.stdout);

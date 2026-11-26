@@ -4,16 +4,16 @@ import { execFile } from 'node:child_process';
 import { mkdtemp, readFile, writeFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { createRequire } from 'node:module';
 import { promisify } from 'node:util';
 import { writeEngine } from './native-browser-smoke.fixture.js';
 import { Script } from 'node:vm';
+import { smokeArgs, smokeElectron, smokeEnv } from './electron-binary.fixture.js';
 
 test('hidden Electron sends encoded tab video and audio with WebRTC, WebM and MP4, with scoped viewers', {
   skip: process.env.TIMON_ELECTRON_SMOKE !== '1', timeout: 60_000,
 }, async () => {
   const home = await mkdtemp(join(tmpdir(), 'timon-media-smoke-'));
-  const electron = createRequire(import.meta.url)('electron') as string;
+  const electron = smokeElectron();
   try {
     await writeEngine(home, { entries: ['native-browser-media'], preloads: [] });
     await writeFile(join(home, 'fixture.html'), `<!doctype html><canvas width="640" height="480"></canvas><script>
@@ -94,8 +94,8 @@ app.exit(0);
 })().catch(fail);
 `);
     new Script(await readFile(join(home, 'smoke.cjs'), 'utf8'), { filename: 'media-smoke.cjs' });
-    const result = await promisify(execFile)(electron, [join(home, 'smoke.cjs')], {
-      env: { ...process.env, ELECTRON_RUN_AS_NODE: '', TIMON_HOME: home }, timeout: 55_000, maxBuffer: 2 * 1024 * 1024,
+    const result = await promisify(execFile)(electron, smokeArgs(join(home, 'smoke.cjs')), {
+      env: smokeEnv({ ...process.env, ELECTRON_RUN_AS_NODE: '', TIMON_HOME: home }), timeout: 55_000, maxBuffer: 2 * 1024 * 1024,
     }).catch((error) => { throw new Error(`Media smoke failed (${error.code ?? error.signal}): ${error.stdout}\n${error.stderr}`); });
     assert.match(result.stdout, /NATIVE_BROWSER_MEDIA_SMOKE_OK/);
     console.log(result.stdout.trim());
