@@ -14,8 +14,8 @@ import { isPersonAuth, viewerFromRequest } from '../users/identity.js';
 import type { DbViewer } from '../users/owned.js';
 import { viewerAllows } from '../users/surfaces.js';
 
-import type { PluginUser } from './contract/core.js';
-export type { PluginUser } from './contract/core.js';
+import type { PluginCaller, PluginUser } from './contract/core.js';
+export type { PluginCaller, PluginUser } from './contract/core.js';
 
 export type PluginRequestIdentity = {
   viewer: DbViewer | null;
@@ -36,6 +36,12 @@ export type PluginRequestIdentity = {
    * `identityFromRequest` sets it.
    */
   person?: true;
+  /**
+   * What `ctx.caller()` answers (API 20). Only `identityFromRequest` sets it,
+   * and only for an authenticated request: a callback that acts for an
+   * account (`integrationRequestIdentity`) has no caller to report.
+   */
+  caller?: PluginCaller;
 };
 
 const pluginRequestAls = new AsyncLocalStorage<PluginRequestIdentity>();
@@ -55,7 +61,14 @@ export function identityFromRequest(req: Request): PluginRequestIdentity {
     user,
     ownerUserId: auth?.user?.id ?? null,
     ...(isPersonAuth(auth) && auth.user ? { person: true as const } : {}),
+    ...(auth ? { caller: callerOf(auth) } : {}),
   };
+}
+
+function callerOf(auth: NonNullable<Request['auth']>): PluginCaller {
+  if (isPersonAuth(auth)) return { kind: 'person' };
+  if (auth.kind === 'api-token' && auth.missionId) return { kind: 'mission' };
+  return { kind: 'service' };
 }
 
 export function runPluginRequest<T>(identity: PluginRequestIdentity, fn: () => T): T {
@@ -88,6 +101,12 @@ export function pluginCallByPerson(): boolean {
 
 export function currentPluginUser(): PluginUser | undefined {
   return pluginRequestAls.getStore()?.user;
+}
+
+/** A fresh object per call: a plugin that mutates it changes nothing for the next one. */
+export function currentPluginCaller(): PluginCaller | undefined {
+  const caller = pluginRequestAls.getStore()?.caller;
+  return caller ? { kind: caller.kind } : undefined;
 }
 
 /**

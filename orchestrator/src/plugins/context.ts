@@ -73,11 +73,13 @@ import {
   currentPluginOwnerUserId,
   pluginCallByPerson,
   pluginCallUnattended,
+  currentPluginCaller,
   currentPluginUser,
   currentPluginViewer,
   identityFromRequest,
   pluginCallerAllows,
   runPluginRequest,
+  type PluginCaller,
   type PluginUser,
 } from './als.js';
 import { assertCompositionMutable } from '../license/capabilities.js';
@@ -240,7 +242,7 @@ import type { PluginContext } from './contract/context.js';
 import { guardPluginCallback } from '../kernel/rejection-guard.js';
 import { apiError } from '../api-error.js';
 
-export type { PluginUser } from './als.js';
+export type { PluginCaller, PluginUser } from './als.js';
 export type {
   PluginTodoDeletedEvent, PluginTodoDoneEvent, PluginTodoEvent, PluginTodoEventKind, PluginTodoEventLink,
   PluginTodoEventMap, PluginTodoOrigin, PluginTodoResolvedEvent,
@@ -1181,6 +1183,7 @@ export function createPluginContext(
     assert,
     assertPermission,
     user: () => currentPluginUser(),
+    caller: () => currentPluginCaller(),
     router(prefix = `${PLUGIN_ROUTE_PREFIX}/${id}`): Router {
       if (prefix !== `${PLUGIN_ROUTE_PREFIX}/${id}` && (!spec.builtin || !/^\/api\/backends\/[a-z][a-z0-9-]*$/.test(prefix))) {
         throw new PluginPolicyError(id, 'route-prefix', 'Only a plugin shipped in the release can preserve a legacy backend endpoint');
@@ -2236,6 +2239,7 @@ type Assert<T extends true> = T;
 type _EffectHandleIsAwaitable = Assert<PluginAsyncEffectHandle extends PromiseLike<() => Promise<void>> ? true : false>;
 /** M.7 freeze: identity is a function, never a field — a plugin is loaded once. */
 type _UserIsFn = Assert<PluginContext['user'] extends () => PluginUser | undefined ? true : false>;
+type _CallerIsFn = Assert<PluginContext['caller'] extends () => PluginCaller | undefined ? true : false>;
 /** What the daemon returns is what the SDK promises: a field dropped from the
  *  row or the link breaks compilation here, not a plugin in the field. */
 type _TodoRowIsPublic = Assert<ReturnType<ScopedTodoApi['get']> extends PluginTodo | undefined ? true : false>;

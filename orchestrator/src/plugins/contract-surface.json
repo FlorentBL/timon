@@ -305,6 +305,11 @@
       "arity": 1,
       "since": 3
     },
+    "caller": {
+      "type": "function",
+      "arity": 0,
+      "since": 20
+    },
     "can": {
       "type": "function",
       "arity": 1,

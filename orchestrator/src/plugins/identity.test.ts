@@ -25,7 +25,7 @@ const { readManifest, PLUGIN_API_VERSION } = await import('./manifest.js');
 const {
   createPluginContext, daemonHost, PluginPermissionError, PluginCallerError, PLUGIN_ROUTE_PREFIX,
 } = await import('./context.js');
-const { runPluginRequest } = await import('./als.js');
+const { identityFromRequest, runPluginRequest } = await import('./als.js');
 const { dbApi } = await import('../db.js');
 const { hashPassword } = await import('../users/password.js');
 const { createDaemonAuthMiddleware } = await import('../plugins-bundled/http/auth.js');
@@ -228,4 +228,92 @@ test('plugin routes carry the caller and hide the API without plugin:<id>', asyn
   server.close();
   await dispose();
   await root.fiber.dispose();
+});
+
+test('ctx.caller() tells a person from a mission or a service, and names neither (API 20)', async () => {
+  const { issueMissionApiToken } = await import('../users/api-tokens.js');
+  const { setLicenseState } = await import('../license/runtime.js');
+  const { paidTestLicense } = await import('../../tests/helpers/paid-license.js');
+  const app = express();
+  const TOKEN = 'witness-plugin-caller';
+  app.use(createDaemonAuthMiddleware({ token: TOKEN, required: true }));
+  const root = new Context();
+  await root.plugin(createHttpPlugin(app));
+  const { ctx, dispose } = await pluginFiber(root);
+  const plugin = createPluginContext(ctx, {
+    manifest: manifestOf(PLUGIN_ID, ['missions:read']),
+    version: '1.0.0',
+  }, daemonHost(root));
+
+  plugin.router().get('/caller', (_req, res) => {
+    res.json({ caller: plugin.caller() ?? null, user: plugin.user()?.id ?? null });
+  });
+
+  const server = app.listen(0, '127.0.0.1');
+  await once(server, 'listening');
+  const { port } = server.address() as AddressInfo;
+  const url = `http://127.0.0.1:${port}${PLUGIN_ROUTE_PREFIX}/${PLUGIN_ID}/caller`;
+  try {
+    const session = await fetch(url, { headers: { cookie: `${SESSION_COOKIE}=${sessionFor(ada.id)}` } });
+    assert.equal(session.status, 200);
+    assert.deepEqual(await session.json(), { caller: { kind: 'person' }, user: ada.id });
+
+    // A developer account's mission holds every right of its account, so its
+    // token reaches the plugin as the same user: only `caller` says no person
+    // is behind it (TODO #1195). An ordinary mission's token stops at the
+    // `plugin:<id>` curtain before the plugin hears of it.
+    setLicenseState({ ...paidTestLicense(), planId: 'internal', expiresAt: new Date(Date.now() + 86_400_000).toISOString() });
+    try {
+      const missionToken = issueMissionApiToken(adminMission);
+      const mission = await fetch(url, { headers: { authorization: `Bearer ${missionToken}` } });
+      assert.equal(mission.status, 200);
+      const missionBody = await mission.json() as { caller: unknown; user: string };
+      assert.deepEqual(missionBody, { caller: { kind: 'mission' }, user: admin.id });
+      assert.equal(JSON.stringify(missionBody.caller).includes(adminMission), false, 'the mission is not named');
+    } finally {
+      setLicenseState(paidTestLicense());
+    }
+
+    const daemon = await fetch(url, { headers: { authorization: `Bearer ${TOKEN}` } });
+    assert.equal(daemon.status, 200);
+    assert.deepEqual((await daemon.json() as { caller: unknown }).caller, { kind: 'service' });
+
+    const anonymous = await fetch(url);
+    assert.equal(anonymous.status, 401, 'an anonymous request is refused before the plugin, as before');
+  } finally {
+    server.close();
+    await dispose();
+    await root.fiber.dispose();
+  }
+});
+
+test('ctx.caller() is undefined outside a request and for an identity no request made', async () => {
+  const root = new Context();
+  const { ctx, dispose } = await pluginFiber(root);
+  const plugin = createPluginContext(ctx, {
+    manifest: manifestOf(PLUGIN_ID, ['missions:read']),
+    version: '1.0.0',
+  }, daemonHost(root));
+  try {
+    assert.equal(plugin.caller(), undefined, 'a job has no caller');
+    assert.equal(runPluginRequest(adaIdentity(), () => plugin.caller()), undefined, 'a callback for an account has none either');
+    const first = runPluginRequest({ ...adaIdentity(), caller: { kind: 'person' } }, () => plugin.caller());
+    assert.deepEqual(first, { kind: 'person' });
+    if (first) (first as { kind: string }).kind = 'mission';
+    assert.deepEqual(runPluginRequest({ ...adaIdentity(), caller: { kind: 'person' } }, () => plugin.caller()), { kind: 'person' });
+  } finally {
+    await dispose();
+    await root.fiber.dispose();
+  }
+});
+
+test('the caller of each credential: a session or a device is a person, a mission token a mission, the rest a service', () => {
+  const user = { id: 'ada', email: 'ada@example.com', name: 'Ada', is_superadmin: true };
+  const of = (auth: unknown) => identityFromRequest({ auth } as Parameters<typeof identityFromRequest>[0]).caller;
+  assert.deepEqual(of({ kind: 'session', user, isSuperadmin: true }), { kind: 'person' });
+  assert.deepEqual(of({ kind: 'device', user, isSuperadmin: true, deviceId: 'd' }), { kind: 'person' });
+  assert.deepEqual(of({ kind: 'api-token', user, isSuperadmin: true, permissions: ['*'], missionId: 'm' }), { kind: 'mission' });
+  assert.deepEqual(of({ kind: 'api-token', user: null, isSuperadmin: false, actorId: 'plugin:x', permissions: [] }), { kind: 'service' });
+  assert.deepEqual(of({ kind: 'daemon-token', user, isSuperadmin: true }), { kind: 'service' });
+  assert.equal(of(undefined), undefined, 'the anonymous request of a machine with no account has no caller');
 });

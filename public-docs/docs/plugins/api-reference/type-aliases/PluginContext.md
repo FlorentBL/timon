@@ -2843,6 +2843,16 @@ readonly [`PluginTaskLinkInput`](PluginTaskLinkInput.md)[]
 
 ***
 
+### caller()
+
+> **caller**(): [`PluginCaller`](PluginCaller.md) \| `undefined`
+
+#### Returns
+
+[`PluginCaller`](PluginCaller.md) \| `undefined`
+
+***
+
 ### can()
 
 > **can**(`permission`): `boolean`
