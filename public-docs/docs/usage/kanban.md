@@ -372,7 +372,7 @@ Timon refuses a commit that your local copy of the repository has and that is no
 
 ## A task waiting on you
 
-When the agent of a running task asks for a permission or asks you a question, its card says **Waiting for a permission (Bash) for 3 min**, or **Waiting for an answer**, followed by the time left before the request is refused automatically (an unattended task does not wait forever). Hover the line to see whether other requests wait behind it. The card names the tool only: the command itself, and the Allow and Deny buttons, are in the task's mission, which the card's open-mission button reaches.
+When the agent of a running task asks for a permission or asks you a question, its card says **Waiting for a permission (Bash) for 3 min**, or **Waiting for an answer**, followed by the time left before the request is refused automatically (an unattended task does not wait forever). Hover the line to see whether other requests wait behind it. The task's detail shows the same line under its status. Both change as soon as a request is raised, answered or refused. The card names the tool only: the command itself, and the Allow and Deny buttons, are in the task's mission, which the card's open-mission button reaches.
 
 `timon task get TASK_ID` and `timon status MISSION_ID` report the same wait: a `pending_permission` field in their JSON (`kind`, `tool_name`, `since`, `expires_at`, `remaining_ms`, `count`), and one readable line on stderr, so a script reading stdout is not disturbed. Agents read the same field with `kanban_get` and `mission_status`. On a running task the field is `null` when nothing waits, and also when your account can read the task but not its mission: the right to read every task does not include the right to read every mission.
 
