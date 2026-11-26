@@ -23,6 +23,22 @@ export function onAccountChange(listener: Listener): () => void {
   return () => { listeners.delete(listener); };
 }
 
+/**
+ * Calls `listener` each time the signed-in account becomes another one, or
+ * signs out: never for the first account named, nor when the same one is
+ * announced again. The listener learns no id, so a plugin can hold it
+ * (`@timon/ui` `onAccountChange`, client API 20) without reading who is
+ * signed in. Returns the unsubscribe.
+ */
+export function onAccountSwitch(listener: () => void): () => void {
+  let followed = announced;
+  return onAccountChange((owner) => {
+    const switched = followed !== null && owner !== followed;
+    followed = owner;
+    if (switched) listener();
+  });
+}
+
 export function announceAccount(owner: string | null): void {
   announced = owner;
   for (const listener of listeners) listener(owner);

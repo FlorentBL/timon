@@ -1955,6 +1955,20 @@ declare module '@timon/ui' {
    */
   export function useWidgetInFront(): boolean;
 
+  /**
+   * Calls `listener` each time the person signed in on this page becomes
+   * another account, or signs out (client API 20). Never for the first
+   * account, nor when the same one signs in again, and the listener learns no
+   * id. Your plugin is not loaded again on a change of account: a value read
+   * from the daemon and kept at module level, or in `apply`'s closure, would
+   * be shown to the next person. Empty it here. Returns the unsubscribe: call
+   * it from the disposer `apply` returns.
+   *
+   * Absent on a Timon older than API 20: declare `apiVersion: 20`, or import
+   * the module as a namespace and test `typeof ui.onAccountChange === 'function'`.
+   */
+  export function onAccountChange(listener: () => void): () => void;
+
   /** A heading of a list page, as the `page.toc` occupant lists it. Client API 15. */
   export type PageTocEntry = {
     /** The heading's `id`, also its anchor. */

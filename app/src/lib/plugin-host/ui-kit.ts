@@ -94,6 +94,7 @@ import { GitStackProjectPicker, useGitStackProject } from '@/plugins-client/kanb
 import { useTodoOpener } from '@/plugins-client/kanban/todo-opener';
 import { useProjectSettings } from '@/components/project-settings-slot';
 import { useWidgetAttention, useWidgetCount, useWidgetInFront, useWidgetMenu } from '@/components/widget-host/widget-self';
+import { onAccountSwitch } from '@/lib/account-change';
 
 /** What `@timon/ui` exposes. One object, so `platform-globals` and the served
  *  module cannot list different members. */
@@ -241,6 +242,9 @@ export const UI_KIT = {
   // The update window (client API 17, `updates.dialog`): the version, its highlights and
   // changelog, the download and the gestures of the step it is at.
   useUpdateDialog,
+  // The signed-in account became another one (client API 20): a module cache of what a
+  // plugin read from the daemon empties itself, as the product's own stores do. No id given.
+  onAccountChange: onAccountSwitch,
 };
 
 /**
