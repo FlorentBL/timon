@@ -1781,6 +1781,7 @@
       "titlePlanned": "Atribuída a {named}, será executada por {agent}: {reason}",
       "detail": "Executada por {agent}",
       "detailPlanned": "Será executada por {agent}",
+      "on": "{agent} com {model}",
       "reasonPinned": "o projeto fixa este papel em {agent} (roles.json)",
       "reasonMissing": "{named} não existe",
       "reasonOtherProject": "{named} não pertence ao projeto da tarefa",

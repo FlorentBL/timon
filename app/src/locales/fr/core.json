@@ -1561,6 +1561,7 @@
       "titlePlanned": "Assignée à {named}, sera exécutée par {agent} : {reason}",
       "detail": "Exécutée par {agent}",
       "detailPlanned": "Sera exécutée par {agent}",
+      "on": "{agent} sur {model}",
       "reasonPinned": "le projet épingle ce rôle sur {agent} (roles.json)",
       "reasonMissing": "{named} n'existe pas",
       "reasonOtherProject": "{named} n'appartient pas au projet de la task",

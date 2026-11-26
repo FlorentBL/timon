@@ -1781,6 +1781,7 @@
       "titlePlanned": "担当 {named}、実行予定 {agent}: {reason}",
       "detail": "実行: {agent}",
       "detailPlanned": "実行予定: {agent}",
+      "on": "{agent}（{model}）",
       "reasonPinned": "プロジェクトがこのロールを {agent} に固定しています (roles.json)",
       "reasonMissing": "{named} は存在しません",
       "reasonOtherProject": "{named} はタスクのプロジェクトに属していません",

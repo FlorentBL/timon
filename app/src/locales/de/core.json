@@ -1781,6 +1781,7 @@
       "titlePlanned": "Zugewiesen an {named}, wird ausgeführt von {agent}: {reason}",
       "detail": "Ausgeführt von {agent}",
       "detailPlanned": "Wird ausgeführt von {agent}",
+      "on": "{agent} mit {model}",
       "reasonPinned": "das Projekt heftet diese Rolle an {agent} (roles.json)",
       "reasonMissing": "{named} existiert nicht",
       "reasonOtherProject": "{named} gehört nicht zum Projekt der Aufgabe",
