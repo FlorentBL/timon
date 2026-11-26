@@ -13,6 +13,7 @@ import { WindowRegistry } from './window-registry.js';
 import { ViewPool } from './view-pool.js';
 import { machineForDetachedWindow, parseOpenWindowRequest } from './window-open.js';
 import { launchedOtherBuild } from './shell-build.js';
+import { BROWSER_HOST_LAUNCH, launchedByBrowserHost } from './browser-host.js';
 import { parseWindowSchemeReport } from './appearance.js';
 import {
   UI_ZOOM_CHANNELS, UI_ZOOM_STEPS, parseUiZoomSetRequest, parseUiZoomStepRequest, stepUiZoom, zoomShortcut, type UiZoomFactor,
@@ -222,7 +223,7 @@ function secondLaunch(input: { daemonUp: boolean; failed: boolean; launch?: unkn
   const calls: string[] = [];
   const context = {
     daemonUp: input.daemonUp, desktopHome: 'home', app: { isPackaged: true }, uiLocale: () => 'fr',
-    ownBuild: '0.1.5+100', launchedOtherBuild, DISPLAY_NAME: 'Timon',
+    ownBuild: '0.1.5+100', launchedOtherBuild, launchedByBrowserHost, DISPLAY_NAME: 'Timon',
     staleShellCopy: () => ({ message: 'm', detail: 'd' }),
     frontWindow: () => null,
     dialog: { showMessageBox: () => { calls.push('notice'); return Promise.resolve(); } },
@@ -236,6 +237,12 @@ function secondLaunch(input: { daemonUp: boolean; failed: boolean; launch?: unkn
   runInNewContext(compile(`(${secondInstanceHandler()})({}, [], '', ${JSON.stringify(input.launch ?? null)})`), context);
   return calls.sort();
 }
+
+test('a browser host waiting for the home asks for the lock again and again: no window, no notice', () => {
+  for (const daemonUp of [true, false]) {
+    for (const failed of [true, false]) assert.deepEqual(secondLaunch({ daemonUp, failed, launch: BROWSER_HOST_LAUNCH }), []);
+  }
+});
 
 test('V3: a second launch opens a new window, unless the interface is failing or not up yet', () => {
   for (const [daemonUp, failed, expected] of [[true, false, 'new'], [true, true, 'show+rearm'], [false, false, 'show']] as const) {

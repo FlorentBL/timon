@@ -659,6 +659,7 @@ for (const platform of ['win32', 'darwin', 'linux']) {
         NativeBrowserEngine: class { constructor() { calls.push('browser'); } }, NativeBrowserMedia: class {},
         sessionAnnotationRoutes: () => async () => ({ status: 503, body: null }),
         startNativeBrowserServer: async () => ({ close: () => {} }),
+        providerCommand: () => async () => ({}),
         offerDataRestore: async () => { calls.push('restore'); return null; },
         hasDesktopService: () => true, serviceUpgradeNeeded: () => platform !== 'win32',
         serviceRepairVerdict: () => 'task-exists', existsSync: () => true,
