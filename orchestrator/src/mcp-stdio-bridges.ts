@@ -15,6 +15,7 @@ import { missionProcessDir, trackMissionProcess } from './host/mission-processes
 import { mcpRelayRoute } from './mcp-relay-route.js';
 import { mcpStdioBridgeLaunch } from './mcp.js';
 import { StdioBridgeManager, type StdioBridge, type StdioBridgeSpec } from './mcp-stdio-bridge.js';
+import { daemonMessage, type DaemonMessage } from './daemon-message.js';
 import { createNotification } from './notifications.js';
 import { TIMON_HOME } from './paths.js';
 import { systemEnv } from './secrets/env.js';
@@ -74,6 +75,25 @@ function specFor(id: string, cwd: string | null): () => StdioBridgeSpec | null {
 // One notice per server and mission: a resumed mission launches again and again.
 const noticed = new Set<string>();
 
+/**
+ * Why a bridge did not start, as a word the webview can translate. The English
+ * reason stays the detail: an OS error code (`ENOENT`) reads the same everywhere.
+ */
+export function leftOutCause(reason: string): 'vault' | 'mission_limit' | 'daemon_limit' | 'restarts' | 'stopped' | 'start' {
+  if (reason.includes('secrets vault')) return 'vault';
+  if (reason.startsWith('this mission already runs')) return 'mission_limit';
+  if (reason.startsWith('the daemon already runs')) return 'daemon_limit';
+  if (reason === 'restarted too often') return 'restarts';
+  if (reason === 'stopped') return 'stopped';
+  return 'start';
+}
+
+/** The code of the "left out" notice (`daemonMessages.mcp_server_left_out`). */
+export function leftOutMessage(serverId: string, reason: string): DaemonMessage {
+  const max = Number(/\d+/.exec(reason)?.[0] ?? 0);
+  return daemonMessage('mcp_server_left_out', { serverId, cause: leftOutCause(reason), max, detail: reason });
+}
+
 function noticeLeftOut(missionId: string, serverId: string, reason: string): void {
   console.warn(`[timon] mcp ${serverId} left out of mission ${missionId.slice(0, 8)}: its bridge did not start (${reason})`);
   const key = `${missionId}\n${serverId}`;
@@ -84,6 +104,7 @@ function noticeLeftOut(missionId: string, serverId: string, reason: string): voi
     title: `MCP server ${serverId} left out`,
     body: `Timon could not start the MCP server ${serverId} for this mission (${reason}), so the agent runs without it. Its variables were not handed to the agent.`,
     missionId,
+    message: leftOutMessage(serverId, reason),
   });
 }
 
