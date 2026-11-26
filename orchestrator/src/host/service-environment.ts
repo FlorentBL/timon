@@ -5,7 +5,8 @@ import { dirname, join } from 'node:path';
 import { builtinBinaries } from '../backends/builtin-declarations.js';
 import { findExecutableBinary } from './binary-path.js';
 import type { TimonConfig } from '../config/schema.js';
-import { TIMON_HOME } from '../paths.js';
+import { DB_PATH, TIMON_HOME } from '../paths.js';
+import { browserHostService, readStoredSetting } from './browser-host-service.js';
 import { packagedRuntime } from './bundled-node.js';
 import { packagedServiceOptions } from './packaged-service.js';
 import type { ServiceOpts } from './service-install.js';
@@ -46,7 +47,15 @@ export function serviceOptsFromEnvironment(
     ...(process.platform === 'linux' ? { agentBinDirs: agentBinDirs() } : {}),
     exec: (command, args, options) => safeExecSync(command, args, host, options?.timeout),
   };
-  return serviceOptsForPlatform(base, process.env, process.execPath, cfg.app.listen.port);
+  const opts = serviceOptsForPlatform(base, process.env, process.execPath, cfg.app.listen.port);
+  const browserHost = browserHostService(opts, {
+    // A daemon handing the service back to an older package names that package's executable.
+    executable: process.env.TIMON_RELEASE_EXECUTABLE || process.execPath,
+    env: process.env,
+    configSettings: cfg.settings,
+    stored: (key) => readStoredSetting(DB_PATH, key),
+  });
+  return browserHost ? { ...opts, browserHost } : opts;
 }
 
 /**

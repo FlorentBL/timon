@@ -22,6 +22,7 @@
 import { readFileSync, realpathSync } from 'node:fs';
 import { isAbsolute, join, relative, resolve, win32 as winPath } from 'node:path';
 import { homeOfPlist, homeOfTask, homeOfUnit, linuxTimonUnits, unescapeXml } from './orphan-services.js';
+import { isBrowserHostUnit } from './packaged-service.js';
 import {
   LINUX_UNIT, MACOS_LABEL, WINDOWS_TASK, launchDaemonPath, macosLauncherPath, plistPath, readEffectiveUnit, readServiceDefinition, unitPath, windowsLauncherRuntime,
   type ServiceOpts, type ServiceResult,
@@ -204,7 +205,8 @@ export function foreignService(opts: ServiceOpts, sourceInstallDir?: string): Fo
 export function servicesSharingHome(opts: ServiceOpts): ForeignService[] {
   if (opts.platform !== 'linux') return [];
   const own = opts.unitName ?? LINUX_UNIT;
-  return linuxTimonUnits(opts.homeDir).filter((unit) => unit !== own).flatMap((unit): ForeignService[] => {
+  // The browser host names this home too, and opens neither its database nor a port.
+  return linuxTimonUnits(opts.homeDir).filter((unit) => unit !== own && !isBrowserHostUnit(unit)).flatMap((unit): ForeignService[] => {
     const effective = readEffectiveUnit(opts, unit);
     if (effective.kind === 'absent') return [];
     const service = {
