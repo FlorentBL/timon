@@ -11,32 +11,31 @@
  * running it so that we keep a trace".
  *
  * Exception: the built-in routine `timon-backup-nightly` (step 4.6).
- * It calls `exportTimon` in-process — spawning an LLM every night
- * to run `tar` would burn quota and miss the slot. The
- * trace is the archive under `$TIMON_HOME/backups/`.
- *
- * Tick interval: 30s by default. A due routine runs only
- * once per tick: next_run_at is computed before creating the task,
- * so two coinciding ticks do not recreate the same task.
+ * A dedicated child exports the backup without blocking the daemon or spawning an LLM.
  */
 import { daemonMessage, type DaemonMessage } from './daemon-message.js';
+import { fork } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { existsSync, mkdirSync, readdirSync, renameSync, rmSync, statSync } from 'node:fs';
-import { join } from 'node:path';
+import { mkdirSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { CronExpressionParser } from 'cron-parser';
 import { db, dbApi, type RoutineExtras, type RoutineRow, type TaskType } from './db.js';
-import { exportTimon, type ExportResult } from './export.js';
+import type { ExportResult } from './export.js';
+import type { BackupReply, BackupRequest } from './backup-worker.js';
+import { backupsDir, BackupSpaceError, listBackupArchives, pruneArchives, type BackupRetention } from './backup-archives.js';
+import { config } from './config/load.js';
 import { bus } from './bus.js';
 import { closePushForAnchor, createNotification } from './notifications.js';
 import { TIMON_HOME } from './paths.js';
 import { settingInt } from './settings.js';
-import { formatBytes, freeBytes } from './storage-failure.js';
 import { scheduleCadenceProblem } from './triggers/schema.js';
 import { recordDelivery } from './triggers/store.js';
 import { assertSpawnAllowed } from './plugins/policy.js';
 import { PLUGIN_OWNER_PREFIX } from './users/api-tokens.js';
 import type { BackupArchive } from './plugins/contract/backup.js';
 export type { BackupArchive } from './plugins/contract/backup.js';
+export { backupArchiveName, backupsDir, BackupSpaceError, listBackupArchives,
+  BACKUP_PARTIAL_SUFFIX, BACKUP_SPACE_FACTOR, type BackupRetention } from './backup-archives.js';
 
 const TICK_INTERVAL_MS = 30_000;
 
@@ -164,47 +163,11 @@ export const BACKUP_AGENT = 'timon';
 const BACKUP_PROMPT =
   'timon export --out ~/.timon/backups/timon-<date>.tar.gz every night at 03:30, '
   + 'then prune by TIMON_BACKUP_KEEP and TIMON_BACKUP_MAX_AGE_DAYS.';
-const BACKUP_ARCHIVE_RE = /^timon-(\d{4})-(\d{2})-(\d{2})\.tar\.gz$/;
-/**
- * An export is written under this suffix and renamed once complete: a `tar`
- * cut short by a full disk must never carry the archive's name, or it would
- * count as the newest backup and push valid ones out of the kept window.
- */
-export const BACKUP_PARTIAL_SUFFIX = '.partial';
-/** Database snapshots taken by hand before a rebuild (`VACUUM INTO`), several GB each. */
-const PRE_REBUILD_RE = /^pre-rebuild-(\d{4})-(\d{2})-(\d{2})\.db$/;
-/** Free space asked before an export, as a multiple of the newest archive. */
-export const BACKUP_SPACE_FACTOR = 1.5;
 /** Consecutive failed nights before the user is alerted. */
 export const BACKUP_ALERT_AFTER_FAILURES = 3;
 export const BACKUP_FAILURES_KEY = 'backup.consecutive_failures';
 /** One card at a time for the backup, whatever the cause. */
 export const BACKUP_ALERT_ANCHOR = 'backup:nightly';
-const DAY_MS = 86_400_000;
-
-export function backupsDir(home: string = TIMON_HOME): string {
-  return join(home, 'backups');
-}
-
-/** `timon-YYYY-MM-DD.tar.gz` in local date — so is the 03:30 cron. */
-export function backupArchiveName(when: Date = new Date()): string {
-  const y = when.getFullYear();
-  const m = String(when.getMonth() + 1).padStart(2, '0');
-  const d = String(when.getDate()).padStart(2, '0');
-  return `timon-${y}-${m}-${d}.tar.gz`;
-}
-
-export function listBackupArchives(dir: string = backupsDir()): BackupArchive[] {
-  if (!existsSync(dir)) return [];
-  return readdirSync(dir)
-    .filter((name) => BACKUP_ARCHIVE_RE.test(name))
-    .sort()
-    .reverse()
-    .map((name) => ({ name, bytes: statSync(join(dir, name)).size }));
-}
-
-/** How many archives to keep, and past what age (0 = none) to drop them. */
-export type BackupRetention = { keep: number; maxAgeDays: number };
 
 /**
  * Read at each prune, not at boot: a value changed in Settings applies to the
@@ -219,13 +182,6 @@ export function backupRetention(): BackupRetention {
     keep: Number.isInteger(keep) && keep >= 1 ? keep : BACKUP_KEEP,
     maxAgeDays: Number.isInteger(maxAgeDays) && maxAgeDays > 0 ? maxAgeDays : 0,
   };
-}
-
-/** Local midnight of the day a file name carries (the cron is local too). */
-function archiveDay(name: string, re: RegExp = BACKUP_ARCHIVE_RE): number | null {
-  const m = re.exec(name);
-  if (!m) return null;
-  return new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3])).getTime();
 }
 
 /**
@@ -245,63 +201,7 @@ export function pruneBackupArchives(
   retention: number | BackupRetention = backupRetention(),
   now: Date = new Date(),
 ): string[] {
-  const { keep, maxAgeDays } = typeof retention === 'number' ? { keep: retention, maxAgeDays: 0 } : retention;
-  const cutoff = maxAgeDays > 0 ? now.getTime() - maxAgeDays * DAY_MS : null;
-  const dropped: string[] = [];
-  const keptDays: number[] = [];
-  listBackupArchives(dir).forEach((file, index) => {
-    const day = archiveDay(file.name);
-    const tooMany = index >= Math.max(1, keep);
-    const tooOld = cutoff !== null && day !== null && day < cutoff;
-    if (index === 0 || (!tooMany && !tooOld)) {
-      if (day !== null) keptDays.push(day);
-      return;
-    }
-    rmSync(join(dir, file.name));
-    dropped.push(file.name);
-  });
-  const snapshots = existsSync(dir) ? readdirSync(dir).filter((n) => PRE_REBUILD_RE.test(n)) : [];
-  for (const name of snapshots) {
-    const day = archiveDay(name, PRE_REBUILD_RE);
-    if (day === null) continue;
-    const newer = keptDays.filter((d) => d > day).length;
-    const outOfWindow = newer >= Math.max(1, keep);
-    const tooOld = cutoff !== null && day < cutoff && newer >= 1;
-    if (!outOfWindow && !tooOld) continue;
-    rmSync(join(dir, name), { force: true });
-    dropped.push(name);
-  }
-  return dropped;
-}
-
-/** Leftovers of an export the daemon did not finish (killed, power cut). */
-function removePartialArchives(dir: string): string[] {
-  const partials = readdirSync(dir).filter((n) =>
-    n.endsWith(BACKUP_PARTIAL_SUFFIX) && BACKUP_ARCHIVE_RE.test(n.slice(0, -BACKUP_PARTIAL_SUFFIX.length)));
-  for (const name of partials) rmSync(join(dir, name), { force: true });
-  return partials;
-}
-
-/** Thrown before the export when the disk cannot hold the next archive. */
-export class BackupSpaceError extends Error {
-  constructor(readonly needed: number, readonly free: number, readonly dir: string) {
-    super(`not enough free space for the nightly backup in ${dir}: ${formatBytes(free)} free, about ${formatBytes(needed)} needed`);
-    this.name = 'BackupSpaceError';
-  }
-}
-
-/**
- * The next archive is about the size of the newest one; half again on top
- * leaves room for growth. No archive yet, or a filesystem that cannot tell its
- * free space: nothing to compare, the export is tried.
- */
-function assertBackupSpace(dir: string, free: (dir: string) => number | null): void {
-  const newest = listBackupArchives(dir)[0];
-  if (!newest) return;
-  const available = free(dir);
-  if (available === null) return;
-  const needed = Math.ceil(newest.bytes * BACKUP_SPACE_FACTOR);
-  if (available < needed) throw new BackupSpaceError(needed, available, dir);
+  return pruneArchives(dir, typeof retention === 'number' ? { keep: retention, maxAgeDays: 0 } : retention, now);
 }
 
 function backupFailureCount(): number {
@@ -452,46 +352,87 @@ export function applyBackupDefault(): 'created' | 'kept' | 'already' {
  * Archive under `$TIMON_HOME/backups/` (never a test's real `~/.timon`:
  * `TIMON_HOME` is the process's). Secrets excluded, like `timon export`.
  */
-export function runNightlyBackup(
-  when: Date = new Date(),
-  deps: { freeBytes?: (dir: string) => number | null; exportArchive?: typeof exportTimon } = {},
-): ExportResult {
-  const dir = backupsDir();
-  mkdirSync(dir, { recursive: true });
-  // `when` is the clock of this backup: the age limit counts from it.
-  const prune = (): void => {
-    const pruned = pruneBackupArchives(dir, backupRetention(), when);
-    if (pruned.length) console.log(`[routines] backup prune: ${pruned.join(', ')}`);
-  };
-  const out = join(dir, backupArchiveName(when));
-  const partial = `${out}${BACKUP_PARTIAL_SUFFIX}`;
-  try {
-    const stale = removePartialArchives(dir);
-    if (stale.length) console.log(`[routines] backup: removed unfinished ${stale.join(', ')}`);
-    // Before the export as well: once the disk is full no export succeeds, and a
-    // prune that only followed a success would never free it again.
-    prune();
-    assertBackupSpace(dir, deps.freeBytes ?? freeBytes);
-    let result: ExportResult;
-    try {
-      result = (deps.exportArchive ?? exportTimon)({
-        out: partial,
-        home: TIMON_HOME,
-        vacuumInto: (dest) => {
-          db.exec(`VACUUM INTO '${dest.replace(/'/g, "''")}'`);
-        },
-      });
-      renameSync(partial, out);
-    } catch (err) {
-      rmSync(partial, { force: true });
-      throw err;
-    }
+function backupInChild(when: number, occurrence: number | null): Promise<BackupReply> {
+  const request: BackupRequest = { when, occurrence, retention: backupRetention(), tarPin: config().host.binaries.tar ?? null };
+  const sourceMode = import.meta.url.endsWith('.ts');
+  return new Promise((accept, reject) => {
+    const child = fork(new URL(sourceMode ? './backup-worker.ts' : './backup-worker.js', import.meta.url), [], {
+      execPath: process.execPath,
+      execArgv: sourceMode ? ['--import', 'tsx'] : [],
+      env: { ...process.env, TIMON_HOME: resolve(TIMON_HOME) },
+      stdio: ['ignore', 'inherit', 'inherit', 'ipc'],
+    });
+    let reply: BackupReply | undefined;
+    child.once('message', (message: BackupReply) => { reply = message; });
+    child.once('error', reject);
+    child.once('close', (code, signal) => {
+      if (code === 0 && reply) accept(reply);
+      else reject(new Error(`Backup worker exited without proof (${signal ?? code})`));
+    });
+    child.send(request, (err) => { if (err) reject(err); });
+  });
+}
+
+function backupError(reply: { message: string; space?: { needed: number; free: number } }): Error {
+  return reply.space ? new BackupSpaceError(reply.space.needed, reply.space.free, backupsDir()) : new Error(reply.message);
+}
+
+export async function runNightlyBackup(when = new Date()): Promise<ExportResult> {
+  const reply = await backupInChild(when.getTime(), null);
+  if (reply.state === 'verified' && reply.result) {
     noteBackupSuccess();
-    prune();
-    return { ...result, out };
-  } catch (err) {
-    noteBackupFailure(err);
+    return reply.result;
+  }
+  if (reply.state === 'failed' || reply.state === 'blocked') {
+    const err = backupError(reply);
+    if (reply.state === 'failed') noteBackupFailure(err);
     throw err;
+  }
+  throw new Error(reply.state === 'busy' ? 'Backup already running' : 'Backup worker did not return an export result');
+}
+
+let backupReserved = false;
+
+async function tickBackup(occurrence: number): Promise<void> {
+  if (backupReserved) return;
+  backupReserved = true;
+  try {
+    const reply = await backupInChild(Date.now(), occurrence);
+    if (reply.state === 'busy') return;
+    if (reply.state === 'blocked') throw backupError(reply);
+    const committed = db.transaction(() => {
+      const current = dbApi.getRoutine(BACKUP_ROUTINE_ID);
+      if (current?.enabled !== 1 || current.next_run_at !== occurrence) return false;
+      let nextAt: number;
+      try { nextAt = nextRunFromCron(current.cron_expr); }
+      catch { nextAt = Date.now() + 60_000; }
+      if (reply.state === 'failed') {
+        recordDelivery({ triggerId: BACKUP_ROUTINE_ID, status: 'error', reason: reply.message });
+        // A failed export isn't a new successful run.
+        dbApi.updateRoutine(BACKUP_ROUTINE_ID, { next_run_at: nextAt });
+      } else if (reply.state === 'verified' && reply.occurrence === occurrence) {
+        recordDelivery({ triggerId: BACKUP_ROUTINE_ID, status: 'received',
+          deliveryKey: `backup:${BACKUP_ROUTINE_ID}:${occurrence}`,
+          reason: `backup ${reply.recovered ? 'recovered ' : ''}${reply.bytes} bytes` });
+        dbApi.markRoutineRun(BACKUP_ROUTINE_ID, reply.startedAt, nextAt);
+      } else {
+        throw new Error('Backup worker returned no proof for this occurrence');
+      }
+      return true;
+    }).immediate();
+    if (!committed) return;
+    if (reply.state === 'failed') {
+      noteBackupFailure(backupError(reply));
+      console.error(`[routines] backup failed: ${reply.message}`);
+    } else if (reply.state === 'verified') {
+      noteBackupSuccess();
+      console.log(`[routines] backup ${reply.recovered ? 'recovered ' : ''}${reply.out} (${reply.bytes} octets)`);
+    }
+  } catch (err) {
+    // A lost worker, invalid proof, or failed SQL commit must leave the occurrence due.
+    console.error(`[routines] backup not confirmed: ${(err as Error).message}`);
+  } finally {
+    backupReserved = false;
   }
 }
 
@@ -504,34 +445,32 @@ export function runNightlyBackup(
  */
 export async function tickRoutines(): Promise<void> {
   const due = dbApi.listDueRoutines();
-  for (const r of due) {
+  await Promise.all(due.map(async (r) => {
+    if (r.id === BACKUP_ROUTINE_ID) {
+      if (r.next_run_at !== null && Number.isSafeInteger(r.next_run_at)) await tickBackup(r.next_run_at);
+      return;
+    }
     const now = Date.now();
     try {
-      if (r.id === BACKUP_ROUTINE_ID) {
-        const result = runNightlyBackup();
-        console.log(`[routines] backup ${result.out} (${result.bytes} octets)`);
-        recordDelivery({ triggerId: r.id, status: 'received', reason: `backup ${result.bytes} bytes` });
-      } else {
-        // A plugin's routine ticks with nobody in front: each task it opens is
-        // a spawn of that plugin, held to its approval and quota (TODO #591).
-        // A refusal skips this tick (the catch below logs it and moves on).
-        if (r.owner_user_id?.startsWith(PLUGIN_OWNER_PREFIX)) {
-          assertSpawnAllowed(r.owner_user_id.slice(PLUGIN_OWNER_PREFIX.length), now, 'ctx.routines');
-        }
-        const taskId = randomUUID();
-        dbApi.createTask(taskId, r.name, r.agent_name, {
-          description: r.prompt,
-          type: r.task_type,
-          priority: 3,
-          // The routine's creator: the task, and the mission it starts, run on
-          // that account's behalf.
-          ownerUserId: r.owner_user_id,
-          ...routineTaskExtras(r),
-        });
-        dbApi.setTaskRoutine(taskId, r.id);
-        console.log(`[routines] ${r.id} (${r.name}) → task ${taskId}`);
-        recordDelivery({ triggerId: r.id, status: 'received', result: [{ type: 'task', ok: true, id: taskId }] });
+      // A plugin's routine ticks with nobody in front: each task it opens is
+      // a spawn of that plugin, held to its approval and quota (TODO #591).
+      // A refusal skips this tick (the catch below logs it and moves on).
+      if (r.owner_user_id?.startsWith(PLUGIN_OWNER_PREFIX)) {
+        assertSpawnAllowed(r.owner_user_id.slice(PLUGIN_OWNER_PREFIX.length), now, 'ctx.routines');
       }
+      const taskId = randomUUID();
+      dbApi.createTask(taskId, r.name, r.agent_name, {
+        description: r.prompt,
+        type: r.task_type,
+        priority: 3,
+        // The routine's creator: the task, and the mission it starts, run on
+        // that account's behalf.
+        ownerUserId: r.owner_user_id,
+        ...routineTaskExtras(r),
+      });
+      dbApi.setTaskRoutine(taskId, r.id);
+      console.log(`[routines] ${r.id} (${r.name}) → task ${taskId}`);
+      recordDelivery({ triggerId: r.id, status: 'received', result: [{ type: 'task', ok: true, id: taskId }] });
       // Moves next_run_at forward — based on "now" so that a routine
       // whose orchestrator was down does not catch up in bursts.
       let nextAt: number;
@@ -548,7 +487,7 @@ export async function tickRoutines(): Promise<void> {
         dbApi.markRoutineRun(r.id, now, nextAt);
       } catch { /* */ }
     }
-  }
+  }));
 }
 
 /**
