@@ -109,6 +109,7 @@ export type DoctorReport = {
    * Whether the built-in terminal can start: node-pty's native module loads
    * in this process, and the loader's own error when it does not (TIM-0162).
    * A warning, never a blocker. Optional: reports built before it lack it.
+   * Contract 20: 0.1.10 and 0.1.11 shipped 19 without it.
    */
   terminal?: { available: boolean; reason: string | null };
   /**
