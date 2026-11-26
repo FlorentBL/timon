@@ -39,7 +39,7 @@ export type BinarySearchOptions = {
   /** Stands in for `TIMON_HOME` when telling the folders a mission can write. */
   timonHome?: string;
   /** Owner and mode reads behind the trust of a version manager's `node`, injectable for tests. */
-  pathTrust?: Pick<TrustedTreeDeps, 'uid' | 'lstat' | 'readlink'>;
+  pathTrust?: Pick<TrustedTreeDeps, 'uid' | 'lstat' | 'readlink' | 'privateGroup'>;
   /** `process.arch` of the machine the search stands for: which native build an npm launcher stands for. */
   arch?: string;
   /** Filesystem reads behind an npm launcher's package, injectable for tests. */
