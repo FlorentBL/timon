@@ -68,7 +68,7 @@ test('the card shows each zone and its value, with no slider until a row is adju
   await s.openRow('chrome');
   assert.ok(document.querySelector('#glass-chrome-blur'));
   await s.openRow('islands');
-  assert.equal(document.querySelector('#glass-chrome-blur'), null, 'one row open at a time');
+  assert.ok(!document.querySelector('#glass-chrome-blur'), 'one row open at a time');
   assert.ok(document.querySelector('#glass-islands-blur'));
   await s.openRow('islands');
   assert.equal(document.querySelectorAll('input[type="range"]').length, 0, 'adjust again folds the row');
