@@ -5,6 +5,7 @@
  */
 
 import type { TaskRunBy } from '@/lib/task-runner';
+import type { PendingPermission } from '@/lib/kanban-card';
 
 export type TaskType = 'code' | 'review' | 'merge' | 'research' | 'doc' | 'chore';
 
@@ -43,6 +44,9 @@ export type TaskFormSource = {
   attachment_count?: number;
   /** The report the agent closed the task with. */
   done_comment?: string | null;
+  mission_id?: string | null;
+  /** The card a running task's mission waits on, as the task route reads it (TODO #1200). */
+  pending_permission?: PendingPermission | null;
 };
 
 /** What `POST /api/tasks` (creation) or `PUT /api/tasks/:id` (edition) receives from the form. */
