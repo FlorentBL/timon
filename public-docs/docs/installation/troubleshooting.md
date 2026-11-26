@@ -267,7 +267,10 @@ machine has none, Timon lends the CLI the Node.js it runs on itself.
 A Node.js found under a version manager is skipped when another account could
 have replaced it: on Linux and macOS, the file or one of the folders above it,
 up to the version manager's own folder, belongs to another user or is writable
-by its group or by everyone (`chmod go-w` on that folder fixes it); on Windows,
+by its group or by everyone (`chmod go-w` on that folder fixes it), except a
+group write bit on your own folder whose group is your private group (the one
+named after you, with no other member, as a `002` umask leaves fnm's folders on
+Ubuntu), which is accepted; on Windows,
 a version manager folder outside your user profile (`FNM_DIR` or `VOLTA_HOME`
 set to `D:\fnm`, say). The Node.js Timon runs on is lent only while it is the
 very file Timon started from, or a file only an administrator or Timon's own
