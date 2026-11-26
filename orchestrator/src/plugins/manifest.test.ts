@@ -785,6 +785,17 @@ test('the project settings slot joins wave 19', () => {
   assert.equal(SLOT_API_VERSIONS['project.settings'], 19);
 });
 
+test('the fence card slot joins wave 19', () => {
+  // `useFenceGrant` is missing from a host 17 (0.1.9): a manifest naming the
+  // slot must declare 19, or its browser half would die there on a missing
+  // import instead of being refused at install.
+  const message = refusal(pkg({ apiVersion: 18, client: { slots: ['chat.fence'] } }));
+  assert.ok(message.includes('names `chat.fence`, which needs `apiVersion: 19`'), message);
+  const res = readManifest(pkg({ apiVersion: 19, client: { slots: ['chat.fence'] } }));
+  assert.ok(res.ok, res.ok ? '' : res.message);
+  assert.equal(SLOT_API_VERSIONS['chat.fence'], 19);
+});
+
 test('`root` outside a layout is refused, whatever the other kind', () => {
   // `root` is the whole interface: a non-layout naming it would replace the
   // shell for everyone, with no choice in the appearance settings.

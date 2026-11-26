@@ -165,6 +165,7 @@ export const SLOT_API_VERSIONS: Readonly<Record<string, number>> = Object.freeze
   'kanban.job.dialog': 19,
   'forge.publish.dialog': 19,
   'project.settings': 19,
+  'chat.fence': 19,
 });
 
 /** A public path relative to the plugin prefix: lowercase segments or `:name` parameters, never a wildcard. */
