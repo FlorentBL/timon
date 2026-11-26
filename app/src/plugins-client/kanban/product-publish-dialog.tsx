@@ -23,7 +23,7 @@ import { useAccess } from '@/hooks/use-me';
 import { t } from '@/lib/i18n';
 import { cn } from '@/lib/utils';
 import {
-  branchUpdateDetails, conflictPushDetails, isPending, issueCloseDetails, PROPOSAL_BODY_LIMIT, publishRefusal, type ForgeProposal,
+  branchDeleteDetails, branchUpdateDetails, conflictPushDetails, isPending, issueCloseDetails, PROPOSAL_BODY_LIMIT, publishRefusal, type ForgeProposal,
 } from './forge-proposals-api';
 import { safeHref } from './project-todo-links';
 import { usePublishDialog } from './publish-dialog-context';
@@ -72,6 +72,17 @@ function WriteDetails({ proposal }: { proposal: ForgeProposal }) {
       </dl>
     );
   }
+  const removal = branchDeleteDetails(proposal);
+  if (removal) {
+    return (
+      <dl data-publish-delete-branch="" className="flex flex-col gap-2 rounded-md bg-background/60 px-3 py-2.5">
+        <Row label={t('forgePublish.deleteBranch.branch')}><span title={removal.branch}>{removal.branch}</span></Row>
+        <Row label={t('forgePublish.deleteBranch.head')}><span className="tabular-nums" title={removal.head_sha}>{shortSha(removal.head_sha)}</span></Row>
+        <Row label={t('forgePublish.deleteBranch.condition')}>{t('forgePublish.deleteBranch.conditionValue')}</Row>
+        <Row label={t('forgePublish.update.runs')}>{t('forgePublish.update.runsValue')}</Row>
+      </dl>
+    );
+  }
   const push = conflictPushDetails(proposal);
   if (!push) return null;
   const branch = `${push.head_repository}:${push.head_ref}`;
@@ -103,8 +114,8 @@ export function ProductPublishDialog(): ReactElement | null {
   const open = fresh || isPending(proposal);
   const writing = open && editable && (fresh || editing);
   const kind = proposal?.kind ?? 'comment';
-  // A branch update and an issue's closing write no comment.
-  const hasComment = kind !== 'update_branch' && kind !== 'close_issue';
+  // A branch update, an issue's closing and a branch's deletion write no comment.
+  const hasComment = kind !== 'update_branch' && kind !== 'close_issue' && kind !== 'delete_branch';
   const state: keyof typeof STATE_TONE = open || proposal.state === 'draft' || proposal.state === 'failed' ? 'pending' : proposal.state;
   const where = t(target.type === 'pull' ? 'forgePublish.onPull' : 'forgePublish.onIssue', { number: target.number });
   const href = safeHref(target.url);

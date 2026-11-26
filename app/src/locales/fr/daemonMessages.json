@@ -333,6 +333,10 @@
       "title": "La fermeture d'une issue GitHub attend votre accord",
       "body": "Fermez {target} sur GitHub, ou laissez-la ouverte."
     },
+    "forge_branch_delete_pending": {
+      "title": "La suppression d'une branche fusionnée attend votre accord",
+      "body": "Supprimez la branche de {target} sur GitHub, maintenant fusionnée, ou gardez-la."
+    },
     "landing_repair_pushed": {
       "title": "Réparation poussée sur {pr}",
       "body": "La réparation de {branch} a été poussée sur sa pull request {pr} ; GitHub relance ses contrôles."
