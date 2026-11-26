@@ -111,12 +111,6 @@ const nextConfig = {
   // (`next/dist/server/next-server.js`, `handleNextImageRequest`);
   // `src/lib/image-optimizer-off.test.ts` keeps both halves true.
   images: { unoptimized: true },
-  // Next 15 type-checks the generated route and page types at build time,
-  // and those now want `params` and `searchParams` as promises. The handlers
-  // still read them synchronously, which Next 15 keeps supporting at run
-  // time; their move to `await` is a separate change, which drops this flag.
-  // `npm run typecheck` still checks the sources.
-  typescript: { ignoreBuildErrors: true },
   // Native addon: required at runtime from node_modules, never bundled.
   serverExternalPackages: ['better-sqlite3'],
   experimental: {
