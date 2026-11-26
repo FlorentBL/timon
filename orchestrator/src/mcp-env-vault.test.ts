@@ -9,15 +9,16 @@
 import './test-home.js';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
   MCP_DIR, deleteMcp, getMcp, listMcp, mcpStdioBridgeLaunch, migrateMcpHeadersToVault, missionTransport, presentMcpServer,
   redactMcpServer, resolveLaunchServers, upsertMcp, type McpStoredServer,
 } from './mcp.js';
-import { getSecret, readSecretValue, updateSecret } from './secrets/store.js';
-import { resolveMasterKey } from './secrets/key.js';
+import { getSecret, readSecretValue, resetRotationCheck, updateSecret } from './secrets/store.js';
+import { resetMasterKeyCache, resolveMasterKey } from './secrets/key.js';
+import { SECRET_KEY_FILE } from './paths.js';
 import { resetActiveModules, setActiveModules } from './kernel/module-state.js';
 
 resolveMasterKey({ keyring: null });
@@ -203,4 +204,39 @@ test('a path sealed before the vault wrote ~/… is rewritten by the migration, 
   await capturingLogs(() => migrateMcpHeadersToVault());
   assert.equal(fileOf('env-old-path'), again, 'idempotent');
   deleteMcp('env-old-path');
+});
+
+test('a master key that reads again (keyring unlocked) moves what the file kept meanwhile, without a reboot', async () => {
+  const { apply } = await import('./plugins-bundled/secrets-vault/index.js');
+  const express = (await import('express')).default;
+  const disposers: Array<() => void> = [];
+  const effect = (fn: () => (() => void) | void) => { const off = fn(); if (off) disposers.push(off); };
+  await capturingLogs(() => apply({ http: { router: () => express() }, effect } as never));
+  // A sealed secret: without one, a missing key is a fresh install, not a locked vault.
+  upsertMcp({ id: 'env-probe', transport: { ...STDIO, env: { P: 'probe' } } });
+  const probe = refsOf('env-probe').P!;
+  const key = readFileSync(SECRET_KEY_FILE);
+  unlinkSync(SECRET_KEY_FILE); resetMasterKeyCache(); resetRotationCheck();
+  try {
+    const { logs } = await capturingLogs(() => upsertMcp({ id: 'env-locked', transport: { ...STDIO, env: { K: 'env-locked-secret' } } }));
+    assert.ok(fileOf('env-locked').includes('env-locked-secret'), 'kept in the file while the key is unreadable');
+    assert.ok(!logs.includes('env-locked-secret'));
+  } finally {
+    // The key is back, the cache left as the failure left it: the next read recovers it.
+    writeFileSync(SECRET_KEY_FILE, key, { mode: 0o600 }); resetRotationCheck();
+  }
+  try {
+    const { logs } = await capturingLogs(async () => {
+      readSecretValue(probe);
+      await new Promise((resolve) => setImmediate(resolve));
+    });
+    assert.ok(!fileOf('env-locked').includes('env-locked-secret'), 'moved once the key read again');
+    assert.ok(!logs.includes('env-locked-secret'));
+    assert.match(logs, /env-locked moved into the secrets vault once the master key read again/);
+    assert.equal(mcpStdioBridgeLaunch('env-locked')?.env.K, 'env-locked-secret');
+  } finally {
+    for (const off of disposers) off();
+    deleteMcp('env-locked');
+    deleteMcp('env-probe');
+  }
 });

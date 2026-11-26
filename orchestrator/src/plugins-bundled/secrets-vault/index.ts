@@ -17,6 +17,7 @@ import { SECRETS_MODULE_ID } from '../../secrets/availability.js';
 import { importSecretsEnvAtBoot, recoverVaultRotation } from '../../secrets/store.js';
 import { bus, type BusEvent } from '../../bus.js';
 import { migrateMcpHeadersToVault } from '../../mcp.js';
+import { onMasterKeyRecovered } from '../../secrets/key.js';
 import { registerRoutes } from './routes.js';
 import { endSecretRequestsOfMission, sweepSecretRequests } from './requests.js';
 
@@ -31,6 +32,19 @@ export const manifest: ModuleManifest = {
 
 export const name = manifest.name;
 export const inject = manifest.inject;
+
+/**
+ * Moves into the vault the credentials MCP server files still hold in clear
+ * (headers, variables, OAuth client secrets). Logs server ids, never a value.
+ */
+function moveMcpCredentials(when: string): void {
+  try {
+    const moved = migrateMcpHeadersToVault();
+    if (moved.moved.length) console.log(`[secrets] mcp: headers and variables of ${moved.moved.join(', ')} moved into the secrets vault${when}`);
+  } catch (err) {
+    console.warn(`[secrets] mcp: moving server credentials into the vault failed (${(err as Error).name})`);
+  }
+}
 
 export function apply(ctx: Context): void {
   registerRoutes(ctx.http.router());
@@ -54,12 +68,10 @@ export function apply(ctx: Context): void {
   // An MCP server saved while the vault was off kept its headers or variables
   // in its file, and is held back from the agents: switching the vault on again
   // moves them now, not at the next boot (TODO #1071).
-  try {
-    const moved = migrateMcpHeadersToVault();
-    if (moved.moved.length) console.log(`[secrets] mcp: headers and variables of ${moved.moved.join(', ')} moved into the secrets vault`);
-  } catch (err) {
-    console.warn(`[secrets] mcp: moving server credentials into the vault failed (${(err as Error).name})`);
-  }
+  moveMcpCredentials('');
+  // Saved while the master key was unreadable (a keyring still locked at boot):
+  // moved as soon as the key reads again, not at the next boot (TODO #1181).
+  ctx.effect(() => onMasterKeyRecovered(() => moveMcpCredentials(' once the master key read again')));
   // A value lent to a mission (`secret_request`, lifetime `once` / `mission`)
   // does not outlive it; a card does not outlive its expiry. The sweep also
   // catches what a daemon that died mid-mission left behind.
