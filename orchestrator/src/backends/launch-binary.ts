@@ -20,7 +20,7 @@
  * limits of `plugins/policy.ts` apply here: a renamed copy of `claude` is not caught.
  */
 import { statSync } from 'node:fs';
-import { isAbsolute } from 'node:path';
+import { isAbsolute, win32 } from 'node:path';
 import { config } from '../config/load.js';
 import {
   binKey, canonicalExecutable, canonicalPath, execDeniedReason, isSubscriptionCli, PluginPolicyError, resolveExecutable, samePath,
@@ -31,6 +31,7 @@ import { clearLaunchCard, raiseLaunchCard } from './launch-card.js';
 import { launchProvenance } from './launch-provenance.js';
 import { declaredBinaries } from '../host/declared-binaries.js';
 import { npmNativeBehind } from '../host/binary-path.js';
+import { BinaryIdentityError } from './binary-identity.js';
 
 /** The plugin that answers for backend `backend`'s code, for the refusal. */
 function ownerOf(backend: string): string {
@@ -100,8 +101,9 @@ function authorizedPrograms(backend: string): string[] {
 }
 
 /**
- * What a third-party launch checked, pinned to the file itself: the path the spawn starts, the file it
- * led to (links followed) and that file's identity on disk (device and inode; the file index on NTFS).
+ * What a launch checked, pinned to the file itself (a third party's program, or a product program whose
+ * identity is checked): the path the spawn starts, the file it led to (links followed) and that file's
+ * identity on disk (device and inode; the file index on NTFS).
  * The check and the spawn are not one system call: the provider's identity check runs in between
  * (`binary-identity.ts`, it starts the program), so a link retargeted or a file renamed over the checked
  * one during that time would be started unchecked. `assertLaunchPinned` is the last thing before the
@@ -123,6 +125,12 @@ export type LaunchPin = {
   readonly size: bigint;
   readonly mtimeNs: bigint;
   readonly ctimeNs: bigint;
+  /**
+   * The file was held to what the operator authorized (a third-party backend): a refusal raises the card
+   * that leads back to that authorization. A product backend's pin only holds the spawn to the file its
+   * identity check asked (`pinIdentifiedProgram`): there is nothing for the operator to authorize.
+   */
+  readonly authorized: boolean;
 };
 
 type FileIdentity = Pick<LaunchPin, 'dev' | 'ino' | 'size' | 'mtimeNs' | 'ctimeNs'>;
@@ -182,7 +190,29 @@ export function assertLaunchAuthorized(backend: string, cmd: string): { program:
   const identity = fileIdentity(launched);
   if (!identity) throw refuse(owner, backend, `backend \`${backend}\` launches \`${launched}\`, which is not a regular file`);
   clearLaunchCard(owner);
-  return { program: resolved, pin: { backend, owner, program: resolved, file: launched, ...identity } };
+  return { program: resolved, pin: { backend, owner, program: resolved, file: launched, authorized: true, ...identity } };
+}
+
+/**
+ * Before the identity check of a PRODUCT backend's program (`declares.binary.identity`, TODO #1201): that
+ * check starts the file `cmd` resolves to and asks it what it is, but the spawn resolved the name again
+ * afterwards, so a program replaced in between (a pinned path rewritten, a CLI updating itself, another
+ * install winning the name) was started on the strength of another file's answer. Codex and the profiles
+ * on its dialect (Ollama Cloud) are held to the same pin as a third party's program: the spawn starts the
+ * path that was checked, and `assertLaunchPinned` refuses it if it no longer leads to that very file.
+ *
+ * Nothing changes where there is no identity to check, nor for a third party, already pinned by
+ * `assertLaunchAuthorized`. A `cmd` the host does not resolve, or that leads to no regular file, is left
+ * as it was: the identity check skips or refuses it, and a spawn of nothing ends on its `missing` notice.
+ */
+export function pinIdentifiedProgram(backend: string, cmd: string): { program: string; pin: LaunchPin | null } {
+  if (backendTrust(backend) === 'third-party' || !profileDeclarations(backend)?.binary?.identity) return { program: cmd, pin: null };
+  const resolved = resolveExecutable(cmd);
+  if (!resolved) return { program: cmd, pin: null };
+  const file = canonicalPath(resolved);
+  const identity = fileIdentity(file);
+  if (!identity) return { program: cmd, pin: null };
+  return { program: resolved, pin: { backend, owner: ownerOf(backend), program: resolved, file, authorized: false, ...identity } };
 }
 
 /**
@@ -196,6 +226,12 @@ export function assertLaunchPinned(pin: LaunchPin): void {
   const file = canonicalPath(pin.program);
   const identity = fileIdentity(file);
   if (samePath(file, pin.file) && identity && sameIdentity(identity, pin)) return;
+  if (!pin.authorized) {
+    // The identity refusal's rules: the program by its own name, never its full path (`binary-identity.ts`).
+    throw new BinaryIdentityError(`backend \`${pin.backend}\` was about to launch \`${win32.basename(pin.program)}\`, which no longer is `
+      + 'the file checked for this launch: it was replaced, or a link moved, between its identity check and the launch. '
+      + 'The next launch checks the program as it is then.');
+  }
   throw refuse(pin.owner, pin.backend, `backend \`${pin.backend}\` was about to launch \`${pin.program}\`, which no longer is the file `
     + `checked for this launch (\`${pin.file}\`): it was replaced, or a link moved, between the check and the launch`);
 }

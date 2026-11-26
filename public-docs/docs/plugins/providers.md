@@ -249,6 +249,8 @@ Before a mission starts the program, and before `ctx.provider.binary` runs it
 against `pattern`, where `^` and `$` match a line. A program that does not match is
 refused, and the person reads which file it was, the first line it printed and your
 `expected` sentence. The answer is remembered per file until the file changes.
+The mission then starts the very file that answered: replaced, or reached through a
+link that moved, between the check and the launch, it is not started.
 Keep the pattern simple: a test that runs past 250 ms (nested repetitions such as
 `(a+)+` can backtrack without end) is stopped and the program refused, and a program
 still running after 5 seconds is killed.
