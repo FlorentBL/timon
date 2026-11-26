@@ -8,7 +8,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import Database from 'better-sqlite3';
 import {
   BROWSER_HOST_SETTING, browserHostEnabled, browserHostService, installedDesktopExecutable, LINUX_DESKTOP_EXECUTABLE, readStoredSetting,
@@ -59,7 +59,14 @@ function machine(m: Machine = {}) {
     if (args.includes('show')) {
       const unit = args[args.indexOf('show') + 1]!;
       if (!existsSync(unitPath(homeDir, unit))) return ok('LoadState=not-found\n');
-      if (unit !== opts.unitName) return ok('LoadState=loaded\nActiveState=active\n');
+      if (unit !== opts.unitName) {
+        // The host's unit as systemd runs it: `servicesSharingHome` reads its command.
+        const root = dirname(desktop);
+        const node = join(root, 'resources', 'node', 'node');
+        const argv = [node, join(root, 'resources', 'orchestrator', 'dist', 'host', 'browser-host-launcher.js'), desktop, `${unit}.service`];
+        return ok(`LoadState=loaded\nNeedDaemonReload=no\nActiveState=active\nEnvironment="TIMON_HOME=${opts.timonHome}"\n`
+          + `ExecStart={ path=${node} ; argv[]=${argv.join(' ')} ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }\n`);
+      }
       return ok(`LoadState=loaded\nNeedDaemonReload=no\nActiveState=active\nUnitFileState=enabled\nWorkingDirectory=${opts.installDir}\n`
         + `Environment="TIMON_HOME=${opts.timonHome}"\n`);
     }
