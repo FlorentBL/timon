@@ -69,7 +69,7 @@ test('a card shows its agent, model, idea tags, schedule and dependency counts',
   resetSlotsForTests();
   const { KanbanClient } = await import('../plugins-client/kanban/kanban-page');
 
-  const router = { back() {}, forward() {}, refresh() {}, prefetch() {}, push() {}, replace() {} };
+  const router = { bfcacheId: 'test', back() {}, forward() {}, refresh() {}, prefetch() {}, push() {}, replace() {} };
   const root = createRoot(document.getElementById('root')!);
   const until = (condition: () => boolean, what: string) => waitUntil(React.act, condition, what);
   const card = (id: string) => document.querySelector(`[data-task-card="${id}"]`);

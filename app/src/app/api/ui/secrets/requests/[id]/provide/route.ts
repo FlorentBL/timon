@@ -9,7 +9,8 @@ export const dynamic = 'force-dynamic';
  * daemon token. The body is relayed as is and never logged; nothing of it is
  * read here.
  */
-export async function POST(req: Request, { params }: { params: { id: string } }): Promise<Response> {
-  const body = await req.json().catch(() => ({}));
-  return proxyJson('POST', `/api/secrets/requests/${encodeURIComponent(params.id)}/provide`, body);
+export async function POST(req: Request, props: { params: Promise<{ id: string }> }): Promise<Response> {
+ const params = await props.params;
+ const body = await req.json().catch(() => ({}));
+ return proxyJson('POST', `/api/secrets/requests/${encodeURIComponent(params.id)}/provide`, body);
 }

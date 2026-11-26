@@ -124,6 +124,15 @@ react-dom
 
 For esbuild, use `format: 'esm'`, `bundle: true` and an `external` array containing those exact specifiers. Do not embed another React instance. Include the built browser file in the published package: installation does not run lifecycle scripts.
 
+### React 19, shared with Timon
+
+Your browser half runs on Timon's own React, version 19: `react` and `react-dom` resolve to the copy the interface uses, so your elements are created by the same React that renders them. A plugin that keeps these modules external has nothing to change. Two things stop working:
+
+- **A bundled React.** A browser bundle that embeds its own `react`, `react-dom` or the automatic JSX runtime (`react/jsx-runtime`) puts a second React in the page, and its hooks fail. Timon does not serve `react/jsx-runtime`: write `React.createElement`, as the [examples](examples.md) do, or compile JSX in classic mode (esbuild `jsx: 'transform'`, `jsxFactory: 'React.createElement'`, `jsxFragment: 'React.Fragment'`).
+- **APIs React 19 removed.** `defaultProps` on a function component (use default values in the destructured props), `propTypes`, string refs (`ref="name"`), legacy context (`contextTypes`, `getChildContext`) and `element.ref` (read `element.props.ref`).
+
+From `apiVersion: 20`, the `react` module also exports React 19's APIs by name: `use`, `useActionState`, `useOptimistic`, `useTransition`, `useDeferredValue`, `startTransition`, `forwardRef`, `useImperativeHandle`, `Children` and `isValidElement`. Declare 20 when you import one of them by name: an older Timon then refuses the plugin instead of loading a browser half that fails on the missing import. Reaching them through the default export (`React.useTransition`) also works on Timon 0.1.8 to 0.1.11, which already run React 19.
+
 ## Host entry
 
 Export `apply(ctx)` and register routes or effects through the context. `ctx.router()` mounts routes beneath `/api/plugins/<encoded-id>/` and removes them when the plugin unloads. The `/-/` path prefix is reserved for platform endpoints. The router is an Express router. A handler may be `async`: if it throws or its promise rejects, Timon logs the error under your plugin's id and answers `500 {"error":"internal_error"}` without the error's message, and the daemon keeps running. An error carrying a 4xx `status` keeps that status. Catch the errors you can explain and answer them yourself: the generic 500 tells your user nothing.

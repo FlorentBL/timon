@@ -22,15 +22,15 @@ test('task attachments: the proxy forwards the file fields and the download flag
     await list.POST(new Request('http://localhost/api/ui/tasks/t1/attachments', {
       method: 'POST',
       body: JSON.stringify({ name: 'a.png', data: 'iVA=', mime: 'image/png', path: '/etc/passwd', task_id: 'other' }),
-    }), { params: { id: 't1' } });
+    }), { params: Promise.resolve({ id: 't1' }) });
     const served = await one.GET(
       new Request('http://localhost/api/ui/tasks/t1/attachments/abc?download=1&token=secret'),
-      { params: { id: 't1', attachmentId: 'abc' } },
+      { params: Promise.resolve({ id: 't1', attachmentId: 'abc' }) },
     );
     assert.equal(served.headers.get('content-type'), 'image/png');
     assert.equal(served.headers.get('x-content-type-options'), 'nosniff');
     assert.match(served.headers.get('content-disposition') ?? '', /^inline/);
-    await one.DELETE(new Request('http://localhost/'), { params: { id: '../x', attachmentId: 'abc' } });
+    await one.DELETE(new Request('http://localhost/'), { params: Promise.resolve({ id: '../x', attachmentId: 'abc' }) });
   });
   assert.match(calls[0]!.url, /\/api\/tasks\/t1\/attachments$/);
   assert.deepEqual(JSON.parse(String(calls[0]!.init.body)), { name: 'a.png', data: 'iVA=', mime: 'image/png' });
@@ -53,17 +53,17 @@ test('idea attachments: the proxy forwards the file fields and the download flag
   });
   const store = { headers: new Headers(), cookies: { get: (name: string) => (name === 'timon_session' ? { value: 'session' } : undefined) } } as never;
   await requestAsyncStorage.run(store, async () => {
-    await list.GET(new Request('http://localhost/api/ui/project-todo/209/attachments'), { params: { id: '209' } });
+    await list.GET(new Request('http://localhost/api/ui/project-todo/209/attachments'), { params: Promise.resolve({ id: '209' }) });
     await list.POST(new Request('http://localhost/api/ui/project-todo/209/attachments', {
       method: 'POST',
       body: JSON.stringify({ name: 'a.png', data: 'iVA=', mime: 'image/png', path: '/etc/passwd', todo_id: 1 }),
-    }), { params: { id: '209' } });
+    }), { params: Promise.resolve({ id: '209' }) });
     const served = await one.GET(
       new Request('http://localhost/api/ui/project-todo/209/attachments/abc?download=1&token=secret'),
-      { params: { id: '209', attachmentId: 'abc' } },
+      { params: Promise.resolve({ id: '209', attachmentId: 'abc' }) },
     );
     assert.equal(served.headers.get('x-content-type-options'), 'nosniff');
-    await one.DELETE(new Request('http://localhost/'), { params: { id: '../x', attachmentId: 'abc' } });
+    await one.DELETE(new Request('http://localhost/'), { params: Promise.resolve({ id: '../x', attachmentId: 'abc' }) });
   });
   assert.match(calls[0]!.url, /\/api\/project-todo\/209\/attachments$/);
   assert.deepEqual(JSON.parse(String(calls[1]!.init.body)), { name: 'a.png', data: 'iVA=', mime: 'image/png' });
@@ -86,12 +86,12 @@ test('idea attachments: an anonymous call reaches the daemon with no credential,
   const anonymous = { headers: new Headers(), cookies: { get: () => undefined } } as never;
   try {
     const statuses = await requestAsyncStorage.run(anonymous, async () => [
-      (await list.GET(new Request('http://localhost/api/ui/project-todo/209/attachments'), { params: { id: '209' } })).status,
+      (await list.GET(new Request('http://localhost/api/ui/project-todo/209/attachments'), { params: Promise.resolve({ id: '209' }) })).status,
       (await list.POST(new Request('http://localhost/api/ui/project-todo/209/attachments', {
         method: 'POST', body: JSON.stringify({ name: 'a.png', data: 'iVA=' }),
-      }), { params: { id: '209' } })).status,
-      (await one.GET(new Request('http://localhost/api/ui/project-todo/209/attachments/abc'), { params: { id: '209', attachmentId: 'abc' } })).status,
-      (await one.DELETE(new Request('http://localhost/'), { params: { id: '209', attachmentId: 'abc' } })).status,
+      }), { params: Promise.resolve({ id: '209' }) })).status,
+      (await one.GET(new Request('http://localhost/api/ui/project-todo/209/attachments/abc'), { params: Promise.resolve({ id: '209', attachmentId: 'abc' }) })).status,
+      (await one.DELETE(new Request('http://localhost/'), { params: Promise.resolve({ id: '209', attachmentId: 'abc' }) })).status,
     ]);
     assert.deepEqual(statuses, [401, 401, 401, 401]);
     assert.equal(seen.length, 4);

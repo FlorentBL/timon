@@ -6,7 +6,7 @@ type Chunk = { data: string; offset: number; size: number; name: string; mimeTyp
 /** Stream into the client's download manager without exposing host paths or buffering the whole file. */
 export async function streamBrowserDownload(req: Request, profileId: string, downloadId: string): Promise<Response> {
   const clientId = new URL(req.url).searchParams.get('clientId');
-  const headers = { ...sessionProxyHeaders(), 'content-type': 'application/json' };
+  const headers = { ...(await sessionProxyHeaders()), 'content-type': 'application/json' };
   // The profile lives on the daemon of the active machine; resolved once, so
   // every chunk of one download is read from the same place.
   const target = await resolveTarget(req);

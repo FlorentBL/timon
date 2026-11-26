@@ -178,7 +178,7 @@ async function clickChatLink(url: string, href: string, init: MouseEventInit = {
     Object.defineProperty(globalThis, 'IS_REACT_ACT_ENVIRONMENT', { value: true, configurable: true, writable: true });
     Object.defineProperty(globalThis, 'React', { value: React, configurable: true, writable: true });
     const router = {
-      back() {}, forward() {}, refresh() {}, prefetch() {}, replace() {},
+      bfcacheId: 'test', back() {}, forward() {}, refresh() {}, prefetch() {}, replace() {},
       push(path: string) { routed.push(path); },
     };
     const root = createRoot(document.getElementById('root')!);

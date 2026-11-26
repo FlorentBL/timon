@@ -14,7 +14,7 @@ async function relay(slug: string, body: string, headers: Record<string, string>
   };
   try {
     const { POST } = await route;
-    const res = await POST(new Request('http://app.test/api/triggers/hooks/x', { method: 'POST', body, headers }), { params: { slug } });
+    const res = await POST(new Request('http://app.test/api/triggers/hooks/x', { method: 'POST', body, headers }), { params: Promise.resolve({ slug }) });
     return { res, seen };
   } finally { globalThis.fetch = original; }
 }

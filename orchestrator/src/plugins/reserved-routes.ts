@@ -27,8 +27,8 @@ export const RESERVED_ROUTE_SEGMENTS: readonly string[] = Object.freeze([
 ]);
 
 /**
- * Starts of a first segment the login middleware skips (its `matcher` in
- * `app/src/middleware.ts`): a page there would paint without the session gate.
+ * Starts of a first segment the login proxy skips (its `matcher` in
+ * `app/src/proxy.ts`): a page there would paint without the session gate.
  */
 export const RESERVED_ROUTE_PREFIXES: readonly string[] = Object.freeze([
   'icon-', 'logo-', 'manifest', 'workbox',

@@ -8,9 +8,10 @@ import { proxyJson } from '@/lib/ui/proxy';
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
-type Ctx = { params: { id: string } };
+type Ctx = { params: Promise<{ id: string }> };
 
-export async function POST(req: Request, { params }: Ctx): Promise<Response> {
+export async function POST(req: Request, props: Ctx): Promise<Response> {
+  const params = await props.params;
   const body = await req.json().catch(() => ({})) as { title?: unknown; body?: unknown };
   return proxyJson('POST', `/api/kanban/landings/${encodeURIComponent(params.id)}/land`, {
     ...(body.title !== undefined ? { title: body.title } : {}),

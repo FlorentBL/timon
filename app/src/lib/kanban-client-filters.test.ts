@@ -57,7 +57,7 @@ test('a stored project filter windows the board and the reset clears it', async 
   resetSlotsForTests();
   const { KanbanClient } = await import('../plugins-client/kanban/kanban-page');
 
-  const router = { back() {}, forward() {}, refresh() {}, prefetch() {}, push() {}, replace() {} };
+  const router = { bfcacheId: 'test', back() {}, forward() {}, refresh() {}, prefetch() {}, push() {}, replace() {} };
   const root = createRoot(document.getElementById('root')!);
   const until = (condition: () => boolean, what: string) => waitUntil(React.act, condition, what);
   const titles = () => Array.from(document.querySelectorAll('article [data-card-title]'))

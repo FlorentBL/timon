@@ -3,10 +3,8 @@ import { proxyJson } from '@/lib/ui/proxy';
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
-export async function DELETE(
-  req: Request,
-  { params }: { params: { slug: string } },
-): Promise<Response> {
+export async function DELETE(req: Request, props: { params: Promise<{ slug: string }> }): Promise<Response> {
+  const params = await props.params;
   // Only the two parameters the daemon understands go through, never the raw query.
   const incoming = new URL(req.url).searchParams;
   const query = new URLSearchParams();

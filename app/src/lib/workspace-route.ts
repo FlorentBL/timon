@@ -5,7 +5,7 @@ import { rowHandover, type LayoutHandover } from './layout-handover';
  *
  * The browser and the server both have to answer "which workspace is this?" —
  * the first from `usePathname` / `useSearchParams`, the second from the URL
- * header the middleware forwards. Two copies of this derivation would drift,
+ * header the proxy forwards. Two copies of this derivation would drift,
  * and a drift here is invisible: the server would seed the layout of a
  * workspace the client then decides it is not in, and the seeded paint would
  * be quietly replaced by another one. The flash it was meant to remove would
@@ -13,11 +13,11 @@ import { rowHandover, type LayoutHandover } from './layout-handover';
  */
 
 /**
- * Header carrying the requested URL from the middleware to the server render.
+ * Header carrying the requested URL from the proxy to the server render.
  *
- * It lives here, and not in `middleware.ts`: a server module importing the
- * middleware would drag the edge runtime's imports into the Node bundle for
- * one string.
+ * It lives here, and not in `proxy.ts`: a server module importing the proxy
+ * would drag its imports (the session gate, the origin rules) into every
+ * render for one string.
  */
 export const URL_HEADER = 'x-timon-url';
 

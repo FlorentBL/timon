@@ -4,10 +4,8 @@ import { proxyJson } from '@/lib/ui/proxy';
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
-export async function POST(
-  req: Request,
-  { params }: { params: { id: string } },
-): Promise<Response> {
+export async function POST(req: Request, props: { params: Promise<{ id: string }> }): Promise<Response> {
+  const params = await props.params;
   // A push notification's Approve/Deny names the machine that asked
   // (`public/sw.js`): the permission lives there, and the browser may have
   // been switched to another machine since. The cards of the interface send

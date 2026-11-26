@@ -69,7 +69,7 @@ test('the series graph icon only on series tasks, focused on its task; no series
   const { KanbanClient } = await import('../plugins-client/kanban/kanban-page');
 
   const pushed: string[] = [];
-  const router = { back() {}, forward() {}, refresh() {}, prefetch() {}, push(path: string) { pushed.push(path); }, replace() {} };
+  const router = { bfcacheId: 'test', back() {}, forward() {}, refresh() {}, prefetch() {}, push(path: string) { pushed.push(path); }, replace() {} };
   const root = createRoot(document.getElementById('root')!);
   const until = (condition: () => boolean, what: string) => waitUntil(React.act, condition, what);
   const click = async (el: Element, done: () => boolean, what: string) => {

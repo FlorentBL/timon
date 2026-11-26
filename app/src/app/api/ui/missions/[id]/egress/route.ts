@@ -5,10 +5,8 @@ export const dynamic = 'force-dynamic';
 
 /** A mission's journaled connections (TODO #590). Only `limit` and `before`
  *  are relayed: the daemon refuses any other query key, and validates these. */
-export async function GET(
-  req: Request,
-  { params }: { params: { id: string } },
-): Promise<Response> {
+export async function GET(req: Request, props: { params: Promise<{ id: string }> }): Promise<Response> {
+  const params = await props.params;
   const incoming = new URL(req.url).searchParams;
   const query = new URLSearchParams();
   for (const key of ['limit', 'before']) {

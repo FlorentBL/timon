@@ -6,7 +6,8 @@ export const dynamic = 'force-dynamic';
 // The daemon validates these (zod); the proxy only relays the ones it knows.
 const RELAYED = ['limit', 'kind', 'before', 'from', 'ids'] as const;
 
-export async function GET(req: Request, { params }: { params: { id: string } }): Promise<Response> {
+export async function GET(req: Request, props: { params: Promise<{ id: string }> }): Promise<Response> {
+  const params = await props.params;
   const incoming = new URL(req.url).searchParams;
   const outgoing = new URLSearchParams();
   for (const name of RELAYED) {

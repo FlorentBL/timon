@@ -55,6 +55,29 @@ class BundleModulesPlugin {
   }
 }
 
+/**
+ * Writes `<distDir>/app-entry-files.json`, `{ pages: { '/chat/page': files[] } }`:
+ * the JS the browser loads for each App Router entry, the shape of the
+ * `app-build-manifest.json` Next 15 wrote and Next 16 no longer does. Same
+ * rule as Next's own plugin: the `main-app` runtime files, then the entry's.
+ */
+class AppEntryFilesPlugin {
+  apply(compiler) {
+    compiler.hooks.afterEmit.tapPromise('AppEntryFilesPlugin', async (compilation) => {
+      const { writeFile } = await import('node:fs/promises');
+      const { join } = await import('node:path');
+      const js = (entry) => (entry ? [...entry.getFiles()].filter((f) => f.endsWith('.js') && !f.includes('.hot-update.')) : []);
+      const main = js(compilation.entrypoints.get('main-app'));
+      const pages = {};
+      for (const [name, entry] of compilation.entrypoints) {
+        if (!name.startsWith('app/')) continue;
+        pages[name.slice('app'.length)] = [...new Set([...main, ...js(entry)])];
+      }
+      await writeFile(join(compiler.outputPath, 'app-entry-files.json'), JSON.stringify({ pages }));
+    });
+  }
+}
+
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   distDir,
@@ -87,9 +110,9 @@ const nextConfig = {
   // Without this normalization, an orphan URL answers 404: nothing to cache,
   // nothing to poison. No internal link uses a trailing slash.
   skipTrailingSlashRedirect: true,
-  // The middleware's `Location` goes out exactly as written (step 5.9.6).
+  // The proxy's `Location` goes out exactly as written (step 5.9.6).
   //
-  // Without this, the middleware adapter reparses our header into a `NextURL`
+  // Without this, the proxy adapter reparses our header into a `NextURL`
   // and, when the host equals the request's, rewrites `Location` with the
   // normalized form — and `parseURL()` folds `127.0.0.1` and `[::1]` back into
   // `localhost` (`next-url.js:15`). A browser sitting on `127.0.0.1:3110` thus
@@ -98,10 +121,10 @@ const nextConfig = {
   // No side effect here: the normalization it also disables covers the
   // `buildId` and locale of `/_next/data/...` URLs, which only exist in the
   // Pages Router — this app is App Router throughout, with no routing i18n.
-  skipMiddlewareUrlNormalize: true,
+  skipProxyUrlNormalize: true,
   // The image optimizer (`/_next/image`) is switched off.
   //
-  // It is unauthenticated (the middleware matcher skips it) and hands any
+  // It is unauthenticated (the proxy matcher skips it) and hands any
   // local or allowed remote file to sharp/libvips: Next 14.2.x carries
   // critical advisories on exactly that path (remote code execution through
   // AVIF and SVG decoding, out-of-memory and disk-filling denials of service),
@@ -111,12 +134,6 @@ const nextConfig = {
   // (`next/dist/server/next-server.js`, `handleNextImageRequest`);
   // `src/lib/image-optimizer-off.test.ts` keeps both halves true.
   images: { unoptimized: true },
-  // Next 15 type-checks the generated route and page types at build time,
-  // and those now want `params` and `searchParams` as promises. The handlers
-  // still read them synchronously, which Next 15 keeps supporting at run
-  // time; their move to `await` is a separate change, which drops this flag.
-  // `npm run typecheck` still checks the sources.
-  typescript: { ignoreBuildErrors: true },
   // Native addon: required at runtime from node_modules, never bundled.
   serverExternalPackages: ['better-sqlite3'],
   experimental: {
@@ -134,9 +151,11 @@ const nextConfig = {
       test: /vendor\/vault-graph\/(graphology\.umd\.min|sigma\.min)\.js$/,
       type: 'javascript/auto',
     });
-    // `scripts/measure-bundle.mjs --modules` reads this to say WHAT a chunk
-    // carries. Opt-in: a regular build writes nothing more.
-    if (!isServer && process.env.TIMON_BUNDLE_STATS === '1') config.plugins.push(new BundleModulesPlugin());
+    // `scripts/measure-bundle.mjs` reads these: which files each route loads,
+    // and WHAT a chunk carries. Opt-in: a regular build writes nothing more.
+    if (!isServer && process.env.TIMON_BUNDLE_STATS === '1') {
+      config.plugins.push(new AppEntryFilesPlugin(), new BundleModulesPlugin());
+    }
     return config;
   },
 };

@@ -60,7 +60,7 @@ test('the login page starts a fresh document in the onboarding once the owner is
   const { default: LoginPage } = await import('../app/login/page');
   const softNavigations: string[] = [];
   const router = {
-    back() {}, forward() {}, refresh() {}, prefetch() {},
+    bfcacheId: 'test', back() {}, forward() {}, refresh() {}, prefetch() {},
     push(path: string) { softNavigations.push(path); },
     replace(path: string) { softNavigations.push(path); },
   };

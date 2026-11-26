@@ -3,8 +3,9 @@ import { proxyJson } from '@/lib/ui/proxy';
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
-type Params = { params: { id: string } };
+type Params = { params: Promise<{ id: string }> };
 
-export async function POST(_req: Request, { params }: Params): Promise<Response> {
+export async function POST(_req: Request, props: Params): Promise<Response> {
+  const params = await props.params;
   return proxyJson('POST', `/api/integrations/connections/${encodeURIComponent(params.id)}/replay-failed`);
 }

@@ -9,7 +9,7 @@ import { proxyJson } from '@/lib/ui/proxy';
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
-type Ctx = { params: { slug: string } };
+type Ctx = { params: Promise<{ slug: string }> };
 
 const path = (slug: string) => `/api/projects/${encodeURIComponent(slug)}/integration`;
 
@@ -17,12 +17,14 @@ const path = (slug: string) => `/api/projects/${encodeURIComponent(slug)}/integr
  *  may resolve a contributor's conflict. `forge` stays on its only value. */
 const WRITABLE = ['mode', 'remote', 'target', 'account', 'gh_config_dir', 'branch_prefix', 'remote_url', 'contributor_conflicts'] as const;
 
-export async function GET(_req: Request, { params }: Ctx): Promise<Response> {
+export async function GET(_req: Request, props: Ctx): Promise<Response> {
+  const params = await props.params;
   return proxyJson('GET', path(params.slug));
 }
 
 /** The daemon refuses `resolve` from anyone but a signed-in person. */
-export async function PUT(req: Request, { params }: Ctx): Promise<Response> {
+export async function PUT(req: Request, props: Ctx): Promise<Response> {
+  const params = await props.params;
   const body = await req.json().catch(() => ({})) as Record<string, unknown> | null;
   const patch: Record<string, unknown> = {};
   for (const key of WRITABLE) {
@@ -32,6 +34,7 @@ export async function PUT(req: Request, { params }: Ctx): Promise<Response> {
 }
 
 /** Back to the local merge: the jobs already under way keep their mode. */
-export async function DELETE(_req: Request, { params }: Ctx): Promise<Response> {
+export async function DELETE(_req: Request, props: Ctx): Promise<Response> {
+  const params = await props.params;
   return proxyJson('DELETE', path(params.slug));
 }

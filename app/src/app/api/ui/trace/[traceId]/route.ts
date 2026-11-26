@@ -5,7 +5,8 @@ export const dynamic = 'force-dynamic';
 
 const RELAYED = ['span_limit', 'payload'] as const;
 
-export async function GET(req: Request, { params }: { params: { traceId: string } }): Promise<Response> {
+export async function GET(req: Request, props: { params: Promise<{ traceId: string }> }): Promise<Response> {
+  const params = await props.params;
   const incoming = new URL(req.url).searchParams;
   const outgoing = new URLSearchParams();
   for (const name of RELAYED) {
