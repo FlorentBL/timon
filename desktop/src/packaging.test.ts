@@ -12,6 +12,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { existsSync, readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
+import { createRequire } from 'node:module';
 import { dirname, join } from 'node:path';
 import { PACKAGED_DEFAULTS } from './config.js';
 
@@ -23,6 +24,21 @@ const pkg = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8')) as {
   homepage?: string;
   author?: { email?: string };
 };
+
+/**
+ * electron-builder checks its configuration against its own schema only when
+ * a build starts, on each OS: a key its new major no longer knows (26 moved the
+ * Linux `desktop` keys under `entry`) failed the build, not a test.
+ */
+test('electron-builder.yml passes the schema of the installed electron-builder', async () => {
+  const require = createRequire(import.meta.url);
+  const yaml = require('js-yaml') as { load: (text: string) => unknown };
+  const { validateConfiguration } = require('app-builder-lib/out/util/config/config.js') as {
+    validateConfiguration: (config: unknown, logger: unknown) => Promise<void>;
+  };
+  const { DebugLogger } = require('builder-util') as { DebugLogger: new (enabled: boolean) => unknown };
+  await validateConfiguration(yaml.load(yml), new DebugLogger(false));
+});
 
 test('the daemon and the built app travel with the client', () => {
   for (const resource of [
@@ -196,8 +212,12 @@ test('the Windows node-pty prebuild ships its ConPTY', () => {
  * "already installed" over it. The shell decides those values on first launch
  * and the first-run screen registers the service once they exist.
  */
+test('the macOS app and its pkg declare the oldest macOS Electron runs on', () => {
+  assert.match(yml, /\nmac:\n(?:  .*\n)*  minimumSystemVersion: "13\.0"\n/);
+});
+
 test('an older installer can replace a newer version, to go back after a bad update', () => {
-  // NSIS (electron-builder 25.1.8) has no version check; the macOS .pkg has one, on by default.
+  // NSIS (electron-builder 26) has no version check; the macOS .pkg has one, on by default.
   assert.match(yml, /\npkg:\n(?:  .*\n)*  isVersionChecked: false\n/);
 });
 

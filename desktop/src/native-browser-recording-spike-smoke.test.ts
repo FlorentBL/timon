@@ -2,12 +2,12 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { execFile } from 'node:child_process';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
-import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
 import { Script } from 'node:vm';
 import { writeEngine } from './native-browser-smoke.fixture.js';
+import { smokeElectron } from './electron-binary.fixture.js';
 
 /**
  * Spike for TODO #461 (recording the built-in browser): can the recorder live in the tab preload
@@ -277,7 +277,7 @@ test('recording spike: a preload listener sees human, agent and synthetic events
   skip: process.env.TIMON_ELECTRON_SMOKE !== '1', timeout: 60_000,
 }, async () => {
   const root = await mkdtemp(join(tmpdir(), 'timon-recording-spike-'));
-  const electron = createRequire(import.meta.url)('electron') as string;
+  const electron = smokeElectron();
   try {
     await writeEngine(root, { preloadSuffix: SPIKE_RECORDER });
     new Script(fixture, { filename: 'smoke.cjs' });

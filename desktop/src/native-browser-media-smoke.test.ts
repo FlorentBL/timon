@@ -4,16 +4,16 @@ import { execFile } from 'node:child_process';
 import { mkdtemp, readFile, writeFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { createRequire } from 'node:module';
 import { promisify } from 'node:util';
 import { writeEngine } from './native-browser-smoke.fixture.js';
 import { Script } from 'node:vm';
+import { smokeElectron } from './electron-binary.fixture.js';
 
 test('hidden Electron sends encoded tab video and audio with WebRTC, WebM and MP4, with scoped viewers', {
   skip: process.env.TIMON_ELECTRON_SMOKE !== '1', timeout: 60_000,
 }, async () => {
   const home = await mkdtemp(join(tmpdir(), 'timon-media-smoke-'));
-  const electron = createRequire(import.meta.url)('electron') as string;
+  const electron = smokeElectron();
   try {
     await writeEngine(home, { entries: ['native-browser-media'], preloads: [] });
     await writeFile(join(home, 'fixture.html'), `<!doctype html><canvas width="640" height="480"></canvas><script>

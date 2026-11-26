@@ -103,7 +103,8 @@ export type ProblemDeps = {
   show: (options: BoxOptions) => Promise<{ response: number }>;
   /** Started as soon as the problem is known; awaited by the actions. */
   report: () => Promise<DiagnosticReport>;
-  writeClipboard: (text: string) => void;
+  /** `clipboard.writeText`, a Promise since Electron 44: awaited, so a refused write reaches the failure box. */
+  writeClipboard: (text: string) => void | Promise<void>;
   /** Writes the report where it lasts, returns its path. */
   save: (text: string) => string;
   /** `shell.showItemInFolder`: the saved file, selected in the file manager. */
@@ -170,7 +171,7 @@ export async function showProblem(deps: ProblemDeps, box: ProblemBox): Promise<v
       try {
         if ('error' in result) throw result.error;
         if (response === 1) {
-          deps.writeClipboard(result.report.text);
+          await deps.writeClipboard(result.report.text);
           // Before the box can close: a quit that follows takes a Linux clipboard with it (TODO #478).
           deps.log(`[desktop] diagnostic copied to the clipboard (${result.report.text.length} characters)`);
           note = deps.copy.copied;

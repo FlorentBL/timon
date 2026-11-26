@@ -2,12 +2,12 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { execFile } from 'node:child_process';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
-import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
 import { Script } from 'node:vm';
 import { SHELL_LOCALES_DIR, writeEngine } from './native-browser-smoke.fixture.js';
+import { smokeElectron } from './electron-binary.fixture.js';
 
 /**
  * The annotation bubble of TODO #481, end to end in a real Electron: the real engine, tab preload,
@@ -233,7 +233,7 @@ interface Report {
 
 async function runSmoke(): Promise<Report> {
   const root = await mkdtemp(join(tmpdir(), 'timon-bubble-smoke-'));
-  const electron = createRequire(import.meta.url)('electron') as string;
+  const electron = smokeElectron();
   try {
     await writeEngine(root, { preloads: ['native-browser-preload', 'native-browser-bubble-preload'] });
     new Script(fixture, { filename: 'smoke.cjs' });

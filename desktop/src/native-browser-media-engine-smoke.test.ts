@@ -4,16 +4,16 @@ import { execFile } from 'node:child_process';
 import { mkdtemp, writeFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { createRequire } from 'node:module';
 import { promisify } from 'node:util';
 import { Script } from 'node:vm';
 import { writeEngine } from './native-browser-smoke.fixture.js';
+import { smokeElectron } from './electron-binary.fixture.js';
 
 test('real engine WebContentsView streams while hidden and while attached to the desktop panel', {
   skip: process.env.TIMON_ELECTRON_SMOKE !== '1', timeout: 60_000,
 }, async () => {
   const home = await mkdtemp(join(tmpdir(), 'timon-engine-media-smoke-'));
-  const electron = createRequire(import.meta.url)('electron') as string;
+  const electron = smokeElectron();
   try {
     await writeEngine(home, { entries: ['native-browser', 'native-browser-media'] });
     const bootstrap = String.raw`

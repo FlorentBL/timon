@@ -1,9 +1,8 @@
 /**
- * The Linux launcher's "New Window" (01/11/2026). electron-builder 25 has no
- * desktop actions: `electron-builder.yml` slips the action group into the
- * value of the last `desktop` key. These tests render the deb and AppImage
- * entries with electron-builder's own code, so a version that writes the
- * entry differently fails here, not on a tester's dock.
+ * The Linux launcher's "New Window" (01/11/2026), declared in
+ * `desktop.desktopActions` of `electron-builder.yml`. These tests render the
+ * deb and AppImage entries with electron-builder's own code, so a version that
+ * writes the entry differently fails here, not on a tester's dock.
  */
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
@@ -16,8 +15,9 @@ const yaml = require('js-yaml') as { load: (text: string) => unknown };
 const { LinuxTargetHelper } = require('app-builder-lib/out/targets/LinuxTargetHelper.js') as {
   LinuxTargetHelper: new (packager: unknown) => { computeDesktopEntry: (options: unknown, exec?: string, extra?: Record<string, string>) => Promise<string> };
 };
+const { deepAssign } = require('builder-util-runtime') as { deepAssign: <T>(target: T, ...objects: unknown[]) => T };
 
-type Options = Record<string, unknown> & { desktop?: Record<string, string>; category?: string };
+type Options = Record<string, unknown> & { desktop?: { entry?: Record<string, string> }; category?: string; executableName?: string };
 const config = yaml.load(readFileSync(new URL('../electron-builder.yml', import.meta.url), 'utf8')) as {
   productName: string; linux: Options; deb: Options; appImage: Options; mac?: { category?: string };
 };
@@ -26,14 +26,15 @@ const pkg = JSON.parse(readFileSync(new URL('../package.json', import.meta.url),
 /** What electron-builder's packager hands the helper, for this config (`linuxPackager.js`). */
 const packager = {
   appInfo: { productName: config.productName, sanitizedProductName: config.productName, description: pkg.description },
+  info: { metadata: pkg },
   executableName: pkg.name.toLowerCase(),
   fileAssociations: [],
   config,
   platformSpecificBuildOptions: config.linux,
 };
 
-/** A target's options as electron-builder merges them: `linux`, then the target's own. */
-const optionsOf = (target: 'deb' | 'appImage'): Options => ({ ...config.linux, ...config[target] });
+/** A target's options as electron-builder merges them (`FpmTarget`, `AppImageTarget`): `linux`, then the target's own, deeply. */
+const optionsOf = (target: 'deb' | 'appImage'): Options => deepAssign({}, config.linux, config[target]);
 
 /** The groups of a desktop entry, each a map of its keys, in order. */
 function groups(entry: string): Map<string, Map<string, string>> {
@@ -87,11 +88,12 @@ for (const target of ['deb', 'appImage'] as const) {
 test('the packaged entry claims the class Electron gives a packaged window: the package name', async () => {
   const raw = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')) as Record<string, unknown>;
   assert.equal(raw.productName, undefined, 'a productName would rename the class');
+  assert.equal(raw.desktopName, undefined, 'a desktopName would rename the Wayland app_id and the default StartupWMClass');
   assert.equal((config as Record<string, unknown>).extraMetadata, undefined, 'so would extraMetadata');
   for (const target of ['deb', 'appImage'] as const) {
     assert.equal((await render(target)).get('Desktop Entry')!.get('StartupWMClass'), pkg.name);
   }
-  assert.equal(config.linux.desktop?.StartupWMClass, pkg.name, 'and any other Linux target');
+  assert.equal(config.linux.desktop?.entry?.StartupWMClass, pkg.name, 'and any other Linux target');
   assert.equal(config.linux.executableName, undefined, 'the deb action names /opt/<productName>/<package name>');
 });
 

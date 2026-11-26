@@ -127,44 +127,52 @@ linux:
     - deb
   # The dock ties a window to the entry whose StartupWMClass is the window's
   # class (X11 WM_CLASS, Wayland app_id). Electron names it after the app's
-  # package.json, which carries `name` and no productName: `timon-desktop`.
-  # electron-builder's default (`Timon`) matches no window.
+  # package.json, which carries `name` and no productName nor desktopName:
+  # `timon-desktop`. electron-builder's default (`Timon`) matches no window.
   desktop:
-    StartupWMClass: timon-desktop
+    entry:
+      StartupWMClass: timon-desktop
 # "New Window" on a right-click of Timon in the dock or the app grid (GNOME,
 # KDE): a `.desktop` action that launches Timon again with `--new-window`; the
 # running shell gets that launch (`second-instance`) and opens one more window.
-# electron-builder 25 has no desktop actions: it writes one `key=value` line
-# per entry of `desktop`, in order, then sets Comment and Categories, which
-# keep their place when already listed. So both are listed with the values it
-# sets, and the action group rides on the value of `Actions`, the LAST key.
-# `packaging.test.ts` renders both entries with electron-builder's own code.
-# A target's `desktop` replaces the one of `linux`: StartupWMClass is repeated.
+# electron-builder writes the `[Desktop Action]` groups of `desktopActions` but
+# not the `Actions` key that announces them: `entry` sets it. Comment and
+# Categories come from the package description and `linux.category`.
+# `linux-desktop.test.ts` renders both entries with electron-builder's own code.
+# A target's `desktop` is merged into the one of `linux`, key by key.
 deb:
   afterInstall: ../orchestrator/src/host/linux-cli-after-install.tpl
   afterRemove: ../orchestrator/src/host/linux-cli-after-remove.tpl
   desktop:
-    StartupWMClass: timon-desktop
-    Comment: Timon desktop client (Electron shell around the local daemon).
-    Categories: Development;
-    # french-ok: the French name of the action; a block scalar cannot hold the
-    # marker (a `.desktop` comment line would be written into the entry), so
-    # the value is double-quoted and its `ê` escaped.
-    Actions: "new-window;\n\n[Desktop Action new-window]\nName=New Window\nName[fr]=Nouvelle fen\u00eatre\nExec=/opt/Timon/timon-desktop --new-window"
+    entry:
+      Actions: new-window;
+    desktopActions:
+      new-window:
+        Name: New Window
+        # french-ok: the French name of the action, its `ê` escaped.
+        "Name[fr]": "Nouvelle fen\u00eatre"
+        Exec: /opt/Timon/timon-desktop --new-window
 appImage:
   desktop:
-    StartupWMClass: timon-desktop
-    Comment: Timon desktop client (Electron shell around the local daemon).
-    Categories: Development;
-    # AppImageLauncher and appimaged rewrite every Exec of the entry, the
-    # action's included, to the path of the AppImage.
-    # french-ok: same French action name, escaped as above.
-    Actions: "new-window;\n\n[Desktop Action new-window]\nName=New Window\nName[fr]=Nouvelle fen\u00eatre\nExec=AppRun --no-sandbox --new-window"
+    entry:
+      Actions: new-window;
+    desktopActions:
+      new-window:
+        Name: New Window
+        # french-ok: same French action name, escaped as above.
+        "Name[fr]": "Nouvelle fen\u00eatre"
+        # AppImageLauncher and appimaged rewrite every Exec of the entry, the
+        # action's included, to the path of the AppImage.
+        Exec: AppRun --no-sandbox --new-window
 rpm:
   afterInstall: ../orchestrator/src/host/linux-cli-after-install.tpl
   afterRemove: ../orchestrator/src/host/linux-cli-after-remove.tpl
 mac:
   category: public.app-category.developer-tools
+  # Electron 45 does not run below macOS 13. Stated here, it becomes the app's
+  # LSMinimumSystemVersion and the pkg's allowed OS versions: the installer
+  # refuses an older Mac instead of installing an app that cannot start.
+  minimumSystemVersion: "13.0"
   # The default, stated: a Developer ID build runs under the hardened runtime,
   # where the microphone needs the audio-input entitlement. The entitlements
   # are build/entitlements.mac.plist (the app) and

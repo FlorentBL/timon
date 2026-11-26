@@ -3,12 +3,12 @@ import test from 'node:test';
 import { execFile } from 'node:child_process';
 import { EventEmitter } from 'node:events';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
-import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
 import { runInNewContext, Script } from 'node:vm';
 import { writeEngine } from './native-browser-smoke.fixture.js';
+import { smokeElectron } from './electron-binary.fixture.js';
 
 /** Installed synchronously, before app.whenReady() or any dynamic browser import. */
 const quietElectronErrors = String.raw`
@@ -73,7 +73,7 @@ test('real hidden Chromium isolates profiles, captures and accepts input after n
   skip: process.env.TIMON_ELECTRON_SMOKE !== '1', timeout: 45_000,
 }, async () => {
   const root = await mkdtemp(join(tmpdir(), 'timon-native-browser-smoke-'));
-  const electron = createRequire(import.meta.url)('electron') as string;
+  const electron = smokeElectron();
   try {
     await writeEngine(root);
     await writeFile(join(root, 'smoke.cjs'), `
