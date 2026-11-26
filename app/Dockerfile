@@ -9,7 +9,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY package.json package-lock.json ./
 RUN npm ci
 
-COPY tsconfig.json next.config.mjs next-env.d.ts ./
+COPY tsconfig.json tsconfig.build.json next.config.mjs next-env.d.ts ./
 COPY tailwind.config.ts postcss.config.js components.json ./
 COPY src ./src
 COPY public ./public
