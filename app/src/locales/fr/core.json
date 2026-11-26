@@ -788,7 +788,9 @@
     "glassTintReset": "Couleur de la surface",
     "glassTuningReset": "Flou et transparence par défaut",
     "glassTuningTitle": "Réglage du verre",
-    "glassTuningHint": "Flou, transparence et couleur du verre, pour tout à la fois ou zone par zone.",
+    "glassTuningAdjust": "Régler",
+    "glassTuningClose": "Terminé",
+    "glassTuningStatus": "Flou {blur} px · transparence {transparency} %",
     "glassZones": {
       "general": "Général",
       "chrome": "Cadre",
@@ -796,18 +798,10 @@
       "widgets": "Widgets",
       "bubbles": "Bulles"
     },
-    "glassZoneOwn": "Réglé à part",
-    "glassZoneHints": {
-      "general": "Ce que chaque zone utilise tant qu’elle n’est pas réglée à part.",
-      "chrome": "Barre du haut, menu latéral et espaces entre les îlots.",
-      "islands": "La plaque dépolie de chaque îlot, floutée indépendamment du cadre.",
-      "widgets": "Les cartes des widgets, la colonne de lecture du chat et les popups.",
-      "bubbles": "Les messages du chat."
-    },
     "glassZoneFollow": "Suivre le réglage général",
+    "glassZoneFollows": "Suit le réglage général",
     "glassFloor": "Plancher de lisibilité",
     "glassFloorOff": "Désactivé",
-    "glassFloorHint": "L’opacité minimale des îlots, des widgets et des bulles, quelle que soit leur transparence, pour que le texte reste lisible sur un fond d’écran clair.",
     "glassProfiles": {
       "title": "Profils de verre",
       "hint": "Tout le rendu du verre sous un nom : interrupteurs, portée, réglage de chaque zone et plancher de lisibilité. Les profils enregistrés sont aussi proposés dans le menu Personnaliser l’interface.",

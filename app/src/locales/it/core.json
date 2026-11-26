@@ -1012,7 +1012,9 @@
     "glassTintReset": "Colore della superficie",
     "glassTuningReset": "Sfocatura e trasparenza predefinite",
     "glassTuningTitle": "Regolazione del vetro",
-    "glassTuningHint": "Sfocatura, trasparenza e colore del vetro, per tutto insieme o zona per zona.",
+    "glassTuningAdjust": "Regola",
+    "glassTuningClose": "Fatto",
+    "glassTuningStatus": "Sfocatura {blur} px · trasparenza {transparency} %",
     "glassZones": {
       "general": "Generale",
       "chrome": "Cornice",
@@ -1020,18 +1022,10 @@
       "widgets": "Widget",
       "bubbles": "Bolle"
     },
-    "glassZoneOwn": "Regolata a parte",
-    "glassZoneHints": {
-      "general": "Ciò che ogni zona usa, a meno che non sia regolata a parte.",
-      "chrome": "Barra superiore, menu laterale e spazi tra le isole.",
-      "islands": "La lastra smerigliata di ogni isola, sfocata separatamente dalla cornice.",
-      "widgets": "Schede dei widget, colonna di lettura della chat e popup.",
-      "bubbles": "Messaggi della chat."
-    },
     "glassZoneFollow": "Segui la regolazione generale",
+    "glassZoneFollows": "Segue l'impostazione generale",
     "glassFloor": "Soglia di leggibilità",
     "glassFloorOff": "Off",
-    "glassFloorHint": "L’opacità minima di isole, widget e bolle, qualunque sia la loro trasparenza, così il testo resta leggibile su uno sfondo luminoso.",
     "glassProfiles": {
       "title": "Profili del vetro",
       "hint": "L’intero aspetto del vetro sotto un nome: interruttori, ambito, regolazione di ogni zona e soglia di leggibilità. I profili salvati sono proposti anche nel menu Personalizza l’interfaccia.",
