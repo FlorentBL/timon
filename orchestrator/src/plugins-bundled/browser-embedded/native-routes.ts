@@ -96,12 +96,12 @@ export function registerNativeBrowserRoutes(app: Router, deps: {
   capabilities?: typeof nativeBrowserCapabilities;
   detectChrome?: () => ChromeDetection;
   /** Why no provider answers, coded: the server's browser host, or the desktop app (`built-in-browser.ts`). */
-  unavailable?: () => ApiErrorBody;
+  unavailable?: () => Promise<ApiErrorBody>;
 } = {}): void {
   const call = deps.call ?? callNativeBrowser;
   const unavailable = deps.unavailable ?? (() => browserUnavailableRefusal());
   // The provider layer only knows that nobody answered; this one says who should have, and how to repair it.
-  const explained = (body: ApiErrorBody): ApiErrorBody => (body.code === 'browser_desktop_unavailable' ? unavailable() : body);
+  const explained = async (body: ApiErrorBody): Promise<ApiErrorBody> => (body.code === 'browser_desktop_unavailable' ? unavailable() : body);
   // The TIMON_CHROME_PATH setting (environment first, then the settings table) pins the browser.
   const detectChrome = deps.detectChrome ?? (() => detectChromeBinary({ env: { ...process.env, TIMON_CHROME_PATH: settingStr('TIMON_CHROME_PATH') } }));
   const controls = browserControls();
@@ -252,13 +252,13 @@ export function registerNativeBrowserRoutes(app: Router, deps: {
     res.setHeader('Cache-Control', 'no-store');
     try { res.json(await operation(req)); }
     catch (error) {
-      res.status(error instanceof NativeBrowserError ? error.status : 400).json(explained(browserErrorBody(error)));
+      res.status(error instanceof NativeBrowserError ? error.status : 400).json(await explained(browserErrorBody(error)));
     }
   };
   app.get('/api/native-browser/capabilities', handle(async () => {
     const capabilities = await (deps.capabilities ?? nativeBrowserCapabilities)(detectChrome);
     if (capabilities.available || !capabilities.refusal) return capabilities;
-    const refusal = explained(capabilities.refusal);
+    const refusal = await explained(capabilities.refusal);
     return { ...capabilities, reason: refusal.error, refusal };
   }));
   app.get('/api/native-browser/profiles', handle((req) => {

@@ -1,4 +1,5 @@
 import { readFileSync, statSync } from 'node:fs';
+import { readFile, stat } from 'node:fs/promises';
 import { join } from 'node:path';
 import { TIMON_HOME } from './paths.js';
 import { detectChromeBinary, type ChromeDetection } from './host/chrome-binary.js';
@@ -31,10 +32,32 @@ export type NativeProvider = { version: 1; origin: string; token: string; pid: n
 /** This credential is local IPC, never returned through a browser-facing API. */
 export function readNativeProvider(home = TIMON_HOME): NativeProvider | null {
   try {
-    const path = join(home, 'browser-native', 'provider.json');
+    const path = providerFile(home);
     const stat = statSync(path);
-    if (!stat.isFile() || stat.size > 4096) return null;
-    const value = JSON.parse(readFileSync(path, 'utf8')) as NativeProvider;
+    if (!stat.isFile() || stat.size > MAX_PROVIDER_BYTES) return null;
+    return parseNativeProvider(readFileSync(path, 'utf8'));
+  } catch { return null; }
+}
+
+/** `readNativeProvider` without holding the event loop: what a daemon route reads. */
+export async function readNativeProviderAsync(home = TIMON_HOME): Promise<NativeProvider | null> {
+  try {
+    const path = providerFile(home);
+    const info = await stat(path);
+    if (!info.isFile() || info.size > MAX_PROVIDER_BYTES) return null;
+    return parseNativeProvider(await readFile(path, 'utf8'));
+  } catch { return null; }
+}
+
+const MAX_PROVIDER_BYTES = 4096;
+
+function providerFile(home: string): string {
+  return join(home, 'browser-native', 'provider.json');
+}
+
+function parseNativeProvider(text: string): NativeProvider | null {
+  try {
+    const value = JSON.parse(text) as NativeProvider;
     const url = new URL(value.origin);
     if (value.version !== 1 || url.protocol !== 'http:' || url.hostname !== '127.0.0.1'
       || !url.port || url.username || url.password || url.pathname !== '/' || url.search || url.hash
