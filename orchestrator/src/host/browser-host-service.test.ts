@@ -140,7 +140,9 @@ test('the host runs the installed package, never a staged copy nor an AppImage m
 
 test('the unit restarts the host on failure, never after a definitive refusal, and stops it with SIGTERM', () => {
   const unit = renderBrowserHostUnit('/home/u/.timon', '/opt/Timon/timon-desktop');
-  assert.match(unit, /^ExecStart="\/opt\/Timon\/timon-desktop" --browser-host$/m);
+  // TODO #1233: through the package's Node and its launcher, which turns a sandbox refusal into 78.
+  assert.match(unit, /^ExecStart="\/opt\/Timon\/resources\/node\/node" "\/opt\/Timon\/resources\/orchestrator\/dist\/host\/browser-host-launcher\.js" "\/opt\/Timon\/timon-desktop" %n$/m);
+  assert.match(unit, /^KillMode=mixed$/m, 'the stop signal reaches the launcher, which hands it to the host once');
   assert.match(unit, /^Environment="TIMON_HOME=\/home\/u\/\.timon"$/m);
   assert.match(unit, /^Restart=on-failure$/m);
   assert.match(unit, /^RestartPreventExitStatus=78$/m);
@@ -270,7 +272,8 @@ test('update apply: both units follow the package now installed', { skip: POSIX_
   const result = installService(next);
   assert.equal(result.ok, true, result.lines.join('\n'));
   assert.equal(readFileSync(first.daemonFile, 'utf8'), next.unitContent);
-  assert.match(readFileSync(first.browserFile, 'utf8'), new RegExp(`^ExecStart="${desktop.replaceAll('/', '\\/')}" --browser-host$`, 'm'));
+  assert.match(readFileSync(first.browserFile, 'utf8'), new RegExp(`^ExecStart=".+" ".+" "${desktop.replaceAll('/', '\\/')}" %n$`, 'm'));
+  assert.ok(readFileSync(first.browserFile, 'utf8').includes(`"${join(newRoot, 'resources', 'node', 'node')}"`), 'the new package\'s own Node');
   const unit = browserHostUnit(next.timonHome);
   const acts = first.acts().slice(before);
   assert.ok(acts.includes(`--user restart ${next.unitName}`));

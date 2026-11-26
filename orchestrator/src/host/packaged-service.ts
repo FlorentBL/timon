@@ -3,7 +3,7 @@ import { readFile, writeFile } from 'node:fs/promises';
 import nodeFs from 'node:fs';
 import { createRequire } from 'node:module';
 import { createHash } from 'node:crypto';
-import { basename, delimiter, dirname, isAbsolute, join, relative, resolve } from 'node:path';
+import { basename, delimiter, dirname, isAbsolute, join, posix, relative, resolve } from 'node:path';
 import type { ServiceOpts } from './service-install.js';
 import { isBundledNode } from './bundled-node.js';
 
@@ -69,16 +69,24 @@ export const PACKAGED_RESTART_BACKOFF = 'RestartSteps=10\nRestartMaxDelaySec=300
  * when it can never run here, which a restart would not change. The executable is the installed
  * package's, not a copy under `desktop-runtime`: Chromium's sandbox helper only works from the
  * package the system installed (setuid root, or an AppArmor profile that names its path).
+ *
+ * The package's Node runs it through `browser-host-launcher.js`: Chromium refuses a sandbox it
+ * cannot use before the host's script runs, so only a process outside it can turn that refusal
+ * into the 78 that stops the restarts. `%n` hands the launcher the unit's name for its repair
+ * line. `KillMode=mixed`: the stop signal goes to the launcher, which hands it to the host once.
  */
 export function renderBrowserHostUnit(home: string, executable: string): string {
+  const root = posix.dirname(executable);
+  const node = posix.join(root, 'resources', 'node', 'node');
+  const launcher = posix.join(root, 'resources', 'orchestrator', 'dist', 'host', 'browser-host-launcher.js');
   return '[Unit]\nDescription=Timon built-in browser (no screen)\nAfter=network.target\n'
     // A package removed without `timon service uninstall`: the unit stays inactive instead of
     // failing to start every few minutes.
     + `ConditionPathExists=${executable.replaceAll('%', '%%')}\n\n`
     + `[Service]\nType=simple\nEnvironment=${quote(`TIMON_HOME=${home}`)}\nUnsetEnvironment=ELECTRON_RUN_AS_NODE\n`
-    + `ExecStart=${execQuote(executable)} --browser-host\n`
+    + `ExecStart=${execQuote(node)} ${execQuote(launcher)} ${execQuote(executable)} %n\n`
     + `Restart=on-failure\nRestartSec=2\n${PACKAGED_RESTART_BACKOFF}RestartPreventExitStatus=78\n`
-    + 'KillSignal=SIGTERM\nKillMode=control-group\nTimeoutStopSec=30\n\n[Install]\nWantedBy=default.target\n';
+    + 'KillSignal=SIGTERM\nKillMode=mixed\nTimeoutStopSec=30\n\n[Install]\nWantedBy=default.target\n';
 }
 
 function execQuote(value: string): string { return quote(value).replaceAll('$', '$$'); }
