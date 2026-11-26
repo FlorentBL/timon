@@ -94,6 +94,7 @@ import { resolvedPermissionModeFor } from './backends/catalog.js';
 import { reportInertShellPreallow } from './auto-mode-preallow.js';
 import { nestedSandboxOf } from './backends/capabilities.js';
 import { settingBool, settingNum } from './settings.js';
+import { appendCappedLine } from './agent-log.js';
 import {
   MissionFenceBlockedError, missionFenceExpected, profileLimits, releaseFencePolicy, watchFencedLaunch, wrapMissionLaunch,
   type MissionFenceOutcome,
@@ -1526,13 +1527,26 @@ export function buildEffectivePrompt(
   return prompt;
 }
 
+/** Agents whose archive could not be written, warned once each: a full disk would log every event. */
+const agentLogFailures = new Set<string>();
+
 function appendAgentLog(agentName: string, entry: unknown): void {
-  mkdirSync(agentMemoryDir(agentName), { recursive: true });
-  // Output redaction (SECRETS-VAULT.md §7): `log.jsonl` is an archive that
-  // outlives the mission and travels — memory synthesis reads it, and it is the
-  // one agent file kept by `timon export` (AGENT_ARCHIVE_FILES). A token landing
-  // there is a leak with a long shelf life.
-  appendFileSync(agentLog(agentName), JSON.stringify(redactDeep(entry)) + '\n');
+  try {
+    mkdirSync(agentMemoryDir(agentName), { recursive: true });
+    // Output redaction (SECRETS-VAULT.md §7): `log.jsonl` is an archive that
+    // outlives the mission and travels — memory synthesis reads it, and it is the
+    // one agent file kept by `timon export` (AGENT_ARCHIVE_FILES). A token landing
+    // there is a leak with a long shelf life.
+    const maxBytes = Math.max(0, settingNum('TIMON_AGENT_LOG_MAX_MB')) * 1024 * 1024;
+    appendCappedLine(agentLog(agentName), JSON.stringify(redactDeep(entry)), maxBytes);
+    agentLogFailures.delete(agentName);
+  } catch (err) {
+    // An archive nothing reads back is never worth a mission's end handler,
+    // which runs right after this call (a full disk threw ENOSPC here).
+    if (agentLogFailures.has(agentName)) return;
+    agentLogFailures.add(agentName);
+    console.warn(`[memory] ${agentName}: log.jsonl not written: ${(err as Error).message}`);
+  }
 }
 
 export type SpawnOptions = {
