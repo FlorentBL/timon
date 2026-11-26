@@ -527,6 +527,7 @@
     "browser_command_unknown": "Unknown browser command.",
     "browser_command_user_only": "This browser operation is reserved for the user.",
     "browser_signin_url_invalid": "The sign-in page must be an http or https address.",
+    "browser_signin_needs_screen": "Signing in with Chrome opens a Chrome window, and this browser runs on a machine with no screen. Sign in to the site directly in the built-in browser.",
     "browser_agent_invalid": "This agent name is invalid.",
     "no_linked_conversation": "This browser is not the one of that conversation.",
     "conversation_start_failed": "The conversation could not start: {detail}",

@@ -527,6 +527,7 @@
     "browser_command_unknown": "Commande de navigateur inconnue.",
     "browser_command_user_only": "Cette opération du navigateur est réservée à l'utilisateur.",
     "browser_signin_url_invalid": "La page de connexion doit être une adresse http ou https.",
+    "browser_signin_needs_screen": "La connexion avec Chrome ouvre une fenêtre Chrome, et ce navigateur tourne sur une machine sans écran. Connectez-vous au site directement dans le navigateur intégré.",
     "browser_agent_invalid": "Ce nom d'agent est invalide.",
     "no_linked_conversation": "Ce navigateur n'est pas celui de cette conversation.",
     "conversation_start_failed": "La conversation n'a pas pu démarrer : {detail}",
