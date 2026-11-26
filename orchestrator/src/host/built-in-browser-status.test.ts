@@ -58,7 +58,7 @@ test('on a server, each missing piece names its own repair, in the order a perso
     [{ executablePresent: false }, 'desktop-missing', /reinstall Timon/],
     [{ state: null }, 'host-unit-missing', /^timon service install$/],
     [{ state: 'failed' }, 'host-unit-stopped', new RegExp(`^systemctl --user restart ${UNIT}$`)],
-    [{ state: 'activating' }, 'host-not-ready', /journalctl --user -u/],
+    [{ state: 'activating' }, 'host-not-ready', new RegExp(`^wait a few seconds; if it lasts, read its log: journalctl --user -u ${UNIT} -n 50$`)],
   ];
   for (const [host, id, fix] of cases) {
     const problem = blocking(builtInBrowserReport(facts({}, host)));

@@ -472,6 +472,7 @@
     "browser_command_failed": "La commande du navigateur a échoué : {detail}",
     "browser_desktop_unavailable": "Ouvrez Timon desktop sur la machine hôte pour utiliser ce navigateur.",
     "browser_host_stopped": "Le navigateur intégré de ce serveur ne tourne pas. Pour le réparer : {command}",
+    "browser_host_starting": "Le navigateur intégré de ce serveur démarre. Attendez quelques secondes ; si ça dure, son journal dit pourquoi : {command}",
     "browser_profile_invalid": "Ce profil de navigateur est invalide.",
     "browser_profile_not_found": "Profil de navigateur introuvable.",
     "browser_profile_unavailable": "Ce profil de navigateur est indisponible.",

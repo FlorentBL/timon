@@ -38,6 +38,16 @@ test('a machine with a screen keeps the desktop message, and an agent is told no
   assert.match(body.error, /Do not retry the browser/);
 });
 
+test('a host still starting is not told "repair it": wait, then its log', () => {
+  const body = builtInBrowserRefusal({
+    provider: 'none', server: true, unit: 'timon-browser-abc',
+    problems: [{ id: 'host-not-ready', blocking: true, message: 'the browser host service runs but does not offer the browser yet.', fix: 'wait a few seconds; if it lasts, read its log: journalctl --user -u timon-browser-abc -n 50' }],
+  });
+  assert.equal(body.code, 'browser_host_starting');
+  assert.deepEqual(body.params, { command: 'journalctl --user -u timon-browser-abc -n 50' });
+  assert.match(body.error, /is starting: .* Wait a few seconds before one more try; if it still fails, do not insist: tell the user/);
+});
+
 const read = (report: BuiltInBrowserReport, degraded = false): BuiltInBrowserRead => ({ report, degraded });
 
 test('ten callers at once share one read, and the event loop keeps turning while it runs', async () => {

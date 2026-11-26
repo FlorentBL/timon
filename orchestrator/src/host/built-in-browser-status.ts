@@ -276,7 +276,7 @@ function unavailable(f: BuiltInBrowserFacts, server: boolean): BuiltInBrowserPro
       `systemctl --user restart ${host.unit}`);
   }
   return blocking('host-not-ready', 'the browser host service runs but does not offer the browser yet: it is starting, or waiting for Timon desktop to quit.',
-    `if it lasts: ${journalCommand(host.unit)}`);
+    `wait a few seconds; if it lasts, read its log: ${journalCommand(host.unit)}`);
 }
 
 function fontFix(apt: boolean): string {

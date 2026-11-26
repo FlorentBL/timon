@@ -10,7 +10,7 @@
  */
 import { apiError, type ApiErrorBody } from './api-error.js';
 import { config } from './config/load.js';
-import { builtInBrowserFacts, builtInBrowserReport } from './host/built-in-browser-status.js';
+import { builtInBrowserFacts, builtInBrowserReport, journalCommand } from './host/built-in-browser-status.js';
 import { getHost } from './host/index.js';
 import { linuxRelease, readOsReleaseAsync } from './host/machine.js';
 import { serviceOptsFromEnvironment } from './host/service-environment.js';
@@ -179,6 +179,13 @@ export async function refreshBuiltInBrowser(): Promise<BuiltInBrowserReport | un
  */
 export function builtInBrowserRefusal(report: BuiltInBrowserReport): ApiErrorBody {
   const problem = report.problems.find((p) => p.blocking);
+  if (report.server && problem?.id === 'host-not-ready' && report.unit) {
+    // Nothing to repair yet: the host is starting. Its log is for when it does not end.
+    const command = journalCommand(report.unit);
+    return apiError('browser_host_starting',
+      `The built-in browser of this server is starting: ${problem.message} Wait a few seconds before one more try; if it still fails, do not insist: tell the user, who can read its log on the server: ${command}`,
+      { command });
+  }
   if (report.server) {
     const command = problem?.fix ?? (report.unit ? `systemctl --user restart ${report.unit}` : 'timon doctor');
     const why = problem?.message ?? 'its provider does not answer.';
