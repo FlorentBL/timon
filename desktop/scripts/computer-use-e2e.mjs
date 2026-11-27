@@ -132,7 +132,15 @@ async function main() {
   }
   await sleep(500);
 
-  const shot = await agent('screenshot', { maxWidth: 1280 }, 'screenshot');
+  const shotTry = await send('screenshot', { maxWidth: 1280 }, 'agent', 'screenshot');
+  // Hosted macOS runners differ: some grant Screen Recording to a new app, some do not. Without it the
+  // capture must be refused cleanly, which is the same outcome as the permission check above.
+  if (process.platform === 'darwin' && shotTry.status === 503 && shotTry.body.code === 'computer_unavailable' && /permission-/.test(String(shotTry.body.error))) {
+    log('skipped: permissions');
+    return 0;
+  }
+  if (shotTry.status !== 200 || !shotTry.body.ok) throw fail(`screenshot failed: HTTP ${shotTry.status} ${JSON.stringify({ ...shotTry.body, result: undefined })}`);
+  const shot = shotTry.body.result;
   const png = Buffer.from(shot.data, 'base64');
   // JPEG starts with FF D8 FF; PNG, the fallback when the JPEG encoder gives nothing, with 89 'PNG'.
   const isJpeg = png[0] === 0xff && png[1] === 0xd8 && png[2] === 0xff;

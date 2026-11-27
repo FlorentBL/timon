@@ -359,7 +359,9 @@ while ($true) {
   if ($null -eq $line) { break }
   try {
     $request = $line | ConvertFrom-Json
-    if ($request.q) { [Console]::Out.WriteLine((Invoke-TimonQuery $request)) }
+    # An array of steps is input. Testing \$request.q on it would enumerate its members: an array
+    # of nulls, which PowerShell reads as true, so every click was taken for a query (CI run 45989910875).
+    if ($request -isnot [System.Array] -and $null -ne $request.q) { [Console]::Out.WriteLine((Invoke-TimonQuery $request)) }
     else { Invoke-TimonSteps $request; [Console]::Out.WriteLine('ok') }
   } catch {
     # Diagnostic mode only: where it failed and which kind of error, never the request or the message
