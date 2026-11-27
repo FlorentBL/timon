@@ -326,14 +326,24 @@ async function main() {
       if (refusedInBackground.status !== 403 || refusedInBackground.body.code !== 'computer_background_only') throw fail(`In the background ${command} must get computer_background_only, got ${JSON.stringify(refusedInBackground)}`);
     }
     await expectValue(TYPED, 'the background refusals left the textarea alone');
+    // Chromium refuses to write a field through accessibility under Windows and Linux (it does on a
+    // native macOS field): in the background, where the keyboard fallback is off, the write either
+    // lands or is refused with an explicit a11y_failed, never typed and never silent.
     const backgroundSet = await back('a11y_action', { id: field.id, action: 'set_value', value: 'bg' });
-    if (backgroundSet.status !== 200) throw fail(`In the background set_value must pass, got ${JSON.stringify(backgroundSet)}`);
-    const backgroundUntil = Date.now() + 5000;
-    while ((await nameField()) !== 'bg' && Date.now() < backgroundUntil) await sleep(100);
-    if ((await nameField()) !== 'bg') throw fail(`Background set_value: the field holds ${JSON.stringify(await nameField())}, expected "bg".`);
+    if (backgroundSet.status === 200) {
+      const backgroundUntil = Date.now() + 5000;
+      while ((await nameField()) !== 'bg' && Date.now() < backgroundUntil) await sleep(100);
+      if ((await nameField()) !== 'bg') throw fail(`Background set_value: the field holds ${JSON.stringify(await nameField())}, expected "bg".`);
+      log('  ✓ background set_value wrote the field');
+    } else if (backgroundSet.status === 502 && backgroundSet.body.code === 'a11y_failed') {
+      if ((await nameField()) === 'bg') throw fail('A refused background set_value still changed the field.');
+      log('  ✓ background set_value refused by this toolkit, cleanly and without typing');
+    } else {
+      throw fail(`In the background set_value must write or be refused with a11y_failed, got ${JSON.stringify(backgroundSet)}`);
+    }
     const backgroundPress = await back('a11y_action', { id: button.id, action: 'press' });
     if (backgroundPress.status !== 200) throw fail(`In the background press must pass, got ${JSON.stringify(backgroundPress)}`);
-    log('  ✓ background mode: pixel, keyboard and focus refused, a11y_action press and set_value pass');
+    log('  ✓ background mode: pixel, keyboard and focus refused, a11y_action press passes');
 
     const stale = await send('a11y_action', { id: `${windowId}#0.99.99`, action: 'press' }, 'agent', 'a11y_action (stale id)');
     if (stale.status !== 409 || stale.body.code !== 'a11y_element_stale') throw fail(`A stale id must get a11y_element_stale, got ${JSON.stringify(stale)}`);
