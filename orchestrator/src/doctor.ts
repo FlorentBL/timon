@@ -40,7 +40,7 @@ import { formatBytes, freeBytes, LOW_DISK_BYTES } from './storage-failure.js';
 import { CATALOG } from './kernel/catalog.js';
 import { degradation } from './kernel/degradation.js';
 import { checkDaemonNode, nodelessBackends, nodelessBackendText } from './host/launch-path.js';
-import { missingRequiredBinaries, REQUIRED_BINARIES } from './host/blocking-facts.js';
+import { missingRequiredBinaries, packagedStandIn, REQUIRED_BINARIES } from './host/blocking-facts.js';
 import { nodePtyStatus } from './terminal-host/pty.js';
 import { binaryCandidates, findExecutableBinary, npmPrefixCandidates, pinnedBinaryCandidates, resolvePinnedBinary, type BinarySearchOptions } from './host/binary-path.js';
 import { BUILTIN_API_KEY_PROVIDERS, BUILTIN_DECLARATIONS, builtinBinaries, builtinProviderIds } from './backends/builtin-declarations.js';
@@ -230,7 +230,9 @@ export function diagnose(): DoctorReport {
   const machine = { platform: process.platform, packageManager: linux?.packageManager ?? null };
 
   const binaries: BinaryReport[] = BINARIES.map((b) => {
-    const { path, pinned } = whichBin(b.name, pins);
+    const { path: searched, pinned } = whichBin(b.name, pins);
+    // An installed package's own Node stands for a `node` missing from the system.
+    const path = searched ?? packagedStandIn(b.name, pinned);
     const pin = pins[b.name];
     const provider = providerOf(b.name);
     const wrongProgram = pinned && path ? pinnedIdentityProblem(b.name, path) : null;
