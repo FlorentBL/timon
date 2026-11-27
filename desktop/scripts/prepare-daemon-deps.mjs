@@ -40,7 +40,8 @@ import { fileURLToPath } from 'node:url';
 import { assertEntriesResolve } from './entry-resolve.mjs';
 import { bundledNodeExecutable, fetchNode, nodeRuntimeSpec } from './fetch-node.mjs';
 import { SHELL_LOCALES_BUILD, copyShellLocales } from './shell-locales.mjs';
-import { GLIBC_FLOOR, assertGlibcFloor, containerBuildEnv, containerCommand, elfFilesUnder, nativeBuildImage, pruneLinuxBuild } from './native-linux.mjs';
+import { GLIBC_FLOOR, assertGlibcFloor, containerBuildEnv, containerCommand, elfFilesUnder, nativeBuildImage } from './native-linux.mjs';
+import { pruneNativeBuild } from './native-build.mjs';
 
 const desktopDir = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const repoRoot = resolve(desktopDir, '..');
@@ -296,11 +297,11 @@ function prepareTree({ name, modules, standalone }, version) {
       runOnRuntime([cli, 'rebuild', moduleName, '--foreground-scripts'], {
         stage, cwd: staged, build: true, readonly: [dirname(dirname(realpathSync(cli)))],
       });
-      // A source build leaves objects and test addons beside the one that ships.
-      if (LINUX) pruneLinuxBuild(join(staged, 'node_modules', moduleName), moduleName);
-      const rebuilt = artefactsOf(staged, moduleName);
-      if (rebuilt.kind !== 'built') throw new Error(`rebuild produced no artefact under ${join(staged, 'node_modules', moduleName, 'build', 'Release')}`);
-      for (const artefact of nativeFilesIn(rebuilt.dir)) loadUnderRuntime(artefact, stage);
+      // A source build leaves objects and test addons beside the one that
+      // ships, on every platform: better-sqlite3's `test_extension.node` is a
+      // SQLite extension that no Node can load (0.1.12-rc.1 on macOS).
+      // Only what ships is loaded, and only it travels.
+      for (const artefact of pruneNativeBuild(join(staged, 'node_modules', moduleName), moduleName)) loadUnderRuntime(artefact, stage);
     }
 
     // The prohibition, checked rather than trusted: if a live artefact moved,
