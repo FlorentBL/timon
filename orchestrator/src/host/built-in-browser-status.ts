@@ -32,6 +32,10 @@ export const INSTALL_SCRIPT_COMMAND = 'curl -fsSL https://timon-ai.com/install.s
 export const LINUX_PACKAGE_DIR = join('/opt', 'Timon');
 /** The unit's exit status for a host that can never start here (`browser-host-launcher.ts`), its sandbox included. */
 const HOST_REFUSED_EXIT = 78;
+/** The host left the browser to Timon desktop and waits for it to quit (`BROWSER_HOST_EXIT.yielded`): restarts are meant. */
+const HOST_YIELDED_EXIT = 75;
+/** The shell's and systemd's "command not found": here, a shared library the dynamic loader cannot find. */
+const MISSING_LIBRARY_EXIT = 127;
 // portability: Linux kernel and AppArmor files, read on Linux only.
 const USERNS_RESTRICTION = join('/proc', 'sys', 'kernel', 'apparmor_restrict_unprivileged_userns');
 // portability: the AppArmor profile the deb installs, Linux only.
@@ -72,6 +76,10 @@ export type BuiltInBrowserFacts = {
     state: string | null;
     /** systemd's `ExecMainStatus` of its last run; `null` when unknown. */
     exitStatus: number | null;
+    /** systemd's `SubState`: `auto-restart` while it waits to start a run that just ended again. */
+    subState: string | null;
+    /** systemd's `NRestarts` since the unit was last started by hand; `null` when unknown. */
+    restarts: number | null;
   };
   /**
    * The installed Linux package's Chromium sandbox: Ubuntu 23.10 and later refuse user
@@ -133,14 +141,25 @@ export async function readHostMarkerPid(home: string): Promise<number | null> {
   } catch { return null; }
 }
 
-async function unitState(exec: AsyncSessionExec, unit: string): Promise<{ state: string; exitStatus: number | null }> {
+type UnitState = { state: string; exitStatus: number | null; subState: string | null; restarts: number | null };
+
+async function unitState(exec: AsyncSessionExec, unit: string): Promise<UnitState> {
+  const unknown: UnitState = { state: 'unknown', exitStatus: null, subState: null, restarts: null };
   try {
-    const result = await exec('systemctl', ['--user', 'show', unit, '--property=ActiveState', '--property=ExecMainStatus']);
-    if (result.code !== 0) return { state: 'unknown', exitStatus: null };
-    const state = /^ActiveState=(\S+)/m.exec(result.stdout)?.[1] ?? 'unknown';
-    const status = /^ExecMainStatus=(\d+)/m.exec(result.stdout)?.[1];
-    return { state, exitStatus: status === undefined ? null : Number(status) };
-  } catch { return { state: 'unknown', exitStatus: null }; }
+    const result = await exec('systemctl', ['--user', 'show', unit,
+      '--property=ActiveState', '--property=ExecMainStatus', '--property=SubState', '--property=NRestarts']);
+    if (result.code !== 0) return unknown;
+    const number = (key: string) => {
+      const value = new RegExp(`^${key}=(\\d+)`, 'm').exec(result.stdout)?.[1];
+      return value === undefined ? null : Number(value);
+    };
+    return {
+      state: /^ActiveState=(\S+)/m.exec(result.stdout)?.[1] ?? 'unknown',
+      exitStatus: number('ExecMainStatus'),
+      subState: /^SubState=(\S+)/m.exec(result.stdout)?.[1] ?? null,
+      restarts: number('NRestarts'),
+    };
+  } catch { return unknown; }
 }
 
 /** The package's sandbox facts, `null` when the package is not installed in `packageDir`. */
@@ -193,6 +212,8 @@ export async function builtInBrowserFacts(input: {
       executablePresent,
       state: unit?.state ?? null,
       exitStatus: unit?.exitStatus ?? null,
+      subState: unit?.subState ?? null,
+      restarts: unit?.restarts ?? null,
     };
   };
   const [markerPid, host, graphicalSession, fonts, sandbox] = await Promise.all([
@@ -239,8 +260,27 @@ export function journalCommand(unit: string): string {
   return `journalctl --user -u ${unit} -n 50`;
 }
 
+/**
+ * The unit's last run ended in a failure and systemd waits to start it again (`activating`,
+ * `auto-restart`): a host that dies at every start, not one that is starting. `activating`
+ * counts as running for systemd, and a person waited on "it is starting" forever (recipe of
+ * 27/11/2026: exit 127, a library missing on a bare server). A host that left the browser to
+ * Timon desktop (75) is meant to restart, and a run that ended cleanly is no crash.
+ */
+function crashLoop(host: NonNullable<BuiltInBrowserFacts['host']>): boolean {
+  if (host.state !== 'activating') return false;
+  if (host.exitStatus === null || host.exitStatus === 0 || host.exitStatus === HOST_YIELDED_EXIT) return false;
+  return host.subState === 'auto-restart' || (host.subState === null && (host.restarts ?? 0) > 0);
+}
+
+/** What an exit status says of the cause, when it says something. */
+function exitCause(status: number | null): string {
+  return status === MISSING_LIBRARY_EXIT ? ': a library it needs is missing on this system' : '';
+}
+
 /** Why nobody provides the browser, in the order a person repairs it. */
 function unavailable(f: BuiltInBrowserFacts, server: boolean): BuiltInBrowserProblem {
+  const apt = f.apt;
   const stalePid = f.providerPid !== null && !f.providerAlive ? f.providerPid : null;
   const blocking = (id: BuiltInBrowserProblem['id'], message: string, fix: string | null): BuiltInBrowserProblem =>
     ({ id, blocking: true, message, fix });
@@ -268,8 +308,16 @@ function unavailable(f: BuiltInBrowserFacts, server: boolean): BuiltInBrowserPro
     return blocking('host-unit-missing', 'the browser host service is not installed.', 'timon service install');
   }
   if (!RUNNING.has(host.state)) {
-    return blocking('host-unit-stopped', `the browser host service is stopped (${host.state}${stalePid !== null ? `, its last process ${stalePid} is gone` : ''}); its log says why: ${journalCommand(host.unit)}.`,
-      `systemctl --user restart ${host.unit}`);
+    const status = host.exitStatus !== null && host.exitStatus !== 0 ? `, exit status ${host.exitStatus}${exitCause(host.exitStatus)}` : '';
+    return blocking('host-unit-stopped', `the browser host service is stopped (${host.state}${status}${stalePid !== null ? `, its last process ${stalePid} is gone` : ''}); its log says why: ${journalCommand(host.unit)}.`,
+      host.exitStatus === MISSING_LIBRARY_EXIT ? missingLibraryFix(host.unit, apt) : `systemctl --user restart ${host.unit}`);
+  }
+  if (crashLoop(host)) {
+    const restarts = host.restarts !== null && host.restarts > 0 ? `, ${host.restarts} restarts so far` : '';
+    return blocking('host-crash-loop',
+      `the browser host crashes at every start and systemd keeps restarting it (exit status ${host.exitStatus}${exitCause(host.exitStatus)}${restarts}); its log says why: ${journalCommand(host.unit)}.`,
+      host.exitStatus === MISSING_LIBRARY_EXIT ? missingLibraryFix(host.unit, apt)
+        : `read its log (${journalCommand(host.unit)}), repair what it names, then: systemctl --user restart ${host.unit}`);
   }
   if (stalePid !== null) {
     return blocking('stale-provider', `the browser host left a provider whose process (${stalePid}) is gone; a new start replaces it.`,
@@ -277,6 +325,18 @@ function unavailable(f: BuiltInBrowserFacts, server: boolean): BuiltInBrowserPro
   }
   return blocking('host-not-ready', 'the browser host service runs but does not offer the browser yet: it is starting, or waiting for Timon desktop to quit.',
     `wait a few seconds; if it lasts, read its log: ${journalCommand(host.unit)}`);
+}
+
+/**
+ * Exit 127: the dynamic loader found no file for a library the program links against. A package
+ * installed before it declared the dependency is the usual case: reinstalling Timon brings it,
+ * installing the one library the log names does too.
+ */
+function missingLibraryFix(unit: string, apt: boolean): string {
+  const install = apt
+    ? 'install the library its log names (libasound.so.2: sudo apt-get install libasound2t64, or libasound2 before Ubuntu 24.04 and Debian 13)'
+    : 'install the package of your distribution that provides the library its log names';
+  return `update or reinstall Timon (${INSTALL_SCRIPT_COMMAND}), whose package installs it, or ${install}; then: systemctl --user restart ${unit}`;
 }
 
 function fontFix(apt: boolean): string {

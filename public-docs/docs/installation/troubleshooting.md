@@ -74,6 +74,7 @@ It names who runs the browser (the Timon app, or the browser host of a server), 
 | the browser host service is not installed | `timon service install` |
 | the browser host service is turned off | Turn **Built-in browser service on a server** back on in Settings, then `timon service install` |
 | Timon runs from an AppImage | Install the deb package (`curl -fsSL https://timon-ai.com/install.sh \| sh`): only it runs the browser on a server |
+| the browser host crashes at every start and systemd keeps restarting it | Read its log (`journalctl --user -u <unit> -n 50`): it gives the exit status and the cause. Exit status 127 is a library missing on the system: update or reinstall Timon (`curl -fsSL https://timon-ai.com/install.sh \| sh`), whose package installs it, or install the library the log names; then `systemctl --user restart <unit>` |
 | the browser host service runs but does not offer the browser yet | It is starting; if it lasts, read its log |
 | Chromium has no usable sandbox | See [Linux: no usable sandbox](#linux-no-usable-sandbox) |
 | no font is installed | `sudo apt-get install fonts-liberation fonts-noto-core fonts-noto-color-emoji` (and `fonts-noto-cjk` for Chinese, Japanese or Korean pages), then restart the browser |
