@@ -262,11 +262,16 @@ async function main() {
       const until = Date.now() + 8000;
       // Chromium publishes its tree a moment after accessibility was switched on.
       while (Date.now() < until) {
-        tree = await agent('a11y_tree', { ...windowArgs, query }, `a11y_tree (${query})`);
+        // Full depth: a web page sits deep under the window (window, pane, document, groups, field).
+        tree = await agent('a11y_tree', { ...windowArgs, query, maxDepth: 15 }, `a11y_tree (${query})`);
         const found = tree.nodes.find(accept);
         if (found) return { tree, found };
         await sleep(400);
       }
+      // What the system really exposes, unfiltered, to tell a shallow tree from an unexposed page.
+      const whole = await send('a11y_tree', { ...windowArgs, maxDepth: 15, maxNodes: 200 }, 'agent', 'a11y_tree (whole)');
+      const outline = (whole.body.result?.nodes ?? []).map((n) => `${'  '.repeat(n.depth)}${n.role} "${n.name ?? ''}"`).join('\n');
+      log(`  whole tree (${whole.body.result?.nodes?.length ?? 0} nodes, truncated=${whole.body.result?.truncated}):\n${outline}`);
       throw fail(`No element matching "${query}" in the accessibility tree: ${JSON.stringify(tree?.nodes.map((n) => [n.role, n.name]))}`);
     };
     const { tree: nameTree, found: field } = await findNode('Nom', (n) => n.name === 'Nom' && ['textfield', 'textarea', 'combobox'].includes(n.role));
