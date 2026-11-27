@@ -5069,6 +5069,8 @@ export type AgentSummary = {
   created_by: string | null;
   /** Folders outside `cwd` its missions may read or write (`agent-extra-dirs.ts`), as stored. */
   extra_dirs: AgentExtraDir[];
+  /** Whether a person let this agent control the host's screen, mouse and keyboard. */
+  computer_use: boolean;
 };
 
 export type AgentDetails = AgentSummary & { system_prompt: string };
@@ -5115,6 +5117,7 @@ export function getAgent(name: string): AgentDetails | null {
     reasoning_effort: cfg.reasoningEffort ?? null,
     created_by: cfg.created_by ?? null,
     extra_dirs: storedExtraDirs(cfg),
+    computer_use: cfg.computer_use === true,
   };
 }
 
@@ -6145,6 +6148,7 @@ export function listAgents(): AgentSummary[] {
       reasoning_effort: cfg.reasoningEffort ?? null,
       created_by: cfg.created_by ?? null,
       extra_dirs: storedExtraDirs(cfg),
+      computer_use: cfg.computer_use === true,
     });
   }
   return out;
