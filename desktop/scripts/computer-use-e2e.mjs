@@ -36,11 +36,11 @@ if (process.env.CI !== 'true' && process.env.TIMON_COMPUTER_USE_E2E !== '1') {
 if (process.platform === 'linux') {
   app.commandLine.appendSwitch('no-sandbox');
   app.disableHardwareAcceleration();
-  // Chromium exports its tree to AT-SPI only when accessibility is requested at start-up (the switch,
-  // and the variable some toolkits read); app.setAccessibilitySupportEnabled below does it at run time.
-  app.commandLine.appendSwitch('force-renderer-accessibility');
+  // Some toolkits read this variable to export their tree to AT-SPI at start-up.
   process.env.ACCESSIBILITY_ENABLED = '1';
 }
+// On every OS: a fresh page can be read at once (the product itself asks Chromium for its tree).
+app.commandLine.appendSwitch('force-renderer-accessibility');
 
 const TYPED = 'hello timon 123';
 // The agent's allowed applications: the Electron binary this test runs under, by each of its names.
