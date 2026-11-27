@@ -763,6 +763,18 @@
       "useFenceGrant": {
         "type": "export",
         "since": 19
+      },
+      "onAccountChange": {
+        "type": "export",
+        "since": 20
+      },
+      "useAgentFolders": {
+        "type": "export",
+        "since": 20
+      },
+      "usePullRequestDialog": {
+        "type": "export",
+        "since": 20
       }
     },
     "api.js": {

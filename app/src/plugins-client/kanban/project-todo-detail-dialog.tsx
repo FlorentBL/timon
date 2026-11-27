@@ -4,6 +4,7 @@ import { useEffect, useRef, useState, type ReactElement } from 'react';
 import { toast } from 'sonner';
 import { Eye, FolderGit2, Pencil, Send } from 'lucide-react';
 import { AttachmentsField, pastedFiles } from '@/components/attachments-field';
+import { BrandMark } from '@/components/brand-mark';
 import { DetailShell } from '@/components/detail-shell';
 import { useAttachmentItems } from '@/components/use-attachment-items';
 import { Button } from '@/components/ui/button';
@@ -11,6 +12,8 @@ import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { mdToSafeHtml } from '@/lib/markdown';
 import { formatDateTime } from '@/lib/intl';
+import { useBackendCatalog } from '@/lib/backends';
+import { taskRunView, type TaskRunSource } from '@/lib/task-runner';
 import type { ProjectTodo } from './project-todo-types';
 import { ExternalLink } from './project-todo-links';
 import { t } from '@/lib/i18n';
@@ -28,7 +31,7 @@ function when(ts: number | null): string {
   return ts ? formatDateTime(ts, { dateStyle: 'short', timeStyle: 'short' }) : '—';
 }
 
-type LinkedTask = { id: string; title: string; type: string; status: string };
+type LinkedTask = TaskRunSource & { id: string; title: string; type: string; status: string };
 
 /**
  * The full detail of a notebook idea, the product's `todo.form` in edition
@@ -58,6 +61,7 @@ function Detail({ host, item }: { host: TodoFormValue; item: ProjectTodo }): Rea
   const [progress, setProgress] = useState<TodoProgress>(effectiveProgress(item.progress));
   const [enCours, setEnCours] = useState(false);
   const [linked, setLinked] = useState<LinkedTask[]>([]);
+  const catalog = useBackendCatalog();
   const titreRef = useRef<HTMLTextAreaElement | null>(null);
   // Sent at once, apart from "Save": a file is not a draft.
   const files = useAttachmentItems(item.id, host.attachments, 'todo');
@@ -209,14 +213,36 @@ function Detail({ host, item }: { host: TodoFormValue; item: ProjectTodo }): Rea
       {linked.length > 0 && (
         <RailGroup label={t('projectTodo.fieldLinkedTasks')} hint={t('projectTodo.linkedTasksHint')}>
           <ul className="flex flex-col gap-1.5">
-            {linked.map((task) => (
-              <li key={task.id} className="flex flex-col text-[12.5px]">
-                <span className="text-[11px] text-muted-foreground" title={task.id}>
-                  {task.type} · {task.status}
-                </span>
-                <span className="line-clamp-2">{task.title}</span>
-              </li>
-            ))}
+            {linked.map((task) => {
+              // Who runs it and on what, as the board's card says it (#1203).
+              const run = taskRunView(catalog, task);
+              return (
+                <li key={task.id} className="flex min-w-0 flex-col text-[12.5px]">
+                  <span className="text-[11px] text-muted-foreground" title={task.id}>
+                    {task.type} · {task.status}
+                  </span>
+                  <span className="line-clamp-2">{task.title}</span>
+                  <span className="flex min-w-0 items-center gap-1 text-[11px] text-muted-foreground" title={run.title} data-task-runner={run.agent}>
+                    <span className="min-w-0 truncate">{run.agent}</span>
+                    {run.model && (
+                      <span className="inline-flex min-w-0 shrink items-center gap-1" data-task-model={run.model}>
+                        {!run.mark.empty && (
+                          <BrandMark
+                            icon={run.mark.icon}
+                            brand={run.mark.brand}
+                            slug={run.mark.slug}
+                            fallbackIcon={run.mark.fallbackIcon}
+                            fallbackBrand={run.mark.fallbackBrand}
+                            className="size-3 flex-none"
+                          />
+                        )}
+                        <span className="truncate">{run.model}</span>
+                      </span>
+                    )}
+                  </span>
+                </li>
+              );
+            })}
           </ul>
         </RailGroup>
       )}

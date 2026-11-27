@@ -13,6 +13,11 @@
  * every other gesture. A folder is added through a dialog; no field stays on
  * the page. A change applies from the agent's next mission: the fence is set
  * when a mission's process starts.
+ *
+ * `AgentFoldersSection` is the host that reads and writes the lists;
+ * `ProductAgentFolders` the product's painting, default occupant of the
+ * `agent.folders` slot, which reads the host's context (`useAgentFolders()`)
+ * like any replacement would.
  */
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactElement } from 'react';
 import { AlertTriangle, Copy, Lock, PenLine, Plus, Trash2 } from 'lucide-react';
@@ -25,13 +30,16 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { ProviderSection, ProviderSettingRow } from '@/components/provider-page/provider-section';
 import { reportDirectoryPick, useDirectoryPicker } from '@/components/directory-browser';
 import { copyToClipboard } from '@/lib/clipboard';
+import { SlotSingle, useSlotEntries } from '@/lib/plugin-host/render';
+import { AGENT_FOLDERS_SLOT } from '@/lib/plugin-host/slots';
 import { t } from '@/lib/i18n';
 import {
   addFolder, AgentFoldersError, fetchFolders, folderName, folderOwnerKey, isAbsoluteFolder, removeFolder,
   type AgentFolder, type AgentFolderMode, type AgentFolders, type FolderOwner,
 } from '@/lib/agent-folders';
-
-type Row = { owner: FolderOwner; folder: AgentFolder; dropped: string | null };
+import {
+  AgentFoldersProvider, useAgentFolders, type AgentFolderRow, type AgentFoldersResult, type AgentFoldersValue,
+} from './agent-folders-context';
 
 /** Who a row or a choice of the dialog names: the agent, or the whole project. */
 function ownerLabel(owner: FolderOwner): string {
@@ -52,11 +60,18 @@ export type AgentFoldersSectionProps = {
   className?: string;
 };
 
+/**
+ * The host: reads the lists, runs the gestures and announces each change, then
+ * hands all of it to the occupant through `useAgentFolders()`. A person who may
+ * not read the agents gets nothing painted.
+ */
 export function AgentFoldersSection({ agents, project = null, showAgent = false, emptyStatus, onChanged, className }: AgentFoldersSectionProps): ReactElement | null {
   const [lists, setLists] = useState<AgentFolders[] | null>(null);
   const [status, setStatus] = useState<'loading' | 'ready' | 'forbidden' | 'error'>('loading');
-  const [adding, setAdding] = useState(false);
   const [busy, setBusy] = useState(false);
+  const picker = useDirectoryPicker();
+  // An empty slot (a page the bundled halves do not reach) still gets the product's section.
+  const claimed = useSlotEntries(AGENT_FOLDERS_SLOT).length > 0;
   // `key` stands for `agents` and `project`: a new array of the same names must not reload.
   const key = `${project ?? ''}\n${agents.join('\n')}`;
   const named = useRef(agents);
@@ -85,9 +100,11 @@ export function AgentFoldersSection({ agents, project = null, showAgent = false,
   }, [owners]);
   useEffect(() => { void load(); }, [load]);
 
-  const rows = useMemo<Row[]>(() => (lists ?? []).flatMap((list) => list.folders.map((folder) => ({
+  const rows = useMemo<AgentFolderRow[]>(() => (lists ?? []).flatMap((list) => list.folders.map((folder) => ({
     owner: list.owner,
-    folder,
+    path: folder.path,
+    name: folderName(folder.path),
+    mode: folder.mode,
     dropped: list.dropped.find((d) => d.path === folder.path)?.reason ?? null,
   }))), [lists]);
   const writable = useMemo(() => (lists ?? []).map((list) => list.owner), [lists]);
@@ -101,31 +118,67 @@ export function AgentFoldersSection({ agents, project = null, showAgent = false,
       : next.running > 0 ? 'agentFolders.savedNextMission' : 'agentFolders.saved'));
   };
 
-  /** Runs a write; its refusal goes to `onError` when given (the dialog shows it), to a toast otherwise. */
-  const run = async (gesture: () => Promise<AgentFolders>, onError?: (message: string) => void): Promise<boolean> => {
+  /** Runs a write; its refusal goes back to the occupant, which shows it where it fits. */
+  const run = async (gesture: () => Promise<AgentFolders>): Promise<AgentFoldersResult> => {
     setBusy(true);
     try {
       apply(await gesture());
-      return true;
+      return { ok: true };
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      if (onError) onError(message);
-      else toast.error(message);
-      return false;
+      return { ok: false, message: err instanceof Error ? err.message : String(err) };
     } finally {
       setBusy(false);
     }
   };
 
-  if (status === 'loading') return <section className={className} aria-busy="true" />;
   if (status === 'forbidden') return null;
+  const value: AgentFoldersValue = {
+    agents,
+    project,
+    showAgent,
+    emptyStatus: emptyStatus ?? null,
+    className,
+    status,
+    rows,
+    owners: writable,
+    busy,
+    reload: load,
+    add: (owner, folder) => run(() => addFolder(owner, folder)),
+    setMode: (owner, path, mode) => run(() => addFolder(owner, { path, mode })),
+    remove: (owner, path) => run(() => removeFolder(owner, path)),
+    browse: async (current) => {
+      const picked = await picker.pick(current);
+      if (picked.status === 'chosen') return picked.path;
+      reportDirectoryPick(picked);
+      return null;
+    },
+  };
+
+  return (
+    <AgentFoldersProvider value={value}>
+      {claimed ? <SlotSingle name={AGENT_FOLDERS_SLOT} /> : <ProductAgentFolders />}
+      {picker.dialog}
+    </AgentFoldersProvider>
+  );
+}
+
+/** The product's section, as the default occupant. Takes no props: it reads the host. */
+export function ProductAgentFolders(): ReactElement | null {
+  const host = useAgentFolders();
+  const [adding, setAdding] = useState(false);
+  if (!host) return null;
+  const { status, rows, owners, busy, className, showAgent } = host;
+  if (status === 'loading') return <section className={className} aria-busy="true" />;
   const title = t('agentFolders.section');
+  const refused = (result: AgentFoldersResult): void => {
+    if (!result.ok) toast.error(result.message);
+  };
 
   return (
     <ProviderSection
       title={title}
       className={className}
-      actions={status === 'ready' && writable.length > 0 ? (
+      actions={status === 'ready' && owners.length > 0 ? (
         <Button type="button" size="sm" variant="ghost" className="h-7 gap-1 text-[12px]" disabled={busy} onClick={() => setAdding(true)} data-agent-folders-add="">
           <Plus aria-hidden className="size-3.5" />{t('agentFolders.add')}
         </Button>
@@ -133,46 +186,45 @@ export function AgentFoldersSection({ agents, project = null, showAgent = false,
     >
       {status === 'error' ? (
         <ProviderSettingRow title={t('agentFolders.loadError')} action={
-          <Button type="button" size="sm" variant="outline" className="h-8" onClick={() => void load()}>{t('agentFolders.retry')}</Button>
+          <Button type="button" size="sm" variant="outline" className="h-8" onClick={() => void host.reload()}>{t('agentFolders.retry')}</Button>
         } />
       ) : rows.length === 0 ? (
-        <ProviderSettingRow title={t('agentFolders.emptyTitle')} status={emptyStatus ?? t('agentFolders.emptyStatus')} data-agent-folders-empty="" />
-      ) : rows.map(({ owner, folder, dropped }) => {
-        const access = t(folder.mode === 'write' ? 'agentFolders.mode.write' : 'agentFolders.mode.read');
-        const name = folderName(folder.path);
+        <ProviderSettingRow title={t('agentFolders.emptyTitle')} status={host.emptyStatus ?? t('agentFolders.emptyStatus')} data-agent-folders-empty="" />
+      ) : rows.map(({ owner, path, name, mode, dropped }) => {
+        const access = t(mode === 'write' ? 'agentFolders.mode.write' : 'agentFolders.mode.read');
         return (
           <ProviderSettingRow
-            key={`${folderOwnerKey(owner)}\n${folder.path}`}
-            data-agent-folder={folder.path}
-            title={<span className="truncate" title={folder.path}>{name}</span>}
+            key={`${folderOwnerKey(owner)}\n${path}`}
+            data-agent-folder={path}
+            title={<span className="truncate" title={path}>{name}</span>}
             status={dropped ? (
-              <span className="flex min-w-0 items-center gap-1 text-amber-700 dark:text-amber-400" title={`${folder.path}\n${dropped}`}>
+              <span className="flex min-w-0 items-center gap-1 text-amber-700 dark:text-amber-400" title={`${path}\n${dropped}`}>
                 <AlertTriangle aria-hidden className="size-3 shrink-0" />
                 <span className="truncate">{t('agentFolders.dropped')}</span>
               </span>
             ) : (
-              <span className="block truncate" title={folder.path}>
+              <span className="block truncate" title={path}>
                 {[...(showAgent || owner.kind === 'project' ? [ownerLabel(owner)] : []), access].join(' · ')}
               </span>
             )}
             menuLabel={t('agentFolders.more', { name })}
             menu={<>
               <DropdownMenuLabel className="max-w-72 break-all text-xs font-normal text-muted-foreground" data-agent-folder-path="">
-                {folder.path}
+                {path}
               </DropdownMenuLabel>
               <DropdownMenuItem onSelect={() => {
-                void copyToClipboard(folder.path).then((copied) => {
+                void copyToClipboard(path).then((copied) => {
                   if (copied) toast.success(t('agentFolders.pathCopied'));
                   else toast.error(t('agentFolders.copyFailed'));
                 });
               }}>
                 <Copy aria-hidden />{t('agentFolders.copyPath')}
               </DropdownMenuItem>
-              <DropdownMenuItem disabled={busy} onSelect={() => void run(() => addFolder(owner, { path: folder.path, mode: folder.mode === 'write' ? 'read' : 'write' }))}>
-                {folder.mode === 'write' ? <Lock aria-hidden /> : <PenLine aria-hidden />}
-                {t(folder.mode === 'write' ? 'agentFolders.makeRead' : 'agentFolders.makeWrite')}
+              <DropdownMenuItem disabled={busy} onSelect={() => void host.setMode(owner, path, mode === 'write' ? 'read' : 'write').then(refused)}>
+                {mode === 'write' ? <Lock aria-hidden /> : <PenLine aria-hidden />}
+                {t(mode === 'write' ? 'agentFolders.makeRead' : 'agentFolders.makeWrite')}
               </DropdownMenuItem>
-              <DropdownMenuItem disabled={busy} variant="destructive" onSelect={() => void run(() => removeFolder(owner, folder.path))}>
+              <DropdownMenuItem disabled={busy} variant="destructive" onSelect={() => void host.remove(owner, path).then(refused)}>
                 <Trash2 aria-hidden />{t('agentFolders.remove')}
               </DropdownMenuItem>
             </>}
@@ -181,10 +233,13 @@ export function AgentFoldersSection({ agents, project = null, showAgent = false,
       })}
       {adding && (
         <AddFolderDialog
-          owners={writable}
+          owners={owners}
+          browse={host.browse}
           onCancel={() => setAdding(false)}
           onAdd={async (owner, folder, onError) => {
-            if (await run(() => addFolder(owner, folder), onError)) setAdding(false);
+            const result = await host.add(owner, folder);
+            if (result.ok) setAdding(false);
+            else onError(result.message);
           }}
         />
       )}
@@ -193,8 +248,9 @@ export function AgentFoldersSection({ agents, project = null, showAgent = false,
 }
 
 /** The dialog that adds one folder: for whom (on a project: the project or one agent), the path, the access. */
-function AddFolderDialog({ owners, onCancel, onAdd }: {
+function AddFolderDialog({ owners, browse: browseFolder, onCancel, onAdd }: {
   owners: readonly FolderOwner[];
+  browse: (current: string) => Promise<string | null>;
   onCancel: () => void;
   onAdd: (owner: FolderOwner, folder: AgentFolder, onError: (message: string) => void) => Promise<void>;
 }): ReactElement {
@@ -204,15 +260,14 @@ function AddFolderDialog({ owners, onCancel, onAdd }: {
   const [mode, setMode] = useState<AgentFolderMode>('read');
   const [busy, setBusy] = useState(false);
   const [refusal, setRefusal] = useState<string | null>(null);
-  const picker = useDirectoryPicker();
   const absolute = isAbsoluteFolder(path);
 
   const browse = async (): Promise<void> => {
-    const picked = await picker.pick(path);
-    if (picked.status === 'chosen') {
-      setPath(picked.path);
+    const picked = await browseFolder(path);
+    if (picked !== null) {
+      setPath(picked);
       setRefusal(null);
-    } else reportDirectoryPick(picked);
+    }
   };
 
   return (
@@ -246,7 +301,6 @@ function AddFolderDialog({ owners, onCancel, onAdd }: {
                 onChange={(event) => { setPath(event.target.value); setRefusal(null); }}
               />
               <Button type="button" variant="outline" className="shrink-0" onClick={() => void browse()}>{t('agentFolders.dialog.browse')}</Button>
-              {picker.dialog}
             </div>
             {refusal && (
               <span role="alert" className="flex items-start gap-1.5 text-[12px] text-amber-700 dark:text-amber-400" lang="en">

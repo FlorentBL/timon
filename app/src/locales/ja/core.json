@@ -1012,7 +1012,9 @@
     "glassTintReset": "表面の色",
     "glassTuningReset": "既定のぼかしと透明度",
     "glassTuningTitle": "ガラスの調整",
-    "glassTuningHint": "ガラスのぼかし、透明度、色を、まとめて、またはゾーンごとに調整します。",
+    "glassTuningAdjust": "調整",
+    "glassTuningClose": "完了",
+    "glassTuningStatus": "ぼかし {blur} px · 透明度 {transparency} %",
     "glassZones": {
       "general": "全般",
       "chrome": "外枠",
@@ -1020,18 +1022,10 @@
       "widgets": "ウィジェット",
       "bubbles": "吹き出し"
     },
-    "glassZoneOwn": "個別に調整",
-    "glassZoneHints": {
-      "general": "個別に調整しない限り、すべてのゾーンで使われる設定。",
-      "chrome": "上部バー、サイドメニュー、アイランド間の隙間。",
-      "islands": "各アイランドのすりガラス面。外枠とは別にぼかします。",
-      "widgets": "ウィジェットカード、チャットの閲覧列、ポップアップ。",
-      "bubbles": "チャットのメッセージ。"
-    },
     "glassZoneFollow": "全般の調整に従う",
+    "glassZoneFollows": "全般の設定に従う",
     "glassFloor": "可読性の下限",
     "glassFloorOff": "オフ",
-    "glassFloorHint": "透明度にかかわらず、アイランド、ウィジェット、吹き出しの最小不透明度。明るい壁紙の上でも文字が読めるようにします。",
     "glassProfiles": {
       "title": "ガラスのプロファイル",
       "hint": "ガラスの見た目全体を名前を付けて保存します: スイッチ、範囲、各ゾーンの調整、可読性の下限。保存したプロファイルは「インターフェースをカスタマイズ」メニューにも表示されます。",
@@ -1787,6 +1781,7 @@
       "titlePlanned": "担当 {named}、実行予定 {agent}: {reason}",
       "detail": "実行: {agent}",
       "detailPlanned": "実行予定: {agent}",
+      "on": "{agent}（{model}）",
       "reasonPinned": "プロジェクトがこのロールを {agent} に固定しています (roles.json)",
       "reasonMissing": "{named} は存在しません",
       "reasonOtherProject": "{named} はタスクのプロジェクトに属していません",

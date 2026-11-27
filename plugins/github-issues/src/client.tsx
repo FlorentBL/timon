@@ -875,6 +875,10 @@ export function apply(ctx: ClientContext): () => void {
       lastRead.delete(signal.project);
       for (const listen of signalListeners) listen(signal);
     }),
+    // Another account's issues are not this one's: a tab remounted within the
+    // minute must read its own. Client API 20; absent from an older host,
+    // where the manifest's 19 still loads this half.
+    typeof ui.onAccountChange === 'function' ? ui.onAccountChange(() => lastRead.clear()) : () => {},
   ];
   return () => {
     for (const dispose of disposers.reverse()) dispose();

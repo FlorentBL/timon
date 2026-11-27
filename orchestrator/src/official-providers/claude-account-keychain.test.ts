@@ -86,12 +86,15 @@ async function accountHarness(setup: Setup) {
   const warnings: string[] = [];
   const log = { info: () => {}, warn: (...args: unknown[]) => { warnings.push(args.join(' ')); }, error: () => {} };
   const token = createClaudeToken(ctx.provider);
-  ctx.provider.registerProvider(createClaudeProvider(ctx.provider, token, createClaudeUsage(ctx.provider, token), { platform: setup.platform ?? 'darwin', log }));
+  const usage = createClaudeUsage(ctx.provider, token);
+  ctx.provider.registerProvider(createClaudeProvider(ctx.provider, token, usage, { platform: setup.platform ?? 'darwin', log }));
   const dialect = ctx.registered.dialect('claude');
   const profile = { id: 'claude@acc-1', cmd: 'claude', env: {}, account: { id: 'acc-1', name: 'Work', configDir } };
   const file = join(configDir, '.credentials.json');
   return {
-    configDir, warnings, logs: ctx.logs, removals,
+    configDir, warnings, logs: ctx.logs, removals, usage,
+    reads: () => reads,
+    writeKeychain: (value: string) => ctx.setOsCredential(service, value),
     launch: (missionId: string) => dialect.buildSpawn({
       agentName: 'claude.account', systemPrompt: 'contract', message: 'ping', resumeSession: null, missionId,
       cfg: { cwd: root, permission_mode: 'auto', mcp_servers: [] },
@@ -190,7 +193,8 @@ test('darwin: an entry that changes on every pass stays in the keychain, the fre
   const stamps = [FRESH_ACCESS, `${FRESH_ACCESS}-2`, `${FRESH_ACCESS}-3`];
   const result = await launchOnAccount({
     keychain: JSON.stringify(pair(ACCESS, REFRESH, Date.now() + HOUR)),
-    afterRead: (count, write) => write(JSON.stringify(pair(stamps[count - 1]!, FRESH_REFRESH, Date.now() + (count + 1) * HOUR))),
+    // Three passes; the fourth read is the gauge's copy of what stays in the keychain.
+    afterRead: (count, write) => { if (count <= stamps.length) write(JSON.stringify(pair(stamps[count - 1]!, FRESH_REFRESH, Date.now() + (count + 1) * HOUR))); },
   });
   assert.deepEqual(result.removals, ['changed', 'changed', 'changed']);
   assert.equal(JSON.parse(result.keychainLeft!).claudeAiOauth.accessToken, stamps[2], 'the last pair written is still there');
@@ -278,5 +282,78 @@ test('Linux and Windows: the account\'s folder already holds its sign-in, the ke
     assert.equal(result.file, null, platform);
     assert.equal(result.keychainLeft, keychain, platform);
     assertNoSecretOut(result);
+  }
+});
+
+/** The usage endpoint, recording the bearer each probe asked with; a refresh would be recorded too. */
+function usageEndpoint() {
+  const seen: string[] = [];
+  const fetchImpl = (async (input: string | URL | Request, init?: RequestInit) => {
+    seen.push(`${String(input)} ${new Headers(init?.headers).get('authorization') ?? ''}`);
+    return Response.json({ five_hour: { utilization: 42, resets_at: null }, seven_day: null, extra_usage: null });
+  }) as typeof fetch;
+  return { seen, fetchImpl };
+}
+
+/** What the CLI writes in the account's folder once signed in, with no secret. */
+function signedIn(configDir: string): void {
+  writeFileSync(join(configDir, '.claude.json'), JSON.stringify({ oauthAccount: { emailAddress: 'ada@example.com' } }));
+}
+
+test('darwin, no fence: the gauge measures the account on the token a launch read in the entry left in the keychain (TODO #1197)', async () => {
+  const keychain = JSON.stringify(pair(ACCESS, REFRESH, Date.now() + HOUR));
+  const harness = await accountHarness({ keychain, unfencedMissions: ['mission-outside'] });
+  signedIn(harness.configDir);
+  const { seen, fetchImpl } = usageEndpoint();
+  await assert.rejects(harness.usage.getClaudeAccountUsage(harness.configDir, { force: true, platform: 'darwin', fetchImpl }),
+    /still in the macOS keychain/, 'before any launch the gauge has nothing to ask with');
+  assert.deepEqual(seen, []);
+  await harness.launch('mission-outside');
+  // A probe that failed on the gap a moment ago asks again, with no force.
+  const usage = await harness.usage.getClaudeAccountUsage(harness.configDir, { platform: 'darwin', fetchImpl });
+  assert.equal(usage.windows.five_hour?.utilization, 42);
+  assert.deepEqual(seen, [`https://api.anthropic.com/api/oauth/usage Bearer ${ACCESS}`], 'the usage call only, never a refresh');
+  assert.equal(await harness.keychainLeft(), keychain, 'the entry stays as it was');
+  assert.equal(harness.file(), null, 'nothing is written in the folder: the CLI keeps reading the keychain');
+  assert.deepEqual(harness.removals, []);
+  assert.deepEqual(harness.warnings, []);
+  for (const secret of SECRETS) assert.ok(!JSON.stringify(harness.logs).includes(secret), 'a token leaked into a log');
+});
+
+test('darwin: the token a launch remembered gives way to a fresher pair in the folder, and to a sign-out', async () => {
+  const harness = await accountHarness({ keychain: JSON.stringify(pair(ACCESS, REFRESH, Date.now() + HOUR)), accountsInUse: ['acc-1'] });
+  signedIn(harness.configDir);
+  await harness.launch('mission-fenced');
+  const { seen, fetchImpl } = usageEndpoint();
+  writeFileSync(join(harness.configDir, '.credentials.json'), JSON.stringify(pair(FRESH_ACCESS, FRESH_REFRESH, Date.now() + 8 * HOUR)));
+  await harness.usage.getClaudeAccountUsage(harness.configDir, { force: true, platform: 'darwin', fetchImpl });
+  assert.deepEqual(seen, [`https://api.anthropic.com/api/oauth/usage Bearer ${FRESH_ACCESS}`], 'the later expiry wins');
+  rmSync(join(harness.configDir, '.credentials.json'));
+  writeFileSync(join(harness.configDir, '.claude.json'), JSON.stringify({}));
+  await assert.rejects(harness.usage.getClaudeAccountUsage(harness.configDir, { force: true, platform: 'darwin', fetchImpl }),
+    /not signed in/, 'signed out since the launch: the remembered token measures nothing');
+  assert.equal(seen.length, 1);
+});
+
+test('darwin: an expired entry left in the keychain is not remembered; a later launch forgets a token gone from it', async () => {
+  const harness = await accountHarness({ keychain: JSON.stringify(pair(ACCESS, REFRESH, Date.now() - HOUR)), unfencedMissions: ['m-1', 'm-2', 'm-3'] });
+  signedIn(harness.configDir);
+  const { seen, fetchImpl } = usageEndpoint();
+  await harness.launch('m-1');
+  await assert.rejects(harness.usage.getClaudeAccountUsage(harness.configDir, { force: true, platform: 'darwin', fetchImpl }), /still in the macOS keychain/);
+  harness.writeKeychain(JSON.stringify(pair(ACCESS, REFRESH, Date.now() + HOUR)));
+  await harness.launch('m-2');
+  await harness.usage.getClaudeAccountUsage(harness.configDir, { force: true, platform: 'darwin', fetchImpl });
+  harness.writeKeychain('not json');
+  await harness.launch('m-3');
+  await assert.rejects(harness.usage.getClaudeAccountUsage(harness.configDir, { force: true, platform: 'darwin', fetchImpl }), /still in the macOS keychain/);
+  assert.deepEqual(seen, [`https://api.anthropic.com/api/oauth/usage Bearer ${ACCESS}`]);
+});
+
+test('Linux and Windows: a launch never reads the keychain for the gauge either', async () => {
+  for (const platform of ['linux', 'win32'] as const) {
+    const harness = await accountHarness({ platform, keychain: JSON.stringify(pair(ACCESS, REFRESH, Date.now() + HOUR)), unfencedMissions: ['m-1'] });
+    await harness.launch('m-1');
+    assert.equal(harness.reads(), 0, platform);
   }
 });

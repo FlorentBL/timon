@@ -47,6 +47,7 @@ import type { Agent, Task, TaskStatus } from './kanban-task';
 import type { ProjectTodo } from './project-todo-types';
 import { movesTodoLanding, useLandingChanges } from './landing-events';
 import { confirmAction } from '@/components/confirm-dialog/confirm-dialog-context';
+import { subscribeMissionsPermissionChanges } from '@/lib/pending-permission-events';
 
 /** `tint`: the theme token (an HSL triple) the column's corner wash is drawn with. */
 type ColumnDef = { key: TaskStatus; labelKey: string; emptyKey: string; dot: string; tint: string };
@@ -158,6 +159,17 @@ export function KanbanClient({ defaultAgent }: { defaultAgent?: string }) {
     const id = setInterval(fetchData, 5000);
     return () => clearInterval(id);
   }, [fetchData, filtersReady]);
+
+  // A permission card opening or closing on a running task's mission is read
+  // at once: the card's "waiting" line must not lag the chat by a poll.
+  const runningMissions = useRef<ReadonlySet<string>>(new Set());
+  runningMissions.current = new Set(tasks.flatMap((t) => (t.status === 'IN_PROGRESS' && t.mission_id ? [t.mission_id] : [])));
+  const latestFetch = useRef(fetchData);
+  latestFetch.current = fetchData;
+  useEffect(() => subscribeMissionsPermissionChanges(
+    () => runningMissions.current,
+    () => { void latestFetch.current(); },
+  ), []);
 
   // Tags of the TO DO ideas the board's tasks carry out. Read again only when
   // that set of ideas changes, not at every poll: a tag rarely moves, and the

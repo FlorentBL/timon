@@ -156,5 +156,10 @@ export function taskModelMark(catalog: BackendCatalog, task: TaskLlm): TaskModel
   };
 }
 
+/** A model name short enough for a card's chip (claude-opus-4-7 → opus, gpt-5.5 → gpt-5.5). */
+export function shortModelName(model: string): string {
+  return model.replace(/^claude-/, '').replace(/-\d+-\d+$/, '');
+}
+
 /** The title of every card of the board, task or TO DO idea: one size, one weight. */
 export const BOARD_CARD_TITLE_CLASS = 'text-[12.5px] leading-tight';

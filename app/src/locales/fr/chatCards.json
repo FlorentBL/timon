@@ -4,6 +4,8 @@
     "mcpExternalToggle": "désactivez-le pour le refuser via --disallowedTools",
     "skillsEmpty": "Aucune skill installée. Créez-en une depuis",
     "toolError": "erreur",
+    "toolInterrupted": "interrompu",
+    "toolInterruptedLabel": "{label} (interrompu)",
     "thinking": "réflexion"
   },
   "composerUsage": {

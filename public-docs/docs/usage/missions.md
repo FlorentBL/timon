@@ -96,6 +96,8 @@ A conversation left idle for a long time (an hour by default) has its process cl
 
 To interrupt work deliberately, use the mission's stop control or `timon kill MISSION_ID`. Interruption does not mean the requested work was completed: check files and task status before retrying.
 
+A tool call that had not finished when its turn ended (stopped, killed, or cut by a restart) is marked **interrupted** in the conversation, with a dashed outline in the compact view of tool calls. It is not running any more, even while the next turn is being prepared.
+
 If Timon itself restarts while a turn is running (a crash, an update, the background service restarted), the mission ends as **Interrupted** and its chat shows "turn interrupted: Timon restarted". The turn is not replayed on its own, since it may already have changed files or sent messages: check what it did, then send a message to carry on. When the backend can resume its session, the conversation picks up with its context.
 
 If that session can no longer be found, Timon restarts the turn from the conversation it recorded. A **Native session unavailable** card in the chat says what the agent received: the recorded conversation, a summary, only its end, or nothing when no history exists. A long conversation is summarized rather than replayed whole, within the limit set for handovers.

@@ -1012,7 +1012,9 @@
     "glassTintReset": "Kolor powierzchni",
     "glassTuningReset": "Domyślne rozmycie i przezroczystość",
     "glassTuningTitle": "Dostrajanie szkła",
-    "glassTuningHint": "Rozmycie, przezroczystość i kolor szkła — dla wszystkiego naraz lub strefa po strefie.",
+    "glassTuningAdjust": "Dostosuj",
+    "glassTuningClose": "Gotowe",
+    "glassTuningStatus": "Rozmycie {blur} px · przezroczystość {transparency} %",
     "glassZones": {
       "general": "Ogólne",
       "chrome": "Ramka",
@@ -1020,18 +1022,10 @@
       "widgets": "Widżety",
       "bubbles": "Dymki"
     },
-    "glassZoneOwn": "Dostrojone osobno",
-    "glassZoneHints": {
-      "general": "Czego używa każda strefa, jeśli nie jest dostrojona osobno.",
-      "chrome": "Górny pasek, menu boczne i odstępy między wyspami.",
-      "islands": "Matowa płyta każdej wyspy, rozmyta niezależnie od ramki.",
-      "widgets": "Karty widżetów, kolumna czytania czatu i okna wyskakujące.",
-      "bubbles": "Wiadomości czatu."
-    },
     "glassZoneFollow": "Podążaj za ustawieniem ogólnym",
+    "glassZoneFollows": "Zgodnie z ustawieniem ogólnym",
     "glassFloor": "Próg czytelności",
     "glassFloorOff": "Wył.",
-    "glassFloorHint": "Minimalna nieprzezroczystość wysp, widżetów i dymków, niezależnie od ich przezroczystości, by tekst pozostał czytelny na jasnej tapecie.",
     "glassProfiles": {
       "title": "Profile szkła",
       "hint": "Cały wygląd szkła pod jedną nazwą: przełączniki, zakres, dostrojenie każdej strefy i próg czytelności. Zapisane profile są też dostępne w menu Dostosuj interfejs.",
@@ -1787,6 +1781,7 @@
       "titlePlanned": "Przypisane do {named}, wykona {agent}: {reason}",
       "detail": "Wykonuje {agent}",
       "detailPlanned": "Wykona {agent}",
+      "on": "{agent} na {model}",
       "reasonPinned": "projekt przypina tę rolę do {agent} (roles.json)",
       "reasonMissing": "{named} nie istnieje",
       "reasonOtherProject": "{named} nie należy do projektu zadania",
