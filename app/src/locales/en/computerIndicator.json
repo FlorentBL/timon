@@ -1,0 +1,10 @@
+{
+  "computerIndicator": {
+    "title": "An agent is controlling your computer",
+    "stoppedTitle": "Computer control is stopped",
+    "stop": "Stop",
+    "resume": "Resume",
+    "stopFailed": "Could not stop the agent. Use the emergency shortcut or quit Timon.",
+    "resumeFailed": "Could not resume computer control."
+  }
+}

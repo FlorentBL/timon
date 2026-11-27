@@ -99,6 +99,8 @@ type AgentSummary = {
   directives?: string | null;
   /** Injects the cross-project digest (hot projects + goals) at spawn. */
   global_context?: boolean;
+  /** Lets the agent drive the desktop's mouse and keyboard (absent = off). */
+  computer_use?: boolean;
   /** Explicit manager (the canvas sets it) and team of bots (an id). */
   reports_to?: string | null;
   team?: string | null;
@@ -196,6 +198,7 @@ type Draft = {
   role: string;
   /** Injects the cross-project digest at spawn (business agents / _main). */
   globalContext: boolean;
+  computerUse: boolean;
 };
 
 /** Auto-derive project slug from a cwd. Mirrors orchestrator helper. */
@@ -310,6 +313,7 @@ function toDraft(a: AgentSummary, cat: BackendCatalog): Draft {
     look: lookOfAgent({ look: a.look, role: a.role }),
     role: a.role || '',
     globalContext: a.global_context ?? false,
+    computerUse: a.computer_use ?? false,
   };
 }
 
@@ -879,6 +883,7 @@ export function AgentEditor({ agent, isNew, onClose, onDirtyChange, initialTab }
           role: draft.role || 'coder',
           reasoningEffort: draft.reasoningEffort || undefined,
           global_context: draft.globalContext || undefined,
+          computer_use: draft.computerUse || undefined,
         },
       };
       // Rename: if the name changed, RENAME the agent (moves the folder +
@@ -1422,6 +1427,34 @@ export function AgentEditor({ agent, isNew, onClose, onDirtyChange, initialTab }
                   onChange={(v) => updateDraft('denied', v)}
                   tone="deny"
                 />
+              </FormRow>
+              <FormRow label={t('editPage.computerUse')} hint={t('editPage.computerUseNeedsDesktop')}>
+                <label className="flex items-start gap-3 rounded-lg bg-muted/30 px-3.5 py-3">
+                  <Switch
+                    checked={draft.computerUse}
+                    onCheckedChange={(v) => updateDraft('computerUse', v)}
+                    aria-label={t('editPage.computerUseToggle')}
+                    data-computer-use-switch
+                  />
+                  <div className="leading-tight">
+                    <div className="text-[13px] font-medium">{t('editPage.computerUseToggle')}</div>
+                    <div className="mt-0.5 text-[11.5px] text-muted-foreground">{t('editPage.computerUseHint')}</div>
+                    <ul className="mt-1.5 list-disc pl-4 text-[11.5px] text-muted-foreground">
+                      <li>{t('editPage.computerUseMac')}</li>
+                      <li>{t('editPage.computerUseLinux')}</li>
+                    </ul>
+                  </div>
+                </label>
+                {draft.computerUse && (
+                  <p
+                    role="note"
+                    data-computer-use-warning
+                    className="mt-2 flex items-start gap-1.5 rounded-md bg-amber-500/10 px-2.5 py-2 text-[12px] text-amber-900 dark:text-amber-200"
+                  >
+                    <TriangleAlert className="mt-0.5 size-3.5 shrink-0" aria-hidden />
+                    <span>{t('editPage.computerUseWarning')}</span>
+                  </p>
+                )}
               </FormRow>
               {selected?.name && (
                 <FormRow label={t('agentApprovals.title')} hint={t('agentApprovals.hint')}>
