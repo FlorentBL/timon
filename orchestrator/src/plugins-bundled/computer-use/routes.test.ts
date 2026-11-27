@@ -32,14 +32,16 @@ function agentWith(name: string, config: object): string {
 const enabledToken = agentWith('computer-on', { computer_use: true });
 const disabledToken = agentWith('computer-off', {});
 
+const forwarded: ({ allowedApps: string[] } | undefined)[] = [];
 const calls: { command: string; args: Record<string, unknown>; actor: string }[] = [];
 let desktop: 'up' | 'down' | 'stopped' | 'echo' = 'up';
 const app = express();
 app.use(createDaemonAuthMiddleware({ required: true, token: 'computer-test-daemon' }));
 app.use(express.json());
 registerComputerRoutes(app, {
-  call: async (command, args, actor) => {
+  call: async (command, args, actor, options) => {
     calls.push({ command, args, actor });
+    forwarded.push(options?.allowedApps === undefined ? undefined : { allowedApps: [...options.allowedApps] });
     if (desktop === 'down') throw new NativeComputerError(apiError('computer_unavailable', 'down'), 503);
     if (desktop === 'stopped') throw new NativeComputerError(apiError('computer_stopped', 'stopped'), 409);
     if (desktop === 'echo') throw new Error(`driver rejected ${String(args.text)}`);
@@ -143,6 +145,12 @@ test('typed text never reaches the logs', async () => {
 test('only a person turns computer_use on', () => {
   assert.match(agentWideningRefusal({ computer_use: true }, null) ?? '', /computer_use/);
   assert.equal(agentWideningRefusal({ computer_use: true }, { computer_use: true }), null);
+  // The list of allowed applications: kept or narrowed by an agent's token, never widened.
+  assert.match(agentWideningRefusal({ computer_use_apps: ['Notepad'] }, null) ?? '', /computer_use_apps/);
+  assert.match(agentWideningRefusal({ computer_use_apps: ['Notepad', 'Calc'] }, { computer_use_apps: ['notepad'] }) ?? '', /adds Calc/);
+  assert.equal(agentWideningRefusal({ computer_use_apps: ['NOTEPAD'] }, { computer_use_apps: ['Notepad', 'Calc'] }), null);
+  assert.equal(agentWideningRefusal({ computer_use_apps: [] }, null), null);
+  assert.match(agentWideningRefusal({ computer_use_apps: 'Notepad' }, null) ?? '', /array of strings/);
   assert.equal(agentWideningRefusal({ computer_use: false }, null), null);
   assert.match(agentWideningRefusal({ computer_use: 'yes' }, null) ?? '', /boolean/);
 });
@@ -260,4 +268,27 @@ test('the journal is bounded to its last 5000 rows', () => {
   const rows = dbApi.listComputerJournal('journal-prune', 500);
   assert.equal(rows[0].args.x, 5009);
   assert.equal(dbApi.listComputerJournal('computer-on', 500).length, 0, 'the oldest rows were purged');
+});
+
+test('the agent\'s allowed applications travel with its commands, never a person\'s or the body\'s', async () => {
+  const listed = agentWith('computer-apps', { computer_use: true, computer_use_apps: ['TextEdit', ' ', 3] });
+  const listedRes = await fetch(`${base}/click`, { method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${listed}` }, body: JSON.stringify({ x: 1, y: 2 }) });
+  assert.equal(listedRes.status, 200);
+  assert.deepEqual(forwarded.at(-1), { allowedApps: ['TextEdit'] });
+  await post('click', { x: 1, y: 2 }, 'enabled');
+  assert.deepEqual(forwarded.at(-1), { allowedApps: [] }, 'no list stored = nothing allowed');
+  await post('list_windows', {}, 'user');
+  assert.equal(forwarded.at(-1), undefined, 'a person\'s command carries no list');
+  assert.equal((await post('click', { x: 1, y: 2, allowedApps: ['*'] }, 'enabled')).status, 400, 'the body cannot add one');
+});
+
+test('list_windows is open to a person and an agent; focus_window only to an agent, with a plain id', async () => {
+  assert.equal((await post('list_windows', {}, 'user')).status, 200);
+  assert.equal((await post('list_windows', {}, 'enabled')).status, 200);
+  assert.equal((await post('list_windows', {}, 'anonymous')).status, 401);
+  assert.equal((await post('list_windows', {}, 'disabled')).json.code, 'computer_use_disabled');
+  assert.equal((await post('focus_window', { id: '12:3' }, 'enabled')).status, 200);
+  assert.equal((await post('focus_window', { id: '12:3' }, 'user')).status, 403);
+  assert.equal((await post('focus_window', { id: '../etc' }, 'enabled')).json.code, 'computer_args_invalid');
+  assert.equal((await post('focus_window', {}, 'enabled')).json.code, 'computer_args_invalid');
 });

@@ -517,6 +517,7 @@ export type WideningRequest = {
   mcp_servers?: unknown;
   disallowed_tools?: unknown;
   computer_use?: unknown;
+  computer_use_apps?: unknown;
 };
 
 export type WideningGrant = {
@@ -524,6 +525,7 @@ export type WideningGrant = {
   mcp_servers?: readonly string[] | null;
   disallowed_tools?: readonly string[] | null;
   computer_use?: boolean | null;
+  computer_use_apps?: readonly string[] | null;
 } | null;
 
 /**
@@ -562,6 +564,16 @@ export function agentWideningRefusal(
       return `${label('computer_use')} turns on control of the host's mouse and keyboard: an agent's token cannot grant it, whatever its account holds. `
         + 'A person turns it on from the Agents page of the app. Turning it off, or sending it unchanged, is accepted';
     }
+  }
+
+  // The applications the agent may act in: an agent's token can keep or narrow the list, never add to it.
+  const apps = listOf('computer_use_apps');
+  if (apps === 'invalid') return `${label('computer_use_apps')} must be an array of strings`;
+  const grantedApps = (granted?.computer_use_apps ?? []).map((app) => app.toLowerCase());
+  for (const app of apps ?? []) {
+    if (grantedApps.includes(app.toLowerCase())) continue;
+    return `${label('computer_use_apps')} adds ${app}: an agent's token cannot widen the applications an agent may control, whatever its account holds. `
+      + 'A person edits the list from the Agents page of the app. Removing entries, or sending the list unchanged, is accepted';
   }
 
   const tools = listOf('allowed_tools');

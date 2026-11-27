@@ -30,3 +30,22 @@ test('an agent that never had it reads as off', () => {
   upsertAgent({ name: 'cu-never', system_prompt: 'x', config: { backend: 'claude' } });
   assert.equal(getAgent('cu-never')?.computer_use, false);
 });
+
+test('computer_use_apps is read back by the details and the list, kept by a save that omits it, and replaced when sent', () => {
+  const name = 'cu-apps-roundtrip';
+  upsertAgent({ name, system_prompt: 'x', config: { backend: 'claude', computer_use: true, computer_use_apps: ['com.apple.TextEdit', 'Notepad'] } });
+  assert.deepEqual(getAgent(name)?.computer_use_apps, ['com.apple.TextEdit', 'Notepad']);
+  assert.deepEqual(listAgents().find((agent) => agent.name === name)?.computer_use_apps, ['com.apple.TextEdit', 'Notepad']);
+
+  upsertAgent({ name, system_prompt: 'x', config: { backend: 'claude', computer_use: true } });
+  assert.deepEqual(getAgent(name)?.computer_use_apps, ['com.apple.TextEdit', 'Notepad'], 'a save without the key keeps it');
+
+  upsertAgent({ name, system_prompt: 'x', config: { backend: 'claude', computer_use: true, computer_use_apps: [] } });
+  assert.deepEqual(getAgent(name)?.computer_use_apps, []);
+  assert.deepEqual(listAgents().find((agent) => agent.name === name)?.computer_use_apps, []);
+});
+
+test('an agent that never had a list reads an empty one', () => {
+  upsertAgent({ name: 'cu-apps-never', system_prompt: 'x', config: { backend: 'claude' } });
+  assert.deepEqual(getAgent('cu-apps-never')?.computer_use_apps, []);
+});

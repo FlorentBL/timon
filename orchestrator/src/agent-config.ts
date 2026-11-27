@@ -39,6 +39,10 @@ export type AgentConfig = {
    *  tools (`timon-computer`). Absent = off. Turning it on is a person's act: an
    *  agent's token cannot (`agentWideningRefusal`). */
   computer_use?: boolean;
+  /** The only applications the agent may type or click in (bundle id, displayed name or
+   *  executable name, case ignored). Empty or absent = no keyboard or mouse action at all.
+   *  Widening it is a person's act, like `computer_use`. */
+  computer_use_apps?: string[];
   /** DEFAULT LLM backend of the agent. 'claude' (default) = long-lived Claude
    *  CLI; 'codex' = one-shot OpenAI Codex CLI on the ChatGPT subscription.
    *  The agent is AGNOSTIC: this field is only a default, overridable per
@@ -342,4 +346,23 @@ export { isValidAgentName };
 
 export function validName(name: string): void {
   if (!isValidAgentName(name)) throw new Error(`invalid agent name: ${name}`);
+}
+
+export const COMPUTER_USE_APPS_MAX = 100;
+export const COMPUTER_USE_APP_MAX_LENGTH = 200;
+
+/** The allowed applications as stored, read defensively: only non-empty strings survive. */
+export function storedComputerUseApps(cfg: Pick<AgentConfig, 'computer_use_apps'>): string[] {
+  const raw: unknown = cfg.computer_use_apps;
+  if (!Array.isArray(raw)) return [];
+  return raw.filter((v): v is string => typeof v === 'string').map((v) => v.trim()).filter(Boolean).slice(0, COMPUTER_USE_APPS_MAX);
+}
+
+/** Why a `computer_use_apps` value is not acceptable, or null. */
+export function computerUseAppsRefusal(value: unknown): string | null {
+  if (!Array.isArray(value) || value.some((v) => typeof v !== 'string' || v.trim() === '' || v.length > COMPUTER_USE_APP_MAX_LENGTH)) {
+    return `computer_use_apps must be an array of non-empty strings of at most ${COMPUTER_USE_APP_MAX_LENGTH} characters`;
+  }
+  if (value.length > COMPUTER_USE_APPS_MAX) return `computer_use_apps holds at most ${COMPUTER_USE_APPS_MAX} applications`;
+  return null;
 }

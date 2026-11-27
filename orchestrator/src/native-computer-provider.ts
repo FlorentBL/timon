@@ -75,6 +75,14 @@ function desktopRefusal(body: { error?: unknown; code?: unknown }, status: numbe
     const reason = (message ? /unavailable: ([a-z-]+)/.exec(message)?.[1] : undefined) ?? null;
     return new NativeComputerError(apiError('computer_unavailable', `Computer use is unavailable on this machine. ${computerUnavailableHint(reason)}`), 503);
   }
+  if (code === 'computer_app_not_allowed') {
+    // The desktop's text names the foreground application so the agent understands what to ask for.
+    const found = message ?? 'The foreground application is not in the agent\'s allowed list.';
+    return new NativeComputerError(apiError('computer_app_not_allowed', `${found} Ask the user to add the application to the allowed applications in this agent's settings, or to bring an allowed one to the front.`, { detail: found }), 403);
+  }
+  if (code === 'window_not_found') {
+    return new NativeComputerError(apiError('computer_window_not_found', 'That window no longer exists. Call list_windows again.'), 404);
+  }
   let detail = message ?? `HTTP ${status}`;
   // What the agent typed never travels back in an error text, which ends in logs.
   for (const secret of secrets) if (secret) detail = detail.split(secret).join('[redacted]');
@@ -89,7 +97,7 @@ export async function callNativeComputer(
   command: string,
   args: Record<string, unknown>,
   actor: ComputerActor,
-  options: { home?: string; timeoutMs?: number } = {},
+  options: { home?: string; timeoutMs?: number; allowedApps?: readonly string[] } = {},
 ): Promise<unknown> {
   const provider = readComputerProvider(options.home);
   if (!provider) throw new NativeComputerError(apiError('computer_unavailable', 'Computer use is unavailable: the Timon desktop app must be running on the host machine. Ask the user to open it.'), 503);
@@ -98,7 +106,7 @@ export async function callNativeComputer(
   try {
     response = await fetch(`${provider.origin}/command`, {
       method: 'POST', headers: { authorization: `Bearer ${provider.token}`, 'content-type': 'application/json' },
-      body: JSON.stringify({ command, args, actor }), signal: AbortSignal.timeout(options.timeoutMs ?? 20_000),
+      body: JSON.stringify({ command, args, actor, ...(actor === 'agent' ? { allowedApps: options.allowedApps ?? [] } : {}) }), signal: AbortSignal.timeout(options.timeoutMs ?? 20_000),
       redirect: 'error',
     });
   } catch {

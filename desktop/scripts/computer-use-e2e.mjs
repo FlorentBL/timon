@@ -13,7 +13,7 @@
 import { app, BrowserWindow } from 'electron';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join, dirname } from 'node:path';
+import { basename, join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
@@ -36,6 +36,8 @@ if (process.platform === 'linux') {
 }
 
 const TYPED = 'hello timon 123';
+// The agent's allowed applications: the Electron binary this test runs under, by each of its names.
+const ALLOWED = [...new Set(['Electron', 'electron', 'com.github.Electron', basename(process.execPath), app.getName()])];
 const timings = [];
 let exitCode = 1;
 let home = null;
@@ -69,12 +71,12 @@ async function main() {
   desktop = await startComputerUse(home, (key) => key);
   const provider = JSON.parse(await readFile(join(home, 'computer-native', 'provider.json'), 'utf8'));
 
-  async function send(command, args, actor = 'agent', label = command) {
+  async function send(command, args, actor = 'agent', label = command, allowedApps = ALLOWED) {
     const started = performance.now();
     const response = await fetch(`${provider.origin}/command`, {
       method: 'POST',
       headers: { 'content-type': 'application/json', authorization: `Bearer ${provider.token}` },
-      body: JSON.stringify({ command, args, actor }),
+      body: JSON.stringify({ command, args, actor, allowedApps }),
     });
     const body = await response.json();
     const ms = Math.round(performance.now() - started);
@@ -164,6 +166,50 @@ async function main() {
   await agent('click', { x: target.x, y: target.y }, 'click');
   await agent('type', { text: TYPED }, 'type');
   await expectValue(TYPED, 'full text');
+
+  log('allowed applications: the guard refuses what is not listed');
+  for (const [label, list] of [['empty list', []], ['other application', ['definitely-not-this-app']]]) {
+    const refusedClick = await send('click', { x: target.x, y: target.y }, 'agent', `click (${label})`, list);
+    if (refusedClick.status !== 403 || refusedClick.body.code !== 'computer_app_not_allowed') throw fail(`With an ${label} a click must get computer_app_not_allowed, got ${JSON.stringify(refusedClick)}`);
+    const refusedType = await send('type', { text: 'LEAK' }, 'agent', `type (${label})`, list);
+    if (refusedType.status !== 403 || refusedType.body.code !== 'computer_app_not_allowed') throw fail(`With an ${label} typing must be refused, got ${JSON.stringify(refusedType)}`);
+    log(`  ✓ ${label}: ${refusedType.body.error}`);
+  }
+  await expectValue(TYPED, 'nothing was typed by the refused actions');
+  // Reading stays open: a capture and a window list work with an empty list.
+  await agent('screenshot', { maxWidth: 256 }, 'screenshot (any list)');
+
+  log('list_windows and focus_window');
+  const windowsOf = async (allowedApps = ALLOWED) => {
+    const { status, body } = await send('list_windows', {}, 'agent', 'list_windows', allowedApps);
+    if (status !== 200 || !body.ok) throw fail(`list_windows failed: HTTP ${status} ${JSON.stringify(body)}`);
+    return body.result;
+  };
+  const ours = (list) => list.find((w) => typeof w.title === 'string' && w.title.includes('timon e2e'));
+  const listed = await windowsOf([]);
+  const mine = ours(listed);
+  if (!mine) throw fail(`The test window is not in list_windows: ${JSON.stringify(listed.map((w) => w.title))}`);
+  log(`  ✓ listed: ${JSON.stringify(mine)}`);
+  // Put another window in front, then ask for ours back.
+  const other = new BrowserWindow({ x: 200, y: 200, width: 400, height: 300, show: true, webPreferences: { sandbox: true, contextIsolation: true } });
+  await other.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent('<!doctype html><title>timon e2e other</title><body>other</body>')}`);
+  other.show();
+  other.focus();
+  await sleep(700);
+  const refusedFocus = await send('focus_window', { id: mine.id }, 'agent', 'focus_window (not allowed)', ['definitely-not-this-app']);
+  if (refusedFocus.status !== 403 || refusedFocus.body.code !== 'computer_app_not_allowed') throw fail(`focus_window must be refused for an unlisted application, got ${JSON.stringify(refusedFocus)}`);
+  await agent('focus_window', { id: mine.id }, 'focus_window');
+  let focusedNow = false;
+  const focusDeadline = Date.now() + 5000;
+  while (!focusedNow && Date.now() < focusDeadline) {
+    focusedNow = ours(await windowsOf())?.focused === true;
+    if (!focusedNow) await sleep(250);
+  }
+  if (!focusedNow) throw fail('focus_window did not bring the test window to the front (list_windows never reported it focused).');
+  log('  ✓ focus_window brought the test window to the front');
+  other.destroy();
+  win.focus();
+  await sleep(300);
 
   log(`stop: pressing ${COMPUTER_STOP_SHORTCUT} through the service`);
   await agent('key', { keys: COMPUTER_STOP_SHORTCUT }, 'key (stop shortcut)');
