@@ -1,0 +1,43 @@
+import assert from 'node:assert/strict';
+import test from 'node:test';
+import { mkdtemp, readFile, rm, stat } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { ComputerCommandError } from './computer-use-protocol.js';
+import { startComputerServer } from './computer-use-server.js';
+
+test('provider publishes a private descriptor, authenticates, validates, and cleans up', async () => {
+  const home = await mkdtemp(join(tmpdir(), 'timon-computer-server-'));
+  const seen: unknown[] = [];
+  const provider = await startComputerServer(home, async (actor, command) => {
+    seen.push([actor, command]);
+    if (command.command === 'stop') throw new ComputerCommandError('nope', 409, 'computer_stopped');
+    return { done: true };
+  });
+  const path = join(home, 'computer-native', 'provider.json');
+  try {
+    const descriptor = JSON.parse(await readFile(path, 'utf8'));
+    assert.deepEqual(descriptor, provider.descriptor);
+    assert.match(descriptor.origin, /^http:\/\/127\.0\.0\.1:\d+$/);
+    if (process.platform !== 'win32') assert.equal((await stat(path)).mode & 0o777, 0o600);
+    const url = `${descriptor.origin}/command`;
+    const headers = { 'Content-Type': 'application/json', Authorization: `Bearer ${descriptor.token}` };
+    const post = (body: unknown, h: Record<string, string> = headers) => fetch(url, { method: 'POST', headers: h, body: JSON.stringify(body) });
+    for (const bad of [{ 'Content-Type': 'application/json' }, { ...headers, Authorization: 'Bearer wrong' }, { ...headers, Origin: 'http://evil.example' }]) {
+      assert.equal((await post({ command: 'status', actor: 'agent' }, bad)).status, 401);
+    }
+    assert.equal(seen.length, 0);
+    const ok = await post({ command: 'click', args: { x: 1, y: 2 }, actor: 'agent' });
+    assert.deepEqual(await ok.json(), { ok: true, result: { done: true } });
+    assert.deepEqual(seen[0], ['agent', { command: 'click', x: 1, y: 2, button: 'left' }]);
+    assert.equal((await post({ command: 'click', args: { x: 1 }, actor: 'agent' })).status, 400);
+    assert.equal((await post({ command: 'click', args: { x: 1, y: 1 } })).status, 400);
+    assert.equal((await post({ command: 'nope', actor: 'agent' })).status, 404);
+    const stopped = await post({ command: 'stop', actor: 'human' });
+    assert.equal(stopped.status, 409);
+    assert.deepEqual(await stopped.json(), { ok: false, error: 'nope', code: 'computer_stopped' });
+    assert.equal((await fetch(`${descriptor.origin}/other`, { method: 'POST', headers, body: '{}' })).status, 404);
+    await provider.close();
+    await assert.rejects(readFile(path), /ENOENT/);
+  } finally { await provider.close(); await rm(home, { recursive: true, force: true }); }
+});
