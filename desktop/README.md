@@ -193,7 +193,7 @@ Coordinates are in the pixels of the last screenshot; the shell converts them to
   "General" instead of the right pane, which cannot be detected: the card always prints the path.
   An agent's refused action answers `computer_unavailable` with what to ask the user (allow Timon under Privacy & Security,
   install `xdotool`, the desktop app must be running).
-- Accessibility tree (first choice, pixels are the last resort): `a11y_tree { windowId?, maxDepth? 1..15 (8), maxNodes? 1..1500 (400), query? }`
+- Accessibility tree (first choice, pixels are the last resort): `a11y_tree { windowId?, maxDepth? 1..15 (15), maxNodes? 1..1500 (400), query? }`
   answers `{ window: { id, title, app }, truncated, nodes: [{ id, parent, depth, role, name, value?, enabled, focused?, bounds?, actions }] }`,
   and `a11y_action { id, action, value? }` (`press`, `focus`, `set_value`, `select`, `expand`, `collapse`, `show_menu`, `scroll_into_view`)
   answers `{ ok: true }` without moving the mouse or the keyboard. Roles are lower-case and shared by the three systems (`button`, `textfield`,
