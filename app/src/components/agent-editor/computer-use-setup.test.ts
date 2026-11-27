@@ -98,3 +98,36 @@ test('desktop not reachable: the only line is the desktop one, with its instruct
     assert.match(doc.body.textContent ?? '', /Open the Timon desktop app/);
   });
 });
+
+test('allowed applications: an empty list warns, windows are offered once and added on click, an entry is removed', async () => {
+  await withDom(async ({ React, root, doc }) => {
+    const { ComputerUseApps, appsToOffer } = await import('./computer-use-apps');
+    assert.deepEqual(appsToOffer([{ app: 'Notepad' }, { app: 'notepad' }, { app: 'Calc' }, { app: ' ' }], ['calc']), ['Notepad']);
+    let values: string[] = [];
+    let loads = 0;
+    const load = async () => { loads += 1; return [{ id: '1', title: 'a', app: 'TextEdit', focused: true }, { id: '2', title: 'b', app: 'Mail', focused: false }]; };
+    const render = () => React.act(async () => { root.render(React.createElement(ComputerUseApps, { values, onChange: (next: string[]) => { values = next; }, load })); });
+    await render();
+    assert.ok(doc.querySelector('[data-computer-use-apps-empty]'), 'an empty list says the agent can do nothing');
+    assert.match(doc.body.textContent ?? '', /cannot do anything with the keyboard or the mouse/);
+    await React.act(async () => { (doc.querySelector('[data-computer-use-apps-load]') as HTMLElement).click(); });
+    assert.equal(loads, 1);
+    assert.deepEqual(Array.from(doc.querySelectorAll('[data-computer-app-offer]')).map((b) => b.textContent), ['TextEdit', 'Mail']);
+    await React.act(async () => { (doc.querySelector('[data-computer-app-offer]') as HTMLElement).click(); });
+    assert.deepEqual(values, ['TextEdit']);
+    await render();
+    assert.ok(!doc.querySelector('[data-computer-use-apps-empty]'));
+    assert.equal(doc.querySelectorAll('[data-computer-app]').length, 1);
+    await React.act(async () => { (doc.querySelector('[data-computer-app] button') as HTMLElement).click(); });
+    assert.deepEqual(values, []);
+  });
+});
+
+test('allowed applications: no window to offer says so', async () => {
+  await withDom(async ({ React, root, doc }) => {
+    const { ComputerUseApps } = await import('./computer-use-apps');
+    await React.act(async () => { root.render(React.createElement(ComputerUseApps, { values: ['Mail'], onChange: () => {}, load: async () => null })); });
+    await React.act(async () => { (doc.querySelector('[data-computer-use-apps-load]') as HTMLElement).click(); });
+    assert.match(doc.querySelector('[data-computer-use-apps-none]')?.textContent ?? '', /Timon desktop app/);
+  });
+});

@@ -89,6 +89,33 @@ export async function fetchComputerSetup(): Promise<ComputerSetup> {
   }
 }
 
+/** An open window, as `list_windows` answers it. */
+export interface ComputerWindow { id: string; title: string; app: string; focused: boolean }
+
+/** Reads a `list_windows` answer defensively: anything unexpected is an empty list. */
+export function parseComputerWindows(raw: unknown): ComputerWindow[] {
+  const result = raw && typeof raw === 'object' ? (raw as Record<string, unknown>).result : undefined;
+  if (!Array.isArray(result)) return [];
+  const out: ComputerWindow[] = [];
+  for (const item of result) {
+    if (!item || typeof item !== 'object') continue;
+    const w = item as Record<string, unknown>;
+    if (typeof w.id !== 'string' || typeof w.app !== 'string' || !w.app.trim()) continue;
+    out.push({ id: w.id, title: typeof w.title === 'string' ? w.title : '', app: w.app, focused: w.focused === true });
+  }
+  return out;
+}
+
+/** The open windows, to offer their applications for the agent's list. Null when the desktop cannot answer. */
+export async function fetchComputerWindows(): Promise<ComputerWindow[] | null> {
+  try {
+    const r = await fetch('/api/ui/computer/list_windows', { method: 'POST' });
+    return r.ok ? parseComputerWindows(await r.json()) : null;
+  } catch {
+    return null;
+  }
+}
+
 /** "Allow": the desktop shows the system prompts, or opens the Settings pane. */
 export async function requestComputerPermissions(): Promise<boolean> {
   try {
@@ -115,7 +142,8 @@ export async function restartComputerApp(): Promise<boolean> {
 const UI_ALLOWED: Record<'GET' | 'POST', ReadonlySet<string>> = {
   GET: new Set(['status']),
   // The person's setup of the machine: system prompts and the restart they may need.
-  POST: new Set(['status', 'stop', 'resume', 'request_permissions', 'restart_app']),
+  // list_windows is read-only: a person fills the agent's allowed applications from it. focus_window stays the agent's.
+  POST: new Set(['status', 'list_windows', 'stop', 'resume', 'request_permissions', 'restart_app']),
 };
 
 export function uiComputerPath(method: 'GET' | 'POST', command: string): string | null {

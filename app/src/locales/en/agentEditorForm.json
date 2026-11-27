@@ -48,6 +48,16 @@
     "computerUseWarning": "Warning: the agent really moves your mouse and types on your keyboard, in whatever is open on your screen. Watch it work, never leave it with sensitive windows open, and know that you can stop it at any time. It never types a password for you.",
     "computerUseMac": "macOS: in the system settings, under Privacy and Security, allow Timon for Accessibility and for Screen Recording.",
     "computerUseLinux": "Linux: an X11 session with xdotool installed. Wayland is not supported.",
-    "computerUseNeedsDesktop": "Only works while the Timon desktop app is running on this machine."
+    "computerUseNeedsDesktop": "Only works while the Timon desktop app is running on this machine.",
+    "computerApps": "Allowed applications",
+    "computerAppsHint": "The agent can only click and type while one of these applications is in front. Use the application name, its executable name or, on macOS, its bundle identifier; case does not matter.",
+    "computerAppsScreenshot": "Screenshots always show the whole screen, whatever this list says.",
+    "computerAppsEmptyWarning": "Empty list = the agent cannot do anything with the keyboard or the mouse.",
+    "computerAppsAdd": "Add an application…  ↵",
+    "computerAppsRemove": "Remove {app}",
+    "computerAppsFromWindows": "Add from open windows",
+    "computerAppsFromWindowsHint": "Click an application to allow it:",
+    "computerAppsNoWindows": "No window to offer. Is the Timon desktop app running on this machine?",
+    "computerAppsAllListed": "Every open application is already in the list."
   }
 }

@@ -103,3 +103,20 @@ test('the setup calls go through the UI proxy and fail soft', async () => {
     globalThis.fetch = real;
   }
 });
+
+test('list_windows goes through the UI proxy, focus_window never does, and the answer is read defensively', async () => {
+  const { uiComputerPath, parseComputerWindows, fetchComputerWindows } = await import('./computer-use');
+  assert.equal(uiComputerPath('POST', 'list_windows'), '/api/computer/list_windows');
+  assert.equal(uiComputerPath('GET', 'list_windows'), null);
+  assert.equal(uiComputerPath('POST', 'focus_window'), null);
+  assert.deepEqual(parseComputerWindows({ ok: true, result: [{ id: '1', title: 't', app: 'Notepad', focused: true }, { id: 2 }, null, { id: '3', app: ' ' }] }),
+    [{ id: '1', title: 't', app: 'Notepad', focused: true }]);
+  assert.deepEqual(parseComputerWindows('nope'), []);
+  const real = globalThis.fetch;
+  try {
+    globalThis.fetch = (async () => new Response(JSON.stringify({ ok: true, result: [{ id: '1', title: '', app: 'Mail' }] }))) as typeof fetch;
+    assert.deepEqual(await fetchComputerWindows(), [{ id: '1', title: '', app: 'Mail', focused: false }]);
+    globalThis.fetch = (async () => new Response('{}', { status: 503 })) as typeof fetch;
+    assert.equal(await fetchComputerWindows(), null);
+  } finally { globalThis.fetch = real; }
+});
