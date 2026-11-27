@@ -119,6 +119,7 @@ test('the journal lists time, action and result, shows refusals, and refreshes o
     await render([]);
     assert.ok(doc.querySelector('[data-computer-journal-empty]'));
     assert.ok(!doc.querySelector('[data-computer-journal-row]'));
+  });
 });
 
 test('allowed applications: an empty list warns, windows are offered once and added on click, an entry is removed', async () => {
