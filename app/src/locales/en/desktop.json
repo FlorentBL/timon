@@ -1,5 +1,10 @@
 {
   "desktop": {
+    "computerUse": {
+      "indicator": "Timon is controlling your computer",
+      "stop": "Stop",
+      "shortcutHint": "{shortcut} also stops it"
+    },
     "menu": {
       "newWindow": "New window",
       "view": "View",
