@@ -118,30 +118,58 @@ def describe(acc, path, parent_ifaces):
             pass
     return node, ifaces
 
-def find_window(req):
-    desktop = Atspi.get_desktop(0)
+def children_of(acc):
+    out = []
+    try:
+        for i in range(acc.get_child_count()):
+            child = acc.get_child_at_index(i)
+            if child is not None:
+                out.append(child)
+    except Exception:
+        pass
+    return out
+
+def app_pid(app):
+    try:
+        return app.get_process_id()
+    except Exception:
+        return None
+
+def find_window(req, seen):
+    """Electron's AT-SPI application may carry another pid or name than the X11 window, so the title
+    is tried first, then the pid, then a looser title; what was seen is returned for diagnostics."""
     pid = req.get('pid')
     title = req.get('title') or ''
-    best = None
-    for i in range(desktop.get_child_count()):
-        app = desktop.get_child_at_index(i)
-        if app is None:
-            continue
-        if pid is not None:
-            try:
-                if app.get_process_id() != pid:
-                    continue
-            except Exception:
-                continue
-        for j in range(app.get_child_count()):
-            win = app.get_child_at_index(j)
-            if win is None:
-                continue
-            if title and (win.get_name() or '') == title:
+    frames = []
+    for app in children_of(Atspi.get_desktop(0)):
+        names = []
+        for win in children_of(app):
+            frames.append((app, win))
+            names.append(win.get_name() or '')
+        seen.append({'app': app.get_name() or '', 'pid': app_pid(app), 'frames': names[:8]})
+    exact = [f for f in frames if title and (f[1].get_name() or '') == title]
+    if exact:
+        for app, win in exact:
+            if pid is not None and app_pid(app) == pid:
                 return win
-            if best is None and win.get_role_name().lower() in ('frame', 'window', 'dialog') and pid is not None:
-                best = win
-    return best
+        return exact[0][1]
+    if pid is not None:
+        mine = [f for f in frames if app_pid(f[0]) == pid]
+        for app, win in mine:
+            if title and title.lower() in (win.get_name() or '').lower():
+                return win
+        for app, win in mine:
+            if has(win.get_state_set(), Atspi.StateType.SHOWING):
+                return win
+        if mine:
+            return mine[0][1]
+    if len(title) >= 3:
+        low = title.lower()
+        for app, win in frames:
+            name = (win.get_name() or '').lower()
+            if name and (low in name or name in low):
+                return win
+    return None
 
 def at_path(win, path):
     acc = win
@@ -224,12 +252,12 @@ def main():
     req = json.loads(sys.argv[1])
     op = req['op']
     if op == 'probe':
-        Atspi.get_desktop(0).get_child_count()
-        out = {'ok': True}
+        out = {'ok': Atspi.get_desktop(0).get_child_count() >= 0}
     else:
-        win = find_window(req)
+        seen = []
+        win = find_window(req, seen)
         if win is None:
-            out = {'error': 'stale'}
+            out = {'error': 'stale', 'seen': seen}
         elif op == 'tree':
             out = walk(win, req['maxDepth'], req['maxNodes'])
         else:
@@ -267,7 +295,11 @@ export function linuxA11yBackend(exec: Exec): A11yBackend {
   }
 
   function refuse(out: Record<string, unknown>): void {
-    if (out.error === 'stale') throw new A11yError('stale', 'That element or window no longer exists.');
+    if (out.error === 'stale') {
+      // Diagnostic mode only: which AT-SPI applications and frames were there, to see why none matched.
+      if (process.env.TIMON_COMPUTER_USE_DEBUG === '1' && out.seen !== undefined) console.error(`[computer-use] AT-SPI found no frame for the window; applications seen: ${JSON.stringify(out.seen ?? []).slice(0, 1500)}`);
+      throw new A11yError('stale', 'That element or window no longer exists.');
+    }
     if (out.error === 'unsupported') {
       const possible = Array.isArray(out.actions) ? out.actions.filter((a): a is typeof ACTIONS[number] => (ACTIONS as readonly unknown[]).includes(a)) : [];
       throw new A11yError('unsupported', 'That element cannot do this.', possible);

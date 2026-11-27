@@ -41,13 +41,31 @@ test('Linux: xdotool lists visible windows, names their application and activate
     if (verb === 'search') return { stdout: '4242\n9001\n; rm -rf /\n' };
     if (verb === 'getwindowname') return { stdout: id === '4242' ? 'Docs - Firefox\n' : 'Terminal\n' };
     if (verb === 'getwindowpid') return { stdout: id === '4242' ? '77\n' : '78\n' };
-    if (verb === 'getwindowclassname') return { stdout: id === '4242' ? 'Navigator\n' : 'XTerm\n' };
+    if (command.file === 'xprop') return { stdout: command.args[1] === '4242' ? 'WM_CLASS(STRING) = "Navigator", "Firefox"\n' : 'WM_CLASS(STRING) = "xterm", "XTerm"\n' };
     return { stdout: '' };
   };
   const windows = await listWindows('linux', exec);
-  assert.deepEqual(windows.map((w) => [w.id, w.title, w.app, w.focused]), [['4242', 'Docs - Firefox', 'Navigator', true], ['9001', 'Terminal', 'XTerm', false]]);
+  assert.deepEqual(windows.map((w) => [w.id, w.title, w.app, w.focused]), [['4242', 'Docs - Firefox', 'Firefox', true], ['9001', 'Terminal', 'XTerm', false]]);
   assert.ok(!calls.some((line) => line.includes('rm -rf')), 'a line that is not a window number is never used');
-  assert.deepEqual(await readForegroundApp('linux', exec), { name: 'Navigator', exe: 'firefox' });
+  assert.deepEqual(await readForegroundApp('linux', exec), { name: 'Firefox', exe: 'firefox' });
+});
+
+test('Linux: without xprop the process name names the application, and the missing tool is asked once', async () => {
+  const calls: string[] = [];
+  const exec = async (command: SystemCommand) => {
+    calls.push(command.file);
+    const [verb] = command.args;
+    if (command.file === 'xprop') throw Object.assign(new Error('spawn xprop ENOENT'), { code: 'ENOENT' });
+    if (command.file === 'ps') return { stdout: 'firefox\n' };
+    if (verb === 'getactivewindow') return { stdout: '1\n' };
+    if (verb === 'search') return { stdout: '1\n2\n3\n' };
+    if (verb === 'getwindowname') return { stdout: 'w\n' };
+    if (verb === 'getwindowpid') return { stdout: '77\n' };
+    return { stdout: '' };
+  };
+  const windows = await listWindows('linux', exec);
+  assert.deepEqual(windows.map((w) => w.app), ['firefox', 'firefox', 'firefox']);
+  assert.equal(calls.filter((file) => file === 'xprop').length, 1);
 });
 
 test('Linux focus: falls back to map, raise and focus without a window manager, and checks the result', async () => {
