@@ -314,7 +314,7 @@
       "body": "{why}. L'app web n'a pas pu rester lancée. Cherchez dans les journaux du daemon l'erreur de démarrage, le code de sortie et le signal. Une fois corrigé, `timon app restart` ou la réouverture de l'app desktop la relance."
     },
     "layout_proposal_to_review": {
-      "title": "{kind, select, widgets {Disposition de widgets} islands {Disposition d'îlots} island_arrangement {Agencement d'îlots} nav {Menu} navigate {Navigation} trigger {Déclencheur} other {Disposition}} à examiner : {agent}",
+      "title": "{kind, select, widgets {Disposition de widgets} islands {Disposition d'îlots} island_arrangement {Agencement d'îlots} nav {Menu} navigate {Navigation} trigger {Déclencheur} computer_use {Accès computer-use} other {Disposition}} à examiner : {agent}",
       "body": "{mission}{project, select, none {} other { ({project})}}{note, select, none {} other { — {note}}}"
     },
     "forge_proposal_pending": {
