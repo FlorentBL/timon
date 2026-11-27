@@ -20,7 +20,7 @@ const UNIT = 'timon-browser-0123456789abcdef01234567';
 function facts(over: Partial<BuiltInBrowserFacts> = {}, host: Partial<NonNullable<BuiltInBrowserFacts['host']>> | null = {}): BuiltInBrowserFacts {
   return {
     platform: 'linux', providerPid: null, providerAlive: false, hostPid: null, graphicalSession: false,
-    host: host === null ? null : { unit: UNIT, enabled: true, executable: '/opt/Timon/timon-desktop', executablePresent: true, state: 'active', exitStatus: 0, ...host },
+    host: host === null ? null : { unit: UNIT, enabled: true, executable: '/opt/Timon/timon-desktop', executablePresent: true, state: 'active', exitStatus: 0, subState: 'running', restarts: 0, ...host },
     fonts: true, apt: true, sandbox: null, ...over,
   };
 }
@@ -133,7 +133,7 @@ test('the facts read the provider, the host marker, the unit and the fonts of th
     const asked: string[] = [];
     const exec = async (name: string, args: string[]) => {
       asked.push([name, ...args].join(' '));
-      if (args.includes('--property=ActiveState')) return { code: 0, stdout: 'ActiveState=failed\nExecMainStatus=78\n', stderr: '' };
+      if (args.includes('--property=ActiveState')) return { code: 0, stdout: 'ActiveState=failed\nSubState=failed\nExecMainStatus=78\nNRestarts=3\n', stderr: '' };
       return { code: 1, stdout: '', stderr: '' };
     };
     const browserHost: BrowserHostService = {
@@ -145,10 +145,10 @@ test('the facts read the provider, the host marker, the unit and the fonts of th
     });
     assert.deepEqual(read, {
       platform: 'linux', providerPid: 314, providerAlive: true, hostPid: 314, graphicalSession: false,
-      host: { unit: UNIT, enabled: true, executable, executablePresent: true, state: 'failed', exitStatus: 78 },
+      host: { unit: UNIT, enabled: true, executable, executablePresent: true, state: 'failed', exitStatus: 78, subState: 'failed', restarts: 3 },
       fonts: false, apt: true, sandbox: null,
     });
-    assert.ok(asked.includes(`systemctl --user show ${UNIT} --property=ActiveState --property=ExecMainStatus`));
+    assert.ok(asked.includes(`systemctl --user show ${UNIT} --property=ActiveState --property=ExecMainStatus --property=SubState --property=NRestarts`));
     // No unit file: systemd is not asked for its state.
     const none = await builtInBrowserFacts({
       platform: 'linux', home, env: { DISPLAY: ':0' }, exec, providerPid: null, browserHost, apt: false,
@@ -203,6 +203,66 @@ test('a browser host unit failed with the launcher\'s refusal exit says the same
   assert.equal(blocking(refused)?.id, 'no-sandbox');
   const crashed = builtInBrowserReport(facts({}, { state: 'failed', exitStatus: 1 }));
   assert.equal(blocking(crashed)?.id, 'host-unit-stopped');
+  assert.match(blocking(crashed)!.message, /\(failed, exit status 1\)/);
+});
+
+test('a unit systemd restarts after every crash is a crash loop, with its exit status and its log, not "starting"', () => {
+  // The recipe of 27/11/2026: libasound.so.2 missing, the host exits 127 at every start.
+  const loop = blocking(builtInBrowserReport(facts({}, { state: 'activating', subState: 'auto-restart', exitStatus: 127, restarts: 14 })));
+  assert.equal(loop?.id, 'host-crash-loop');
+  assert.equal(loop?.message, 'the browser host crashes at every start and systemd keeps restarting it (exit status 127: a library it needs'
+    + ` is missing on this system, 14 restarts so far); its log says why: journalctl --user -u ${UNIT} -n 50.`);
+  assert.match(loop!.fix!, /^update or reinstall Timon \(curl -fsSL https:\/\/timon-ai\.com\/install\.sh \| sh\)/);
+  assert.match(loop!.fix!, /sudo apt-get install libasound2t64, or libasound2 before/);
+  assert.match(loop!.fix!, new RegExp(`then: systemctl --user restart ${UNIT}$`));
+  const noApt = blocking(builtInBrowserReport(facts({ apt: false }, { state: 'activating', subState: 'auto-restart', exitStatus: 127, restarts: 2 })));
+  assert.doesNotMatch(noApt!.fix!, /apt-get/);
+  assert.match(noApt!.fix!, /the package of your distribution that provides the library its log names/);
+
+  // Another exit: the log names the cause, no library guessed.
+  const other = blocking(builtInBrowserReport(facts({}, { state: 'activating', subState: 'auto-restart', exitStatus: 1, restarts: 0 })));
+  assert.equal(other?.id, 'host-crash-loop');
+  assert.match(other!.message, /\(exit status 1\); its log says why/);
+  assert.equal(other?.fix, `read its log (journalctl --user -u ${UNIT} -n 50), repair what it names, then: systemctl --user restart ${UNIT}`);
+  // A systemd too old for SubState: the restarts tell it.
+  assert.equal(blocking(builtInBrowserReport(facts({}, { state: 'activating', subState: null, exitStatus: 127, restarts: 4 })))?.id, 'host-crash-loop');
+  // Systemd gave up, or never restarts it: stopped, with the same repair for a missing library.
+  const gaveUp = blocking(builtInBrowserReport(facts({}, { state: 'failed', subState: 'failed', exitStatus: 127, restarts: 5 })));
+  assert.equal(gaveUp?.id, 'host-unit-stopped');
+  assert.match(gaveUp!.message, /exit status 127: a library it needs is missing/);
+  assert.match(gaveUp!.fix!, /^update or reinstall Timon/);
+});
+
+test('a host that waits for Timon desktop to quit, or a unit really starting, is still "starting"', () => {
+  for (const host of [
+    { state: 'activating', subState: 'auto-restart', exitStatus: 75, restarts: 9 },
+    { state: 'activating', subState: 'auto-restart', exitStatus: 0, restarts: 1 },
+    { state: 'activating', subState: 'start', exitStatus: 127, restarts: 0 },
+    { state: 'activating', subState: null, exitStatus: 1, restarts: 0 },
+    { state: 'active', subState: 'running', exitStatus: 0, restarts: 6 },
+  ]) {
+    assert.equal(blocking(builtInBrowserReport(facts({}, host)))?.id, 'host-not-ready', JSON.stringify(host));
+  }
+});
+
+test('the unit\'s sub-state and restart count are read from systemd', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'timon-browser-loop-'));
+  try {
+    const unitFile = join(root, `${UNIT}.service`);
+    writeFileSync(unitFile, '[Unit]\n');
+    const executable = join(root, 'timon-desktop');
+    writeFileSync(executable, '');
+    const exec = async (_name: string, args: string[]) => (args.includes('--property=NRestarts')
+      ? { code: 0, stdout: 'ActiveState=activating\nExecMainStatus=127\nSubState=auto-restart\nNRestarts=12\n', stderr: '' }
+      : { code: 1, stdout: '', stderr: '' });
+    const browserHost: BrowserHostService = { unitName: UNIT, unitContent: '[Unit]\n', executable, enabled: () => true, refusal: () => null };
+    const read = await builtInBrowserFacts({
+      platform: 'linux', home: join(root, 'home'), env: {}, exec, providerPid: null, browserHost, apt: true,
+      unitFile: () => unitFile, alive: () => false, fontDirs: [], probe: NO_PACKAGE,
+    });
+    assert.deepEqual(read.host, { unit: UNIT, enabled: true, executable, executablePresent: true, state: 'activating', exitStatus: 127, subState: 'auto-restart', restarts: 12 });
+    assert.equal(blocking(builtInBrowserReport(read))?.id, 'host-crash-loop');
+  } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
 test('a systemctl that takes its time does not hold the event loop, and the probes run side by side', async () => {

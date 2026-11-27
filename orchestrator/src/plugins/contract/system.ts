@@ -185,7 +185,7 @@ export type DoctorReport = {
 /** Why the built-in browser is missing or degraded (`host/built-in-browser-status.ts`). */
 export type BuiltInBrowserProblemId =
   | 'stale-provider' | 'host-turned-off' | 'host-appimage' | 'desktop-missing' | 'host-unit-missing'
-  | 'host-unit-stopped' | 'host-not-ready' | 'desktop-closed' | 'no-provider' | 'no-fonts' | 'no-sandbox';
+  | 'host-unit-stopped' | 'host-crash-loop' | 'host-not-ready' | 'desktop-closed' | 'no-provider' | 'no-fonts' | 'no-sandbox';
 
 export type BuiltInBrowserProblem = {
   id: BuiltInBrowserProblemId;
