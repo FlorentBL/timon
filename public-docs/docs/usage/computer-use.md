@@ -13,7 +13,7 @@ Computer use needs the **Timon desktop app** running on the machine to control. 
 2. Switch on **Computer use**.
 3. Follow the setup card that appears under the switch: it checks each requirement (desktop app connected, system permissions, input tool) and marks it ✅ or ❌. On macOS, **Allow** shows the system prompt; when macOS asks for it, **Restart Timon** reopens the app. Elsewhere the card gives the exact steps or the install command. It updates by itself when you come back from System Settings.
 
-Only that agent gets the screen and input tools; other agents are unaffected. Switching it off removes them at the agent's next conversation. The agent can list and focus windows, take a screenshot (a JPEG, 1024 px wide by default), move the pointer, click, double-click, drag, scroll, type text and press key combinations. To keep the cost in tokens down, it chains the steps it can predict in a single call and looks at the screen only when the next step depends on it.
+Only that agent gets the screen and input tools; other agents are unaffected. Switching it off removes them at the agent's next conversation. The agent can list and focus windows, read a window as a tree of elements and act on them, take a screenshot (a JPEG, 1024 px wide by default), move the pointer, click, double-click, drag, scroll, type text and press key combinations. To keep the cost in tokens down, it chains the steps it can predict in a single call and looks at the screen only when the next step depends on it.
 
 ## Choose the applications it may use
 
@@ -36,6 +36,19 @@ Two more actions let the agent find its way around without guessing coordinates:
 - `focus_window` brings a window to the front by its `id`. It is refused with `computer_app_not_allowed` when the window's application is not on the list, and with a clear error when the window no longer exists.
 
 Both can be used as a step of a chained call. The window `id` is only valid until the windows change: list them again when in doubt.
+
+## Read a window by its elements
+
+Before looking at pixels, the agent reads a window as a **tree of elements** (buttons, fields, menus, with their names, values and the actions they accept) and acts on an element directly. This is faster, cheaper (text instead of an image) and more reliable than guessing coordinates, and it moves neither your mouse nor your keyboard.
+
+- `computer_a11y_tree` reads the window in front, or the one given by its `id` from `list_windows`. `query` keeps the elements whose name, value or role contains a word, together with the elements that contain them. Positions are only returned on request.
+- `computer_a11y_action` acts on an element by its id: `press`, `focus`, `set_value` (writes a value into a field), `select`, `expand`, `collapse`, `show_menu` or `scroll_into_view`. The element lists the actions it accepts; any other is refused with the possible ones. It can also be a step of a chained call.
+- An element id lasts as long as the window does not change. After a change the agent gets `a11y_element_stale` and reads the tree again.
+- The agent takes a screenshot and clicks in pixels only when an element is missing from the tree.
+
+The same list of allowed applications applies: the tree of a window, or an action on one of its elements, is refused with `computer_app_not_allowed` unless its application is listed. The action journal keeps the length of a value written with `set_value`, never the value.
+
+The setup card has an optional **Accessibility tree** line. Without it, or where the system does not offer it yet, the agent works from screenshots as before. On Linux, accessibility must be turned on in the desktop session; Electron and Chromium applications build their tree only when accessibility is on, which Timon asks them for where the system allows it.
 
 ## Allow Timon on your system
 
