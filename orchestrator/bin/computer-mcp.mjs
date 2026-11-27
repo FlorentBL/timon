@@ -15,10 +15,10 @@ const NO_PASSWORD = ' Never type a password, a one-time code or a payment detail
 // The steps computer_actions accepts: the commands that act or wait, never one that reads.
 const BATCH_ACTIONS = ['click', 'double_click', 'move', 'drag', 'type', 'key', 'scroll', 'wait', 'focus_window', 'a11y_action'];
 const A11Y_ACTIONS = ['press', 'focus', 'set_value', 'select', 'expand', 'collapse', 'show_menu', 'scroll_into_view'];
-// The order to work in: the tree first, pixels only for what the tree does not show.
-const A11Y_FIRST = ' Read the window first with computer_a11y_tree and act by element. Take a screenshot and click in pixels only if the element is missing from the tree.' + NO_FOCUS;
 // Acting by window id keeps the user's screen and focus theirs; an agent set to the background mode cannot do otherwise.
 const NO_FOCUS = ' Prefer acting by windowId with computer_a11y_tree and computer_a11y_action without bringing the window to the front; use computer_focus_window only if needed. If a call is refused with computer_background_only, this agent works in the background: use only computer_list_windows, computer_a11y_tree and computer_a11y_action, never a screenshot, the mouse, the keyboard or focus.';
+// The order to work in: the tree first, pixels only for what the tree does not show.
+const A11Y_FIRST = ' Read the window first with computer_a11y_tree and act by element. Take a screenshot and click in pixels only if the element is missing from the tree.' + NO_FOCUS;
 const MAX_STEPS = 20;
 const tools = [
   { name: 'computer_a11y_tree', description: `Read a window as a tree of elements (buttons, fields, menus...), with no screenshot. One line per element, indented by depth: #id role "name" = value [actions] @x,y. The id is what follows the first "#". Without windowId it reads the window in front. Use query to find an element by part of its name, value or role (case does not matter): the answer keeps the matches and the elements that contain them. Roles: button, textfield, textarea, checkbox, radio, combobox, list, listitem, menu, menuitem, menubar, tab, tablist, link, image, text, group, window, toolbar, table, row, cell, slider, scrollbar, other. Ids last as long as the interface does not change: an a11y_element_stale error means read the tree again. Set withBounds only if you need the positions (in screenshot pixels).${A11Y_FIRST}`, inputSchema: schema({
