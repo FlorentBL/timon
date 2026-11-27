@@ -152,7 +152,8 @@ export const BUNDLED_IDENTITY: Readonly<Record<string, BundledIdentity>> = Objec
     route: '/agents',
     // `agent.mascot`: the meerkat, default occupant of the boot slot.
     // `agent.lookstyler`: its configurator, same footing.
-    slots: ['nav.item', 'cockpit.widget', 'settings.agenttrash', 'agent.mascot', 'agent.lookstyler'],
+    // `agent.folders`: an agent's or a project's extra folders, same footing.
+    slots: ['nav.item', 'cockpit.widget', 'settings.agenttrash', 'agent.mascot', 'agent.lookstyler', 'agent.folders'],
   }),
   '@timon/company': page('/company', ['page', 'agents.view']),
   '@timon/agents-projects': page('/agents?view=projects', ['agents.view']),

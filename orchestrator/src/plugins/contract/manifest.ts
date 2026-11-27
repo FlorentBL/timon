@@ -68,6 +68,10 @@ export type PluginProviderDecl = {
     service: string;
     account?: string | undefined;
   }[];
+  /**
+   * Folders of the home (relative, no `..`, never the user's own key stores) the provider's CLI keeps its
+   * sign-in in. At most 16 for the whole plugin; more than 4 needs `apiVersion: 20`.
+   */
   credentialDirs: string[];
   backends?: unknown[] | undefined;
 };

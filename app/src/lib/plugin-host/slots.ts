@@ -668,9 +668,9 @@ export const CONFLICT_DIALOG_SLOT = 'forge.conflict.dialog';
  * slot like `kanban.job.dialog`: the product's window is the fallback and
  * comes back when a replacement leaves.
  *
- * Not in the plugin contract yet: API 19 shipped, so the hook would open a new
- * wave (docs/SDK-COMPAT.md §131). Until then only a bundled occupant, which
- * imports the context, can take the slot.
+ * Its hook joined the plugin contract at client API 20: 0.1.10 and 0.1.11
+ * shipped the slot without it, when only a bundled occupant could take it
+ * (docs/SDK-COMPAT.md §141).
  */
 export const PULL_REQUEST_DIALOG_SLOT = 'kanban.pull.dialog';
 
@@ -790,6 +790,18 @@ export const EMAIL_CODE_SLOT = 'email.code';
 export const AGENT_LOOK_STYLER_SLOT = 'agent.lookstyler';
 
 /**
+ * Slot of an agent's extra folders (TODO #505, #1168): the folders outside the
+ * working directory its missions may read, or read and write. Painted by every
+ * `AgentFoldersSection` host — the Workspace tab of the agent's page, and the
+ * project's settings, which list the project's own folders and every agent's —
+ * so a plugin that takes it changes both at once. The occupant reads
+ * `useAgentFolders()` (client API 20) and paints; the host keeps the reads,
+ * the writes, which the daemon checks again, and the folder browser. A boot
+ * slot like `agent.lookstyler`.
+ */
+export const AGENT_FOLDERS_SLOT = 'agent.folders';
+
+/**
  * Slot of the parts mascot packs add (docs/AGENT-MASCOT.md, "Mascot packs"):
  * skulls, furs, eyes and accessories, as data, keyed `<pluginId>:<slug>`. Not
  * painted: the mascot and its configurator read it. A boot slot: a pack
@@ -831,6 +843,7 @@ function declareBootSlots(): void {
   declareSlot(AGENT_MASCOT_SLOT, 'single');
   declareSlot(EMAIL_CODE_SLOT, 'single');
   declareSlot(AGENT_LOOK_STYLER_SLOT, 'single');
+  declareSlot(AGENT_FOLDERS_SLOT, 'single');
   declareSlot(MASCOT_PARTS_SLOT, 'keyed');
   // Also listed in `UI_LAYOUT_CHILD_SLOTS`, which is the daemon's contract
   // (`bundled-identity.ts`); declared here as well so that dictation does not

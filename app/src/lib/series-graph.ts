@@ -15,6 +15,8 @@
  * task (must still render something).
  */
 
+import type { TaskRunBy } from './task-runner';
+
 export type SeriesTaskStatus = 'PENDING' | 'IN_PROGRESS' | 'DONE' | 'BLOCKED';
 export type SeriesTaskType = 'code' | 'review' | 'merge' | 'research' | 'doc' | 'chore';
 
@@ -32,6 +34,12 @@ export type SeriesTask = {
   mission_id?: string | null;
   updated_at?: number;
   iteration?: number | null;
+  /** Who runs it and on what (#1203): the board's rows carry them, a bare list may not. */
+  run_by?: TaskRunBy | null;
+  backend_override?: string | null;
+  model_override?: string | null;
+  effective_backend?: string | null;
+  effective_model?: string | null;
 };
 
 export type SeriesGraphNode<T extends SeriesTask = SeriesTask> = {

@@ -445,6 +445,7 @@ test('a permission card is announced by name on the global stream, only to who s
   card(adaMission, 'permission_request');
   card(adaMission, 'permission_resolved');
   card(adaMission, 'permission_expired');
+  card(adaMission, 'permission_timeout_adapted');
   card(adminMission, 'permission_request');
   card(adaMission, 'assistant');
   try {
@@ -455,6 +456,7 @@ test('a permission card is announced by name on the global stream, only to who s
       ['permission_request', { kind: 'permission_request', missionId: adaMission }],
       ['permission_resolved', { kind: 'permission_resolved', missionId: adaMission }],
       ['permission_expired', { kind: 'permission_expired', missionId: adaMission }],
+      ['permission_timeout_adapted', { kind: 'permission_timeout_adapted', missionId: adaMission }],
     ], 'one named frame per card event of her own mission, without the card payload');
     assert.doesNotMatch(text, new RegExp(adminMission), 'another account\'s card stays hidden');
     // The chat of one mission reads the `event` frame itself: no echo there.

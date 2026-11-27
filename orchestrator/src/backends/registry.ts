@@ -1142,10 +1142,30 @@ function keptStatus(id: string): ProviderAuthStatus | null {
   return hostSignInKept(id) ? { ok: true, detail: 'Signed in through Timon', signInCommand: null, source: 'file' } : null;
 }
 
+/**
+ * C4 of the provider behind profile `id`, when its answer speaks for that profile. The check
+ * reads the session of the dialect's CLI on this computer. A profile another plugin, a pack or
+ * the user's own file puts on that CLI with a key and an endpoint of its own (Z.ai and Kimi on
+ * `claude`, Ollama Cloud on `codex`) never runs on that session: the CLI being signed in says
+ * nothing about its key, and borrowing the verdict showed it connected with no key at all.
+ */
+function profileAuthCheck(id: string): ProviderDeclarations['authStatus'] {
+  const base = baseBackendId(id);
+  const profile = profiles.find((p) => p.id === base);
+  if (!profile) return undefined;
+  const ownCredentials = !!profile.custom || !!profile.providerConfig || !!profile.requiredEnv?.length;
+  if (ownCredentials) {
+    // The dialect's own plugin may still answer for a keyed profile of its own: its check knows that key.
+    const dialectOwner = declarationEntries.get(profile.dialect)?.owner;
+    if (dialectOwner === undefined || dialectOwner !== profileOwners.get(profile.id)) return undefined;
+  }
+  return profileDeclarations(id)?.authStatus;
+}
+
 export async function providerAuthStatus(id: string, env: Readonly<Record<string, string>> = {}): Promise<ProviderAuthStatus | null> {
   const kept = keptStatus(id);
   if (kept) return kept;
-  const authStatus = profileDeclarations(id)?.authStatus;
+  const authStatus = profileAuthCheck(id);
   return authStatus ? authStatus(env) : null;
 }
 
@@ -1181,7 +1201,7 @@ export function protocolOfDialect(dialectId: string): ProviderProtocol | null {
 export function authStatusNow(id: string, env: Readonly<Record<string, string>> = {}): ProviderAuthStatus | null {
   const kept = keptStatus(id);
   if (kept) return kept;
-  const authStatus = profileDeclarations(id)?.authStatus;
+  const authStatus = profileAuthCheck(id);
   if (!authStatus) return null;
   const status = authStatus(env);
   return status instanceof Promise ? null : status;

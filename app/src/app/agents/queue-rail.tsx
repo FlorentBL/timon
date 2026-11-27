@@ -14,6 +14,9 @@ import { sseOn } from '@/lib/sse-stream';
 import { missionActivity } from '@/lib/mission-activity';
 import { machineScopedStorage } from '@/lib/machines/machine-storage';
 import { ChevronDown } from 'lucide-react';
+import { BrandMark } from '@/components/brand-mark';
+import { useBackendCatalog } from '@/lib/backends';
+import { taskRunAgent, taskRunView, type TaskRunBy } from '@/lib/task-runner';
 
 type Mission = {
   id: string;
@@ -33,6 +36,11 @@ type Task = {
   scheduled_at?: number | null;
   type?: string | null;
   project?: string | null;
+  run_by?: TaskRunBy | null;
+  backend_override?: string | null;
+  model_override?: string | null;
+  effective_backend?: string | null;
+  effective_model?: string | null;
 };
 
 type Projet = { slug: string; name?: string | null };
@@ -51,6 +59,7 @@ export function QueueRail({ handle, className }: WidgetProps) {
   const [agentProjects, setAgentProjects] = useState<ReadonlyMap<string, string | null>>(new Map());
   const [projects, setProjects] = useState<Projet[]>([]);
   const [choice, setChoice] = useState<string>(ALL_FILTER);
+  const catalog = useBackendCatalog();
 
   // In a chat, the conversation's project decides; elsewhere (the Agents page,
   // the cockpit) no single project is in context, so the rail lists them all
@@ -127,7 +136,8 @@ export function QueueRail({ handle, className }: WidgetProps) {
     return { missions: f.missions.slice(0, 12), tasks: f.tasks.slice(0, 20) };
   }, [running, queued, slug, agentProjects]);
   const runningKeys = new Set(shown.missions.map((m) => m.agent_name + '|' + firstLine(m.mission, 80)));
-  const queuedClean = shown.tasks.filter((task) => !runningKeys.has(task.agent_name + '|' + firstLine(task.title, 80)));
+  // The mission runs under the agent the roles hand the task to, not always the named one (#1203).
+  const queuedClean = shown.tasks.filter((task) => !runningKeys.has(taskRunAgent(task) + '|' + firstLine(task.title, 80)));
 
   const runningShown = shown.missions;
   const empty = runningShown.length === 0 && queuedClean.length === 0;
@@ -214,10 +224,12 @@ export function QueueRail({ handle, className }: WidgetProps) {
             <span className="mr-1.5 inline-block size-1.5 rounded-full bg-muted-foreground/40 align-middle" />
             {t('agentsLayout.queuedCount', { count: queuedClean.length })}
           </h3>
-          {queuedClean.map((task) => (
+          {queuedClean.map((task) => {
+            const run = taskRunView(catalog, task);
+            return (
             <ChatLink
               key={task.id}
-              href={chatHref(task.agent_name)}
+              href={chatHref(run.agent)}
               className="qr-card group relative block rounded-xl border border-border/50 bg-card/55 px-3 py-2.5 shadow-md backdrop-blur transition-all hover:border-primary/50 hover:bg-card/85"
             >
               {/* Comic-style Z's floating away — 3 chars, offset in x/delay
@@ -227,13 +239,28 @@ export function QueueRail({ handle, className }: WidgetProps) {
                 <span className="qr-z">Z</span>
                 <span className="qr-z">Z</span>
               </span>
-              <div className="flex items-center gap-2">
-                <span className="truncate text-[11px] font-medium text-foreground/85">
-                  {task.agent_name}
+              <div className="flex min-w-0 items-center gap-2" title={run.title} data-task-runner={run.agent}>
+                <span className="min-w-0 truncate text-[11px] font-medium text-foreground/85">
+                  {run.agent}
                 </span>
                 {task.type && (
                   <span className="shrink-0 rounded border border-border/60 bg-muted/30 px-1 text-[9px] uppercase tracking-wider text-muted-foreground">
                     {task.type}
+                  </span>
+                )}
+                {run.model && (
+                  <span className="ml-auto inline-flex min-w-0 max-w-[45%] shrink items-center gap-1 text-[10.5px] text-muted-foreground" data-task-model={run.model}>
+                    {!run.mark.empty && (
+                      <BrandMark
+                        icon={run.mark.icon}
+                        brand={run.mark.brand}
+                        slug={run.mark.slug}
+                        fallbackIcon={run.mark.fallbackIcon}
+                        fallbackBrand={run.mark.fallbackBrand}
+                        className="size-3 flex-none"
+                      />
+                    )}
+                    <span className="truncate">{run.model}</span>
                   </span>
                 )}
               </div>
@@ -241,7 +268,8 @@ export function QueueRail({ handle, className }: WidgetProps) {
                 {firstLine(task.title, 140)}
               </p>
             </ChatLink>
-          ))}
+            );
+          })}
         </section>
       )}
 

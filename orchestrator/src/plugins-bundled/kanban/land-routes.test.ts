@@ -421,6 +421,7 @@ test('a kept job whose pull request was closed without a merge: the gesture open
   const row = dbApi.getIntegrationById(j.row.id)!;
   assert.equal(row.state, 'open');
   assert.notEqual(row.notified_state, 'closed', 'a second closing is told again');
+  assert.equal(row.notified_state, 'open', 'the new pull request is told to the pilot');
   assert.equal(row.checks, null);
   assert.equal((await view()).kept, false);
 });

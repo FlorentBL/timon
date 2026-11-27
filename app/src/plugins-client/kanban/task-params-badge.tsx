@@ -5,7 +5,7 @@ import { toast } from 'sonner';
 import { ModelPickerPopover, type CatalogTarget, type ModelPick } from '@/components/model-picker';
 import { BrandMark } from '@/components/brand-mark';
 import { backendShortName, useBackendCatalog } from '@/lib/backends';
-import { taskModelMark } from '@/lib/kanban-card';
+import { shortModelName, taskModelMark } from '@/lib/kanban-card';
 import { t as i18n } from '@/lib/i18n';
 import { cn } from '@/lib/utils';
 import {
@@ -80,9 +80,7 @@ export function TaskParamsBadge({ task: stored, onSaved, target }: {
   const mode = task.permission_mode_override;
   // Compact model display (claude-opus-4-7 → opus, gpt-5.5 → gpt-5.5).
   // Keeps the chip from taking up 80% of the card's width.
-  const shortModel = model
-    ? model.replace(/^claude-/, '').replace(/-\d+-\d+$/, '')
-    : null;
+  const shortModel = model ? shortModelName(model) : null;
   const extrasCount = (mode ? 1 : 0) + skills.length + mcps.length + tools.length;
 
   const mark = taskModelMark(catalog, task);

@@ -160,3 +160,41 @@ test('an accord that put a blocked Kanban task back in the queue says so', async
   await w.until(() => Boolean(document.querySelector('[data-fence-grant-requeued]')), 'the requeue to show');
   assert.match(document.body.textContent ?? '', /The task is back in the queue/);
 });
+
+test('a reload replays "the task is back in the queue" from the recorded answer (TODO #1189)', async (t) => {
+  // What the thread does on a reload: the stored `fence_refused`, then the stored
+  // `fence_grant_resolved`, through the same parsers as the live events.
+  const recorded = { type: 'fence_grant_resolved', id: 'refusal-1', status: 'allowed', path: '/home/u/.cache/tool', mode: 'write', scope: 'agent', project: null, requeued: true, resolvedAt: 1 };
+  const replayed = applyFenceGrantResolution(view(), parseFenceGrantResolution(recorded)!);
+  assert.equal(replayed.requeued, true);
+  const w = await mount(t);
+  await w.render(replayed);
+  assert.ok(document.querySelector('[data-fence-grant-state="allowed"]'));
+  assert.match(document.body.textContent ?? '', /The task is back in the queue/);
+  // An answer recorded before the requeue was kept says nothing about the task.
+  const older = applyFenceGrantResolution(view(), parseFenceGrantResolution({ ...recorded, requeued: undefined })!);
+  assert.equal(older.requeued, null);
+  await w.render(older);
+  assert.ok(!document.querySelector('[data-fence-grant-requeued]'));
+  // A refusal never says it, whatever the payload claims.
+  assert.equal(applyFenceGrantResolution(view(), parseFenceGrantResolution({ ...recorded, status: 'refused' })!).requeued, null);
+});
+
+test('a plugin that takes the slot offers "Allow for the project" through the contract (client API 20)', async (t) => {
+  const w = await mount(t, { body: { ok: true, resolution: { id: 'refusal-1', status: 'allowed', scope: 'project', project: 'lib' }, relaunched: true, requeued: false } });
+  const seen: Array<{ project: string | null; offered: boolean }> = [];
+  function Replacement() {
+    const ctx = w.card.useFenceGrant();
+    seen.push({ project: ctx?.grant.project ?? null, offered: typeof ctx?.allowProject === 'function' });
+    return w.React.createElement('button', { 'data-replacement': '', onClick: () => void ctx?.allowProject?.() }, ctx?.grant.scope ?? 'open');
+  }
+  const undo = w.slots.register({ slot: w.slots.CHAT_FENCE_GRANT_SLOT, pluginId: 'acme' }, Replacement);
+  t.after(undo);
+  await w.render(view());
+  assert.deepEqual(seen.at(-1), { project: null, offered: false }, 'no project in the offer: no gesture');
+  await w.render(projectView());
+  assert.deepEqual(seen.at(-1), { project: 'lib', offered: true });
+  await w.click('[data-replacement]');
+  await w.until(() => document.querySelector('[data-replacement]')?.textContent === 'project', 'the replacement to show the accord');
+  assert.deepEqual(w.calls, [{ method: 'POST', url: '/api/ui/missions/m1/fence-grants/refusal-1', body: { decision: 'allow', scope: 'project' } }]);
+});

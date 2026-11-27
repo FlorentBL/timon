@@ -20,7 +20,9 @@
  * or by the desktop: what ends them there is `taskkill /F` or TerminateProcess,
  * which runs no handler. So the same stop can also be asked for in-process
  * (`requestDaemonShutdown`, behind `POST /api/daemon/shutdown`), and the
- * Windows stop paths ask for it before they fall back to the forced kill.
+ * Windows stop paths ask for it before they fall back to the forced kill. The
+ * Windows installer, which holds no token, asks through a file instead
+ * (`host/stop-request.ts`).
  */
 
 /** A step run before the module tree is released, in registration order. */

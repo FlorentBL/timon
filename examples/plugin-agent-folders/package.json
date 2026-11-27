@@ -1,0 +1,24 @@
+{
+  "name": "@timon-ai/plugin-agent-folders",
+  "version": "0.1.0",
+  "license": "MIT",
+  "private": true,
+  "type": "module",
+  "exports": { "./client": "./lib/client.js" },
+  "files": ["lib", "README.md", "SIGNATURE"],
+  "timon": {
+    "id": "example-agent-folders",
+    "apiVersion": 20,
+    "kind": "behavior",
+    "label": "Folders grouped by owner",
+    "description": "Replaces the extra folders of the agent's page and of the project's settings with one list per owner and a read/write switch on each folder.",
+    "permissions": [],
+    "client": {
+      "slots": ["agent.folders"],
+      "external": ["react", "@timon/ui"],
+      "mode": "esm"
+    },
+    "settings": [],
+    "license": { "required": false }
+  }
+}

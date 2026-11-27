@@ -36,6 +36,9 @@ param(
   # The journal of both phases. The stop phase computes it and hands it to the
   # resume phase, whose environment comes from WMI, not from the installer.
   [string]$Log = '',
+  # The installer wrote run\stop-request in the data directory, as the user,
+  # once this script was started: the daemon is waited for before it is ended.
+  [switch]$StopRequested,
   [switch]$Resume
 )
 $task = 'TimonOrchestrator'
@@ -136,19 +139,6 @@ if (-not $account) {
 $mine = { param($process) $account -and ((& $sidOf $process) -eq $account) }
 & $note ("pause: start, elevated: {0}, installer pid {1}, account SID {2} (from {3}), installation '{4}', data '{5}'" -f $elevated, $InstallerPid, $account, $accountSource, $InstallDir, $TimonHome)
 
-# Disabled first: its 5-minute repeating trigger would otherwise start the
-# daemon again from half-replaced files.
-& $note ("pause: task {0} is {1}" -f $task, (& $taskState))
-try {
-  $null = Disable-ScheduledTask -TaskName $task -TaskPath '\' -ErrorAction Stop
-  & $note 'pause: task disabled'
-} catch { & $note "pause: task not disabled: $($_.Exception.Message)" }
-try {
-  Stop-ScheduledTask -TaskName $task -TaskPath '\' -ErrorAction Stop
-  & $note 'pause: task stopped'
-} catch { & $note "pause: task not stopped: $($_.Exception.Message)" }
-& $note ("pause: task {0} is now {1}" -f $task, (& $taskState))
-
 # The daemon runs on the Node the package ships (resources\node\node.exe);
 # a package before it ran it on $Exe as Node. An update from one to the other
 # finds either, so both are ours.
@@ -168,6 +158,51 @@ $processes = {
     @()
   }
 }
+
+# Disabled first: its 5-minute repeating trigger would otherwise start the
+# daemon again from half-replaced files.
+& $note ("pause: task {0} is {1}" -f $task, (& $taskState))
+try {
+  $null = Disable-ScheduledTask -TaskName $task -TaskPath '\' -ErrorAction Stop
+  & $note 'pause: task disabled'
+} catch { & $note "pause: task not disabled: $($_.Exception.Message)" }
+
+# The installer, which runs as the user, wrote run\stop-request in the data
+# directory right after starting this script (installer.nsh): the service's
+# daemon reads it and runs its own stop (host/stop-request.ts), so the next
+# start reads this run as clean instead of unknown. No token is sent, and
+# nothing is written there from here: an elevated write into a folder the user
+# controls is what a junction turns against another path. This phase only
+# waits, once the task is disabled (its trigger would start a daemon that left
+# again) and before anything is ended by force. A daemon that does not take the
+# request (an older version) leaves the file in place: past $requestTaken
+# seconds the wait ends there, and the kills below end it, as before.
+$stopWait = 10
+$requestTaken = 3
+if ($StopRequested -and $TimonHome) {
+  $request = Join-Path $TimonHome 'run\stop-request'
+  $daemonsOfAccount = {
+    @(& $processes | Where-Object {
+      $runtimes -contains $_.Name -and $_.CommandLine -and
+      $_.CommandLine.ToLowerInvariant().Contains('\dist\boot.js') -and (& $mine $_)
+    })
+  }
+  $clock = [Diagnostics.Stopwatch]::StartNew()
+  $outcome = "the daemon still runs after $stopWait s"
+  while ($true) {
+    if (@(& $daemonsOfAccount).Count -eq 0) { $outcome = 'no daemon of this account is seen'; break }
+    if ($clock.Elapsed.TotalSeconds -ge $requestTaken -and (Test-Path -LiteralPath $request -PathType Leaf)) { $outcome = 'the daemon did not take the request'; break }
+    if ($clock.Elapsed.TotalSeconds -ge $stopWait) { break }
+    Start-Sleep -Milliseconds 500
+  }
+  & $note ("pause: stop request: {0} ({1:N1} s)" -f $outcome, $clock.Elapsed.TotalSeconds)
+}
+try {
+  Stop-ScheduledTask -TaskName $task -TaskPath '\' -ErrorAction Stop
+  & $note 'pause: task stopped'
+} catch { & $note "pause: task not stopped: $($_.Exception.Message)" }
+& $note ("pause: task {0} is now {1}" -f $task, (& $taskState))
+
 $end = {
   param($process, [string]$what)
   & $note ("pause: found {0}: {1}" -f $what, (& $describe $process))
@@ -278,6 +313,16 @@ if ($waiting.Count -gt 0) {
       Start-Process -WindowStyle Hidden -FilePath $powershell -ArgumentList $arguments -ErrorAction Stop
     } catch { & $note "pause: the resume could not be started at all, the task stays disabled: $($_.Exception.Message)" }
   }
+}
+
+# A task still enabled starts the daemon again within five minutes, from
+# half-replaced files. That is the task of a refused elevation (S4U), whose
+# daemon may well have left on the stop request above: the files must not be
+# replaced under it. The resume above enables and starts it again.
+$taskNow = & $taskState
+if (@('Ready', 'Running', 'Queued') -contains $taskNow) {
+  & $note ("pause: exit {0}, task {1} is still {2}: its trigger would start the daemon during the installation" -f $stillRunning, $task, $taskNow)
+  exit $stillRunning
 }
 
 # The net. Everything above can miss: an elevation that was refused leaves a

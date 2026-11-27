@@ -16,7 +16,7 @@ import type { BundledClientPlugin } from './types';
 import { widgetPicto } from './widget-pictos';
 import { TOPBAR_CENTER_ZONE } from '@/components/widget-host/widget-catalog';
 import { WorkingAgentsWidget } from './working-agents/working-agents-widget';
-import { AGENT_LOOK_STYLER_SLOT, AGENT_MASCOT_SLOT, PROJECT_SETTINGS_SLOT } from '@/lib/plugin-host/slots';
+import { AGENT_FOLDERS_SLOT, AGENT_LOOK_STYLER_SLOT, AGENT_MASCOT_SLOT, PROJECT_SETTINGS_SLOT } from '@/lib/plugin-host/slots';
 import { ProductAgentMascot } from '@/components/mascot/agent-mascot';
 import { ProductLookStyler } from '@/components/mascot/look-styler/look-styler';
 
@@ -33,6 +33,7 @@ const forgetDocumentDraft = (params: IslandParams, tabId: TabId) => {
 const QueueRail = dynamic(() => import('@/app/agents/queue-rail').then((m) => m.QueueRail), { ssr: false });
 const NotificationRail = dynamic(() => import('@/app/agents/notification-rail').then((m) => m.NotificationRail), { ssr: false });
 const AgentInjectionsCard = dynamic(() => import('./agent-injections/agent-injections-card').then((m) => m.AgentInjectionsCard), { ssr: false });
+const ProductAgentFolders = dynamic(() => import('@/components/agent-folders/agent-folders-section').then((m) => m.ProductAgentFolders), { ssr: false });
 const ProjectAgentFoldersSetting = dynamic(() => import('@/components/agent-folders/project-agent-folders-setting').then((m) => m.ProjectAgentFoldersSetting), { ssr: false });
 const AgentTrashPanel = dynamic(() => import('./agent-trash/agent-trash-panel').then((m) => m.AgentTrashPanel), { ssr: false });
 
@@ -48,6 +49,10 @@ export const coreAgentsClient: BundledClientPlugin = {
     // the mascot configurator of the onboarding and of the editor's Avatar tab.
     // A plugin that takes the slot changes both at once.
     ctx.register({ slot: AGENT_LOOK_STYLER_SLOT, fallback: true }, ProductLookStyler);
+    // Default occupant of `agent.folders` (a boot slot): an agent's extra
+    // folders on its page, and the project's in its settings. A plugin that
+    // takes the slot changes both at once.
+    ctx.register({ slot: AGENT_FOLDERS_SLOT, fallback: true }, ProductAgentFolders);
     // The extra folders of the project's agents, in the project's settings: a
     // row that counts them and opens their list (TODO #505).
     ctx.register({ slot: PROJECT_SETTINGS_SLOT, key: 'agent-folders', order: 30 }, ProjectAgentFoldersSetting);

@@ -69,6 +69,7 @@ import { usePageToc } from '@/components/page-toc/page-toc-context';
 import { useAgentMascot } from '@/components/mascot/agent-mascot-context';
 import { useEmailCode } from '@/components/email-code/email-code-context';
 import { useLookStyler } from '@/components/mascot/look-styler/look-styler-context';
+import { useAgentFolders } from '@/components/agent-folders/agent-folders-context';
 import { useProviderPage } from '@/components/provider-page/provider-page-context';
 import { ProviderSection, ProviderSettingRow } from '@/components/provider-page/provider-section';
 import { useProviderRow } from '@/components/provider-list/provider-row-context';
@@ -90,10 +91,12 @@ import { useKanbanCard } from '@/plugins-client/kanban/kanban-card-context';
 import { useTodoForm } from '@/plugins-client/kanban/todo-form-context';
 import { useJobDialog } from '@/plugins-client/kanban/job-dialog-context';
 import { usePublishDialog } from '@/plugins-client/kanban/publish-dialog-context';
+import { usePullRequestDialog } from '@/plugins-client/kanban/pull-request-dialog-context';
 import { GitStackProjectPicker, useGitStackProject } from '@/plugins-client/kanban/git-stack-project';
 import { useTodoOpener } from '@/plugins-client/kanban/todo-opener';
 import { useProjectSettings } from '@/components/project-settings-slot';
 import { useWidgetAttention, useWidgetCount, useWidgetInFront, useWidgetMenu } from '@/components/widget-host/widget-self';
+import { onAccountSwitch } from '@/lib/account-change';
 
 /** What `@timon/ui` exposes. One object, so `platform-globals` and the served
  *  module cannot list different members. */
@@ -129,7 +132,7 @@ export const UI_KIT = {
   // `chat.secret` occupant renders, and its two gestures.
   useSecretRequest,
   // A path the mission fence refused, with the folder offered to the agent (client API 19):
-  // what a `chat.fence` occupant renders, and its two answers.
+  // what a `chat.fence` occupant renders, and its answers (`allowProject` since API 20).
   useFenceGrant,
   // Deprecated since client API 17: the `updates.banner` slot is no longer
   // painted, so this answers `null`. Kept so an API 15 plugin still loads.
@@ -228,6 +231,13 @@ export const UI_KIT = {
   // The mascot configurator (client API 15, `agent.lookstyler`): the look being edited, the
   // change, the agent's name and role, the states to try, the closed lists and a random look.
   useLookStyler,
+  // An agent's or a project's extra folders (client API 20, `agent.folders`): the rows, whose
+  // lists a folder may join, and the gestures (add, access, remove, the folder browser).
+  useAgentFolders,
+  // A pull request's detail window (client API 20, `kanban.pull.dialog`): the row, GitHub's
+  // page read through the daemon, `refresh`, the placed gestures and `run`, the check log and
+  // the diff; the occupant draws the window, the reads and the gestures stay the host's.
+  usePullRequestDialog,
   // The page of one provider (client API 16, `settings.provider.section`): the provider on
   // screen, its status, `refresh` and `back`; the frame the product's sections use, and
   // its row (a title and a status at the left, one action and a "…" menu at the right).
@@ -241,6 +251,9 @@ export const UI_KIT = {
   // The update window (client API 17, `updates.dialog`): the version, its highlights and
   // changelog, the download and the gestures of the step it is at.
   useUpdateDialog,
+  // The signed-in account became another one (client API 20): a module cache of what a
+  // plugin read from the daemon empties itself, as the product's own stores do. No id given.
+  onAccountChange: onAccountSwitch,
 };
 
 /**

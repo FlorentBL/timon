@@ -13,6 +13,10 @@ import {
   Tile, BrandMark, Input, Switch, AnchoredPopover,
   cn, createTranslator, getLocale,
 } from '@timon/ui'
+// The whole module too, for what a newer Timon adds: a name the host lacks,
+// listed in the braces above, stops the bundle from loading; read as a member,
+// it is only `undefined`.
+import * as platform from '@timon/ui'
 
 const t = createTranslator({
   en: {
@@ -203,6 +207,9 @@ function createQuotaStore(ctx) {
   // forced reading runs right after it instead of being swallowed.
   let forceQueued = false
   let timer = null
+  // Bumped when another person signs in: a reading started for the previous
+  // account lands after the reset and must not show their quotas.
+  let generation = 0
   const listeners = new Set()
 
   const emit = (patch) => {
@@ -218,6 +225,7 @@ function createQuotaStore(ctx) {
       if (forced) forceQueued = true
       return request
     }
+    const mine = generation
     request = (async () => {
       try {
         const response = await ctx.api(forced ? 'all?refresh=1' : 'all')
@@ -228,16 +236,18 @@ function createQuotaStore(ctx) {
         const data = await response.json()
         const historyResponse = await ctx.api('history')
         const history = historyResponse.ok ? await historyResponse.json() : snapshot.history
-        emit({ data, history, loading: false, failed: null })
+        if (mine === generation) emit({ data, history, loading: false, failed: null })
       } catch (error) {
-        emit({ loading: false, failed: error && error.message ? error.message : t('loadFailed') })
+        if (mine === generation) emit({ loading: false, failed: error && error.message ? error.message : t('loadFailed') })
       } finally {
-        request = null
-        if (forceQueued) {
-          forceQueued = false
-          void refresh(true)
-        } else {
-          schedule()
+        if (mine === generation) {
+          request = null
+          if (forceQueued) {
+            forceQueued = false
+            void refresh(true)
+          } else {
+            schedule()
+          }
         }
       }
     })()
@@ -275,8 +285,21 @@ function createQuotaStore(ctx) {
   }
   const getSnapshot = () => snapshot
 
+  // Another person signed in on this page: the quotas on screen are the
+  // previous account's. Drop them and read this one's.
+  const forget = () => {
+    generation += 1
+    request = null
+    forceQueued = false
+    if (timer) clearTimeout(timer)
+    timer = null
+    emit({ data: null, history: null, loading: true, failed: null })
+    if (listeners.size) void refresh()
+  }
+
   return {
     refresh,
+    forget,
     useQuota() {
       return React.useSyncExternalStore(subscribe, getSnapshot, getSnapshot)
     },
@@ -678,7 +701,14 @@ export function apply(ctx) {
     makeWidget(store),
   )
   const disposeSettings = ctx.slots.register({ slot: 'settings.section' }, makeSettings(ctx))
+  // The plugin is not loaded again when another person signs in on the page:
+  // what the store read belongs to the previous account (client API 20; on an
+  // older Timon the next poll replaces it).
+  const disposeAccount = typeof platform.onAccountChange === 'function'
+    ? platform.onAccountChange(() => store.forget())
+    : () => {}
   return () => {
+    disposeAccount()
     disposeSettings()
     disposeWidget()
   }
