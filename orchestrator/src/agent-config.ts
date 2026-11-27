@@ -35,6 +35,10 @@ export type AgentConfig = {
   /** undefined inherits; null disables browsing; a profile id is an explicit,
    * owner-checked assignment frozen when each mission starts. */
   browser_profile_id?: string | null;
+  /** The agent may drive the host's mouse and keyboard through the computer-use
+   *  tools (`timon-computer`). Absent = off. Turning it on is a person's act: an
+   *  agent's token cannot (`agentWideningRefusal`). */
+  computer_use?: boolean;
   /** DEFAULT LLM backend of the agent. 'claude' (default) = long-lived Claude
    *  CLI; 'codex' = one-shot OpenAI Codex CLI on the ChatGPT subscription.
    *  The agent is AGNOSTIC: this field is only a default, overridable per

@@ -1280,7 +1280,7 @@ export function registerRoutes(app: express.IRouter): void {
         'allowed_tools', 'disallowed_tools',
         'skills', 'mcp_servers', 'excluded_mcp_servers', 'project',
         'emoji', 'color', 'icon_url', 'look', 'avatar',
-        'role', 'directives', 'global_context', 'browser_profile_id',
+        'role', 'directives', 'global_context', 'browser_profile_id', 'computer_use',
         'team', 'reports_to', 'memory_scope', 'reasoningEffort',
       ];
       const patch: Record<string, unknown> = {};
@@ -1355,7 +1355,7 @@ export function registerRoutes(app: express.IRouter): void {
       const respawnTriggers = [
         'skills', 'mcp_servers', 'excluded_mcp_servers',
         'allowed_tools', 'disallowed_tools', 'model', 'permission_mode',
-        'role', 'directives', 'browser_profile_id', 'memory_scope', 'reasoningEffort',
+        'role', 'directives', 'browser_profile_id', 'computer_use', 'memory_scope', 'reasoningEffort',
       ] as const;
       const needsRespawn = respawnTriggers.some((k) => k in patch);
       let killed = 0;

@@ -196,6 +196,10 @@
         "label": "Browser annotations",
         "description": "Point at an element of the built-in browser, say what to change, and send it to an agent."
       },
+      "@timon/computer-use": {
+        "label": "Computer use",
+        "description": "Lets an agent that has the right drive this machine's mouse and keyboard through the desktop app. Off for every agent until a person turns it on."
+      },
       "@timon/terminal-native": {
         "label": "Host terminal",
         "description": "Opens the machine's terminal or file manager in a desktop window. Needs a graphical session."
