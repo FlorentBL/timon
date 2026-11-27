@@ -57,6 +57,9 @@ const UNAVAILABLE_HINTS: Readonly<Record<string, string>> = {
   'no-desktop': 'Ask the user to open Timon on a machine with a desktop session: the Timon desktop app must be running.',
 };
 
+const A11Y_HINT = 'Ask the user to open the Computer use setup card in this agent\'s settings: the accessibility line says what is missing '
+  + '(on macOS the Accessibility grant, on Linux accessibility turned on in the desktop session).';
+
 /** The instruction for an agent whose action was refused because the machine is not ready. */
 export function computerUnavailableHint(reason: string | null): string {
   return (reason && Object.hasOwn(UNAVAILABLE_HINTS, reason) ? UNAVAILABLE_HINTS[reason] : undefined)
@@ -79,6 +82,17 @@ function desktopRefusal(body: { error?: unknown; code?: unknown }, status: numbe
     // The desktop's text names the foreground application so the agent understands what to ask for.
     const found = message ?? 'The foreground application is not in the agent\'s allowed list.';
     return new NativeComputerError(apiError('computer_app_not_allowed', `${found} Ask the user to add the application to the allowed applications in this agent's settings, or to bring an allowed one to the front.`, { detail: found }), 403);
+  }
+  if (code === 'a11y_element_stale') {
+    return new NativeComputerError(apiError('a11y_element_stale', 'That element no longer exists: the window changed. Call computer_a11y_tree again and use the new ids.'), 409);
+  }
+  if (code === 'a11y_action_unsupported') {
+    // The desktop's text lists the actions the element does accept: the agent picks one of them.
+    const found = message ?? 'That element cannot do this.';
+    return new NativeComputerError(apiError('a11y_action_unsupported', found, { detail: found }), 422);
+  }
+  if (code === 'a11y_unavailable') {
+    return new NativeComputerError(apiError('a11y_unavailable', `The accessibility tree is not available on this machine. ${A11Y_HINT} Work from screenshots meanwhile.`), 503);
   }
   if (code === 'window_not_found') {
     return new NativeComputerError(apiError('computer_window_not_found', 'That window no longer exists. Call list_windows again.'), 404);

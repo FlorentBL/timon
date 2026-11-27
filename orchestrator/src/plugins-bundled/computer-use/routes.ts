@@ -27,6 +27,19 @@ const SCHEMAS = {
   list_windows: empty,
   // An opaque id read from list_windows (a window number, `pid:index`): never a path or a title.
   focus_window: z.object({ id: z.string().regex(/^[A-Za-z0-9:_.-]{1,64}$/) }).strict(),
+  // Read a window as elements; `windowId` is an id from list_windows, absent = the window in front.
+  a11y_tree: z.object({
+    windowId: z.string().regex(/^[A-Za-z0-9:_.-]{1,64}$/).optional(),
+    maxDepth: z.number().int().min(1).max(15).optional(),
+    maxNodes: z.number().int().min(1).max(1500).optional(),
+    query: z.string().max(200).optional(),
+  }).strict(),
+  // An element id read from a11y_tree: the window id, `#`, then the index path. `value` is for set_value only.
+  a11y_action: z.object({
+    id: z.string().regex(/^[A-Za-z0-9:_.-]{1,64}#\d{1,4}(\.\d{1,4}){0,14}$/),
+    action: z.enum(['press', 'focus', 'set_value', 'select', 'expand', 'collapse', 'show_menu', 'scroll_into_view']),
+    value: z.string().max(2000).optional(),
+  }).strict().refine((args) => (args.action === 'set_value') === (args.value !== undefined), { message: 'value is required by set_value and refused by every other action' }),
   wait: z.object({ ms: z.number().int().min(0).max(10_000) }).strict(),
   stop: empty,
   resume: empty,
@@ -79,12 +92,14 @@ function journalContext(req: Request): { agent: string; missionId: string } | nu
   return mission ? { agent: mission.agent_name, missionId: req.auth.missionId } : null;
 }
 
-/** What the journal keeps of the arguments: coordinates and keys yes, typed text never (only its length). */
+/** What the journal keeps of the arguments: coordinates and keys yes, typed text and a set value never (only their length). */
 function journalArgs(command: ComputerCommand, body: unknown): Record<string, unknown> {
   const parsed = SCHEMAS[command].safeParse(body ?? {});
   if (!parsed.success) return { invalid: true };
   const args = parsed.data as Record<string, unknown>;
   if (command === 'type') return { length: (args.text as string).length };
+  // The value written into a field can be a password: only its length is kept.
+  if (command === 'a11y_action' && typeof args.value === 'string') return { id: args.id, action: args.action, valueLength: args.value.length };
   return args;
 }
 
