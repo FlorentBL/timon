@@ -36,6 +36,10 @@ if (process.env.CI !== 'true' && process.env.TIMON_COMPUTER_USE_E2E !== '1') {
 if (process.platform === 'linux') {
   app.commandLine.appendSwitch('no-sandbox');
   app.disableHardwareAcceleration();
+  // Chromium exports its tree to AT-SPI only when accessibility is requested at start-up (the switch,
+  // and the variable some toolkits read); app.setAccessibilitySupportEnabled below does it at run time.
+  app.commandLine.appendSwitch('force-renderer-accessibility');
+  process.env.ACCESSIBILITY_ENABLED = '1';
 }
 
 const TYPED = 'hello timon 123';
@@ -211,6 +215,7 @@ async function main() {
   const ours = (list) => list.find((w) => w.id === expectedId) ?? list.find((w) => w.title === 'timon e2e');
   const listed = await windowsOf([]);
   const mine = ours(listed);
+  // The accessibility part works on our window by id, or on the front window when the list cannot name it.
   // The hosted macOS runner has no real display: its window server lists Electron's helper windows
   // on screen but not reliably the test window (ids 32 against 36, then gone). The window part is
   // checked on a real Mac instead; here it is skipped out loud, never guessed.
@@ -243,6 +248,9 @@ async function main() {
   }
 
   log('accessibility: find by name, set_value, press, no mouse');
+  // Without the window in the list (hosted macOS) the contract applies: no windowId reads the front window.
+  const windowArgs = mine ? { windowId: mine.id } : {};
+  if (!mine) { win.show(); win.focus(); await sleep(500); }
   const a11yCheck = status.checks.a11y;
   if (a11yCheck !== 'ok') {
     if (process.env.TIMON_E2E_REQUIRE_A11Y === '1') throw fail(`The accessibility tree is required here, got checks.a11y=${a11yCheck}.`);
@@ -254,7 +262,7 @@ async function main() {
       const until = Date.now() + 8000;
       // Chromium publishes its tree a moment after accessibility was switched on.
       while (Date.now() < until) {
-        tree = await agent('a11y_tree', { windowId: mine.id, query }, `a11y_tree (${query})`);
+        tree = await agent('a11y_tree', { ...windowArgs, query }, `a11y_tree (${query})`);
         const found = tree.nodes.find(accept);
         if (found) return { tree, found };
         await sleep(400);
@@ -262,19 +270,20 @@ async function main() {
       throw fail(`No element matching "${query}" in the accessibility tree: ${JSON.stringify(tree?.nodes.map((n) => [n.role, n.name]))}`);
     };
     const { tree: nameTree, found: field } = await findNode('Nom', (n) => n.name === 'Nom' && ['textfield', 'textarea', 'combobox'].includes(n.role));
-    if (nameTree.window.id !== mine.id || !nameTree.nodes.every((n) => typeof n.id === 'string' && n.id.startsWith(`${mine.id}#`))) throw fail('Element ids must be prefixed by the window id.');
+    const windowId = nameTree.window.id;
+    if ((mine && windowId !== mine.id) || !nameTree.nodes.every((n) => typeof n.id === 'string' && n.id.startsWith(`${windowId}#`))) throw fail('Element ids must be prefixed by the window id.');
     if (!field.actions.includes('set_value')) throw fail(`The field does not offer set_value: ${JSON.stringify(field)}`);
     const { found: button } = await findNode('Valider', (n) => n.role === 'button' && n.name === 'Valider');
     if (!button.actions.includes('press')) throw fail(`The button does not offer press: ${JSON.stringify(button)}`);
     log(`  ✓ found field ${field.id} and button ${button.id}`);
     const started = performance.now();
-    await agent('a11y_tree', { windowId: mine.id, maxNodes: 400 }, 'a11y_tree (400 nodes)');
+    await agent('a11y_tree', { ...windowArgs, maxNodes: 400 }, 'a11y_tree (400 nodes)');
     log(`  full tree read in ${Math.round(performance.now() - started)} ms (target: under 1500)`);
 
     const pointer = () => agent('cursor_position', {}, 'cursor_position');
     const before = await pointer();
     for (const [label, list] of [['empty list', []], ['other application', ['definitely-not-this-app']]]) {
-      const refusedTree = await send('a11y_tree', { windowId: mine.id }, 'agent', `a11y_tree (${label})`, list);
+      const refusedTree = await send('a11y_tree', windowArgs, 'agent', `a11y_tree (${label})`, list);
       const refusedSet = await send('a11y_action', { id: field.id, action: 'set_value', value: 'LEAK' }, 'agent', `a11y_action (${label})`, list);
       const refusedPress = await send('a11y_action', { id: button.id, action: 'press' }, 'agent', `a11y_action press (${label})`, list);
       for (const refused of [refusedTree, refusedSet, refusedPress]) {
@@ -299,7 +308,7 @@ async function main() {
     await expectValue(TYPED, 'the accessibility actions left the textarea alone');
     log('  ✓ the mouse did not move');
 
-    const stale = await send('a11y_action', { id: `${mine.id}#0.99.99`, action: 'press' }, 'agent', 'a11y_action (stale id)');
+    const stale = await send('a11y_action', { id: `${windowId}#0.99.99`, action: 'press' }, 'agent', 'a11y_action (stale id)');
     if (stale.status !== 409 || stale.body.code !== 'a11y_element_stale') throw fail(`A stale id must get a11y_element_stale, got ${JSON.stringify(stale)}`);
     log('  ✓ a stale id is refused with a11y_element_stale');
   }
