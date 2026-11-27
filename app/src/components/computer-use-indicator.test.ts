@@ -32,7 +32,7 @@ test('the banner shows Stop while active, Resume once stopped, nothing when idle
       }));
     });
     await render(false, false);
-    assert.equal(document.querySelector('[data-computer-use-banner]'), null);
+    assert.ok(!document.querySelector('[data-computer-use-banner]'));
     await render(true, false);
     const banner = document.querySelector('[data-computer-use-banner="active"]');
     assert.ok(banner);
