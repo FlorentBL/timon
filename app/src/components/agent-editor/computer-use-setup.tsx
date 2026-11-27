@@ -12,9 +12,10 @@ import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { t } from '@/lib/i18n';
 import {
-  COMPUTER_CHECK_KEYS, COMPUTER_UNREACHABLE, fetchComputerSetup, requestComputerPermissions, restartComputerApp,
-  type ComputerCheck, type ComputerCheckKey, type ComputerSetup,
+  COMPUTER_CHECK_KEYS, COMPUTER_UNREACHABLE, fetchComputerJournal, fetchComputerSetup, requestComputerPermissions, restartComputerApp,
+  type ComputerCheck, type ComputerCheckKey, type ComputerJournalEntry, type ComputerSetup,
 } from '@/lib/computer-use';
+import { formatTime } from '@/lib/intl';
 
 const POLL_MS = 3_000;
 
@@ -104,6 +105,46 @@ export function ComputerUseSetupView({
       )}
     </div>
   );
+}
+
+/** The last actions of the agent: time, action, result. `entries` null means the journal could not be read. */
+export function ComputerJournalView({
+  entries, onRefresh,
+}: {
+  entries: ComputerJournalEntry[] | null;
+  onRefresh: () => void;
+}): React.ReactElement {
+  return (
+    <div data-computer-journal className="mt-2 rounded-lg bg-muted/30 px-3.5 py-3">
+      <div className="flex items-center justify-between gap-2">
+        <div className="text-[13px] font-medium">{t('computerSetup.journalTitle')}</div>
+        <Button size="sm" variant="outline" onClick={onRefresh} data-computer-journal-refresh>{t('computerSetup.journalRefresh')}</Button>
+      </div>
+      <p className="mt-0.5 text-[11.5px] text-muted-foreground">{t('computerSetup.journalHint')}</p>
+      {entries === null && <p className="mt-1.5 text-[12px] text-muted-foreground">{t('computerSetup.journalUnreadable')}</p>}
+      {entries !== null && entries.length === 0 && <p className="mt-1.5 text-[12px] text-muted-foreground" data-computer-journal-empty>{t('computerSetup.journalEmpty')}</p>}
+      {entries !== null && entries.length > 0 && (
+        <ul className="mt-1.5 max-h-60 space-y-0.5 overflow-y-auto">
+          {entries.map((entry) => (
+            <li key={entry.id} data-computer-journal-row className="flex items-baseline gap-2 text-[12px]">
+              <span className="shrink-0 text-muted-foreground">{formatTime(entry.at, { hour: '2-digit', minute: '2-digit', second: '2-digit' })}</span>
+              <span className="min-w-0 flex-1 truncate">{entry.command}</span>
+              <span className={entry.result === 'ok' ? 'shrink-0 text-emerald-700 dark:text-emerald-400' : 'shrink-0 text-amber-700 dark:text-amber-400'}>
+                {entry.result === 'ok' ? t('computerSetup.journalResultOk') : t('computerSetup.journalResultRefused', { code: entry.result })}
+              </span>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
+export function ComputerJournal({ agent }: { agent: string }): React.ReactElement {
+  const [entries, setEntries] = useState<ComputerJournalEntry[] | null>([]);
+  const load = useCallback(async () => { setEntries(await fetchComputerJournal(agent, 50)); }, [agent]);
+  useEffect(() => { void load(); }, [load]);
+  return <ComputerJournalView entries={entries} onRefresh={() => void load()} />;
 }
 
 export function ComputerUseSetup(): React.ReactElement {

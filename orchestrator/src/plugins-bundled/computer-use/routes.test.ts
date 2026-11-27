@@ -198,3 +198,66 @@ test('every unavailable reason has an instruction for the agent', () => {
   assert.match(computerUnavailableHint('weird'), /setup card/);
   assert.match(computerUnavailableHint(null), /setup card/);
 });
+
+async function getJournal(agent: string, auth: 'user' | 'enabled' | 'disabled' | 'daemon' | 'anonymous', query = '') {
+  const headers: Record<string, string> = {};
+  if (auth === 'user') headers.cookie = `${SESSION_COOKIE}=${cookie}`;
+  if (auth === 'enabled') headers.authorization = `Bearer ${enabledToken}`;
+  if (auth === 'disabled') headers.authorization = `Bearer ${disabledToken}`;
+  if (auth === 'daemon') headers.authorization = 'Bearer computer-test-daemon';
+  const res = await fetch(`${base}/journal?agent=${agent}${query}`, { headers });
+  return { status: res.status, json: await res.json() as any };
+}
+
+test('the journal records a successful command with reduced arguments and a duration', async () => {
+  await post('click', { x: 3, y: 4, button: 'left' });
+  const { json } = await getJournal('computer-on', 'user');
+  const entry = json.entries[0];
+  assert.equal(entry.command, 'click');
+  assert.deepEqual(entry.args, { x: 3, y: 4, button: 'left' });
+  assert.equal(entry.result, 'ok');
+  assert.equal(entry.agent, 'computer-on');
+  assert.ok(entry.mission_id);
+  assert.ok(entry.duration_ms >= 0 && entry.at > 0);
+});
+
+test('the journal records refused commands with their error code', async () => {
+  desktop = 'stopped';
+  await post('move', { x: 1, y: 1 });
+  desktop = 'up';
+  assert.equal((await getJournal('computer-on', 'user')).json.entries[0].result, 'computer_stopped');
+  await post('click', { x: 9, y: 9 }, 'disabled');
+  const off = (await getJournal('computer-off', 'user')).json.entries[0];
+  assert.equal(off.result, 'computer_use_disabled');
+  assert.equal(off.command, 'click');
+});
+
+test('typed text never reaches the journal, only its length', async () => {
+  const secret = 'journal-secret-text';
+  await post('type', { text: secret });
+  desktop = 'echo';
+  await post('type', { text: secret });
+  desktop = 'up';
+  const res = await getJournal('computer-on', 'user');
+  assert.equal(JSON.stringify(res.json).includes(secret), false);
+  assert.deepEqual(res.json.entries[0].args, { length: secret.length });
+  assert.equal(res.json.entries[0].result, 'computer_command_failed');
+});
+
+test('the journal is read by people only', async () => {
+  assert.equal((await getJournal('computer-on', 'anonymous')).status, 401);
+  const agent = await getJournal('computer-on', 'enabled');
+  assert.equal(agent.status, 403);
+  assert.equal(agent.json.code, 'computer_journal_people_only');
+  assert.equal((await getJournal('computer-on', 'daemon')).status, 403);
+  assert.equal((await getJournal('', 'user')).status, 400);
+  const lim = await getJournal('computer-on', 'user', '&limit=1');
+  assert.equal(lim.json.entries.length, 1);
+});
+
+test('the journal is bounded to its last 5000 rows', () => {
+  for (let i = 0; i < 5010; i++) dbApi.recordComputerJournal({ agent: 'journal-prune', command: 'move', args: { x: i, y: 0 }, result: 'ok', duration_ms: 1 });
+  const rows = dbApi.listComputerJournal('journal-prune', 500);
+  assert.equal(rows[0].args.x, 5009);
+  assert.equal(dbApi.listComputerJournal('computer-on', 500).length, 0, 'the oldest rows were purged');
+});

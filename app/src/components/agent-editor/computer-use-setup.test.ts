@@ -98,3 +98,26 @@ test('desktop not reachable: the only line is the desktop one, with its instruct
     assert.match(doc.body.textContent ?? '', /Open the Timon desktop app/);
   });
 });
+
+test('the journal lists time, action and result, shows refusals, and refreshes on demand', async () => {
+  await withDom(async ({ React, root, doc }) => {
+    const { ComputerJournalView } = await import('./computer-use-setup');
+    let refreshed = 0;
+    const render = (entries: Parameters<typeof ComputerJournalView>[0]['entries']) => React.act(async () => {
+      root.render(React.createElement(ComputerJournalView, { entries, onRefresh: () => { refreshed += 1; } }));
+    });
+    await render([
+      { id: 2, at: Date.now(), command: 'click', args: { x: 1, y: 2 }, result: 'ok', duration_ms: 5 },
+      { id: 1, at: Date.now(), command: 'move', args: {}, result: 'computer_stopped', duration_ms: 1 },
+    ]);
+    const rows = Array.from(doc.querySelectorAll('[data-computer-journal-row]')).map((row) => row.textContent ?? '');
+    assert.equal(rows.length, 2);
+    assert.match(rows[0] ?? '', /click/);
+    assert.match(rows[1] ?? '', /computer_stopped/);
+    await React.act(async () => { (doc.querySelector('[data-computer-journal-refresh]') as HTMLElement).click(); });
+    assert.equal(refreshed, 1);
+    await render([]);
+    assert.ok(doc.querySelector('[data-computer-journal-empty]'));
+    assert.ok(!doc.querySelector('[data-computer-journal-row]'));
+  });
+});

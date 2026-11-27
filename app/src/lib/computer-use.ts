@@ -132,3 +132,37 @@ export function uiComputerUpstream(method: 'GET' | 'POST', command: string): { m
   const path = uiComputerPath(method, command);
   return path ? { method: 'POST', path } : null;
 }
+
+/** One line of an agent's action journal, as the daemon serves it. */
+export interface ComputerJournalEntry {
+  id: number;
+  at: number;
+  command: string;
+  args: Record<string, unknown>;
+  result: string;
+  duration_ms: number;
+}
+
+/**
+ * The journal read goes through its own UI route, never through the `[command]`
+ * allow list: it carries a query, and only people read it (the daemon refuses any token).
+ * Null for an empty name; the limit is clamped to what the daemon serves.
+ */
+export function uiComputerJournalPath(agent: string, limit = 50): string | null {
+  if (!agent.trim()) return null;
+  const bounded = Math.max(1, Math.min(Math.trunc(limit) || 50, 500));
+  return `/api/computer/journal?agent=${encodeURIComponent(agent)}&limit=${bounded}`;
+}
+
+/** The last journal lines of an agent, most recent first; null when they cannot be read. */
+export async function fetchComputerJournal(agent: string, limit = 50): Promise<ComputerJournalEntry[] | null> {
+  if (!uiComputerJournalPath(agent, limit)) return [];
+  try {
+    const r = await fetch(`/api/ui/computer/journal?agent=${encodeURIComponent(agent)}&limit=${limit}`, { cache: 'no-store' });
+    if (!r.ok) return null;
+    const body = await r.json() as { entries?: unknown };
+    return Array.isArray(body.entries) ? (body.entries as ComputerJournalEntry[]) : null;
+  } catch {
+    return null;
+  }
+}

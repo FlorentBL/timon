@@ -24,6 +24,13 @@
     "restartMaybe": "Après avoir autorisé l'Enregistrement de l'écran, macOS peut demander de quitter et rouvrir Timon : un bouton Redémarrer apparaît ici.",
     "ready": "Prêt : l'agent peut contrôler cet ordinateur.",
     "stateOk": "Fait :",
-    "stateMissing": "À faire :"
+    "stateMissing": "À faire :",
+    "journalTitle": "Journal des actions",
+    "journalHint": "Les dernières actions de cet agent sur l'ordinateur. Le texte saisi n'est jamais enregistré.",
+    "journalRefresh": "Actualiser",
+    "journalEmpty": "Aucune action pour l'instant.",
+    "journalUnreadable": "Impossible de lire le journal.",
+    "journalResultOk": "OK",
+    "journalResultRefused": "Refusé : {code}"
   }
 }

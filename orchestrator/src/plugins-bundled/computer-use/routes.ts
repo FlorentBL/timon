@@ -2,6 +2,7 @@ import type { Request, Response, Router } from 'express';
 import { z } from 'zod';
 import { loadConfig } from '../../agent-config.js';
 import { apiError } from '../../api-error.js';
+import { dbApi } from '../../db.js';
 import { scopedDb } from '../../users/scoped-db.js';
 import { isPersonAuth, requireAuth, viewerFromRequest } from '../../users/identity.js';
 import { callNativeComputer, computerErrorBody, NativeComputerError, type ComputerActor } from '../../native-computer-provider.js';
@@ -62,15 +63,61 @@ function actorOf(req: Request, command: ComputerCommand): ComputerActor {
   return 'agent';
 }
 
+/** The agent and mission behind an agent's command, for the journal; null for a person or an unbound token. */
+function journalContext(req: Request): { agent: string; missionId: string } | null {
+  if (req.auth?.kind !== 'api-token' || !req.auth.missionId) return null;
+  const mission = scopedDb(viewerFromRequest(req)).getMission(req.auth.missionId);
+  return mission ? { agent: mission.agent_name, missionId: req.auth.missionId } : null;
+}
+
+/** What the journal keeps of the arguments: coordinates and keys yes, typed text never (only its length). */
+function journalArgs(command: ComputerCommand, body: unknown): Record<string, unknown> {
+  const parsed = SCHEMAS[command].safeParse(body ?? {});
+  if (!parsed.success) return { invalid: true };
+  const args = parsed.data as Record<string, unknown>;
+  if (command === 'type') return { length: (args.text as string).length };
+  return args;
+}
+
+function record(ctx: { agent: string; missionId: string } | null, command: ComputerCommand, body: unknown, started: number, result: string): void {
+  if (!ctx) return;
+  // A failing journal never blocks the command it describes.
+  try {
+    dbApi.recordComputerJournal({ agent: ctx.agent, mission_id: ctx.missionId, command, args: journalArgs(command, body), result, duration_ms: Date.now() - started });
+  } catch { /* nothing to do: the journal is best effort */ }
+}
+
 /** `call` is injected in HTTP tests; production never accepts a caller-selected endpoint. */
 export function registerComputerRoutes(app: Router, deps: { call?: typeof callNativeComputer } = {}): void {
   const call = deps.call ?? callNativeComputer;
+  // Read by people only (session or device): an agent's or a mission's token never reads its own journal.
+  app.get('/api/computer/journal', (req: Request, res: Response) => {
+    if (!requireAuth(req, res)) return;
+    res.setHeader('Cache-Control', 'no-store');
+    if (!isPersonAuth(req.auth)) {
+      res.status(403).json(apiError('computer_journal_people_only', 'The computer-use journal is reserved to people.'));
+      return;
+    }
+    const agent = typeof req.query.agent === 'string' ? req.query.agent : '';
+    if (!agent || agent.length > 200) {
+      res.status(400).json(apiError('computer_args_invalid', 'An agent name is required.'));
+      return;
+    }
+    const limit = Number(req.query.limit ?? 50);
+    res.json({ ok: true, entries: dbApi.listComputerJournal(agent, Number.isFinite(limit) ? limit : 50) });
+  });
   app.post('/api/computer/:command', async (req: Request, res: Response) => {
     if (!requireAuth(req, res)) return;
     res.setHeader('Cache-Control', 'no-store');
+    const started = Date.now();
+    let ctx: ReturnType<typeof journalContext> = null;
+    let known: ComputerCommand | null = null;
+    let result = 'ok';
     try {
       const command = String(req.params.command);
       if (!isCommand(command)) refuse(apiError('computer_command_unknown', 'Unknown computer command.'), 400);
+      known = command;
+      ctx = journalContext(req);
       const actor = actorOf(req, command);
       // `actor` and every other key a caller adds are refused: the schema is strict, the body is only the arguments.
       const parsed = SCHEMAS[command].safeParse(req.body ?? {});
@@ -83,7 +130,10 @@ export function registerComputerRoutes(app: Router, deps: { call?: typeof callNa
       }
       res.json({ ok: true, result: await call(command, args, actor) });
     } catch (error) {
+      result = computerErrorBody(error).code;
       res.status(error instanceof NativeComputerError ? error.status : 400).json(computerErrorBody(error));
+    } finally {
+      if (known) record(ctx, known, req.body, started, result);
     }
   });
 }
