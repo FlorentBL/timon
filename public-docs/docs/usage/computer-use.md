@@ -13,7 +13,7 @@ Computer use needs the **Timon desktop app** running on the machine to control. 
 2. Switch on **Computer use**.
 3. Follow the setup card that appears under the switch: it checks each requirement (desktop app connected, system permissions, input tool) and marks it ✅ or ❌. On macOS, **Allow** shows the system prompt; when macOS asks for it, **Restart Timon** reopens the app. Elsewhere the card gives the exact steps or the install command. It updates by itself when you come back from System Settings.
 
-Only that agent gets the screen and input tools; other agents are unaffected. Switching it off removes them at the agent's next conversation. The agent can take a screenshot (resized, 1280 px wide by default), move the pointer, click, double-click, drag, scroll, type text and press key combinations.
+Only that agent gets the screen and input tools; other agents are unaffected. Switching it off removes them at the agent's next conversation. The agent can take a screenshot (a JPEG, 1024 px wide by default), move the pointer, click, double-click, drag, scroll, type text and press key combinations. To keep the cost in tokens down, it chains the steps it can predict in a single call and looks at the screen only when the next step depends on it.
 
 ## Allow Timon on your system
 
