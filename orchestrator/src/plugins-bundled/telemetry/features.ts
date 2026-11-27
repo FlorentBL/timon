@@ -64,7 +64,7 @@ export function featureOf(method: string, template: string | null): Feature | nu
 /** API areas, the first segment after `/api/` of a route template. */
 export const API_AREAS = [
   'admin', 'agent-look', 'agent-roles', 'agent-trash', 'agents', 'app', 'appearance', 'audit-log', 'auth', 'backends',
-  'backup', 'bots', 'browser', 'capabilities', 'chat', 'company', 'devices', 'docker', 'doctor', 'dreams', 'events',
+  'backup', 'bots', 'browser', 'capabilities', 'chat', 'company', 'computer', 'devices', 'docker', 'doctor', 'dreams', 'events',
   'files', 'git', 'git-remote', 'global-instructions', 'gpt-live', 'graph', 'grepai', 'groups',
   'health', 'host', 'human', 'integrations', 'invitations', 'islands', 'kanban', 'layout', 'license', 'machines',
   'mcp', 'mcp-apps', 'memory', 'messages', 'mission-titles', 'missions', 'native-browser', 'nav', 'navigate', 'notifications',
