@@ -48,6 +48,9 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y xvfb xdotool
+          # Ubuntu 24.04 forbids the unprivileged user namespaces Chromium's sandbox needs, so Electron
+          # aborts on start ("SUID sandbox helper ... not configured correctly"). Runner-only setting.
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
 
       - name: Test computer use (Linux, X11 on xvfb)
         if: runner.os == 'Linux'
