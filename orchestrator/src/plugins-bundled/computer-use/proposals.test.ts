@@ -34,7 +34,7 @@ const missionToken = (agent: string, owner = alice.id): string => {
   return issueMissionApiToken(mission);
 };
 const UNTOUCHED = { backend: 'claude', computer_use: false, computer_use_apps: ['Notepad'] };
-const configOf = (name: string): { backend?: string; computer_use?: boolean; computer_use_apps?: string[] } => JSON.parse(readFileSync(agentConfig(name), 'utf8'));
+const configOf = (name: string): { backend?: string; computer_use?: boolean; computer_use_apps?: unknown[] } => JSON.parse(readFileSync(agentConfig(name), 'utf8'));
 
 writeAgent('cu-boss', { backend: 'claude' });
 writeAgent('cu-target', { backend: 'claude', computer_use: false, computer_use_apps: ['Notepad'] });
@@ -70,8 +70,15 @@ const propose = (body: object, who: Who = 'boss') => send('/api/computer/proposa
 const decide = (id: string, who: Who, decision: 'applied' | 'dismissed' = 'applied') => send(`/api/layout/proposals/${id}/resolve`, who, { decision });
 
 test('nextAllowedApps adds without duplicate (case apart) and removes by name', () => {
-  assert.deepEqual(nextAllowedApps(['Notepad', 'Slack'], ['notepad', 'Discord'], ['SLACK']), ['Notepad', 'Discord']);
+  assert.deepEqual(nextAllowedApps(['Notepad', 'Slack'], ['notepad', 'Discord'], ['SLACK']), [{ app: 'Notepad', mode: 'foreground' }, { app: 'Discord', mode: 'foreground' }]);
   assert.deepEqual(nextAllowedApps([], [], ['x']), []);
+});
+
+test('nextAllowedApps gives a bare name the default mode, keeps an object\'s own, and changes the mode of a listed application', () => {
+  assert.deepEqual(nextAllowedApps(['Notes'], ['Mail', { app: 'Discord', mode: 'foreground' }], [], 'background'), [
+    { app: 'Notes', mode: 'background' }, { app: 'Mail', mode: 'background' }, { app: 'Discord', mode: 'foreground' },
+  ]);
+  assert.deepEqual(nextAllowedApps([{ app: 'Notes', mode: 'background' }], [{ app: 'notes', mode: 'foreground' }], []), [{ app: 'Notes', mode: 'foreground' }]);
 });
 
 test('a mission token proposes: a pending card, and nothing changes on the agent', async () => {
@@ -82,7 +89,8 @@ test('a mission token proposes: a pending card, and nothing changes on the agent
   assert.equal(row.kind, COMPUTER_USE_PROPOSAL_KIND);
   assert.equal(row.status, 'pending');
   const payload = JSON.parse(row.payload);
-  assert.deepEqual(payload.before, { enabled: false, apps: ['Notepad'] });
+  assert.deepEqual(payload.before, { enabled: false, apps: [{ app: 'Notepad', mode: 'foreground' }], defaultMode: 'foreground' });
+  assert.deepEqual(payload.addApps, [{ app: 'Discord', mode: 'foreground' }], 'a bare name is settled on the card');
   assert.ok(payload.expiresAt > Date.now());
   assert.deepEqual(configOf('cu-target'), UNTOUCHED);
 });
@@ -113,9 +121,9 @@ test('a person applies it once: config written, the mission told, a second click
   const id = (await propose({ agent: 'cu-target', addApps: ['Discord'], enable: true })).json.id as string;
   const res = await decide(id, 'person');
   assert.equal(res.status, 200, JSON.stringify(res.json));
-  assert.deepEqual(configOf('cu-target'), { backend: 'claude', computer_use: true, computer_use_apps: ['Notepad', 'Discord'] });
+  assert.deepEqual(configOf('cu-target'), { backend: 'claude', computer_use: true, computer_use_apps: [{ app: 'Notepad', mode: 'foreground' }, { app: 'Discord', mode: 'foreground' }] });
   assert.equal(delivered.length, before + 1);
-  assert.match(delivered.at(-1)!.text, /^\[computer-use proposal\] The user allowed it: cu-target: computer use on, allowed applications: Notepad, Discord/);
+  assert.match(delivered.at(-1)!.text, /^\[computer-use proposal\] The user allowed it: cu-target: computer use on, allowed applications: Notepad \(foreground\), Discord \(foreground\)/);
   // A proposal applies once.
   assert.equal((await decide(id, 'person')).status, 409);
   assert.equal(delivered.length, before + 1);
@@ -124,14 +132,14 @@ test('a person applies it once: config written, the mission told, a second click
 test('removing an application, without touching the switch', async () => {
   const id = (await propose({ agent: 'cu-target', removeApps: ['notepad'] })).json.id as string;
   assert.equal((await decide(id, 'person')).status, 200);
-  assert.deepEqual(configOf('cu-target'), { backend: 'claude', computer_use: true, computer_use_apps: ['Discord'] });
+  assert.deepEqual(configOf('cu-target'), { backend: 'claude', computer_use: true, computer_use_apps: [{ app: 'Discord', mode: 'foreground' }] });
 });
 
 test('refusing changes nothing and tells the mission', async () => {
   const before = delivered.length;
   const id = (await propose({ agent: 'cu-target', addApps: ['Slack'] })).json.id as string;
   assert.equal((await decide(id, 'person', 'dismissed')).status, 200);
-  assert.deepEqual(configOf('cu-target').computer_use_apps, ['Discord']);
+  assert.deepEqual(configOf('cu-target').computer_use_apps, [{ app: 'Discord', mode: 'foreground' }]);
   assert.match(delivered.at(-1)!.text, /refused your computer-use proposal/);
   assert.equal(delivered.length, before + 1);
 });
@@ -144,7 +152,7 @@ test('an expired proposal is not applied, and stays untouched', async () => {
   const res = await decide(id, 'person');
   assert.equal(res.status, 409);
   assert.equal(res.json.problems[0].code, 'expired');
-  assert.deepEqual(configOf('cu-target').computer_use_apps, ['Discord']);
+  assert.deepEqual(configOf('cu-target').computer_use_apps, [{ app: 'Discord', mode: 'foreground' }]);
 });
 
 test('a person without agents:manage cannot apply, and another account never sees the card', async () => {
@@ -154,5 +162,19 @@ test('a person without agents:manage cannot apply, and another account never see
   assert.equal(refused.json.problems[0].code, 'forbidden');
   const alices = (await propose({ agent: 'cu-target', addApps: ['Slack'] })).json.id as string;
   assert.equal((await decide(alices, 'bob')).status, 404);
-  assert.deepEqual(configOf('cu-target').computer_use_apps, ['Discord']);
+  assert.deepEqual(configOf('cu-target').computer_use_apps, [{ app: 'Discord', mode: 'foreground' }]);
+});
+
+test('a proposal carries the mode of each application, shown on the card and applied as asked', async () => {
+  writeAgent('cu-modes', { backend: 'claude', computer_use: true, computer_use_apps: [{ app: 'Notes', mode: 'background' }] });
+  const res = await propose({ agent: 'cu-modes', addApps: ['Mail', { app: 'Discord', mode: 'foreground' }, { app: 'notes', mode: 'foreground' }] });
+  assert.equal(res.status, 202, JSON.stringify(res.json));
+  const payload = JSON.parse(dbApi.getLayoutProposal(res.json.id)!.payload);
+  assert.deepEqual(payload.before.apps, [{ app: 'Notes', mode: 'background' }], 'the card shows the modes of before');
+  assert.deepEqual(payload.addApps, [{ app: 'Mail', mode: 'foreground' }, { app: 'Discord', mode: 'foreground' }, { app: 'notes', mode: 'foreground' }], 'and of after');
+  assert.equal((await propose({ agent: 'cu-modes', addApps: [{ app: 'x', mode: 'sideways' }] })).status, 400);
+  assert.equal((await decide(res.json.id, 'person')).status, 200);
+  assert.deepEqual(configOf('cu-modes').computer_use_apps, [
+    { app: 'Notes', mode: 'foreground' }, { app: 'Mail', mode: 'foreground' }, { app: 'Discord', mode: 'foreground' },
+  ]);
 });

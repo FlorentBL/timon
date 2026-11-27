@@ -13,23 +13,26 @@ import { t } from '@/lib/i18n';
 import {
   appsAfter, COMPUTER_USE_PROPOSAL_KIND, enabledAfter, openAppName, parseComputerUseProposal, type ComputerUseProposal,
 } from '@/lib/computer-use-proposals';
-import { fetchComputerWindows } from '@/lib/computer-use';
+import { fetchComputerWindows, type AllowedApp } from '@/lib/computer-use';
 import type { ApplyResult, ProposalKindRenderer } from './layout-proposal-kinds';
 
 export { COMPUTER_USE_PROPOSAL_KIND };
 
-const list = (apps: readonly string[]): string => (apps.length ? apps.join(', ') : t('computerProposal.noApps'));
+const modeLabel = (mode: AllowedApp['mode']): string => t(mode === 'background' ? 'computerProposal.modeBackground' : 'computerProposal.modeForeground');
+/** Each application with the mode it is driven in: the mode is what the person is deciding on. */
+const withModes = (apps: readonly AllowedApp[]): string => apps.map((entry) => `${entry.app} (${modeLabel(entry.mode)})`).join(', ');
+const list = (apps: readonly AllowedApp[]): string => (apps.length ? withModes(apps) : t('computerProposal.noApps'));
 
 /** "Allow <agent> to control <apps> with computer use", in the form that fits what is asked. */
 export function computerUseTitle(payload: unknown): string | null {
   const p = parseComputerUseProposal(payload);
   if (!p) return null;
-  if (p.addApps.length) return t('computerProposal.titleApps', { target: p.agent, apps: p.addApps.join(', ') });
+  if (p.addApps.length) return t('computerProposal.titleApps', { target: p.agent, apps: withModes(p.addApps) });
   if (p.enable === true) return t('computerProposal.titleEnable', { target: p.agent });
   return t('computerProposal.titleChange', { target: p.agent });
 }
 
-function State({ label, enabled, apps, removed = [] }: { label: string; enabled: boolean; apps: readonly string[]; removed?: readonly string[] }): ReactElement {
+function State({ label, enabled, apps, removed = [] }: { label: string; enabled: boolean; apps: readonly AllowedApp[]; removed?: readonly string[] }): ReactElement {
   return (
     <div className="flex flex-col gap-0.5">
       <span className="text-[11.5px] font-medium text-muted-foreground">{label}</span>
@@ -55,7 +58,7 @@ function ComputerUsePreview({ payload }: { payload: unknown; titleOf: (id: strin
   }, [asks]);
   if (!proposal) return <p className="text-[12.5px] text-muted-foreground">{t('layoutProposal.unknownKind')}</p>;
   const hints = windows
-    ? proposal.addApps.flatMap((typed) => { const name = openAppName(typed, windows); return name ? [t('computerProposal.openAs', { typed, name })] : []; })
+    ? proposal.addApps.flatMap(({ app: typed }) => { const name = openAppName(typed, windows); return name ? [t('computerProposal.openAs', { typed, name })] : []; })
     : [];
   const expired = proposal.expiresAt > 0 && Date.now() > proposal.expiresAt;
   return (

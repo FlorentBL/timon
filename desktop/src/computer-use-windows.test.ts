@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { ComputerCommandError, parseAllowedApps, parseComputerCommand } from './computer-use-protocol.js';
 import type { SystemCommand } from './computer-use-input.js';
-import { focusWindow, isAppAllowed, listWindows, readForegroundApp, windowApp } from './computer-use-windows.js';
+import { appMode, focusWindow, isAppAllowed, listWindows, readForegroundApp, windowApp } from './computer-use-windows.js';
 
 test('the allow-list compares case-insensitively with the bundle id, the displayed name or the executable', () => {
   const app = { bundle: 'com.microsoft.VSCode', name: 'Visual Studio Code', exe: 'Code' };
@@ -102,12 +102,26 @@ test('a failing or garbled read gives no application', async () => {
   assert.deepEqual(await listWindows('win32', async () => ({ stdout: '[{"id":"../x","title":"t","app":"A"}]' })), [], 'an id that is not plain is dropped');
 });
 
+test('appMode reads the mode of the entry naming the application, the stricter one when two disagree', () => {
+  const app = { bundle: 'com.apple.Notes', name: 'Notes', exe: 'Notes' };
+  assert.equal(appMode(app, [{ app: 'notes', mode: 'background' }]), 'background');
+  assert.equal(appMode(app, ['Notes']), 'foreground', 'a bare name is the foreground without a default');
+  assert.equal(appMode(app, ['Notes'], 'background'), 'background');
+  assert.equal(appMode(app, [{ app: 'com.apple.Notes', mode: 'foreground' }, { app: 'Notes', mode: 'background' }]), 'background');
+  assert.equal(appMode(app, [{ app: 'Mail', mode: 'foreground' }]), null);
+  assert.equal(appMode(null, [{ app: 'Notes', mode: 'foreground' }]), null);
+});
+
 test('the new commands and the allowed list are validated', () => {
   assert.deepEqual(parseComputerCommand('list_windows', {}), { command: 'list_windows' });
   assert.deepEqual(parseComputerCommand('focus_window', { id: '12:3' }), { command: 'focus_window', id: '12:3' });
   for (const id of [undefined, '', '../x', 'a b', 5]) assert.throws(() => parseComputerCommand('focus_window', { id }), ComputerCommandError);
   assert.deepEqual(parseAllowedApps(undefined), []);
-  assert.deepEqual(parseAllowedApps(['Notepad']), ['Notepad']);
+  assert.deepEqual(parseAllowedApps(['Notepad']), [{ app: 'Notepad', mode: 'foreground' }], 'a bare name takes the default mode');
+  assert.deepEqual(parseAllowedApps(['Notepad'], 'background'), [{ app: 'Notepad', mode: 'background' }]);
+  assert.deepEqual(parseAllowedApps(['Notes', { app: 'Discord', mode: 'foreground' }], 'background'), [{ app: 'Notes', mode: 'background' }, { app: 'Discord', mode: 'foreground' }]);
+  assert.throws(() => parseAllowedApps([{ app: 'Notes', mode: 'sideways' }]), ComputerCommandError);
+  assert.throws(() => parseAllowedApps([{ mode: 'background' }]), ComputerCommandError);
   assert.throws(() => parseAllowedApps('Notepad'), ComputerCommandError);
   assert.throws(() => parseAllowedApps([1]), ComputerCommandError);
 });

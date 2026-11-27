@@ -17,25 +17,55 @@ Only that agent gets the screen and input tools; other agents are unaffected. Sw
 
 ## Choose the applications it may use
 
-Computer use is **refused for everything except an explicit list of applications**. In the card **Allowed applications** under the setup card, list the applications the agent may click and type in. Before every mouse or keyboard action (click, double-click, move, drag, type, key, scroll), Timon reads which application is in front, and the action is refused with `computer_app_not_allowed` unless it is on the list. The error names the application it found, so the agent can ask you to add it.
+Computer use is **refused for everything except an explicit list of applications**. In the card **Allowed applications** under the setup card, list the applications the agent may control, each in its own [mode](#choose-a-mode-per-application). Before every screenshot, mouse or keyboard action (click, double-click, move, drag, type, key, scroll, cursor position), Timon reads which application is in front, and the action is refused with `computer_app_not_allowed` unless it is on the list in the foreground mode. The error names the application it found, so the agent can ask you to add it.
 
 The foreground application is checked just before each action. A window change in the interval between the check and the action remains possible.
 
 - An entry can be the application's name, the name of its executable, or on macOS its bundle identifier (for example `TextEdit`, `notepad` or `com.apple.TextEdit`). The case does not matter, and a trailing `.exe` is ignored.
-- **An empty list means the agent cannot do anything with the keyboard or the mouse.** The card warns you about it. Screenshots, listing the windows and waiting stay possible.
-- **Add from open windows** lists the applications that have a window open right now: click one to add it.
+- **An empty list means the agent cannot do anything with the computer.** The card warns you about it. Only listing the windows and waiting stay possible.
+- **Add from open windows** lists the applications that have a window open right now: click one to add it. Timon reads its accessibility tree first and pre-fills the mode (see below).
 - Only a person can edit the list. An agent cannot add to it, whatever its account holds; it can only remove entries, and it can **ask you** to add some, as the next section describes.
 
-**Known limit:** a screenshot always shows your whole screen, not only the allowed applications. Close or hide whatever the agent must not see before you let it work.
+**Known limit:** a screenshot shows your whole screen, not only the allowed application in front of it. Close or hide whatever the agent must not see before you let it work.
+
+## Choose a mode per application
+
+Each allowed application carries its own mode, so one agent can work in the background in TextEdit and Notes and in the foreground in Discord. The setting **Default mode of new applications** (under **Allowed applications**) is only what a newly added application starts with; each line of the list has its own **Foreground / Background** choice.
+
+| | Foreground | Background |
+|---|---|---|
+| What the agent uses | Screenshots, mouse, keyboard, and accessibility | Accessibility only (`computer_a11y_tree`, `computer_a11y_action`) |
+| Your screen, mouse and keyboard | The agent takes them | Stay yours: you can keep working |
+| `focus_window`, the `focus` action, the keyboard fallback of `set_value` | Allowed | Refused (`computer_background_only`) |
+| Needs from the application | Nothing | A **rich accessibility tree** |
+| Examples | Games, canvas applications, a remote-desktop window, applications that draw their own controls | Native applications: TextEdit, Notes, Finder, Notepad, Calculator, many settings windows |
+
+Which applications are eligible for the background? Those whose controls the system describes: buttons, fields and menus with names and actions. A game or an application that draws everything on a canvas shows an **empty tree**, so only pixels work: allow it in the foreground. Applications built on a web engine sit in between: the tree of a browser page is usually rich once accessibility is on, but check it.
+
+When you add an application from the open windows, Timon reads the tree of one of its windows (200 elements at most) and tells you what it found:
+
+- **Rich accessibility: background possible**: at least three elements accept an action. The mode is pre-filled with Background.
+- **Limited accessibility: foreground advised**: a few elements only. The mode is pre-filled with Foreground.
+- **Empty tree: foreground only**: nothing but the window itself. The mode is pre-filled with Foreground.
+- **Not checked**: an application added by name, or not open. It starts with the default mode, and you can open it and add it from the open windows to check it.
+
+You can always change the pre-filled mode. Only a person can set modes: an agent can move an application from foreground to background (a narrowing) but never the other way round, and cannot add one.
+
+The rules, per application:
+
+- `computer_a11y_tree` and `computer_a11y_action` work for the application of the window or element, in either mode. In the background, the `focus` action and the keyboard fallback are refused for it.
+- Screenshots, cursor position, click, double-click, move, drag, type, key and scroll need the application **in front** allowed in the foreground mode. Otherwise: `computer_background_only` when it is allowed in the background ("Notes is allowed in the background only: use a11y_tree / a11y_action"), `computer_app_not_allowed` when it is not on the list.
+- `focus_window` is judged on the application of the window it targets, with the same two refusals.
+- `computer_list_windows` and `computer_wait` are always possible.
 
 ## Allow from the conversation
 
 You do not have to open the settings. Tell an agent, for example your orchestrator, "I want agent X to control Discord", and it calls `computer_use_propose` (`timon computer propose <agent> --add Discord --enable` from a terminal). Nothing changes yet: a card appears in that conversation, titled **Allow X to control Discord with computer use**.
 
-- The card shows the agent's access **now** and **after** (computer use on or off, and the list of allowed applications before and after), then a reminder: the agent will be able to click and type in these applications when they are in front.
+- The card shows the agent's access **now** and **after** (computer use on or off, and the list of allowed applications before and after), then a reminder: the agent will control each application in the mode shown, such as `Notes (background)` or `Discord (foreground)`.
 - **Allow** applies it: the agent's settings are updated as if you had edited them, and its running conversations restart with the new access at their next turn. **Refuse** changes nothing. Either way, the agent that asked is told your answer.
 - Only you can press **Allow**, from the app (a signed-in session or a paired device): an agent's, a conversation's or the daemon's token is refused, so an agent can never grant itself access. A request applies once, and expires after 24 hours; after that, ask again.
-- A request can add applications (up to 20), remove some, and switch computer use on or off. If the application is open, the card also shows the name your system gives it, such as "discord" for "Discord". The list keeps the name as the agent wrote it, which Timon compares without regard to case; to be exact, ask the agent to give the bundle identifier (`com.hnc.Discord` on macOS), the executable (`Discord.exe` on Windows) or the command (`discord` on Linux).
+- A request can add applications (up to 20, each with a mode, or the agent's default when it gives none), remove some, change the mode of a listed one, and switch computer use on or off. If the application is open, the card also shows the name your system gives it, such as "discord" for "Discord". The list keeps the name as the agent wrote it, which Timon compares without regard to case; to be exact, ask the agent to give the bundle identifier (`com.hnc.Discord` on macOS), the executable (`Discord.exe` on Windows) or the command (`discord` on Linux).
 
 ## Windows
 
@@ -61,15 +91,13 @@ The setup card has an optional **Accessibility tree** line. Without it, or where
 
 ## Work in the background
 
-By default an agent works in the **foreground**: it sees your screen and may click and type like you do. In the setup card of the agent, **Working mode** lets you choose **Background (accessibility only, never touches your screen)** instead. Only a person can change it, never an agent.
-
-A background agent keeps your screen, mouse and keyboard yours, so you can keep working while it acts:
+An application allowed in the **background** keeps your screen, mouse and keyboard yours, so you can keep working while the agent acts:
 
 - Allowed: `computer_list_windows`, `computer_a11y_tree`, `computer_a11y_action` (`press`, `set_value` written directly into the field, `select`, `expand`, `collapse`, `show_menu`, `scroll_into_view`) and `computer_wait`. The agent acts by window `id`, without bringing the window to the front.
-- Refused with `computer_background_only` (HTTP 403): screenshots, click, double-click, move, drag, type, key, scroll, cursor position, `computer_focus_window` and the `focus` accessibility action, which would take your focus or show your screen.
-- When a toolkit refuses to write a field through accessibility, the keyboard fallback is not used: the agent gets `a11y_failed` and tries another element, or asks you to switch it to the foreground.
+- Refused with `computer_background_only` (HTTP 403): screenshots, click, double-click, move, drag, type, key, scroll and cursor position while that application is in front, `computer_focus_window` on its windows and the `focus` accessibility action, which would take your focus or show your screen.
+- When a toolkit refuses to write a field through accessibility, the keyboard fallback is not used: the agent gets `a11y_failed` and tries another element, or asks you to allow the application in the foreground.
 
-The list of allowed applications still applies.
+Set every application to Background (or pick Background as the default mode) to get an agent that never touches your screen.
 
 ## Allow Timon on your system
 

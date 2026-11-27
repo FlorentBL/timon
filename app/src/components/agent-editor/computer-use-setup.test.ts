@@ -14,7 +14,7 @@ async function withDom<T>(run: (ctx: { React: typeof import('react'); root: impo
     if (!saved.has(key)) saved.set(key, Object.getOwnPropertyDescriptor(globalThis, key));
     Object.defineProperty(globalThis, key, { value, configurable: true, writable: true });
   };
-  for (const key of ['window', 'document', 'navigator', 'HTMLElement', 'Node', 'Event', 'MouseEvent']) {
+  for (const key of ['window', 'document', 'navigator', 'HTMLElement', 'Node', 'Event', 'MouseEvent', 'KeyboardEvent']) {
     install(key, key === 'window' ? dom.window : (dom.window as unknown as Record<string, unknown>)[key]);
   }
   install('self', dom.window);
@@ -125,34 +125,70 @@ test('the journal lists time, action and result, shows refusals, and refreshes o
   });
 });
 
-test('allowed applications: an empty list warns, windows are offered once and added on click, an entry is removed', async () => {
+test('allowed applications: an empty list warns, an open application is probed and added in the mode its tree allows, an entry is removed', async () => {
   await withDom(async ({ React, root, doc }) => {
     const { ComputerUseApps, appsToOffer } = await import('./computer-use-apps');
-    assert.deepEqual(appsToOffer([{ app: 'Notepad' }, { app: 'notepad' }, { app: 'Calc' }, { app: ' ' }], ['calc']), ['Notepad']);
-    let values: string[] = [];
+    assert.deepEqual(appsToOffer([{ app: 'Notepad', id: '9' }, { app: 'notepad' }, { app: 'Calc' }, { app: ' ' }], [{ app: 'calc', mode: 'background' }]), [{ app: 'Notepad', windowId: '9' }]);
+    let values: { app: string; mode: 'foreground' | 'background' }[] = [];
     let loads = 0;
-    const load = async () => { loads += 1; return [{ id: '1', title: 'a', app: 'TextEdit', focused: true }, { id: '2', title: 'b', app: 'Mail', focused: false }]; };
-    const render = () => React.act(async () => { root.render(React.createElement(ComputerUseApps, { values, onChange: (next: string[]) => { values = next; }, load })); });
+    const probed: string[] = [];
+    const load = async () => { loads += 1; return [{ id: '1', title: 'a', app: 'TextEdit', focused: true }, { id: '2', title: 'b', app: 'Game', focused: false }, { id: '3', title: 'c', app: 'Mail', focused: false }]; };
+    const probe = async (id: string) => { probed.push(id); return id === '1' ? 'rich' as const : id === '2' ? 'empty' as const : null; };
+    const render = () => React.act(async () => { root.render(React.createElement(ComputerUseApps, { values, onChange: (next: typeof values) => { values = next; }, load, probe })); });
     await render();
     assert.ok(doc.querySelector('[data-computer-use-apps-empty]'), 'an empty list says the agent can do nothing');
-    assert.match(doc.body.textContent ?? '', /cannot do anything with the keyboard or the mouse/);
+    assert.match(doc.body.textContent ?? '', /cannot do anything with the computer/);
     await React.act(async () => { (doc.querySelector('[data-computer-use-apps-load]') as HTMLElement).click(); });
     assert.equal(loads, 1);
-    assert.deepEqual(Array.from(doc.querySelectorAll('[data-computer-app-offer]')).map((b) => b.textContent), ['TextEdit', 'Mail']);
-    await React.act(async () => { (doc.querySelector('[data-computer-app-offer]') as HTMLElement).click(); });
-    assert.deepEqual(values, ['TextEdit']);
+    assert.deepEqual(Array.from(doc.querySelectorAll('[data-computer-app-offer]')).map((b) => b.textContent), ['TextEdit', 'Game', 'Mail']);
+    const offers = () => Array.from(doc.querySelectorAll('[data-computer-app-offer]')) as HTMLElement[];
+    await React.act(async () => { offers()[0]!.click(); });
+    assert.deepEqual(values, [{ app: 'TextEdit', mode: 'background' }], 'a rich tree is added in the background');
     await render();
+    assert.equal(doc.querySelector('[data-computer-app-verdict]')?.textContent, 'Rich accessibility: background possible');
+    await React.act(async () => { offers()[0]!.click(); });
+    assert.deepEqual(values.at(-1), { app: 'Game', mode: 'foreground' }, 'an empty tree is added in the foreground');
+    await render();
+    assert.deepEqual(Array.from(doc.querySelectorAll('[data-computer-app-verdict]')).map((v) => v.textContent), ['Rich accessibility: background possible', 'Empty tree: foreground only']);
+    await React.act(async () => { offers()[0]!.click(); });
+    assert.deepEqual(values.at(-1), { app: 'Mail', mode: 'foreground' }, 'a probe that cannot answer falls back to the default mode');
+    await render();
+    assert.equal(doc.querySelectorAll('[data-computer-app-verdict="unchecked"]').length, 1);
+    assert.deepEqual(probed, ['1', '2', '3']);
     assert.ok(!doc.querySelector('[data-computer-use-apps-empty]'));
-    assert.equal(doc.querySelectorAll('[data-computer-app]').length, 1);
-    await React.act(async () => { (doc.querySelector('[data-computer-app] button') as HTMLElement).click(); });
-    assert.deepEqual(values, []);
+    assert.equal(doc.querySelectorAll('[data-computer-app]').length, 3);
+    // Each application has its own choice.
+    await React.act(async () => { (doc.querySelector('[data-computer-app] [data-computer-app-mode-option="foreground"]') as HTMLElement).click(); });
+    assert.deepEqual(values[0], { app: 'TextEdit', mode: 'foreground' });
+    assert.deepEqual(values[1], { app: 'Game', mode: 'foreground' });
+    await React.act(async () => { (doc.querySelector('[data-computer-app] button[aria-label^="Remove"]') as HTMLElement).click(); });
+    assert.deepEqual(values.map((v) => v.app), ['Game', 'Mail']);
+  });
+});
+
+test('allowed applications: a name typed by hand takes the default mode and is marked unchecked', async () => {
+  await withDom(async ({ React, root, doc }) => {
+    const { ComputerUseApps } = await import('./computer-use-apps');
+    let values: { app: string; mode: 'foreground' | 'background' }[] = [];
+    const render = () => React.act(async () => { root.render(React.createElement(ComputerUseApps, { values, defaultMode: 'background', onChange: (next: typeof values) => { values = next; } })); });
+    await render();
+    const input = doc.querySelector('input') as HTMLInputElement;
+    await React.act(async () => {
+      const setter = Object.getOwnPropertyDescriptor(input.ownerDocument.defaultView!.HTMLInputElement.prototype, 'value')!.set!;
+      setter.call(input, 'Notes');
+      input.dispatchEvent(new input.ownerDocument.defaultView!.Event('input', { bubbles: true }));
+    });
+    await React.act(async () => { input.dispatchEvent(new input.ownerDocument.defaultView!.KeyboardEvent('keydown', { key: 'Enter', bubbles: true })); });
+    assert.deepEqual(values, [{ app: 'Notes', mode: 'background' }]);
+    await render();
+    assert.match(doc.querySelector('[data-computer-app-verdict="unchecked"]')?.textContent ?? '', /Not checked/);
   });
 });
 
 test('allowed applications: no window to offer says so', async () => {
   await withDom(async ({ React, root, doc }) => {
     const { ComputerUseApps } = await import('./computer-use-apps');
-    await React.act(async () => { root.render(React.createElement(ComputerUseApps, { values: ['Mail'], onChange: () => {}, load: async () => null })); });
+    await React.act(async () => { root.render(React.createElement(ComputerUseApps, { values: [{ app: 'Mail', mode: 'foreground' }], onChange: () => {}, load: async () => null })); });
     await React.act(async () => { (doc.querySelector('[data-computer-use-apps-load]') as HTMLElement).click(); });
     assert.match(doc.querySelector('[data-computer-use-apps-none]')?.textContent ?? '', /Timon desktop app/);
   });

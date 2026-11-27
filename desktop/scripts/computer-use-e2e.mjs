@@ -345,6 +345,24 @@ async function main() {
     if (backgroundPress.status !== 200) throw fail(`In the background press must pass, got ${JSON.stringify(backgroundPress)}`);
     log('  ✓ background mode: pixel, keyboard and focus refused, a11y_action press passes');
 
+    // The mode is per application: the same test application, listed with its own mode.
+    const perApp = (mode) => ALLOWED.map((app) => ({ app, mode }));
+    const asApp = (mode, command, args, label) => send(command, args, 'agent', `${label ?? command} (${mode} app)`, perApp(mode));
+    for (const [command, args] of [['screenshot', {}], ['click', { x: target.x, y: target.y }], ['type', { text: 'LEAK' }], ['a11y_action', { id: field.id, action: 'focus' }]]) {
+      const refusedForApp = await asApp('background', command, args);
+      if (refusedForApp.status !== 403 || refusedForApp.body.code !== 'computer_background_only') throw fail(`For an application allowed in the background ${command} must get computer_background_only, got ${JSON.stringify(refusedForApp)}`);
+    }
+    const backgroundAppPress = await asApp('background', 'a11y_action', { id: button.id, action: 'press' });
+    if (backgroundAppPress.status !== 200) throw fail(`For an application allowed in the background a11y_action press must pass, got ${JSON.stringify(backgroundAppPress)}`);
+    log('  ✓ application allowed in the background: pixels refused with computer_background_only, a11y_action press accepted');
+    for (const [command, args] of [['screenshot', { maxWidth: 256 }], ['cursor_position', {}]]) {
+      const acceptedForApp = await asApp('foreground', command, args);
+      if (acceptedForApp.status !== 200) throw fail(`For an application allowed in the foreground ${command} must pass, got ${JSON.stringify(acceptedForApp)}`);
+    }
+    const foregroundFocus = await asApp('foreground', 'a11y_action', { id: field.id, action: 'focus' });
+    if (foregroundFocus.status !== 200) throw fail(`For an application allowed in the foreground the a11y focus action must pass, got ${JSON.stringify(foregroundFocus)}`);
+    log('  ✓ application allowed in the foreground: pixels and focus accepted');
+
     const stale = await send('a11y_action', { id: `${windowId}#0.99.99`, action: 'press' }, 'agent', 'a11y_action (stale id)');
     if (stale.status !== 409 || stale.body.code !== 'a11y_element_stale') throw fail(`A stale id must get a11y_element_stale, got ${JSON.stringify(stale)}`);
     log('  ✓ a stale id is refused with a11y_element_stale');

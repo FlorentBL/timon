@@ -299,6 +299,7 @@ import {
   validName,
   storedComputerUseApps,
   storedComputerUseMode,
+  type ComputerUseApp,
   type ComputerUseMode,
 } from './agent-config.js';
 
@@ -5075,8 +5076,8 @@ export type AgentSummary = {
   extra_dirs: AgentExtraDir[];
   /** Whether a person let this agent control the host's screen, mouse and keyboard. */
   computer_use: boolean;
-  /** Applications the agent may type or click in while computer use is on. */
-  computer_use_apps: string[];
+  /** Applications the agent may control while computer use is on, each with the mode it is driven in. */
+  computer_use_apps: ComputerUseApp[];
   /** 'background' = accessibility only, the user's screen, mouse and keyboard are never touched. */
   computer_use_mode: ComputerUseMode;
 };

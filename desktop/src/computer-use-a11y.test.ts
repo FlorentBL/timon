@@ -190,15 +190,15 @@ test('element ids round-trip, and the filter and tree builder drop orphans', () 
   assert.equal(orphan.nodes.length, 1);
 });
 
-test('in the background mode only reads and accessibility actions pass; the pixel and focus ones are refused with computer_background_only', async () => {
+test('an application allowed in the background: only reads and accessibility actions pass; screenshots, pixels and focus are refused with computer_background_only', async () => {
   const { run, backend, calls } = setup();
-  const refused = (e: ComputerCommandError) => e.code === 'computer_background_only' && e.statusCode === 403 && /a11y_tree and a11y_action/.test(e.message);
+  const refused = (e: ComputerCommandError) => e.code === 'computer_background_only' && e.statusCode === 403 && /a11y_tree \/ a11y_action/.test(e.message) || /a11y_tree and a11y_action/.test(e.message);
   for (const [command, args] of [['screenshot', {}], ['click', { x: 1, y: 1 }], ['double_click', { x: 1, y: 1 }], ['move', { x: 1, y: 1 }],
     ['drag', { fromX: 1, fromY: 1, toX: 2, toY: 2 }], ['type', { text: 'x' }], ['key', { keys: 'Enter' }], ['scroll', { x: 1, y: 1, deltaY: 3 }],
     ['focus_window', { id: '10:1' }], ['a11y_action', { id: '10:1#0.0.0', action: 'focus' }]] as const) {
     await assert.rejects(run(command, args, 'agent', 'background'), refused, command);
   }
-  assert.equal(calls.length, 0, 'nothing reached the machine');
+  assert.equal(calls.some((c) => c.args.some((arg) => arg.includes('CGEventPost') || arg.includes('AXRaise') || arg.includes('keystroke'))), false, 'no input reached the machine');
   assert.equal(backend.acts.length, 0);
   await run('list_windows', undefined, 'agent', 'background');
   await run('a11y_tree', undefined, 'agent', 'background');
@@ -217,4 +217,21 @@ test('in the background mode a field the toolkit refuses gets a11y_failed with a
     (e: ComputerCommandError) => e.code === 'a11y_failed' && /foreground/.test(e.message) && !/timon/.test(e.message));
   assert.deepEqual(acts, ['set_value'], 'no focus action');
   assert.equal(calls.some((c) => c.args.some((arg) => arg.includes('CGEventPost') || arg.includes('keystroke'))), false);
+});
+
+test('accessibility rules are per application: background ones never get focus or the keyboard fallback, foreground ones keep both', async () => {
+  const { service, backend } = setup();
+  const apps = [{ app: 'TextEdit', mode: 'background' as const }, { app: 'Mail', mode: 'foreground' as const }];
+  const run = (command: string, args?: unknown) => service.handle('agent', parseComputerCommand(command, args), apps);
+  // The tree of any allowed application can be read, whatever its mode.
+  await run('a11y_tree', { windowId: '10:1' });
+  await run('a11y_tree', { windowId: '20:1' });
+  await assert.rejects(run('a11y_action', { id: '10:1#0.0.0', action: 'focus' }), (e: ComputerCommandError) => e.code === 'computer_background_only');
+  await run('a11y_action', { id: '20:1#0.0.0', action: 'focus' });
+  await run('a11y_action', { id: '10:1#0.1', action: 'press' });
+  assert.deepEqual(backend.acts.map((act) => [act.windowId, act.action, act.background === true]), [['20:1', 'focus', false], ['10:1', 'press', true]]);
+  // A window of an application that is not listed is refused.
+  const only = (command: string, args?: unknown) => service.handle('agent', parseComputerCommand(command, args), [{ app: 'Mail', mode: 'background' }]);
+  await assert.rejects(only('a11y_tree', { windowId: '10:1' }), (e: ComputerCommandError) => e.code === 'computer_app_not_allowed');
+  await assert.rejects(only('a11y_action', { id: '10:1#0.1', action: 'press' }), (e: ComputerCommandError) => e.code === 'computer_app_not_allowed');
 });

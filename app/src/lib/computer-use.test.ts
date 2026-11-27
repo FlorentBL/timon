@@ -130,3 +130,28 @@ test('list_windows goes through the UI proxy, focus_window never does, and the a
     assert.equal(await fetchComputerWindows(), null);
   } finally { globalThis.fetch = real; }
 });
+
+test('the allowed applications are normalised: bare names take the default mode, objects keep theirs, blanks and repeats go', async () => {
+  const { normalizeAllowedApps, modeForVerdict, parseProbeVerdict } = await import('./computer-use');
+  assert.deepEqual(normalizeAllowedApps(['Notes', { app: 'Discord', mode: 'foreground' }, 'notes', ' ', 3, { app: 'Mail' }], 'background'), [
+    { app: 'Notes', mode: 'background' }, { app: 'Discord', mode: 'foreground' }, { app: 'Mail', mode: 'background' },
+  ]);
+  assert.deepEqual(normalizeAllowedApps(undefined), []);
+  assert.equal(modeForVerdict('rich'), 'background');
+  assert.equal(modeForVerdict('poor'), 'foreground');
+  assert.equal(modeForVerdict('empty'), 'foreground');
+  assert.equal(parseProbeVerdict({ result: { nodes: 4, actionable: 3, verdict: 'rich' } }), 'rich');
+  assert.equal(parseProbeVerdict({ result: { verdict: 'amazing' } }), null);
+  assert.equal(parseProbeVerdict(null), null);
+});
+
+test('the probe of an open window goes through the UI proxy with its window id only; the agent commands stay out', async () => {
+  const { uiComputerUpstream, uiComputerBody } = await import('./computer-use');
+  assert.deepEqual(uiComputerUpstream('POST', 'a11y_probe_app'), { method: 'POST', path: '/api/computer/a11y_probe_app' });
+  assert.equal(uiComputerUpstream('GET', 'a11y_probe_app'), null);
+  assert.equal(uiComputerUpstream('POST', 'a11y_tree'), null);
+  assert.deepEqual(uiComputerBody('a11y_probe_app', { windowId: '12:3', actor: 'agent' }), { windowId: '12:3' });
+  assert.equal(uiComputerBody('a11y_probe_app', { windowId: '../x' }), null);
+  assert.equal(uiComputerBody('a11y_probe_app', null), null);
+  assert.deepEqual(uiComputerBody('list_windows', { windowId: '1' }), {}, 'no other command forwards a body');
+});
