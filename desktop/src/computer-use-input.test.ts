@@ -45,8 +45,13 @@ test('macOS: click, double click, drag, key, scroll steps', () => {
   const drag = steps({ kind: 'drag', fromX: 0, fromY: 0, toX: 80, toY: 40 });
   assert.equal(drag.at(-1).t, 'up');
   assert.deepEqual(drag.filter((s: { t: string }) => s.t === 'drag').at(-1), { t: 'drag', x: 80, y: 40 });
+  // The modifier key itself goes down first and up last: apps ignore a flag with no pressed key.
   assert.deepEqual(steps({ kind: 'key', keys: 'cmd+c' }), [
-    { t: 'key', code: 8, flags: 0x100000, down: true }, { t: 'key', code: 8, flags: 0x100000, down: false }]);
+    { t: 'key', code: 55, flags: 0x100000, down: true },
+    { t: 'key', code: 8, flags: 0x100000, down: true }, { t: 'key', code: 8, flags: 0x100000, down: false },
+    { t: 'key', code: 55, flags: 0, down: false }]);
+  assert.deepEqual(steps({ kind: 'key', keys: 'cmd+shift+t' }).map((s: { code: number; down: boolean }) => [s.code, s.down]),
+    [[55, true], [56, true], [17, true], [17, false], [56, false], [55, false]]);
   // DOM scroll down is a negative wheel value.
   assert.deepEqual(steps({ kind: 'scroll', x: 5, y: 5, deltaX: 0, deltaY: 3 }).at(-1), { t: 'wheel', dx: 0, dy: -3 });
 });

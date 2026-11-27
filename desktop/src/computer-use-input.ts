@@ -72,6 +72,8 @@ const MAC_KEYCODES: Record<string, number> = {
 };
 // '+' is shift+'=' on a US layout.
 const MAC_FLAGS: Record<Modifier, number> = { shift: 0x20000, ctrl: 0x40000, alt: 0x80000, meta: 0x100000 };
+/** Virtual key codes of the left-hand modifier keys. */
+const MAC_MODIFIER_KEYCODES: Record<Modifier, number> = { shift: 56, ctrl: 59, alt: 58, meta: 55 };
 
 const WIN_VK: Record<string, number> = {
   enter: 0x0d, tab: 0x09, escape: 0x1b, backspace: 0x08, delete: 0x2e, space: 0x20, left: 0x25, up: 0x26, right: 0x27, down: 0x28,
@@ -198,8 +200,20 @@ function macSteps(action: InputAction): MacStep[] {
       const { modifiers, key } = parseKeys(action.keys);
       const code = MAC_KEYCODES[key];
       if (code === undefined) throw new ComputerCommandError(`Unsupported key "${key}".`);
-      const flags = modifiers.reduce((mask, modifier) => mask | MAC_FLAGS[modifier], key === '+' ? MAC_FLAGS.shift : 0);
-      return [{ t: 'key', code, flags, down: true }, { t: 'key', code, flags, down: false }];
+      const held: Modifier[] = key === '+' && !modifiers.includes('shift') ? [...modifiers, 'shift'] : [...modifiers];
+      // A flag alone is not a pressed key: Spotlight and Chromium ignore ⌘A unless ⌘ itself goes down first.
+      const steps: MacStep[] = [];
+      let flags = 0;
+      for (const modifier of held) {
+        flags |= MAC_FLAGS[modifier];
+        steps.push({ t: 'key', code: MAC_MODIFIER_KEYCODES[modifier], flags, down: true });
+      }
+      steps.push({ t: 'key', code, flags, down: true }, { t: 'key', code, flags, down: false });
+      for (const modifier of [...held].reverse()) {
+        flags &= ~MAC_FLAGS[modifier];
+        steps.push({ t: 'key', code: MAC_MODIFIER_KEYCODES[modifier], flags, down: false });
+      }
+      return steps;
     }
     case 'scroll':
       // DOM convention (positive = down) in, wheel convention (positive = up) out.

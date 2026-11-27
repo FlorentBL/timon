@@ -183,7 +183,7 @@ Coordinates are in the pixels of the last screenshot; the shell converts them to
 - Input: macOS `osascript` (JXA, CGEvent), Windows `powershell.exe` (SendInput), Linux `xdotool` under X11.
   Wayland or a missing tool reports `available: false` with a `reason`. macOS also needs the Accessibility and
   Screen Recording grants (`permission-accessibility`, `permission-screen`).
-- Safety: only a person (`actor: "human"`) can `stop` or `resume`. `Ctrl/Cmd+Shift+Escape` stops from anywhere, and a
+- Safety: only a person (`actor: "human"`) can `stop` or `resume`. `Control+Option+Command+Escape` (macOS) or `Ctrl+Alt+Shift+Escape` (Windows, Linux) stops from anywhere, and a
   small always-on-top bar with a Stop button shows while the agent is acting.
 - Code: `desktop/src/computer-use-*.ts`. Scripts are fixed text fed with JSON; typed text never reaches a script or a shell.
 
