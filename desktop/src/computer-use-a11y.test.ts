@@ -139,9 +139,11 @@ test('status reports the accessibility check, and a missing one refuses the comm
   await missing.run('move', { x: 1, y: 1 });
 });
 
-test('the platform backends are selected by platform and report unsupported until they are written', async () => {
+test('a platform without a backend reports unsupported, and one whose probe gets no answer reports missing', async () => {
   const exec = async () => ({ stdout: '' });
-  for (const platform of ['darwin', 'freebsd'] as const) assert.equal(await selectA11yBackend(platform, exec).probe(), 'unsupported');
+  assert.equal(await selectA11yBackend('freebsd', exec).probe(), 'unsupported');
+  // macOS, Windows and Linux all have a backend now: an empty answer means the grant or the bus is missing.
+  for (const platform of ['darwin', 'win32', 'linux'] as const) assert.equal(await selectA11yBackend(platform, exec).probe(), 'missing');
 });
 
 test('arguments are validated', () => {
