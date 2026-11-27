@@ -190,6 +190,10 @@
         "label": "Annotations du navigateur",
         "description": "Désignez un élément du navigateur intégré, dites quoi changer et envoyez-le à un agent."
       },
+      "@timon/computer-use": {
+        "label": "Contrôle de l'ordinateur",
+        "description": "Laisse un agent autorisé piloter la souris et le clavier de cette machine via l'application de bureau. Désactivé pour chaque agent tant qu'une personne ne l'active pas."
+      },
       "@timon/terminal-native": {
         "label": "Terminal hôte",
         "description": "Ouvre le terminal ou le gestionnaire de fichiers de la machine dans une fenêtre du bureau. Demande une session graphique."
