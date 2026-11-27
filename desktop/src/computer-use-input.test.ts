@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { imageToPoints, pointsToImage, screenshotSize } from './computer-use-geometry.js';
-import { MAC_INPUT_SCRIPT, WINDOWS_INPUT_SCRIPT, buildInputCommand, parseKeys } from './computer-use-input.js';
+import { MAC_INPUT_SCRIPT, WINDOWS_INPUT_SCRIPT, WINDOWS_WORKER_SCRIPT, buildInputCommand, parseKeys } from './computer-use-input.js';
 import { ComputerCommandError } from './computer-use-protocol.js';
 
 const retina = { width: 1440, height: 900, scaleFactor: 2 };
@@ -62,6 +62,11 @@ test('Windows: fixed encoded script, steps in the environment, absolute normalis
   assert.deepEqual(command.args.slice(0, 5), ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-EncodedCommand']);
   assert.equal(Buffer.from(command.args[5]!, 'base64').toString('utf16le'), WINDOWS_INPUT_SCRIPT);
   assert.equal(command.args.join(' ').includes('rm -rf'), false);
+  // The persistent form: same fixed script family, the request is one JSON line, never code.
+  assert.equal(Buffer.from(command.worker!.args[5]!, 'base64').toString('utf16le'), WINDOWS_WORKER_SCRIPT);
+  assert.equal(command.worker!.input, command.env!.TIMON_CU_STEPS);
+  assert.equal(command.worker!.input.includes('\n'), false);
+  assert.equal(/[^\x20-\x7e]/.test(command.worker!.input), false, 'ASCII only: the console code page cannot alter it');
   const steps = JSON.parse(command.env!.TIMON_CU_STEPS!) as Array<{ t: string; unit?: number; up?: boolean }>;
   const typed = steps.filter((s) => s.t === 'unicode' && !s.up).map((s) => String.fromCharCode(s.unit!)).join('');
   assert.equal(typed, NASTY.replace(/[\n\t]/g, ''));

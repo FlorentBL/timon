@@ -5,7 +5,7 @@
 import { BrowserWindow, desktopCapturer, globalShortcut, screen, shell, systemPreferences } from 'electron';
 import { ComputerUseService } from './computer-use-service.js';
 import { startComputerServer } from './computer-use-server.js';
-import { runSystemCommand } from './computer-use-exec.js';
+import { createSystemExecutor } from './computer-use-exec.js';
 import type { DisplayInfo, ImageSize } from './computer-use-geometry.js';
 
 export type ShellText = (key: string, vars?: Record<string, string | number>) => string;
@@ -105,10 +105,11 @@ export interface ComputerUseDesktop { close: () => Promise<void>; service: Compu
 
 export async function startComputerUse(home: string, t: ShellText): Promise<ComputerUseDesktop> {
   let indicator: Indicator | null = null;
+  const executor = createSystemExecutor();
   const service: ComputerUseService = new ComputerUseService({
     platform: process.platform,
     env: process.env,
-    exec: (command) => runSystemCommand(command),
+    exec: (command) => executor.run(command),
     display: () => { try { return primaryDisplay(); } catch { return null; } },
     cursor: () => screen.getCursorScreenPoint(),
     capture: capturePrimary,
@@ -130,6 +131,7 @@ export async function startComputerUse(home: string, t: ShellText): Promise<Comp
     close: async () => {
       if (registered) globalShortcut.unregister(COMPUTER_STOP_SHORTCUT);
       service.dispose();
+      executor.dispose();
       indicator?.hide();
       await provider.close();
     },

@@ -9,7 +9,17 @@
 import { ComputerCommandError, type MouseButton } from './computer-use-protocol.js';
 import type { DisplayInfo } from './computer-use-geometry.js';
 
-export interface SystemCommand { file: string; args: string[]; env?: Record<string, string> }
+export interface SystemCommand {
+  file: string;
+  args: string[];
+  env?: Record<string, string>;
+  /**
+   * The same work for a long-lived process that reads one request per line: `args` start it once
+   * (the expensive part happens there), `input` is this request. An executor that has no such
+   * process runs `file` and `args` as a plain one-shot command, which does the same thing.
+   */
+  worker?: { args: string[]; input: string };
+}
 export type InputPlatform = 'darwin' | 'win32' | 'linux';
 
 export type InputAction =
@@ -223,8 +233,11 @@ function macSteps(action: InputAction): MacStep[] {
 
 // ── Windows: PowerShell + SendInput ────────────────────────────────────────
 
-/** Fixed text. The steps arrive as JSON in TIMON_CU_STEPS. */
-export const WINDOWS_INPUT_SCRIPT = `
+/**
+ * Fixed text, shared by the one-shot and the persistent forms. Compiling the C# helper is what costs
+ * (hundreds of milliseconds per `powershell.exe`), so the persistent form does it once.
+ */
+const WINDOWS_INPUT_LIB = `
 $ErrorActionPreference = 'Stop'
 Add-Type -TypeDefinition @"
 using System;
@@ -246,24 +259,44 @@ public static class TimonInput {
   }
 }
 "@
-$steps = $env:TIMON_CU_STEPS | ConvertFrom-Json
 $buttons = @{ left = @(0x2, 0x4); right = @(0x8, 0x10); middle = @(0x20, 0x40) }
-$ax = 0; $ay = 0
-foreach ($s in $steps) {
-  switch ($s.t) {
-    'move' { $ax = [int]$s.x; $ay = [int]$s.y; [TimonInput]::Mouse($ax, $ay, 0, 0x8001) }
-    'down' { [TimonInput]::Mouse($ax, $ay, 0, [uint32](0x8000 -bor $buttons[$s.b][0])) }
-    'up' { [TimonInput]::Mouse($ax, $ay, 0, [uint32](0x8000 -bor $buttons[$s.b][1])) }
-    'wheel' {
-      if ($s.dy -ne 0) { [TimonInput]::Mouse(0, 0, [int]$s.dy, 0x800) }
-      if ($s.dx -ne 0) { [TimonInput]::Mouse(0, 0, [int]$s.dx, 0x1000) }
+function Invoke-TimonSteps($steps) {
+  $ax = 0; $ay = 0
+  foreach ($s in $steps) {
+    switch ($s.t) {
+      'move' { $ax = [int]$s.x; $ay = [int]$s.y; [TimonInput]::Mouse($ax, $ay, 0, 0x8001) }
+      'down' { [TimonInput]::Mouse($ax, $ay, 0, [uint32](0x8000 -bor $buttons[$s.b][0])) }
+      'up' { [TimonInput]::Mouse($ax, $ay, 0, [uint32](0x8000 -bor $buttons[$s.b][1])) }
+      'wheel' {
+        if ($s.dy -ne 0) { [TimonInput]::Mouse(0, 0, [int]$s.dy, 0x800) }
+        if ($s.dx -ne 0) { [TimonInput]::Mouse(0, 0, [int]$s.dx, 0x1000) }
+      }
+      'key' { [TimonInput]::Key([uint16]$s.vk, 0, $(if ($s.up) { 2 } else { 0 })) }
+      'unicode' { [TimonInput]::Key(0, [uint16]$s.unit, $(if ($s.up) { 6 } else { 4 })) }
+      'sleep' { Start-Sleep -Milliseconds ([int]$s.ms) }
     }
-    'key' { [TimonInput]::Key([uint16]$s.vk, 0, $(if ($s.up) { 2 } else { 0 })) }
-    'unicode' { [TimonInput]::Key(0, [uint16]$s.unit, $(if ($s.up) { 6 } else { 4 })) }
-    'sleep' { Start-Sleep -Milliseconds ([int]$s.ms) }
   }
 }
 `.trim();
+
+/** One-shot form: the steps arrive as JSON in TIMON_CU_STEPS. */
+export const WINDOWS_INPUT_SCRIPT = `${WINDOWS_INPUT_LIB}
+Invoke-TimonSteps ($env:TIMON_CU_STEPS | ConvertFrom-Json)
+`;
+
+/**
+ * Persistent form: one JSON array of steps per line on stdin, answered by one line, "ok" or "error".
+ * The steps hold numbers and ASCII only (typed text is sent as UTF-16 unit numbers), so the console
+ * code page cannot alter them, and nothing read here is ever evaluated as code.
+ */
+export const WINDOWS_WORKER_SCRIPT = `${WINDOWS_INPUT_LIB}
+[Console]::Out.WriteLine('ready')
+while ($true) {
+  $line = [Console]::In.ReadLine()
+  if ($null -eq $line) { break }
+  try { Invoke-TimonSteps ($line | ConvertFrom-Json); [Console]::Out.WriteLine('ok') } catch { [Console]::Out.WriteLine('error') }
+}
+`;
 
 type WinStep =
   | { t: 'move'; x: number; y: number } | { t: 'down' | 'up'; b: MouseButton }
@@ -321,13 +354,18 @@ function windowsSteps(action: InputAction, display: DisplayInfo): WinStep[] {
   }
 }
 
+/** -EncodedCommand is UTF-16LE base64: no quoting layer between us and PowerShell. */
+function powershellArgs(script: string): string[] {
+  return ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-EncodedCommand', Buffer.from(script, 'utf16le').toString('base64')];
+}
+
 function windowsCommand(steps: WinStep[]): SystemCommand {
-  // -EncodedCommand is UTF-16LE base64: no quoting layer between us and PowerShell.
-  const encoded = Buffer.from(WINDOWS_INPUT_SCRIPT, 'utf16le').toString('base64');
+  const json = JSON.stringify(steps);
   return {
     file: 'powershell.exe',
-    args: ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-EncodedCommand', encoded],
-    env: { TIMON_CU_STEPS: JSON.stringify(steps) },
+    args: powershellArgs(WINDOWS_INPUT_SCRIPT),
+    env: { TIMON_CU_STEPS: json },
+    worker: { args: powershellArgs(WINDOWS_WORKER_SCRIPT), input: json },
   };
 }
 
