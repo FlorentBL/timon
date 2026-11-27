@@ -5,7 +5,7 @@
  * so the whole decision logic runs under test with simulated ones. This file imports no Electron.
  */
 import {
-  ComputerCommandError, type ComputerActor, type ComputerCommand, type ComputerUnavailableReason,
+  COMPUTER_DEFAULT_MAX_WIDTH, ComputerCommandError, type ComputerActor, type ComputerCommand, type ComputerUnavailableReason,
 } from './computer-use-protocol.js';
 import { imageToPoints, pointsToImage, screenshotSize, type DisplayInfo, type ImageSize } from './computer-use-geometry.js';
 import {
@@ -21,7 +21,7 @@ export interface ComputerUseDeps {
   display: () => DisplayInfo | null;
   /** The pointer, in screen points. */
   cursor: () => { x: number; y: number };
-  /** A PNG of the primary display at exactly this size, or null when the system gave an empty frame. */
+  /** A JPEG of the primary display at exactly this size, or null when the system gave an empty frame. */
   capture: (size: ImageSize) => Promise<Buffer | null>;
   /** macOS Screen Recording grant. `not-determined`: never asked yet, so asking shows the system prompt. */
   screenPermission: () => 'granted' | 'denied' | 'not-determined' | 'unknown';
@@ -271,7 +271,7 @@ export class ComputerUseService {
   }
 
   private currentFrame(display: DisplayInfo): ImageSize {
-    return this.frame ?? screenshotSize(display, 1280);
+    return this.frame ?? screenshotSize(display, COMPUTER_DEFAULT_MAX_WIDTH);
   }
 
   private async screenshot(display: DisplayInfo, maxWidth: number): Promise<unknown> {
@@ -280,7 +280,7 @@ export class ComputerUseService {
     if (!png || png.length === 0) throw new ComputerCommandError('Computer use is unavailable: permission-screen.', 503, 'computer_unavailable');
     // Later coordinates are expressed in this image.
     this.frame = size;
-    return { mimeType: 'image/png', data: png.toString('base64'), width: size.width, height: size.height };
+    return { mimeType: 'image/jpeg', data: png.toString('base64'), width: size.width, height: size.height };
   }
 
   private async input(display: DisplayInfo, command: ComputerCommand): Promise<unknown> {

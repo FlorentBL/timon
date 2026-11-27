@@ -2,7 +2,11 @@
 
 export const COMPUTER_MAX_TEXT = 2000;
 export const COMPUTER_MAX_WAIT_MS = 10_000;
-export const COMPUTER_DEFAULT_MAX_WIDTH = 1280;
+/**
+ * 1024 px: the cost of an image to the model grows with its pixels, and 1024 is a whole number of
+ * the 512 px tiles some models bill by. Wide enough to read ordinary text; an agent asks for more when needed.
+ */
+export const COMPUTER_DEFAULT_MAX_WIDTH = 1024;
 
 export type ComputerActor = 'agent' | 'human';
 export type ComputerUnavailableReason =

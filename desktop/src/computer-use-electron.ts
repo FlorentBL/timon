@@ -32,7 +32,9 @@ async function capturePrimary(size: ImageSize): Promise<Buffer | null> {
   const source = sources.find((candidate) => candidate.display_id === String(display.id)) ?? sources[0];
   if (!source || source.thumbnail.isEmpty()) return null;
   const image = source.thumbnail.getSize().width === size.width ? source.thumbnail : source.thumbnail.resize({ width: size.width, height: size.height, quality: 'best' });
-  return image.toPNG();
+  // JPEG: five to ten times lighter than PNG for a screen, so faster to send and to store in the
+  // conversation; quality 75 keeps small text readable.
+  return image.toJPEG(75);
 }
 
 /** Small always-on-top bar with a Stop button. Hidden from captures so the agent never reads it as part of the task. */

@@ -124,8 +124,9 @@ async function main() {
 
   const shot = await agent('screenshot', { maxWidth: 1280 }, 'screenshot');
   const png = Buffer.from(shot.data, 'base64');
-  if (shot.mimeType !== 'image/png' || png.length < 1000 || png.subarray(1, 4).toString('latin1') !== 'PNG') {
-    throw fail(`Screenshot is not a plausible PNG (${shot.mimeType}, ${png.length} bytes).`);
+  // JPEG starts with FF D8 FF.
+  if (shot.mimeType !== 'image/jpeg' || png.length < 1000 || png[0] !== 0xff || png[1] !== 0xd8 || png[2] !== 0xff) {
+    throw fail(`Screenshot is not a plausible JPEG (${shot.mimeType}, ${png.length} bytes).`);
   }
   const ratio = (shot.width / shot.height) / (status.display.width / status.display.height);
   if (Math.abs(ratio - 1) > 0.01 || shot.width > 1280) throw fail(`Screenshot size ${shot.width}x${shot.height} does not match the display ${status.display.width}x${status.display.height}.`);

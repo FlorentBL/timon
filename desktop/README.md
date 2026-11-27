@@ -179,7 +179,7 @@ The shell serves a second private loopback transport, `computer-native`, next to
 `{ ok: true, result }` or `{ ok: false, error, code }` (HTTP 409 and `computer_stopped` after a stop).
 Coordinates are in the pixels of the last screenshot; the shell converts them to screen points.
 
-- Screenshots: Electron's `desktopCapturer`, primary display, resized (1280 px wide by default).
+- Screenshots: Electron's `desktopCapturer`, primary display, resized (1024 px wide by default) and sent as JPEG (quality 75).
 - Input: macOS `osascript` (JXA, CGEvent), Windows `powershell.exe` (SendInput), Linux `xdotool` under X11.
   Wayland or a missing tool reports `available: false` with a `reason`. macOS also needs the Accessibility and
   Screen Recording grants (`permission-accessibility`, `permission-screen`).

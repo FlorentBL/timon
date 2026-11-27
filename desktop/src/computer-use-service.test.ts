@@ -14,7 +14,7 @@ function setup(overrides: Partial<ComputerUseDeps> = {}) {
     exec: async (command) => { calls.push(command); return { stdout: 'true\n' }; },
     display: () => display,
     cursor: () => ({ x: 720, y: 450 }),
-    capture: async () => Buffer.from('png-bytes'),
+    capture: async () => Buffer.from('jpeg-bytes'),
     screenPermission: () => 'granted',
     sleep: async () => {},
     activeMs: 30,
@@ -28,8 +28,8 @@ function setup(overrides: Partial<ComputerUseDeps> = {}) {
 test('screenshot sets the frame later coordinates are expressed in', async () => {
   const { run, calls } = setup();
   const shot = await run('screenshot', { maxWidth: 720 }) as { data: string; width: number; height: number; mimeType: string };
-  assert.deepEqual([shot.mimeType, shot.width, shot.height], ['image/png', 720, 450]);
-  assert.equal(Buffer.from(shot.data, 'base64').toString(), 'png-bytes');
+  assert.deepEqual([shot.mimeType, shot.width, shot.height], ['image/jpeg', 720, 450]);
+  assert.equal(Buffer.from(shot.data, 'base64').toString(), 'jpeg-bytes');
   calls.length = 0;
   await run('click', { x: 360, y: 225 });
   const steps = JSON.parse(calls[0]!.args[4]!);
@@ -110,7 +110,7 @@ test('arguments are validated', () => {
   assert.throws(() => parseComputerCommand('click', { x: 'a', y: 1 }), ComputerCommandError);
   assert.throws(() => parseComputerCommand('click', { x: 1, y: 1, button: 'back' }), ComputerCommandError);
   assert.throws(() => parseComputerCommand('rm', {}), /Unknown/);
-  assert.deepEqual(parseComputerCommand('screenshot', {}), { command: 'screenshot', maxWidth: 1280 });
+  assert.deepEqual(parseComputerCommand('screenshot', {}), { command: 'screenshot', maxWidth: 1024 });
 });
 
 test('a refused action asks for the missing grant, at most once a minute', async () => {
