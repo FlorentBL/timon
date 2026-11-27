@@ -24,6 +24,9 @@ jobs:
     name: ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 20
+    # The capture must really be JPEG here: a silent fallback to PNG would hide the token cost again.
+    env:
+      TIMON_E2E_REQUIRE_JPEG: '1'
     strategy:
       fail-fast: false
       matrix:

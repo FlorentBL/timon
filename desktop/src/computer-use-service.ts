@@ -21,7 +21,7 @@ export interface ComputerUseDeps {
   display: () => DisplayInfo | null;
   /** The pointer, in screen points. */
   cursor: () => { x: number; y: number };
-  /** A JPEG of the primary display at exactly this size, or null when the system gave an empty frame. */
+  /** A JPEG (PNG when JPEG encoding fails) of the primary display at exactly this size, or null when the system gave an empty frame. */
   capture: (size: ImageSize) => Promise<Buffer | null>;
   /** macOS Screen Recording grant. `not-determined`: never asked yet, so asking shows the system prompt. */
   screenPermission: () => 'granted' | 'denied' | 'not-determined' | 'unknown';
@@ -280,7 +280,9 @@ export class ComputerUseService {
     if (!png || png.length === 0) throw new ComputerCommandError('Computer use is unavailable: permission-screen.', 503, 'computer_unavailable');
     // Later coordinates are expressed in this image.
     this.frame = size;
-    return { mimeType: 'image/jpeg', data: png.toString('base64'), width: size.width, height: size.height };
+    // The capture is JPEG unless the encoder fell back to PNG: the bytes say which.
+    const mimeType = png[0] === 0xff && png[1] === 0xd8 ? 'image/jpeg' : 'image/png';
+    return { mimeType, data: png.toString('base64'), width: size.width, height: size.height };
   }
 
   private async input(display: DisplayInfo, command: ComputerCommand): Promise<unknown> {

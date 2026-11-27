@@ -14,7 +14,7 @@ function setup(overrides: Partial<ComputerUseDeps> = {}) {
     exec: async (command) => { calls.push(command); return { stdout: 'true\n' }; },
     display: () => display,
     cursor: () => ({ x: 720, y: 450 }),
-    capture: async () => Buffer.from('jpeg-bytes'),
+    capture: async () => Buffer.from([0xff, 0xd8, 0xff, 0x6a, 0x70, 0x67]),
     screenPermission: () => 'granted',
     sleep: async () => {},
     activeMs: 30,
@@ -29,7 +29,7 @@ test('screenshot sets the frame later coordinates are expressed in', async () =>
   const { run, calls } = setup();
   const shot = await run('screenshot', { maxWidth: 720 }) as { data: string; width: number; height: number; mimeType: string };
   assert.deepEqual([shot.mimeType, shot.width, shot.height], ['image/jpeg', 720, 450]);
-  assert.equal(Buffer.from(shot.data, 'base64').toString(), 'jpeg-bytes');
+  assert.equal(Buffer.from(shot.data, 'base64').toString('hex'), 'ffd8ff6a7067');
   calls.length = 0;
   await run('click', { x: 360, y: 225 });
   const steps = JSON.parse(calls[0]!.args[4]!);
@@ -181,4 +181,10 @@ test('restart_app is reserved to people and calls the shell restart', async () =
   await new Promise((resolve) => setTimeout(resolve, 400));
   assert.equal(restarted, 1);
   await assert.rejects(setup().run('restart_app', undefined, 'human'), (e: ComputerCommandError) => e.statusCode === 501);
+});
+
+test('a capture that fell back to PNG is labelled as PNG', async () => {
+  const { run } = setup({ capture: async () => Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a]) });
+  const shot = await run('screenshot') as { mimeType: string };
+  assert.equal(shot.mimeType, 'image/png');
 });
