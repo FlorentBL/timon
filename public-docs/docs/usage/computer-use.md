@@ -19,6 +19,8 @@ Only that agent gets the screen and input tools; other agents are unaffected. Sw
 
 Computer use is **refused for everything except an explicit list of applications**. In the card **Allowed applications** under the setup card, list the applications the agent may click and type in. Before every mouse or keyboard action (click, double-click, move, drag, type, key, scroll), Timon reads which application is in front, and the action is refused with `computer_app_not_allowed` unless it is on the list. The error names the application it found, so the agent can ask you to add it.
 
+The foreground application is checked just before each action. A window change in the interval between the check and the action remains possible.
+
 - An entry can be the application's name, the name of its executable, or on macOS its bundle identifier (for example `TextEdit`, `notepad` or `com.apple.TextEdit`). The case does not matter, and a trailing `.exe` is ignored.
 - **An empty list means the agent cannot do anything with the keyboard or the mouse.** The card warns you about it. Screenshots, listing the windows and waiting stay possible.
 - **Add from open windows** lists the applications that have a window open right now: click one to add it.
