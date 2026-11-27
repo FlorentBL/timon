@@ -72,7 +72,7 @@ test('probe reports ok when the worker loads UI Automation, missing otherwise', 
 test('the worker script carries the UI Automation functions the requests need', async () => {
   const { seen, exec } = recorder({ ok: true });
   await win32A11yBackend(exec).probe();
-  const script = Buffer.from(seen[0].worker!.args[seen[0].worker!.args.length - 1], 'base64').toString('utf16le');
+  const script = seen[0].worker!.env!.TIMON_CU_SCRIPT!;
   for (const needle of ['UIAutomationClient', 'ControlViewWalker', 'CacheRequest', 'InvokePattern', 'ValuePattern', 'SelectionItemPattern', 'ExpandCollapsePattern', 'ScrollItemPattern', 'SetFocus', "'a11y_tree'", "'a11y_act'"]) {
     assert.ok(script.includes(needle), needle);
   }

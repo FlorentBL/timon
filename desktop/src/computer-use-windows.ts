@@ -131,11 +131,37 @@ function entriesOf(value: unknown): WindowEntry[] {
 
 const xdotool = (...args: string[]): SystemCommand => ({ file: 'xdotool', args });
 
+/**
+ * Commands known to be absent, per executor: a missing tool is asked once, not once per window and
+ * action (xdotool 3.20160805 of Ubuntu 24.04 has no getwindowclassname, and was asked dozens of times).
+ */
+const missingTools = new WeakMap<Exec, Set<string>>();
+
+/** Runs `command` unless it is known to be missing; resolves null on any failure and remembers ENOENT. */
+async function tryTool(exec: Exec, command: SystemCommand): Promise<string | null> {
+  let missing = missingTools.get(exec);
+  if (missing?.has(command.file)) return null;
+  try { return (await exec(command)).stdout; } catch (error) {
+    if ((error as NodeJS.ErrnoException | null)?.code === 'ENOENT') {
+      if (!missing) { missing = new Set(); missingTools.set(exec, missing); }
+      missing.add(command.file);
+    }
+    return null;
+  }
+}
+
+/** The WM_CLASS class of an X11 window ("Navigator", "Electron"): the second quoted string xprop prints. */
+async function linuxClassName(exec: Exec, windowId: string): Promise<string> {
+  const out = await tryTool(exec, { file: 'xprop', args: ['-id', windowId, 'WM_CLASS'] });
+  const quoted = out?.match(/"([^"]*)"/g)?.map((part) => part.slice(1, -1)) ?? [];
+  return quoted[1] ?? quoted[0] ?? '';
+}
+
 async function linuxIdentity(exec: Exec, windowId: string): Promise<AppIdentity | null> {
   let pid = '';
-  let className = '';
   try { pid = (await exec(xdotool('getwindowpid', windowId))).stdout.trim(); } catch { /* no pid: the class may still name it */ }
-  try { className = (await exec(xdotool('getwindowclassname', windowId))).stdout.trim(); } catch { /* same */ }
+  // Without xprop the process name read below names the application.
+  const className = await linuxClassName(exec, windowId);
   let exe = '';
   if (/^\d+$/.test(pid)) {
     // portability: Linux branch only, the same X11 session xdotool needs
@@ -186,7 +212,11 @@ export async function readForegroundApp(platform: InputPlatform, exec: Exec): Pr
     let active = (await exec(xdotool('getactivewindow')).catch(() => ({ stdout: '' }))).stdout.trim();
     if (!/^\d+$/.test(active)) active = (await exec(xdotool('getwindowfocus'))).stdout.trim();
     return /^\d+$/.test(active) ? await linuxIdentity(exec, active) : null;
-  } catch { return null; }
+  } catch (error) {
+    // Diagnostic mode only: a null here becomes a refusal ("could not be read"), which said nothing about why.
+    if (process.env.TIMON_COMPUTER_USE_DEBUG === '1') console.error(`[computer-use] reading the foreground application failed: ${error instanceof Error ? error.message.slice(0, 300) : String(error).slice(0, 300)}`);
+    return null;
+  }
 }
 
 async function entries(platform: InputPlatform, exec: Exec): Promise<WindowEntry[]> {
