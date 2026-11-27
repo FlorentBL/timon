@@ -76,7 +76,7 @@ async function buildArgs(opts, thinkingArgs) {
  const plan = await services.mcp(opts, { permissionPrompt: prompts });
  args.push('--allowedTools', [...new Set([...(cfg.allowed_tools ?? []), ...plan.preApprovedTools])].join(','));
  // MCP children inherit the mission token. It must never enter argv; user secrets live in a private file.
- const roles = ['user', 'forms', 'timon', 'grepai', 'browser'];
+ const roles = ['user', 'forms', 'timon', 'grepai', 'browser', 'computer'];
  const servers = [...plan.servers].sort((a, b) => roles.indexOf(a.role) - roles.indexOf(b.role)).map((server) => {
    if (server.role === 'user' || server.type !== 'stdio') return server;
    const env = { ...server.env };
