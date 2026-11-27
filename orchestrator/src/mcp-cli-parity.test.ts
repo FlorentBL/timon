@@ -490,6 +490,22 @@ test('widgets: the MCP tools and `timon widgets` take the same routes; a proposa
   });
 });
 
+test('computer: computer_use_propose and `timon computer propose` take the same route with the same body; a proposal needs a mission', async () => {
+  await withDaemon(async (base, seen) => {
+    const wanted = { agent: 'a.b', addApps: ['Discord'], removeApps: ['Slack'], enable: true, note: 'why' };
+    const [outside] = await session(base, [{ method: 'tools/call', params: { name: 'computer_use_propose', arguments: wanted } }]);
+    assert.equal(outside!.result?.isError, true, 'outside a mission there is no conversation to show the card in');
+    seen.length = 0;
+    await session(base, [{ method: 'tools/call', params: { name: 'computer_use_propose', arguments: wanted } }], true);
+    assert.deepEqual(seen.find((s) => s.url === '/api/computer/proposals')?.body, wanted);
+    seen.length = 0;
+    const run = await cli(base, ['computer', 'propose', 'a.b', '--add', 'Discord', '--remove', 'Slack', '--enable', '--note', 'why']);
+    assert.equal(run.code, 0, run.out);
+    assert.deepEqual(seen.find((s) => s.url === '/api/computer/proposals')?.body, wanted);
+    assert.equal((await cli(base, ['computer', 'propose'])).code, 64);
+  });
+});
+
 test('skill attachments: the MCP tools and `timon skill` take the same routes, with the same body', async () => {
   await withDaemon(async (base, seen) => {
     await session(base, [

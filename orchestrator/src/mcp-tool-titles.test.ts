@@ -43,6 +43,8 @@ const TITLED = [
   'health', 'backup_status', 'backup_enable',
   // mcp-tools-widgets.mjs
   'widgets_get', 'widgets_propose', 'widgets_preset_save',
+  // mcp-tools-computer-use.mjs
+  'computer_use_propose',
   // mcp-tools-islands.mjs
   'islands_get', 'islands_propose', 'islands_preset_save', 'islands_arrangements_list', 'islands_arrangement_save',
   // mcp-tools-onboarding.mjs

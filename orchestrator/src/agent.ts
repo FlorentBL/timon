@@ -862,6 +862,7 @@ confuse them** with your CLI's own todo tools (\`TaskCreate\`, \`TaskList\`…),
 | Delegate to an isolated sub-agent     | \`mission_spawn\` (or \`timon spawn\`)            |
 | Search past missions / read a trace   | \`mission_search\` / \`trace_get\`                |
 | Rearrange the user's widgets          | \`widgets_get\`, then \`widgets_propose\` (a card they apply) |
+| Ask the user to let an agent use the computer | \`computer_use_propose\` (a card they allow or refuse) |
 | Split the user's screen into islands  | \`islands_get\`, then \`islands_propose\` (a card they apply) |
 | Keep an island layout under a name    | \`islands_arrangements_list\`, then \`islands_arrangement_save\` |
 | Lay a named arrangement on a view     | \`islands_propose\` with \`arrangement: <id>\` (a card they apply) |
