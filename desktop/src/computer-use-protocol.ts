@@ -69,6 +69,15 @@ export function parseAllowedApps(value: unknown): string[] {
   return value as string[];
 }
 
+export type ComputerUseMode = 'foreground' | 'background';
+
+/** The agent's mode as the daemon sends it with each agent command; absent means the foreground. */
+export function parseComputerMode(value: unknown): ComputerUseMode {
+  if (value === undefined || value === null || value === 'foreground') return 'foreground';
+  if (value === 'background') return 'background';
+  throw new ComputerCommandError('"mode" must be "foreground" or "background".');
+}
+
 export function parseComputerActor(value: unknown): ComputerActor {
   if (value === 'agent' || value === 'human') return value;
   throw new ComputerCommandError('"actor" must be "agent" or "human".');

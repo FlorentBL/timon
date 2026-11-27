@@ -136,3 +136,14 @@ test("an agent's token may narrow the list", async () => {
   assert.equal(r.status, 200, JSON.stringify(r.json));
   assert.deepEqual(stored('apps.lead').computer_use_apps ?? [], []);
 });
+
+test("an agent's token cannot change computer_use_mode, a person can", async () => {
+  const refused = await call('PATCH', '/api/agents/apps.helper/config', { bearer: leadToken, body: { computer_use_mode: 'background' } });
+  assert.equal(refused.status, 403, JSON.stringify(refused.json));
+  assert.equal(stored('apps.helper').computer_use_mode, undefined);
+  const invalid = await call('PATCH', '/api/agents/apps.helper/config', { bearer: TOKEN, body: { computer_use_mode: 'sideways' } });
+  assert.equal(invalid.status, 400, JSON.stringify(invalid.json));
+  const set = await call('PATCH', '/api/agents/apps.helper/config', { bearer: TOKEN, body: { computer_use_mode: 'background' } });
+  assert.equal(set.status, 200, JSON.stringify(set.json));
+  assert.equal(stored('apps.helper').computer_use_mode, 'background');
+});

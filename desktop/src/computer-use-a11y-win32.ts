@@ -60,6 +60,7 @@ export function win32A11yBackend(exec: Exec): A11yBackend {
       if (!HWND.test(args.windowId)) throw new A11yError('stale', 'The element is gone.');
       const query: WindowsQuery = { q: 'a11y_act', id: args.windowId, path: args.path, action: args.action };
       if (args.action === 'set_value') query.value = args.value ?? '';
+      if (args.background) query.background = true;
       const answer = await ask(exec, query);
       if (answer.ok === true) return;
       if (answer.stale === true) throw new A11yError('stale', 'The element is gone.');

@@ -186,6 +186,8 @@ function Invoke-TimonMsaaAct($q, $root, $steps) {
           if (([int]$d[3] -band 0x20000000) -ne 0) { $done = $true } else { $done = ([string][TimonMsaa]::Describe($node)[2] -eq $want) }
         } catch { $done = $false }
         if (-not $done) {
+          # Background mode: no keyboard, no focus. The agent is told to do without.
+          if ($q.background -eq $true) { return @{ failed = $true } }
           # Last resort: focus the field, select all and type. It uses the keyboard, so the window must
           # already be the foreground one, which is the app the allow list was checked against.
           [TimonMsaa]::Select($node, 1)

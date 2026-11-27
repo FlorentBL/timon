@@ -181,3 +181,18 @@ test('the accessibility line explains what is missing, per system, and stays opt
     assert.doesNotMatch(doc.body.textContent ?? '', /works from screenshots/);
   });
 });
+
+test('working mode: two choices, the stored one is checked, picking the other reports it', async () => {
+  await withDom(async ({ React, root, doc }) => {
+    const { ComputerUseMode } = await import('./computer-use-mode');
+    let picked = '';
+    await React.act(async () => { root.render(React.createElement(ComputerUseMode, { value: 'foreground', onChange: (next: string) => { picked = next; } })); });
+    const foreground = doc.querySelector('[data-computer-use-mode-option="foreground"]') as HTMLInputElement;
+    const background = doc.querySelector('[data-computer-use-mode-option="background"]') as HTMLInputElement;
+    assert.ok(foreground.checked);
+    assert.ok(!background.checked);
+    assert.match(doc.body.textContent ?? '', /never touches your screen/);
+    await React.act(async () => { background.click(); });
+    assert.equal(picked, 'background');
+  });
+});

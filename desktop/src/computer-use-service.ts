@@ -5,7 +5,7 @@
  * so the whole decision logic runs under test with simulated ones. This file imports no Electron.
  */
 import {
-  COMPUTER_DEFAULT_MAX_WIDTH, ComputerCommandError, type ComputerActor, type ComputerCommand, type ComputerUnavailableReason,
+  COMPUTER_DEFAULT_MAX_WIDTH, ComputerCommandError, type ComputerActor, type ComputerUseMode, type ComputerCommand, type ComputerUnavailableReason,
 } from './computer-use-protocol.js';
 import { imageToPoints, pointsToImage, screenshotSize, type DisplayInfo, type ImageSize } from './computer-use-geometry.js';
 import { A11yError, buildTree, parseElementId, type A11yBackend } from './computer-use-a11y.js';
@@ -83,6 +83,8 @@ const INPUT_TIMEOUT_NOTE = 'Input command failed.';
  * What acts on the screen with the keyboard or the mouse: refused unless the foreground application is
  * on the agent's list. screenshot, list_windows and wait stay open (the capture shows the whole screen).
  */
+/** What a background agent may not do: they use the screen, the mouse, the keyboard or the focus of the user. */
+const BACKGROUND_REFUSED = new Set(['screenshot', 'click', 'double_click', 'move', 'drag', 'type', 'key', 'scroll', 'focus_window', 'cursor_position']);
 const GATED = new Set(['click', 'double_click', 'move', 'drag', 'type', 'key', 'scroll']);
 
 export class ComputerUseService {
@@ -232,13 +234,13 @@ export class ComputerUseService {
   }
 
   /** One command at a time: two inputs interleaved would be worse than a short wait. */
-  handle(actor: ComputerActor, command: ComputerCommand, allowedApps: readonly string[] = []): Promise<unknown> {
-    const run = this.queue.then(() => this.dispatch(actor, command, allowedApps));
+  handle(actor: ComputerActor, command: ComputerCommand, allowedApps: readonly string[] = [], mode: ComputerUseMode = 'foreground'): Promise<unknown> {
+    const run = this.queue.then(() => this.dispatch(actor, command, allowedApps, mode));
     this.queue = run.catch(() => undefined);
     return run;
   }
 
-  private async dispatch(actor: ComputerActor, command: ComputerCommand, allowedApps: readonly string[]): Promise<unknown> {
+  private async dispatch(actor: ComputerActor, command: ComputerCommand, allowedApps: readonly string[], mode: ComputerUseMode): Promise<unknown> {
     if (command.command === 'status') return this.status();
     if (command.command === 'request_permissions' || command.command === 'restart_app') {
       if (actor !== 'human') throw new ComputerCommandError('Only a person can change the computer permissions or restart Timon.', 403, 'forbidden');
@@ -256,6 +258,14 @@ export class ComputerUseService {
     }
     if (actor === 'agent' && this.stopped) {
       throw new ComputerCommandError('Computer use was stopped by the user.', 409, 'computer_stopped');
+    }
+    // A background agent never touches the user's screen, mouse or keyboard: only reads and accessibility actions pass.
+    const background = actor === 'agent' && mode === 'background';
+    if (background && BACKGROUND_REFUSED.has(command.command)) {
+      throw new ComputerCommandError('This agent works in the background: use a11y_tree and a11y_action.', 403, 'computer_background_only');
+    }
+    if (background && command.command === 'a11y_action' && command.action === 'focus') {
+      throw new ComputerCommandError('This agent works in the background: use a11y_tree and a11y_action. Focusing an element would take the user\'s focus.', 403, 'computer_background_only');
     }
     const reason = await this.unavailableReason();
     if (reason) {
@@ -275,7 +285,7 @@ export class ComputerUseService {
       case 'list_windows': return this.windows(platform);
       case 'focus_window': return this.focus(actor, platform, command.id, allowedApps);
       case 'a11y_tree': return this.a11yTree(actor, platform, display, command, allowedApps);
-      case 'a11y_action': return this.a11yAction(actor, platform, command, allowedApps, display);
+      case 'a11y_action': return this.a11yAction(actor, platform, command, allowedApps, display, background);
       case 'screenshot': return this.screenshot(display, command.maxWidth);
       case 'cursor_position': {
         const point = this.deps.cursor();
@@ -340,7 +350,7 @@ export class ComputerUseService {
 
   private async a11yAction(
     actor: ComputerActor, platform: InputPlatform, command: Extract<ComputerCommand, { command: 'a11y_action' }>, allowedApps: readonly string[],
-    display?: DisplayInfo,
+    display?: DisplayInfo, background = false,
   ): Promise<unknown> {
     await this.requireA11y();
     const target = parseElementId(command.id);
@@ -351,8 +361,11 @@ export class ComputerUseService {
     if (!app) throw this.a11yFailure(new A11yError('stale', 'No such window.'), '');
     if (actor === 'agent' && !isAppAllowed(app, allowedApps)) throw this.notAllowed(app, allowedApps, 'The application of that element');
     try {
-      await this.a11y.act({ windowId: target.windowId, path: target.path, action: command.action, ...(command.value === undefined ? {} : { value: command.value }) });
+      await this.a11y.act({ windowId: target.windowId, path: target.path, action: command.action, ...(command.value === undefined ? {} : { value: command.value }), ...(background ? { background: true } : {}) });
     } catch (error) {
+      if (background && command.action === 'set_value' && error instanceof A11yError && error.kind === 'failed') {
+        throw new ComputerCommandError('This field refused the value through accessibility, and a background agent may not type with the keyboard. Try another element, or ask the user to switch this agent to the foreground mode.', 502, 'a11y_failed');
+      }
       // Some toolkits refuse to write a field's text through accessibility (Chromium under Linux did,
       // CI run 46006353531): focus the element through accessibility, then select its content and type
       // the value with the keyboard. The keyboard goes to the application in front, so the allowed

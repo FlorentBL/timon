@@ -80,12 +80,12 @@ async function main() {
   desktop = await startComputerUse(home, (key) => key);
   const provider = JSON.parse(await readFile(join(home, 'computer-native', 'provider.json'), 'utf8'));
 
-  async function send(command, args, actor = 'agent', label = command, allowedApps = ALLOWED) {
+  async function send(command, args, actor = 'agent', label = command, allowedApps = ALLOWED, mode) {
     const started = performance.now();
     const response = await fetch(`${provider.origin}/command`, {
       method: 'POST',
       headers: { 'content-type': 'application/json', authorization: `Bearer ${provider.token}` },
-      body: JSON.stringify({ command, args, actor, allowedApps }),
+      body: JSON.stringify({ command, args, actor, allowedApps, ...(mode ? { mode } : {}) }),
     });
     const body = await response.json();
     const ms = Math.round(performance.now() - started);
@@ -316,6 +316,24 @@ async function main() {
     if (before.x !== after.x || before.y !== after.y) throw fail(`The accessibility actions moved the mouse: ${JSON.stringify(before)} -> ${JSON.stringify(after)}`);
     await expectValue(TYPED, 'the accessibility actions left the textarea alone');
     log('  ✓ the mouse did not move');
+
+    // Background mode: the pixel, keyboard and focus commands are refused, accessibility still works.
+    const back = (command, args, label) => send(command, args, 'agent', `${label ?? command} (background)`, ALLOWED, 'background');
+    const pixelRefusals = [['screenshot', {}], ['click', { x: target.x, y: target.y }], ['type', { text: 'LEAK' }], ['key', { keys: 'a' }],
+      ['scroll', { x: target.x, y: target.y, deltaY: 1 }], ['focus_window', { id: windowId }], ['a11y_action', { id: field.id, action: 'focus' }]];
+    for (const [command, args] of pixelRefusals) {
+      const refusedInBackground = await back(command, args);
+      if (refusedInBackground.status !== 403 || refusedInBackground.body.code !== 'computer_background_only') throw fail(`In the background ${command} must get computer_background_only, got ${JSON.stringify(refusedInBackground)}`);
+    }
+    await expectValue(TYPED, 'the background refusals left the textarea alone');
+    const backgroundSet = await back('a11y_action', { id: field.id, action: 'set_value', value: 'bg' });
+    if (backgroundSet.status !== 200) throw fail(`In the background set_value must pass, got ${JSON.stringify(backgroundSet)}`);
+    const backgroundUntil = Date.now() + 5000;
+    while ((await nameField()) !== 'bg' && Date.now() < backgroundUntil) await sleep(100);
+    if ((await nameField()) !== 'bg') throw fail(`Background set_value: the field holds ${JSON.stringify(await nameField())}, expected "bg".`);
+    const backgroundPress = await back('a11y_action', { id: button.id, action: 'press' });
+    if (backgroundPress.status !== 200) throw fail(`In the background press must pass, got ${JSON.stringify(backgroundPress)}`);
+    log('  ✓ background mode: pixel, keyboard and focus refused, a11y_action press and set_value pass');
 
     const stale = await send('a11y_action', { id: `${windowId}#0.99.99`, action: 'press' }, 'agent', 'a11y_action (stale id)');
     if (stale.status !== 409 || stale.body.code !== 'a11y_element_stale') throw fail(`A stale id must get a11y_element_stale, got ${JSON.stringify(stale)}`);

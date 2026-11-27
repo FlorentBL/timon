@@ -39,7 +39,7 @@ function setup(allowed: readonly string[] = ['TextEdit'], overrides: Partial<Com
     },
     ...overrides,
   });
-  const run = (command: string, args?: unknown, actor: 'agent' | 'human' = 'agent') => service.handle(actor, parseComputerCommand(command, args), allowed);
+  const run = (command: string, args?: unknown, actor: 'agent' | 'human' = 'agent', mode: 'foreground' | 'background' = 'foreground') => service.handle(actor, parseComputerCommand(command, args), allowed, mode);
   return { backend, service, run, calls };
 }
 
@@ -188,4 +188,33 @@ test('element ids round-trip, and the filter and tree builder drop orphans', () 
   assert.equal(filterByQuery(TREE, undefined).length, TREE.length);
   const orphan = buildTree({ id: 'w', title: '', app: '' }, { truncated: false, nodes: [node('0', 'window', 'w'), node('0.3.1', 'button', 'lost')] }, { maxDepth: 8, maxNodes: 10 }, display, { width: 1440, height: 900 });
   assert.equal(orphan.nodes.length, 1);
+});
+
+test('in the background mode only reads and accessibility actions pass; the pixel and focus ones are refused with computer_background_only', async () => {
+  const { run, backend, calls } = setup();
+  const refused = (e: ComputerCommandError) => e.code === 'computer_background_only' && e.statusCode === 403 && /a11y_tree and a11y_action/.test(e.message);
+  for (const [command, args] of [['screenshot', {}], ['click', { x: 1, y: 1 }], ['double_click', { x: 1, y: 1 }], ['move', { x: 1, y: 1 }],
+    ['drag', { fromX: 1, fromY: 1, toX: 2, toY: 2 }], ['type', { text: 'x' }], ['key', { keys: 'Enter' }], ['scroll', { x: 1, y: 1, deltaY: 3 }],
+    ['focus_window', { id: '10:1' }], ['a11y_action', { id: '10:1#0.0.0', action: 'focus' }]] as const) {
+    await assert.rejects(run(command, args, 'agent', 'background'), refused, command);
+  }
+  assert.equal(calls.length, 0, 'nothing reached the machine');
+  assert.equal(backend.acts.length, 0);
+  await run('list_windows', undefined, 'agent', 'background');
+  await run('a11y_tree', undefined, 'agent', 'background');
+  await run('wait', { ms: 0 }, 'agent', 'background');
+  assert.deepEqual(await run('a11y_action', { id: '10:1#0.1', action: 'press' }, 'agent', 'background'), { ok: true });
+  assert.deepEqual(backend.acts.at(-1), { windowId: '10:1', path: '0.1', action: 'press', background: true });
+  // A person is never held to the mode.
+  await run('screenshot', undefined, 'human', 'background');
+});
+
+test('in the background mode a field the toolkit refuses gets a11y_failed with advice, never the keyboard', async () => {
+  const { run, backend, calls } = setup();
+  const acts: string[] = [];
+  backend.act = async (args) => { acts.push(args.action); throw new A11yError('failed', 'refused'); };
+  await assert.rejects(run('a11y_action', { id: '10:1#0.0.0', action: 'set_value', value: 'timon' }, 'agent', 'background'),
+    (e: ComputerCommandError) => e.code === 'a11y_failed' && /foreground/.test(e.message) && !/timon/.test(e.message));
+  assert.deepEqual(acts, ['set_value'], 'no focus action');
+  assert.equal(calls.some((c) => c.args.some((arg) => arg.includes('CGEventPost') || arg.includes('keystroke'))), false);
 });

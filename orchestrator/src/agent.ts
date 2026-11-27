@@ -298,6 +298,8 @@ import {
   isValidAgentName,
   validName,
   storedComputerUseApps,
+  storedComputerUseMode,
+  type ComputerUseMode,
 } from './agent-config.js';
 
 // The ACP runtime is shared with the published SDK, so it learns from the daemon which missions are fenced.
@@ -5075,6 +5077,8 @@ export type AgentSummary = {
   computer_use: boolean;
   /** Applications the agent may type or click in while computer use is on. */
   computer_use_apps: string[];
+  /** 'background' = accessibility only, the user's screen, mouse and keyboard are never touched. */
+  computer_use_mode: ComputerUseMode;
 };
 
 export type AgentDetails = AgentSummary & { system_prompt: string };
@@ -5123,6 +5127,7 @@ export function getAgent(name: string): AgentDetails | null {
     extra_dirs: storedExtraDirs(cfg),
     computer_use: cfg.computer_use === true,
     computer_use_apps: storedComputerUseApps(cfg),
+    computer_use_mode: storedComputerUseMode(cfg),
   };
 }
 
@@ -5210,7 +5215,7 @@ export function upsertAgent(input: {
     // them would take the delegation rights away without anyone asking.
     // The mascot look and the avatar mode are picked elsewhere too
     // (onboarding, the Avatar tab, `agent_update look`, `agent_set_look`).
-    for (const key of ['reports_to', 'team', 'orchestrator', 'orchestrates', 'directives', 'created_by', 'uid', 'look', 'avatar', 'extra_dirs', 'computer_use', 'computer_use_apps'] as const) {
+    for (const key of ['reports_to', 'team', 'orchestrator', 'orchestrates', 'directives', 'created_by', 'uid', 'look', 'avatar', 'extra_dirs', 'computer_use', 'computer_use_apps', 'computer_use_mode'] as const) {
       if (!(key in config) && current[key] !== undefined) (config as Record<string, unknown>)[key] = current[key];
     }
   }
@@ -6155,6 +6160,7 @@ export function listAgents(): AgentSummary[] {
       extra_dirs: storedExtraDirs(cfg),
       computer_use: cfg.computer_use === true,
       computer_use_apps: storedComputerUseApps(cfg),
+      computer_use_mode: storedComputerUseMode(cfg),
     });
   }
   return out;

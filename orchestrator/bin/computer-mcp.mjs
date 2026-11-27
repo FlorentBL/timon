@@ -15,8 +15,10 @@ const NO_PASSWORD = ' Never type a password, a one-time code or a payment detail
 // The steps computer_actions accepts: the commands that act or wait, never one that reads.
 const BATCH_ACTIONS = ['click', 'double_click', 'move', 'drag', 'type', 'key', 'scroll', 'wait', 'focus_window', 'a11y_action'];
 const A11Y_ACTIONS = ['press', 'focus', 'set_value', 'select', 'expand', 'collapse', 'show_menu', 'scroll_into_view'];
+// Acting by window id keeps the user's screen and focus theirs; an agent set to the background mode cannot do otherwise.
+const NO_FOCUS = ' Prefer acting by windowId with computer_a11y_tree and computer_a11y_action without bringing the window to the front; use computer_focus_window only if needed. If a call is refused with computer_background_only, this agent works in the background: use only computer_list_windows, computer_a11y_tree and computer_a11y_action, never a screenshot, the mouse, the keyboard or focus.';
 // The order to work in: the tree first, pixels only for what the tree does not show.
-const A11Y_FIRST = ' Read the window first with computer_a11y_tree and act by element. Take a screenshot and click in pixels only if the element is missing from the tree.';
+const A11Y_FIRST = ' Read the window first with computer_a11y_tree and act by element. Take a screenshot and click in pixels only if the element is missing from the tree.' + NO_FOCUS;
 const MAX_STEPS = 20;
 const tools = [
   { name: 'computer_a11y_tree', description: `Read a window as a tree of elements (buttons, fields, menus...), with no screenshot. One line per element, indented by depth: #id role "name" = value [actions] @x,y. The id is what follows the first "#". Without windowId it reads the window in front. Use query to find an element by part of its name, value or role (case does not matter): the answer keeps the matches and the elements that contain them. Roles: button, textfield, textarea, checkbox, radio, combobox, list, listitem, menu, menuitem, menubar, tab, tablist, link, image, text, group, window, toolbar, table, row, cell, slider, scrollbar, other. Ids last as long as the interface does not change: an a11y_element_stale error means read the tree again. Set withBounds only if you need the positions (in screenshot pixels).${A11Y_FIRST}`, inputSchema: schema({
@@ -38,8 +40,8 @@ const tools = [
   { name: 'computer_type', description: `Type text with the keyboard into the focused field (at most 2000 characters). Click the field first.${NO_PASSWORD}`, inputSchema: schema({ text: { type: 'string', minLength: 1, maxLength: 2000 } }, ['text']) },
   { name: 'computer_key', description: `Press a key or a shortcut, such as "Enter", "cmd+c" or "ctrl+shift+t".${NO_PASSWORD}`, inputSchema: schema({ keys: { type: 'string', minLength: 1, maxLength: 100 } }, ['keys']) },
   { name: 'computer_scroll', description: `Scroll the wheel at a point of the screen; a positive deltaY scrolls down.${SEE_FIRST}`, inputSchema: schema({ x: num, y: num, deltaX: num, deltaY: num }, ['x', 'y', 'deltaY']) },
-  { name: 'computer_list_windows', description: 'List the open windows as [{ id, title, app, focused }]. Use it to find the window to bring to the front with computer_focus_window. The user allows only some applications: keyboard and mouse actions are refused unless the application in the foreground is on that list.', inputSchema: schema() },
-  { name: 'computer_focus_window', description: 'Bring a window to the front, by the id computer_list_windows returned. Refused when its application is not one the user allowed. Take a screenshot afterwards: the windows may have moved.', inputSchema: schema({ id: { type: 'string', minLength: 1, maxLength: 64 } }, ['id']) },
+  { name: 'computer_list_windows', description: 'List the open windows as [{ id, title, app, focused }]. Use it to find a window id for computer_a11y_tree, or the window to bring to the front with computer_focus_window. The user allows only some applications: keyboard and mouse actions are refused unless the application in the foreground is on that list.', inputSchema: schema() },
+  { name: 'computer_focus_window', description: 'Bring a window to the front, by the id computer_list_windows returned. Refused when its application is not one the user allowed. Take a screenshot afterwards: the windows may have moved. It takes the focus from the user: prefer computer_a11y_tree with a windowId. Refused for an agent that works in the background.', inputSchema: schema({ id: { type: 'string', minLength: 1, maxLength: 64 } }, ['id']) },
   { name: 'computer_cursor_position', description: 'Read the current position of the mouse pointer, in screenshot coordinates.', inputSchema: schema() },
   { name: 'computer_wait', description: `Wait for the screen to settle, at most 10 seconds.${THRIFT}`, inputSchema: schema({ ms: { type: 'integer', minimum: 0, maximum: 10000 } }, ['ms']) },
 ];
@@ -57,7 +59,11 @@ async function command(name, args) {
     body: JSON.stringify(args), signal: AbortSignal.timeout(30_000), redirect: 'error',
   });
   const body = await response.json().catch(() => ({}));
-  if (!response.ok || body.ok === false) throw new Error(body.error?.message || body.message || (typeof body.error === 'string' ? body.error : '') || `Computer request failed (${response.status}).`);
+  if (!response.ok || body.ok === false) {
+    const failure = new Error(body.error?.message || body.message || (typeof body.error === 'string' ? body.error : '') || `Computer request failed (${response.status}).`);
+    failure.code = body.error?.code ?? body.code;
+    throw failure;
+  }
   return body.result;
 }
 /** Runs the steps one after the other through the daemon, which validates each of them as a single call would be. */
@@ -74,7 +80,12 @@ async function runActions(args) {
     done += 1;
   }
   if (args.screenshot === false) return { steps: done };
-  const shot = await command('screenshot', args.maxWidth === undefined ? {} : { maxWidth: args.maxWidth });
+  let shot;
+  try { shot = await command('screenshot', args.maxWidth === undefined ? {} : { maxWidth: args.maxWidth }); } catch (error) {
+    // A background agent never gets a capture of the user's screen: the steps are done, so say so.
+    if (error.code === 'computer_background_only') return { steps: done, note: error.message };
+    throw error;
+  }
   return { ...shot, steps: done };
 }
 /** The tree as indented text: far fewer tokens than the JSON, and the ids stay readable. */
