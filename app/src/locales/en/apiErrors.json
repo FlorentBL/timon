@@ -478,6 +478,8 @@
     "computer_mission_token_required": "A mission token is required to control the computer.",
     "computer_use_disabled": "Computer use is turned off for this agent.",
     "computer_args_invalid": "Invalid arguments for this computer command.",
+    "computer_app_not_allowed": "{detail}",
+    "computer_window_not_found": "That window no longer exists. List the open windows again.",
     "browser_desktop_unavailable": "Open Timon desktop on the host machine to use this browser.",
     "browser_profile_invalid": "This browser profile is invalid.",
     "browser_profile_not_found": "Browser profile not found.",

@@ -13,11 +13,11 @@ const SEE_FIRST = ' Coordinates are in the pixels of the latest screenshot.';
 const THRIFT = ' To save tokens, chain the steps you can predict in one computer_actions call, and look at the screen only when the next step depends on it.';
 const NO_PASSWORD = ' Never type a password, a one-time code or a payment detail: ask the user to do it.';
 // The steps computer_actions accepts: the commands that act or wait, never one that reads.
-const BATCH_ACTIONS = ['click', 'double_click', 'move', 'drag', 'type', 'key', 'scroll', 'wait'];
+const BATCH_ACTIONS = ['click', 'double_click', 'move', 'drag', 'type', 'key', 'scroll', 'wait', 'focus_window'];
 const MAX_STEPS = 20;
 const tools = [
   { name: 'computer_screenshot', description: `Capture the main screen as a JPEG, 1024 px wide by default. Ask for a larger maxWidth only to read small text, a smaller one (768) for a quick look.${THRIFT}`, inputSchema: schema({ maxWidth: { type: 'integer', minimum: 64, maximum: 4096 } }) },
-  { name: 'computer_actions', description: `Run several steps in a row, then return one screenshot (unless screenshot is false). Each step is an object with an "action" (click, double_click, move, drag, type, key, scroll, wait) and that action's arguments, for example [{"action":"key","keys":"cmd+space"},{"action":"type","text":"TextEdit"},{"action":"key","keys":"Enter"},{"action":"wait","ms":1500}]. Stops at the first failing step and says which.${SEE_FIRST}${NO_PASSWORD}`, inputSchema: schema({
+  { name: 'computer_actions', description: `Run several steps in a row, then return one screenshot (unless screenshot is false). Each step is an object with an "action" (click, double_click, move, drag, type, key, scroll, wait, focus_window) and that action's arguments, for example [{"action":"key","keys":"cmd+space"},{"action":"type","text":"TextEdit"},{"action":"key","keys":"Enter"},{"action":"wait","ms":1500}]. Stops at the first failing step and says which.${SEE_FIRST}${NO_PASSWORD}`, inputSchema: schema({
     steps: { type: 'array', minItems: 1, maxItems: 20, items: { type: 'object', properties: { action: { type: 'string', enum: [...BATCH_ACTIONS] } }, required: ['action'] } },
     screenshot: { type: 'boolean' }, maxWidth: { type: 'integer', minimum: 64, maximum: 4096 },
   }, ['steps']) },
@@ -28,6 +28,8 @@ const tools = [
   { name: 'computer_type', description: `Type text with the keyboard into the focused field (at most 2000 characters). Click the field first.${NO_PASSWORD}`, inputSchema: schema({ text: { type: 'string', minLength: 1, maxLength: 2000 } }, ['text']) },
   { name: 'computer_key', description: `Press a key or a shortcut, such as "Enter", "cmd+c" or "ctrl+shift+t".${NO_PASSWORD}`, inputSchema: schema({ keys: { type: 'string', minLength: 1, maxLength: 100 } }, ['keys']) },
   { name: 'computer_scroll', description: `Scroll the wheel at a point of the screen; a positive deltaY scrolls down.${SEE_FIRST}`, inputSchema: schema({ x: num, y: num, deltaX: num, deltaY: num }, ['x', 'y', 'deltaY']) },
+  { name: 'computer_list_windows', description: 'List the open windows as [{ id, title, app, focused }]. Use it to find the window to bring to the front with computer_focus_window. The user allows only some applications: keyboard and mouse actions are refused unless the application in the foreground is on that list.', inputSchema: schema() },
+  { name: 'computer_focus_window', description: 'Bring a window to the front, by the id computer_list_windows returned. Refused when its application is not one the user allowed. Take a screenshot afterwards: the windows may have moved.', inputSchema: schema({ id: { type: 'string', minLength: 1, maxLength: 64 } }, ['id']) },
   { name: 'computer_cursor_position', description: 'Read the current position of the mouse pointer, in screenshot coordinates.', inputSchema: schema() },
   { name: 'computer_wait', description: `Wait for the screen to settle, at most 10 seconds.${THRIFT}`, inputSchema: schema({ ms: { type: 'integer', minimum: 0, maximum: 10000 } }, ['ms']) },
 ];
@@ -35,7 +37,7 @@ const tools = [
 const COMMANDS = {
   computer_screenshot: 'screenshot', computer_click: 'click', computer_double_click: 'double_click', computer_move: 'move',
   computer_drag: 'drag', computer_type: 'type', computer_key: 'key', computer_scroll: 'scroll',
-  computer_cursor_position: 'cursor_position', computer_wait: 'wait',
+  computer_cursor_position: 'cursor_position', computer_list_windows: 'list_windows', computer_focus_window: 'focus_window', computer_wait: 'wait',
 };
 async function command(name, args) {
   if (!token) throw new Error('A mission token is required to control the computer.');

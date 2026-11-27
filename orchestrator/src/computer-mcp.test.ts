@@ -41,8 +41,8 @@ test('computer MCP lists its tools and warns about screenshots, tokens and passw
   const { call } = await harness(t, () => ({ body: {} }));
   const { result } = await call('tools/list');
   assert.deepEqual(result.tools.map((x: any) => x.name).sort(), [
-    'computer_actions', 'computer_click', 'computer_cursor_position', 'computer_double_click', 'computer_drag', 'computer_key',
-    'computer_move', 'computer_screenshot', 'computer_scroll', 'computer_type', 'computer_wait',
+    'computer_actions', 'computer_click', 'computer_cursor_position', 'computer_double_click', 'computer_drag', 'computer_focus_window', 'computer_key',
+    'computer_list_windows', 'computer_move', 'computer_screenshot', 'computer_scroll', 'computer_type', 'computer_wait',
   ]);
   const text = result.tools.map((x: any) => x.description).join(' ');
   assert.match(text, /screenshot/i);
@@ -103,4 +103,12 @@ test('computer_actions refuses a step that is not an action, before doing anythi
   const out = await call('tools/call', { name: 'computer_actions', arguments: { steps: [{ action: 'screenshot' }] } });
   assert.equal(out.result.isError, true);
   assert.deepEqual(requests, []);
+});
+
+test('computer_actions accepts focus_window as a step, and the window tools reach their commands', async (t) => {
+  const { requests, call } = await harness(t, () => ({ body: { ok: true, result: {} } }));
+  await call('tools/call', { name: 'computer_actions', arguments: { screenshot: false, steps: [{ action: 'focus_window', id: '12:1' }, { action: 'type', text: 'x' }] } });
+  await call('tools/call', { name: 'computer_list_windows', arguments: {} });
+  await call('tools/call', { name: 'computer_focus_window', arguments: { id: '7' } });
+  assert.deepEqual(requests.map((r) => r.path), ['/api/computer/focus_window', '/api/computer/type', '/api/computer/list_windows', '/api/computer/focus_window']);
 });
