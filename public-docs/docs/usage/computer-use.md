@@ -24,9 +24,18 @@ The foreground application is checked just before each action. A window change i
 - An entry can be the application's name, the name of its executable, or on macOS its bundle identifier (for example `TextEdit`, `notepad` or `com.apple.TextEdit`). The case does not matter, and a trailing `.exe` is ignored.
 - **An empty list means the agent cannot do anything with the keyboard or the mouse.** The card warns you about it. Screenshots, listing the windows and waiting stay possible.
 - **Add from open windows** lists the applications that have a window open right now: click one to add it.
-- Only a person can edit the list. An agent cannot add to it, whatever its account holds; it can only remove entries.
+- Only a person can edit the list. An agent cannot add to it, whatever its account holds; it can only remove entries, and it can **ask you** to add some, as the next section describes.
 
 **Known limit:** a screenshot always shows your whole screen, not only the allowed applications. Close or hide whatever the agent must not see before you let it work.
+
+## Allow from the conversation
+
+You do not have to open the settings. Tell an agent, for example your orchestrator, "I want agent X to control Discord", and it calls `computer_use_propose` (`timon computer propose <agent> --add Discord --enable` from a terminal). Nothing changes yet: a card appears in that conversation, titled **Allow X to control Discord with computer use**.
+
+- The card shows the agent's access **now** and **after** (computer use on or off, and the list of allowed applications before and after), then a reminder: the agent will be able to click and type in these applications when they are in front.
+- **Allow** applies it: the agent's settings are updated as if you had edited them, and its running conversations restart with the new access at their next turn. **Refuse** changes nothing. Either way, the agent that asked is told your answer.
+- Only you can press **Allow**, from the app (a signed-in session or a paired device): an agent's, a conversation's or the daemon's token is refused, so an agent can never grant itself access. A request applies once, and expires after 24 hours; after that, ask again.
+- A request can add applications (up to 20), remove some, and switch computer use on or off. If the application is open, the card also shows the name your system gives it, such as "discord" for "Discord". The list keeps the name as the agent wrote it, which Timon compares without regard to case; to be exact, ask the agent to give the bundle identifier (`com.hnc.Discord` on macOS), the executable (`Discord.exe` on Windows) or the command (`discord` on Linux).
 
 ## Windows
 

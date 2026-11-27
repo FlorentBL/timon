@@ -405,6 +405,10 @@ Widget arrangement of the user's screen (an agent's mission owner):
   timon widgets preset-save <name> [--view PATH] [--project SLUG] [--replace]
                                              current arrangement → Layouts menu
 
+Computer use (an agent's mission, the user decides):
+  timon computer propose <agent> [--add APP]... [--remove APP]... [--enable|--disable] [--note TEXT]
+                                             a card the user allows or refuses; nothing changes by itself
+
 Island workspace of the user's screen (an agent's mission owner):
   timon islands get [--view PATH] [--project SLUG]
                                              islands, tabs, focus, content types, limits
