@@ -171,6 +171,22 @@ over `timon.config.json` (`orchestrator/src/config/load.ts`, `ENV_OVERRIDES`):
 | `TIMON_INSTALL_DIR` | `<installDir>/../app` is where the daemon serves the UI from, and an AppImage mounts its resources on a different `/tmp/.mount_XXXX` at every launch. |
 | `PORT`, `TIMON_APP_ENABLED`, `TIMON_APP_PORT` | Only on a first launch (see above): what the shell decided alone, so the daemon does not pick the developer defaults instead. |
 
+## Computer use (native service)
+
+The shell serves a second private loopback transport, `computer-native`, next to the browser's:
+`<TIMON_HOME>/computer-native/provider.json` (`{ version, origin, token, pid }`, owner-only, removed on quit) and
+`POST <origin>/command` with `Authorization: Bearer <token>` and `{ command, args, actor }`. The answer is
+`{ ok: true, result }` or `{ ok: false, error, code }` (HTTP 409 and `computer_stopped` after a stop).
+Coordinates are in the pixels of the last screenshot; the shell converts them to screen points.
+
+- Screenshots: Electron's `desktopCapturer`, primary display, resized (1280 px wide by default).
+- Input: macOS `osascript` (JXA, CGEvent), Windows `powershell.exe` (SendInput), Linux `xdotool` under X11.
+  Wayland or a missing tool reports `available: false` with a `reason`. macOS also needs the Accessibility and
+  Screen Recording grants (`permission-accessibility`, `permission-screen`).
+- Safety: only a person (`actor: "human"`) can `stop` or `resume`. `Ctrl/Cmd+Shift+Escape` stops from anywhere, and a
+  small always-on-top bar with a Stop button shows while the agent is acting.
+- Code: `desktop/src/computer-use-*.ts`. Scripts are fixed text fed with JSON; typed text never reaches a script or a shell.
+
 ## Uninstall
 
 In an installed desktop app, open **Settings → Desktop application → Uninstall
