@@ -20,6 +20,7 @@
     "dist:daemon": "node scripts/prepare-daemon-release.mjs",
     "test:release": "node ../scripts/run-tests.mjs scripts/release.test.mjs scripts/daemon-artefact.test.mjs",
     "test:runtime": "node scripts/runtime-node-smoke.mjs",
+    "test:computer-use-e2e": "tsc --outDir dist-e2e && electron scripts/computer-use-e2e.mjs",
     "check:release": "node scripts/prepare-daemon-release.mjs --check"
   },
   "devDependencies": {
