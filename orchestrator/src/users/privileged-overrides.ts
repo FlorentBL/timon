@@ -516,12 +516,14 @@ export type WideningRequest = {
   allowed_tools?: unknown;
   mcp_servers?: unknown;
   disallowed_tools?: unknown;
+  computer_use?: unknown;
 };
 
 export type WideningGrant = {
   allowed_tools?: readonly string[] | null;
   mcp_servers?: readonly string[] | null;
   disallowed_tools?: readonly string[] | null;
+  computer_use?: boolean | null;
 } | null;
 
 /**
@@ -552,6 +554,15 @@ export function agentWideningRefusal(
     if (value === undefined || value === null) return null;
     return asStringArray(value) ?? 'invalid';
   };
+
+  // Controlling the host's mouse and keyboard: only a person grants it.
+  if (wanted.computer_use !== undefined && wanted.computer_use !== null) {
+    if (typeof wanted.computer_use !== 'boolean') return `${label('computer_use')} must be a boolean`;
+    if (wanted.computer_use && granted?.computer_use !== true) {
+      return `${label('computer_use')} turns on control of the host's mouse and keyboard: an agent's token cannot grant it, whatever its account holds. `
+        + 'A person turns it on from the Agents page of the app. Turning it off, or sending it unchanged, is accepted';
+    }
+  }
 
   const tools = listOf('allowed_tools');
   if (tools === 'invalid') return `${label('allowed_tools')} must be an array of strings`;
