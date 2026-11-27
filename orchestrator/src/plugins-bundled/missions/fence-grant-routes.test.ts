@@ -170,6 +170,7 @@ test('an accord adds the folder, records the answer and relaunches the mission, 
     (({ id: rid, status, path, mode }) => ({ id: rid, status, path, mode }))(JSON.parse(answer.payload) as Record<string, unknown>),
     { id, status: 'allowed', path: folder, mode: 'write' },
   );
+  assert.equal((JSON.parse(answer.payload) as Record<string, unknown>).requeued, undefined, 'no task was put back');
   assert.equal(relaunched.length, 1);
   assert.equal(relaunched[0]!.missionId, m);
   assert.match(relaunched[0]!.text, /may now read and write/);
@@ -279,6 +280,14 @@ test('a task blocked by a refused launch goes back to PENDING; its mission is no
   assert.equal(task.status, 'PENDING');
   assert.equal(task.blocked_reason, null);
   assert.equal(relaunched.length, before);
+  // A reload of the thread reads the recorded answer, not this response: it must say the task went back (TODO #1189).
+  const answer = dbApi.listEvents(missionId).find((e) => e.type === 'fence_grant_resolved');
+  assert.ok(answer);
+  assert.equal((JSON.parse(answer.payload) as Record<string, unknown>).requeued, true);
+  assert.equal((r.json.resolution as Record<string, unknown>).requeued, true);
+  const again = await call('POST', route(missionId, refusalId), { cookie: adminCookie, body: { decision: 'allow' } });
+  assert.equal(again.status, 409);
+  assert.equal((again.json.resolution as Record<string, unknown>).requeued, true, 'a card answered elsewhere comes back with the requeue');
 });
 
 test('the same with "Allow for the project"', async () => {

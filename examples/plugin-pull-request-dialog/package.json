@@ -1,0 +1,24 @@
+{
+  "name": "@timon-ai/plugin-pull-request-dialog",
+  "version": "0.1.0",
+  "license": "MIT",
+  "private": true,
+  "type": "module",
+  "exports": { "./client": "./lib/client.js" },
+  "files": ["lib", "README.md", "SIGNATURE"],
+  "timon": {
+    "id": "example-pull-request-dialog",
+    "apiVersion": 20,
+    "kind": "behavior",
+    "label": "Compact pull request window",
+    "description": "Replaces a pull request's detail window with a compact one: where it stands, its checks one line each with the log of a failure, and its gestures.",
+    "permissions": [],
+    "client": {
+      "slots": ["kanban.pull.dialog"],
+      "external": ["react", "@timon/ui"],
+      "mode": "esm"
+    },
+    "settings": [],
+    "license": { "required": false }
+  }
+}

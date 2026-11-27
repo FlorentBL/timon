@@ -30,6 +30,18 @@ export type DownloadOptions = {
   timeoutMs?: number;
 };
 
+/**
+ * What a download error may say: it reaches the HTTP answer and the log. A system
+ * error names files of this machine, so only its code is kept; a fetch error may
+ * quote the address, whose query or userinfo can hold a credential.
+ */
+function reasonOf(err: unknown): string {
+  // A stream may reject with something that is not an Error: its text is still the reason.
+  const { code, syscall, message } = (err instanceof Error ? err : {}) as Partial<NodeJS.ErrnoException>;
+  if (syscall) return code ?? 'system error';
+  return String(message ?? err).replace(/\b[a-z][a-z0-9+.-]*:\/\/\S+/gi, '<address>');
+}
+
 function assertHttps(url: string): URL {
   let parsed: URL;
   try { parsed = new URL(url); } catch { throw new DownloadError('insecure', 'invalid download address'); }
@@ -56,7 +68,7 @@ export async function downloadVerified(
       try {
         res = await fetchFn(current, { redirect: 'manual', signal: abort.signal });
       } catch (err) {
-        throw new DownloadError('network', `download failed: ${(err as Error).message}`);
+        throw new DownloadError('network', `download failed: ${reasonOf(err)}`);
       }
       if (res.status >= 300 && res.status < 400) {
         const location = res.headers.get('location');
@@ -103,7 +115,7 @@ export async function downloadVerified(
     if (fd !== null) { try { closeSync(fd); } catch { /* already closed */ } }
     rmSync(dest, { force: true });
     if (err instanceof DownloadError) throw err;
-    throw new DownloadError('network', `download failed: ${(err as Error).message}`);
+    throw new DownloadError('network', `download failed: ${reasonOf(err)}`);
   } finally {
     clearTimeout(timer);
   }

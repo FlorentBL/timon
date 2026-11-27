@@ -94,14 +94,17 @@ async function call<T>(method: string, path: string, body?: unknown): Promise<T>
   return json as T;
 }
 
+/** Refusals whose sentence alone does not say what to fix: the daemon's own words follow it. */
+const EXPLAINED = ['download-failed', 'checksum', 'archive', 'command-missing', 'definition-refused'];
+
 /** Daemon codes → sentences of the locale; an unknown code keeps the daemon's own (path-free) message. */
 export function providerErrorMessage(status: number, code: string, message: string): string {
   if (status === 401 || status === 403) return t('providersSettings.errors.forbidden');
   const known = ['mismatch', 'refused', 'unverified', 'already-installed', 'not-installed', 'unknown-agent', 'unsupported',
-    'registry-unavailable', 'download-failed', 'checksum', 'archive', 'command-missing', 'definition-refused', 'authorize-failed', 'failed',
-    'not-ready', 'inspect-failed'];
-  if (known.includes(code)) return t(`providersSettings.errors.${code}`);
-  return message || t('providersSettings.errors.generic', { status });
+    'registry-unavailable', 'authorize-failed', 'failed', 'not-ready', 'inspect-failed', ...EXPLAINED];
+  if (!known.includes(code)) return message || t('providersSettings.errors.generic', { status });
+  const sentence = t(`providersSettings.errors.${code}`);
+  return message && EXPLAINED.includes(code) ? t('providersSettings.errors.withReason', { sentence, reason: message }) : sentence;
 }
 
 export const fetchProviders = async (): Promise<ProviderPlugin[]> => (await call<{ providers: ProviderPlugin[] }>('GET', 'list')).providers;

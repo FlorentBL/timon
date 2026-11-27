@@ -432,6 +432,7 @@
       "archive": "Archiwum zostało odrzucone jako niebezpieczne.",
       "command-missing": "Programu wskazanego przez rejestr nie ma w archiwum.",
       "definition-refused": "Timon odrzucił tego agenta: jego opis jest wewnętrznie sprzeczny.",
+      "withReason": "{sentence} ({reason})",
       "authorize-failed": "Nie udało się autoryzować programu. Szczegóły są w dzienniku Timon.",
       "failed": "Operacja nie powiodła się. Szczegóły są w dzienniku Timon."
     }

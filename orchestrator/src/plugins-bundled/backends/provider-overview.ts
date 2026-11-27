@@ -514,7 +514,9 @@ function overviewOf(group: Group, snap: Snapshot, viewer: DbViewer): ProviderOve
   const progs = programs(group, snap);
   const plugin = group.plugin;
   const installed = group.agent?.installed ?? null;
-  const signedIn = signedInOf(group.backendIds);
+  // A provider that reads a key runs on nothing else: without it, a turn that once worked is no sign-in to show.
+  const remembered = signedInOf(group.backendIds);
+  const signedIn = secret.required && !secret.present && remembered === true ? null : remembered;
   const signInCommand = card?.signInCommand ?? (first ? snap.catalog.get(first)?.signInCommand : undefined) ?? null;
   const signInThen = card?.signInThen ?? (first ? snap.catalog.get(first)?.signInThen : undefined) ?? null;
   const disabled = plugin?.state === 'disabled' || (backends.length > 0 && backends.every((backend) => backend.disabled));

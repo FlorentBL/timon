@@ -358,7 +358,9 @@ test('opencode 2 found: the card says why it is left alone, and offers no button
   try {
     await m.render(m.React.createElement(m.cards.ProviderCliCards, { mode: 'settings' }));
     await m.until(() => document.body.textContent?.includes('opencode 2.0.0 found') === true, 'the unsupported notice');
-    assert.equal(document.querySelectorAll('section[aria-label="opencode"] button').length, 0, 'no Install, no Update');
+    // The "…" stays, for where the program lives (TODO #1198): no action besides it.
+    assert.equal(document.querySelectorAll('section[aria-label="opencode"] button:not([data-row-menu])').length, 0, 'no Install, no Update');
+    assert.ok(!document.body.textContent?.includes('Found at'), 'no path in permanence');
     assert.ok(!document.body.textContent?.includes('Update available'));
     assert.ok(document.querySelector('section[aria-label="opencode"] a[href="https://opencode.ai/docs/"]'), 'the vendor page instead');
   } finally {

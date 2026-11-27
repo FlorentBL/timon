@@ -15,6 +15,7 @@ import { BRAND } from '../brand.js';
 import {
   readManifest, PLUGIN_API_VERSION, SLOT_API_VERSIONS, ALLOWED_INJECT, PLUGIN_PERMISSIONS, SENSITIVE_PLUGIN_PERMISSIONS, ORDINARY_PLUGIN_PERMISSIONS,
   dictationEgressLines, PluginManifestSchema, PLUGIN_KINDS,
+  PROVIDER_CREDENTIAL_DIRS_MAX, PROVIDER_CREDENTIAL_DIRS_LEGACY_MAX, PROVIDER_CREDENTIAL_DIRS_API_VERSION,
 } from './manifest.js';
 
 /** A plugin `package.json`, overriding only what the test observes. */
@@ -486,6 +487,35 @@ test('a provider binary is a bare name, never a path', () => {
   }
 });
 
+test('a provider lists up to 16 credential folders, more than 4 from API 20, each still checked (TODO #1164)', () => {
+  const read = (credentialDirs: string[], apiVersion = PROVIDER_CREDENTIAL_DIRS_API_VERSION) => readManifest(pkg({
+    kind: 'provider', apiVersion, permissions: ['backends:register'], provider: { binaries: [], credentialDirs },
+  }));
+  const folders = (n: number) => Array.from({ length: n }, (_, i) => `.acme-${i}`);
+  assert.equal(PROVIDER_CREDENTIAL_DIRS_MAX, 16);
+
+  const atBound = read(folders(PROVIDER_CREDENTIAL_DIRS_MAX));
+  assert.ok(atBound.ok, atBound.ok ? '' : atBound.message);
+  assert.equal(atBound.manifest.provider?.credentialDirs.length, PROVIDER_CREDENTIAL_DIRS_MAX);
+
+  const beyond = read(folders(PROVIDER_CREDENTIAL_DIRS_MAX + 1));
+  assert.ok(!beyond.ok);
+  assert.match(beyond.message, /at most 16 credential folders per plugin/);
+
+  // Up to the former bound, any API the product still admits; beyond it, the manifest says 20.
+  const legacy = read(folders(PROVIDER_CREDENTIAL_DIRS_LEGACY_MAX), 12);
+  assert.ok(legacy.ok, legacy.ok ? '' : legacy.message);
+  const young = read(folders(PROVIDER_CREDENTIAL_DIRS_LEGACY_MAX + 1), PROVIDER_CREDENTIAL_DIRS_API_VERSION - 1);
+  assert.ok(!young.ok);
+  assert.match(young.message, /lists 5 folders; more than 4 needs `apiVersion: 20`/);
+
+  // The bound grants no folder: a dangerous one among fifteen safe ones is refused all the same.
+  for (const bad of ['/etc', '../outside', '.acme/../.ssh', '.ssh', '.aws', '.config', '.gnupg', '.config/gcloud']) {
+    const res = read([...folders(PROVIDER_CREDENTIAL_DIRS_MAX - 1), bad]);
+    assert.ok(!res.ok, `\`${bad}\` must be refused`);
+  }
+});
+
 test('`provider` is read only for `kind: provider`', () => {
   const res = readManifest(pkg({ provider: { binaries: [{ name: 'agent' }] } }));
   assert.ok(!res.ok);
@@ -805,6 +835,28 @@ test('the fence card slot joins wave 19', () => {
   const res = readManifest(pkg({ apiVersion: 19, client: { slots: ['chat.fence'] } }));
   assert.ok(res.ok, res.ok ? '' : res.message);
   assert.equal(SLOT_API_VERSIONS['chat.fence'], 19);
+});
+
+test('the agent folders slot opens in wave 20', () => {
+  // `useAgentFolders` is missing from a host 19 (0.1.10, 0.1.11): a manifest
+  // naming the slot must declare 20, or its browser half would die there on a
+  // missing import instead of being refused at install.
+  const message = refusal(pkg({ apiVersion: 19, client: { slots: ['agent.folders'] } }));
+  assert.ok(message.includes('names `agent.folders`, which needs `apiVersion: 20`'), message);
+  const res = readManifest(pkg({ apiVersion: 20, client: { slots: ['agent.folders'] } }));
+  assert.ok(res.ok, res.ok ? '' : res.message);
+  assert.equal(SLOT_API_VERSIONS['agent.folders'], 20);
+});
+
+test('the pull request window slot opens in wave 20', () => {
+  // `usePullRequestDialog` is missing from a host 19 (0.1.10, 0.1.11), which
+  // only let a bundled occupant take the slot: a manifest naming it must
+  // declare 20, or its browser half would die there on a missing import.
+  const message = refusal(pkg({ apiVersion: 19, client: { slots: ['kanban.pull.dialog'] } }));
+  assert.ok(message.includes('names `kanban.pull.dialog`, which needs `apiVersion: 20`'), message);
+  const res = readManifest(pkg({ apiVersion: 20, client: { slots: ['kanban.pull.dialog'] } }));
+  assert.ok(res.ok, res.ok ? '' : res.message);
+  assert.equal(SLOT_API_VERSIONS['kanban.pull.dialog'], 20);
 });
 
 test('`root` outside a layout is refused, whatever the other kind', () => {

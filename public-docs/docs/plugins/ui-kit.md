@@ -27,10 +27,11 @@ Timon serves these modules to the browser; nothing installs them. To type-check 
 | `t`, `getLocale` | Product translations, and the reader's language as a BCP 47 tag (`en`, `fr`, `pt-BR`…) |
 | `createTranslator` | Translations shipped by your own plugin, in any language (API 15 for ICU plurals; see [below](#plugin-languages)) |
 | `formatDate`, `formatTime`, `formatDateTime`, `formatNumber`, `formatPercent`, `formatBytes`, `formatRelativeTime`, `formatAgeShort`, `formatList`, `compareText` | Dates, numbers, sizes, relative times, lists and sort order in the reader's language: the formatters Timon itself uses (API 15) |
+| `onAccountChange` | Calls you when another account signs in on the page, or the person signs out, so you empty what you read for the previous one (API 20; see [below](#onaccountchange)) |
 | `apiErrorMessage`, `parseApiError` | The message of a route error in the reader's language (API 15, see below) |
 | `useIslandContent`, `openInIsland`, `startIslandDrag` | Island tab context, opening and drag sources (API 8; see [Island content](island.md)) |
 | `useUiDocument`, `UiDocumentFrame`, `uiDocumentUrl` | The `chat.document` card: the document on screen, its sandboxed frame with bridge and focus guard, and the only URL to load (API 9; see [HTML documents in a conversation](ui-documents.md)) |
-| `useFenceGrant` | The `chat.fence` card: a path the mission fence refused, the folder offered to the agent, and `allow`, `refuse` (API 19; see [Slots](slots.md#special-surfaces)) |
+| `useFenceGrant` | The `chat.fence` card: a path the mission fence refused, the folder offered to the agent, and `allow`, `refuse` (API 19); `allowProject` and the card's `project`, `scope`, `requeued` (API 20; see [Slots](slots.md#special-surfaces)) |
 | `usePromptHistory`, `canRecallPrompt`, `isTextareaWrapped` | The per-agent prompt history the chat input recalls with ↑ / ↓ (API 12; see [Composer](composer.md#prompt-history)) |
 | `useModelPicker` | The `model.picker` occupant's host: value, `onChange`, `inherit`, `filter`, `target`, `footer`, `disabled`, `mode` (API 13; see [Slots](slots.md#special-surfaces)) |
 | `useProviderCliCards` | The `providers.cli` occupant's host: the AI CLI cards, their install jobs and console, and `install`, `refresh`, `checkUpdates`, `signIn` (API 14; see [Slots](slots.md#special-surfaces)) |
@@ -44,6 +45,7 @@ Timon serves these modules to the browser; nothing installs them. To type-check 
 | `useAgentMascot` | The `agent.mascot` occupant's host: `look` (`shape`, `color`, `eyes`, `acc`), `size`, `live`, `state`, `fit`, `shadow`, `label`, `reducedMotion` (API 15; see [Slots](slots.md#special-surfaces)) |
 | `useEmailCode` | The `email.code` occupant's host: `purpose`, `email`, `length`, `digits`, `input`, `state`, `attemptsLeft`, `message`, `resendIn`, `resending`, `resend`, `changeEmail` (API 15; see [Slots](slots.md#special-surfaces)) |
 | `useLookStyler` | The `agent.lookstyler` occupant's host: `look`, `onChange`, `name`, `role`, `states`, `choices` (`shapes`, `colors`, `eyes`, `accessories`), `random` (API 15; see [Slots](slots.md#special-surfaces)) |
+| `useAgentFolders` | The `agent.folders` occupant's host: `rows` (`owner`, `path`, `name`, `mode`, `dropped`), `owners`, `agents`, `project`, `showAgent`, `emptyStatus`, `status`, `busy`, `className`, `reload`, `add`, `setMode`, `remove`, `browse` (API 20; see [Slots](slots.md#special-surfaces)) |
 | `useProviderPage`, `ProviderSection`, `ProviderSettingRow` | The page of one provider a `settings.provider.section` occupant is painted on: `provider`, `status`, `defaultBackend`, `refresh`, `back`; the frame of Timon's own sections, a short label over a card (`title`, `description`, `actions`, children); and the card's row (`title`, `status`, `leading`, one `action`, a `menu` of `DropdownMenuItem`s, `children` unfolded under it) (API 16; see [Providers](providers.md#add-a-section-to-your-providers-page)) |
 | `useProviderRow`, `ProviderRow` | One provider's row a `providers.row` occupant is painted for: `mode`, `provider`, `status`, `open`, `action`; and the host that paints a row for a `provider` (`onOpen`, `action`, `mode`) (API 16; see [Slots](slots.md#special-surfaces)) |
 | `useNotices`, `useNotice` | The bottom-left cards: what a `notices` entry pushes with (`notices`, `push`, `remove`), and the card a `notices.card` occupant paints (`notice`, `dismiss`, `act`) (API 17; see [Slots](slots.md#special-surfaces)) |
@@ -57,13 +59,14 @@ Timon serves these modules to the browser; nothing installs them. To type-check 
 | `useProjectSettings` | The project a `project.settings` row is painted for: `{ project }` (API 19; see [Slots](slots.md#special-surfaces)) |
 | `useWidgetCount`, `useWidgetAttention`, `useWidgetMenu`, `useWidgetInFront` | What a widget hands its tab in a stack: a count, a dot while something waits, header actions moved to the widget's menu, and whether it is in view (API 19; see [Widget](widget.md#in-a-stack-of-tabs)) |
 | `usePublishDialog` | The **Publish on GitHub** window a `forge.publish.dialog` occupant paints: `project`, `proposal`, `loading`, `repo`, `target`, `account`, `body`, `setBody`, `editable`, `problem`, `busy`, `error`, and Timon's gestures `publish`, `save`, `discard`, `close` (API 19; see [Slots](slots.md#special-surfaces)) |
+| `usePullRequestDialog` | A pull request's detail window a `kanban.pull.dialog` occupant paints: `project`, `repo`, `pull` (the row), `load` (GitHub's page, or its refusal), `refreshing`, `refresh`, `actions` (`primary`, `secondary`, `overflow`), `run`, `readCheckLog`, `readDiff`, `openJob`, `openTodo`, `close` (API 20; see [Slots](slots.md#special-surfaces)) |
 | `BoardCard` | The tile of a Kanban item, the one Timon's own tiles are laid out with: `identity`, `corner`, `leading`, `title`, `badges`, `context`, `meta`, `actions`, `onOpen`, `muted`, `tone`, `dragging`, `density` (`card` or `row`), `as`. A zone you leave out paints nothing. With `onOpen`, the title becomes a button named after it, so the keyboard and screen readers reach it (on a `draggable` card, an element with the button role, so the card can still be dragged by its title in Firefox); a click elsewhere on the card opens it too, except on one of its own controls (`actions`, `leading`, a link in a badge). Keep links and buttons out of `title` (API 15) |
 | `DetailShell` | The inside of a Kanban item's window: `header`, the body as children, `rail` and `railLabel`, `attachments` and `attachmentsLabel`, `footer` (API 15) |
 | `DetailFrame` | The window around it: veil, focus kept inside and given back, Escape, a click outside. Props `labelledBy`, `onClose`, children. A `task.form` or `todo.form` occupant is already inside one (API 15) |
 | `confirmAction` | Asks a confirmation in Timon's own dialog, from anywhere: `await confirmAction({ title, description?, confirmLabel?, cancelLabel?, destructive? })` resolves `true` only on an explicit yes. Use it instead of the browser's `confirm()` (API 15) |
-| `useBackendCatalog`, `vendorLabel`, `isPickable`, `accountStateHint`, `byPower`, `matchesQuery`, `formatWindow` | The model catalogue and the helpers Timon's own picker uses: provider and account label, whether an account can run and why not, models most capable first, the search (pass a trimmed, lower-cased query), « 1 M » / « 200 k » (API 13) |
+| `useBackendCatalog`, `vendorLabel`, `isPickable`, `accountStateHint`, `byPower`, `matchesQuery`, `formatWindow` | The model catalogue and the helpers Timon's own picker uses: provider and account label, whether an account can run and why not, models most capable first, the search (pass a trimmed, lower-cased query), "1 M" / "200 k" (API 13) |
 | `useModelFavorites` | The signed-in account's favourite models, shared by every picker on screen: `favorites`, `ready`, `isFavorite`, `toggle` (API 13) |
-| `isNewModel`, `backendLimits`, `BackendLimitsBadge`, `AccountStateBadge` | What Timon's picker shows beyond the names: the « new » badge of a model added this week, the « Remote » / « Limited » chip of a provider, the chip of an account to sign in again (API 13) |
+| `isNewModel`, `backendLimits`, `BackendLimitsBadge`, `AccountStateBadge` | What Timon's picker shows beyond the names: the "new" badge of a model added this week, the "Remote" / "Limited" chip of a provider, the chip of an account to sign in again (API 13) |
 
 `Separator`, `SelectSeparator` and `DropdownMenuSeparator` leave a blank gap and draw no line.
 
@@ -97,7 +100,7 @@ Your strings travel with your package and never enter Timon's dictionary, so no 
 
 - **One file per language**, `locales/<tag>.json`, named by its BCP 47 tag: `en`, `fr`, `de`, `ja`, `pt-BR`. Nest keys (`{ "files": { "selected": "…" } }`, read as `files.selected`) or write them flat (`{ "files.selected": "…" }`).
 - **Ship English complete.** Any other language may be partial: what it lacks is read in English, key by key.
-- **Messages are ICU MessageFormat**, like Timon's own: `{name}`, and plurals or selects inside one message, with the plural categories of the language — `{count, plural, one {# file} other {# files}}`; Polish uses `one`, `few`, `many`, `other`; Japanese and Korean `other` alone; `=0 {…}` covers « none ». `#` is written the way the language writes numbers. Put a literal brace between apostrophes (`'{'`). No markup: build a link around two keys.
+- **Messages are ICU MessageFormat**, like Timon's own: `{name}`, and plurals or selects inside one message, with the plural categories of the language — `{count, plural, one {# file} other {# files}}`; Polish uses `one`, `few`, `many`, `other`; Japanese and Korean `other` alone; `=0 {…}` covers "none". `#` is written the way the language writes numbers. Put a literal brace between apostrophes (`'{'`). No markup: build a link around two keys.
 - **Bundle the files into your browser half.** Timon serves `client.js` alone; a JSON file beside it is out of the browser's reach.
 
 ```js
@@ -118,9 +121,9 @@ The object you pass is read at each call, not copied: you may create the transla
 
 ```js
 import { formatDate, formatRelativeTime, formatBytes } from '@timon/ui'
-formatDate(item.createdAt)          // "Nov 4, 2026", « 4 nov. 2026 », "04.11.2026"
-formatRelativeTime(item.updatedAt)  // "3 min ago", « il y a 3 min », "vor 3 Min."
-formatBytes(file.size)              // "1.2 MB", « 1,2 Mo »
+formatDate(item.createdAt)          // "Nov 4, 2026", "4 nov. 2026", "04.11.2026"
+formatRelativeTime(item.updatedAt)  // "3 min ago", "il y a 3 min", "vor 3 Min."
+formatBytes(file.size)              // "1.2 MB", "1,2 Mo"
 ```
 
 Each takes an optional BCP 47 `locale` as its last argument. Times are in the computer's time zone unless the options name one; an unreadable date gives an empty string.
@@ -214,6 +217,36 @@ function Plot() {
 ```
 
 The island's own choice wins over the Appearance setting, and the value follows both live. No permission is needed. Treat a value you do not know as `'widgets'`: more places for the glass may come.
+
+## onAccountChange
+
+Requires `"apiVersion": 20` in the manifest, unless you test for it (below).
+
+Your browser half is loaded once per page. When another person signs in on that page, or the person signs out, Timon does not load your plugin again: a value you read from your routes and kept outside a component (a module variable, a store in `apply`'s closure) still holds what the previous account was allowed to see. Empty it when the account changes:
+
+```js
+import { onAccountChange } from '@timon/ui'
+
+const lastRead = new Map()
+
+export function apply(ctx) {
+  const stop = onAccountChange(() => lastRead.clear())
+  // … register your slots
+  return () => stop()
+}
+```
+
+Your listener is called when the account becomes another one or signs out; never for the first account of the page, nor when the same one signs in again. It receives no argument: it tells you that the account changed, not who it is (read `ctx.user()` on the host half for that). Call the function it returns from the disposer of `apply`. A reading of yours still under way when it fires answers for the previous account: drop its result.
+
+To keep a lower `apiVersion`, read the export from the module rather than by name, and test it. A name listed in braces that the host does not export stops your bundle from loading; read as a member, it is only `undefined`:
+
+```js
+import * as ui from '@timon/ui'
+
+const stop = typeof ui.onAccountChange === 'function' ? ui.onAccountChange(() => lastRead.clear()) : () => {}
+```
+
+The quota monitor template (`examples/plugin-quota-monitor`) does this.
 
 ## Reading usage
 

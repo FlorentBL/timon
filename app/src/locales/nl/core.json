@@ -1012,7 +1012,9 @@
     "glassTintReset": "Vlakkleur",
     "glassTuningReset": "Standaard vervaging en transparantie",
     "glassTuningTitle": "Glas afstellen",
-    "glassTuningHint": "Vervaging, transparantie en kleur van het glas, voor alles tegelijk of per zone.",
+    "glassTuningAdjust": "Aanpassen",
+    "glassTuningClose": "Klaar",
+    "glassTuningStatus": "Vervaging {blur} px · transparantie {transparency} %",
     "glassZones": {
       "general": "Algemeen",
       "chrome": "Omlijsting",
@@ -1020,18 +1022,10 @@
       "widgets": "Widgets",
       "bubbles": "Ballonnen"
     },
-    "glassZoneOwn": "Apart afgesteld",
-    "glassZoneHints": {
-      "general": "Wat elke zone gebruikt zolang ze niet apart is afgesteld.",
-      "chrome": "Bovenbalk, zijmenu en de ruimtes tussen eilanden.",
-      "islands": "De matglazen plaat van elk eiland, los van de omlijsting vervaagd.",
-      "widgets": "Widgetkaarten, de leeskolom van de chat en pop-ups.",
-      "bubbles": "Chatberichten."
-    },
     "glassZoneFollow": "Algemene afstelling volgen",
+    "glassZoneFollows": "Volgt Algemeen",
     "glassFloor": "Leesbaarheidsgrens",
     "glassFloorOff": "Uit",
-    "glassFloorHint": "De minimale dekking van eilanden, widgets en ballonnen, ongeacht hun transparantie, zodat tekst leesbaar blijft op een lichte achtergrond.",
     "glassProfiles": {
       "title": "Glasprofielen",
       "hint": "De hele glaslook onder een naam: schakelaars, bereik, de afstelling van elke zone en de leesbaarheidsgrens. Opgeslagen profielen verschijnen ook in het menu Interface aanpassen.",
@@ -1787,6 +1781,7 @@
       "titlePlanned": "Toegewezen aan {named}, wordt uitgevoerd door {agent}: {reason}",
       "detail": "Uitgevoerd door {agent}",
       "detailPlanned": "Wordt uitgevoerd door {agent}",
+      "on": "{agent} met {model}",
       "reasonPinned": "het project zet deze rol vast op {agent} (roles.json)",
       "reasonMissing": "{named} bestaat niet",
       "reasonOtherProject": "{named} hoort niet bij het project van de taak",

@@ -28,6 +28,12 @@ const STALE_MAX_MS = 30 * 60_000;
 const hostProbe = { cache: null, request: null, last: null, blockedUntil: 0, blockedErr: null };
 
 const accountProbes = new Map();
+/**
+ * macOS: the access token a launch read in an account's keychain entry it could not move (no
+ * fence, another process on the account, a refused delete), by folder. In memory only, never the
+ * refresh token: the gauge cannot read that entry itself outside a launch.
+ */
+const keychainAccess = new Map();
 
 function resetClaudeUsageCache() {
     hostProbe.cache = null;
@@ -36,6 +42,7 @@ function resetClaudeUsageCache() {
     hostProbe.blockedUntil = 0;
     hostProbe.blockedErr = null;
     accountProbes.clear();
+    keychainAccess.clear();
 }
 const refreshSlot = { current: null };
 function credentialsPath() {
@@ -275,7 +282,9 @@ const accountRefreshSlots = new Map();
  * The access token an account's gauge asks with, read from the account's folder. On macOS that
  * file is where the daemon moves the CLI's keychain entry before a fenced launch
  * (`account-keychain.js`), and where a fenced CLI writes a renewed pair: it is read there, never
- * renewed, and the keychain entry itself is left alone (only a launch may touch it).
+ * renewed, and the keychain entry itself is left alone (only a launch may touch it). An entry a
+ * launch had to leave in the keychain (no fence on the Mac) is measured on the access token that
+ * launch read in it (`rememberAccountKeychain`).
  * `fallbackToken`: the long-lived token Timon keeps for the host, for the host's kept sign-in only.
  */
 async function readAccountToken(configDir, fetchImpl, platform = process.platform, fallbackToken) {
@@ -283,8 +292,13 @@ async function readAccountToken(configDir, fetchImpl, platform = process.platfor
     const credentials = readCredentialsAt(file);
     const oauth = credentials?.claudeAiOauth;
     const accessToken = typeof oauth?.accessToken === 'string' ? oauth.accessToken : '';
-    if (accessToken && !isExpired(expiryMs(oauth?.expiresAt)))
-        return accessToken;
+    // A sign-out clears `.claude.json`: what a launch read before it no longer measures anything.
+    const remembered = platform === 'darwin' && signedInAt(configDir) ? liveAccess(keychainAccess.get(configDir)) : null;
+    const live = [liveAccess(oauth), remembered]
+        .filter((candidate) => candidate !== null)
+        .sort((a, b) => b.expiresAt - a.expiresAt);
+    if (live.length)
+        return live[0].accessToken;
     // Renewed like the host's file, which the CLI of the account reads the same way: a gauge left
     // "stale" until a mission happened to run on the account told nothing. Never on macOS, where
     // the CLI keeps its session in the keychain and a rotated token would sign it out.
@@ -308,6 +322,23 @@ async function readAccountToken(configDir, fetchImpl, platform = process.platfor
     if (platform === 'darwin' && signedInAt(configDir))
         throw new Error('This sign-in is still in the macOS keychain; its usage shows once a mission has run on it');
     throw new UsageNotSignedInError('This subscription account is not signed in; sign it in from the settings');
+}
+
+/**
+ * What a launch read in the account's keychain entry, left there (`raw`, the CLI's JSON or null):
+ * its access token while it is valid, for the gauge. A gauge that failed on the gap asks again.
+ */
+function rememberAccountKeychain(configDir, raw) {
+    const key = resolve(configDir);
+    const live = liveAccess(keychainOauth(raw));
+    if (!live) {
+        keychainAccess.delete(key);
+        return;
+    }
+    keychainAccess.set(key, live);
+    const slot = accountProbes.get(key);
+    if (slot?.cache && 'err' in slot.cache)
+        slot.cache = null;
 }
 
 /** The CLI records who it is signed in as in `.claude.json` (no secret), and forgets it on sign-out. */
@@ -365,7 +396,7 @@ async function claudeAuthStatus(env = {}) {
     return { ok: false, detail: 'Claude Code is not signed in: run `claude`, then `/login`', signInCommand: 'claude', path: file };
 }
 
-const api = { getClaudeUsage, getClaudeAccountUsage, resetClaudeUsageCache, claudeAuthStatus };
+const api = { getClaudeUsage, getClaudeAccountUsage, rememberAccountKeychain, resetClaudeUsageCache, claudeAuthStatus };
 instances.set(services, api);
 return api;
 }

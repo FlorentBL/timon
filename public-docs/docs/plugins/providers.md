@@ -185,6 +185,14 @@ the definition's `declares` must stay inside: `binaries` (the programs),
 (the macOS keychain entries it reads). A `declares` entry or a keychain read that the
 manifest does not list is refused at registration.
 
+`credentialDirs` takes at most 16 folders for the whole plugin; listing more than 4
+needs `apiVersion: 20` (an older Timon accepts 4). The bound is there for the person
+installing it: every folder is shown on the install sheet and linked, writable, into
+the missions of your backends, so the list has to stay short enough to read. Sixteen
+leaves four folders to each of the four programs `binaries` can name. The size of the
+list changes no other check: each folder is relative to the home, written with `/`,
+without `..`, and never one of the user's own credential stores.
+
 To write a name or a folder once, your code can read it from its own manifest instead
 of repeating it: `package.json` ships with your package, so
 `JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')).timon.provider`
@@ -461,6 +469,10 @@ published checksum · verified 1.5.0 available to replace it*.
 - **Checked on every start.** Timon keeps a digest of the installed files, and of
   where each link points, and compares it each time it registers the agent. A file changed afterwards is
   never launched; the line says its files changed and **Reinstall** repairs it.
+- **Refused installs.** When an install or an update is refused (download,
+  checksum, archive, program or description), the message says why in
+  parentheses, and the Timon log records it on a line starting with
+  `[acp-registry] install`.
 - **Updates.** A newer version appears on the line; installing it keeps the
   working version until the new one is verified, then swaps them. The previous
   version is kept until the next update.

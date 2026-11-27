@@ -25,14 +25,17 @@ import { useAgentMenuItem } from '../plugins-client/bots/agent-menu-slot';
 import { useProviderPage } from '../components/provider-page/provider-page-context';
 import { ProviderSection, ProviderSettingRow } from '../components/provider-page/provider-section';
 import { useProviderRow } from '../components/provider-list/provider-row-context';
+import { useAgentFolders } from '../components/agent-folders/agent-folders-context';
 import { ProviderRow } from '../components/provider-list/provider-row';
 import { useJobDialog } from '../plugins-client/kanban/job-dialog-context';
 import { usePublishDialog } from '../plugins-client/kanban/publish-dialog-context';
+import { usePullRequestDialog } from '../plugins-client/kanban/pull-request-dialog-context';
 import { GitStackProjectPicker, useGitStackProject } from '../plugins-client/kanban/git-stack-project';
 import { useTodoOpener } from '../plugins-client/kanban/todo-opener';
 import { useFenceGrant } from '../components/chat/fence-grant-card';
 import { useProjectSettings } from '../components/project-settings-slot';
 import { useWidgetAttention, useWidgetCount, useWidgetInFront, useWidgetMenu } from '../components/widget-host/widget-self';
+import { onAccountSwitch } from './account-change';
 import { PLATFORM_MODULE_SOURCES, platformModuleExports } from './plugin-host/platform-modules';
 import { PLATFORM_MODULES } from './plugin-host/modules';
 
@@ -277,6 +280,26 @@ test('the fence card belongs to wave 19', () => {
   assert.ok(declarations.includes('export function useFenceGrant(): FenceGrantValue | null;'));
 });
 
+test('"Allow for the project" joins the fence card in wave 20, optional for a host 19', () => {
+  // 0.1.11 shipped API 19 without it: the member is optional in the SDK, so a
+  // plugin tests it before drawing the answer instead of calling undefined.
+  assert.ok(snapshot.apiVersion >= 20);
+  const declarations = readFileSync(join(process.cwd(), '../packages/sdk/src/ui.d.ts'), 'utf8');
+  assert.ok(declarations.includes('allowProject?: (() => Promise<boolean>) | null;'));
+  assert.ok(declarations.includes('project?: string | null;'));
+  assert.ok(declarations.includes('requeued?: boolean | null;'));
+});
+
+test('the signal of a change of account opens in wave 20, with no id for the plugin', () => {
+  // 0.1.11 shipped API 19 without it: a plugin importing it by name declares 20.
+  assert.ok(snapshot.apiVersion >= 20);
+  assert.equal(UI_KIT.onAccountChange, onAccountSwitch);
+  assert.ok(platformModuleExports('ui.js').includes('onAccountChange'));
+  assert.equal(snapshot.modules['ui.js']?.onAccountChange?.since, 20);
+  const declarations = readFileSync(join(process.cwd(), '../packages/sdk/src/ui.d.ts'), 'utf8');
+  assert.ok(declarations.includes('export function onAccountChange(listener: () => void): () => void;'));
+});
+
 test('the platform `react` module hands out the app\'s own React, and its React 19 names open wave 20', () => {
   // 0.1.10 shipped API 19 without them: a plugin that imports one declares 20,
   // or a 0.1.10 host loads it and its browser half dies on the missing import.
@@ -346,4 +369,29 @@ test('an example plugin declares at least the apiVersion of every platform expor
     checked.push(dir);
   }
   assert.ok(checked.includes('plugin-quota-monitor'), 'the quota monitor is checked');
+});
+
+test('the agent folders open in wave 20, with their slot', () => {
+  // 0.1.11 shipped API 19 without them: a plugin naming `agent.folders`
+  // declares 20, which `SLOT_API_VERSIONS` enforces on the daemon side.
+  assert.ok(snapshot.apiVersion >= 20);
+  assert.equal(UI_KIT.useAgentFolders, useAgentFolders);
+  assert.ok(platformModuleExports('ui.js').includes('useAgentFolders'));
+  assert.equal(snapshot.modules['ui.js']?.useAgentFolders?.since, 20);
+  const declarations = readFileSync(join(process.cwd(), '../packages/sdk/src/ui.d.ts'), 'utf8');
+  assert.ok(declarations.includes('export function useAgentFolders(): AgentFoldersValue | null;'));
+  assert.ok(declarations.includes('browse(current: string): Promise<string | null>;'));
+});
+
+test('the pull request window opens in wave 20, with its slot', () => {
+  // 0.1.10 and 0.1.11 shipped API 19 with the slot but not the hook, so only a
+  // bundled occupant could take it: a plugin naming `kanban.pull.dialog`
+  // declares 20, which `SLOT_API_VERSIONS` enforces on the daemon side.
+  assert.ok(snapshot.apiVersion >= 20);
+  assert.equal(UI_KIT.usePullRequestDialog, usePullRequestDialog);
+  assert.ok(platformModuleExports('ui.js').includes('usePullRequestDialog'));
+  assert.equal(snapshot.modules['ui.js']?.usePullRequestDialog?.since, 20);
+  const declarations = readFileSync(join(process.cwd(), '../packages/sdk/src/ui.d.ts'), 'utf8');
+  assert.ok(declarations.includes('export function usePullRequestDialog(): PullRequestDialogValue | null;'));
+  assert.ok(declarations.includes('run(id: PullRequestActionId): void;'));
 });

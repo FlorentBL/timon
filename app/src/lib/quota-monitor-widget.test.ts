@@ -9,6 +9,7 @@ import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { UI_KIT } from './plugin-host/ui-kit';
 import { setLocale } from './i18n';
+import { announceAccount } from './account-change';
 
 /**
  * The shipped quota monitor (`examples/plugin-quota-monitor`), loaded as the
@@ -23,8 +24,10 @@ async function loadClient(): Promise<{ apply: (ctx: unknown) => () => void; clea
   const source = readFileSync(resolve(process.cwd(), '..', 'examples', 'plugin-quota-monitor', 'lib', 'client.js'), 'utf8');
   const platform = source
     .replace(/import React from 'react'\n/, 'const React = globalThis.__quotaTestReact\n')
-    .replace(/import \{([^}]*)\} from '@timon\/ui'\n/, 'const {$1} = globalThis.__quotaTestUi\n');
+    .replace(/import \{([^}]*)\} from '@timon\/ui'\n/, 'const {$1} = globalThis.__quotaTestUi\n')
+    .replace(/import \* as platform from '@timon\/ui'\n/, 'const platform = globalThis.__quotaTestUi\n');
   assert.notEqual(platform, source, 'the client still imports react and @timon/ui');
+  assert.ok(!/from '(react|@timon\/ui)'/.test(platform), 'every platform import rewritten');
   Object.assign(globalThis, { React, __quotaTestReact: React, __quotaTestUi: UI_KIT });
   const dir = mkdtempSync(join(tmpdir(), 'quota-monitor-'));
   const file = join(dir, 'client.mjs');
@@ -144,5 +147,80 @@ test('the rings open their detail on click, under them on the line and beside th
       if (descriptor) Object.defineProperty(globalThis, key, descriptor);
       else delete (globalThis as Record<string, unknown>)[key];
     }
+  }
+});
+
+test('another person signing in drops the quotas read for the previous account and reads this one\'s', async () => {
+  setLocale('en');
+  announceAccount('alice');
+  const { apply, cleanup } = await loadClient();
+  const reads: string[] = [];
+  let account = 'alice';
+  // The previous account's reading, still in flight when the account changes.
+  let releaseLate: (() => void) | null = null;
+  const entry = (backend: string) => ({ backend, label: backend, brand: backend, state: 'available', risk: 10, usage: { windows: {} } });
+  let dispose = () => {};
+  try {
+    const registrations: Registration[] = [];
+    dispose = apply({
+      id: 'quota-monitor',
+      slots: { register: (options: Registration['options'], Component: Registration['Component']) => { registrations.push({ options, Component }); return () => {}; } },
+      api: async (path: string) => {
+        const who = account;
+        reads.push(`${who}:${path}`);
+        if (path === 'history') return Response.json({ points: [] });
+        if (who === 'alice' && path === 'all?refresh=1') {
+          await new Promise<void>((resolve) => { releaseLate = resolve; });
+        }
+        return Response.json({ entries: [entry(who === 'alice' ? 'alice-claude' : 'bob-codex')], thresholds: { warning: 70, critical: 90 } });
+      },
+      settings: { set: async () => new Response(null) },
+    });
+    const widget = registrations.find((r) => r.options.slot === 'cockpit.widget')!;
+    const { createRoot } = await import('react-dom/client');
+    const { JSDOM } = await import('jsdom');
+    const dom = new JSDOM('<div id="root"></div>', { url: 'http://localhost/', pretendToBeVisual: true });
+    const saved = new Map<string, PropertyDescriptor | undefined>();
+    const install = (key: string, value: unknown) => {
+      saved.set(key, Object.getOwnPropertyDescriptor(globalThis, key));
+      Object.defineProperty(globalThis, key, { value, configurable: true, writable: true });
+    };
+    install('self', dom.window);
+    for (const key of ['window', 'document', 'navigator', 'HTMLElement', 'Node', 'Event', 'KeyboardEvent', 'getComputedStyle']) {
+      install(key, key === 'window' ? dom.window : (dom.window as unknown as Record<string, unknown>)[key]);
+    }
+    install('IS_REACT_ACT_ENVIRONMENT', true);
+    const root = createRoot(dom.window.document.getElementById('root')!);
+    const shown = () => document.querySelector('section')?.textContent ?? '';
+    try {
+      await React.act(async () => { root.render(React.createElement(widget.Component, { orientation: 'vertical', handle: null })); });
+      await waitUntil(React.act, () => shown().includes('alice-claude'), 'alice\'s quotas');
+
+      // A reading for alice starts (the refresh button), then bob signs in before it lands.
+      const refresh = document.querySelector<HTMLButtonElement>('button[aria-label="Refresh"]');
+      assert.ok(refresh, 'the tile\'s refresh button');
+      await React.act(async () => { refresh.click(); });
+      await waitUntil(React.act, () => releaseLate !== null, 'alice\'s second reading in flight');
+      account = 'bob';
+      await React.act(async () => { announceAccount('bob'); });
+      assert.doesNotMatch(shown(), /alice-claude/, 'the previous account\'s quotas are gone at once');
+      await waitUntil(React.act, () => shown().includes('bob-codex'), 'bob\'s quotas');
+
+      // The late answer for alice lands: it shows nothing.
+      await React.act(async () => { releaseLate!(); await new Promise((r) => setTimeout(r, 20)); });
+      assert.match(shown(), /bob-codex/);
+      assert.doesNotMatch(shown(), /alice-claude/, 'a reading of the previous account is dropped');
+    } finally {
+      await React.act(async () => { root.unmount(); });
+      dom.window.close();
+      for (const [key, descriptor] of saved) {
+        if (descriptor) Object.defineProperty(globalThis, key, descriptor);
+        else delete (globalThis as Record<string, unknown>)[key];
+      }
+    }
+  } finally {
+    dispose();
+    cleanup();
+    announceAccount(null);
   }
 });

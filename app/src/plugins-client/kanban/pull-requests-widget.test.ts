@@ -5,6 +5,11 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join, resolve } from 'node:path';
+import { pathToFileURL } from 'node:url';
+import type { ComponentType } from 'react';
 import {
   anyReviewRunning, filterByAuthor, pullAuthors, reviewBadge, type PullRequestItem,
 } from './pull-requests-model';
@@ -853,6 +858,63 @@ test('a plugin that takes kanban.pull.dialog paints the window from usePullReque
     assert.ok(!document.querySelector('[data-acme-pull]'));
   } finally {
     off();
+    await m.unmount();
+  }
+});
+
+/** `examples/plugin-pull-request-dialog`, loaded as the platform loads it: `react` and `@timon/ui` are the platform's own. */
+async function loadExample(): Promise<{ apply: (ctx: unknown) => () => void; cleanup: () => void }> {
+  const source = readFileSync(resolve(process.cwd(), '..', 'examples', 'plugin-pull-request-dialog', 'lib', 'client.js'), 'utf8');
+  const platform = source
+    .replace(/import React from 'react'\n/, 'const React = globalThis.__pullTestReact\n')
+    .replace(/import \{([^}]*)\} from '@timon\/ui'\n/, 'const {$1} = globalThis.__pullTestUi\n');
+  assert.notEqual(platform, source, 'the client still imports react and @timon/ui');
+  const React = await import('react');
+  const { UI_KIT } = await import('@/lib/plugin-host/ui-kit');
+  Object.assign(globalThis, { __pullTestReact: React, __pullTestUi: UI_KIT });
+  const dir = mkdtempSync(join(tmpdir(), 'plugin-pull-request-dialog-'));
+  const file = join(dir, 'client.mjs');
+  writeFileSync(file, platform);
+  const mod = await import(pathToFileURL(file).href) as { apply: (ctx: unknown) => () => void };
+  return { apply: mod.apply, cleanup: () => rmSync(dir, { recursive: true, force: true }) };
+}
+
+test('the examples/plugin-pull-request-dialog template paints the checks and runs a gesture with the SDK alone', async () => {
+  const m = await mount([pull()]);
+  const slots = await import('@/lib/plugin-host/slots');
+  const example = await loadExample();
+  const off = example.apply({ id: 'example-pull-request-dialog', slots: {
+    register: (options: { slot: string }, Component: ComponentType) => slots.register({ ...options, pluginId: 'example-pull-request-dialog' }, Component),
+  } });
+  try {
+    await m.choose(document.querySelector('[data-stack-project]'), 'acme');
+    await m.click(document.querySelector('[data-pull-row="12"] [data-pull-open]'));
+    const window = document.querySelector('[data-example-pull="12"]');
+    assert.ok(window, 'the template\'s window');
+    assert.ok(!document.querySelector('[data-pull-dialog]'), 'the product\'s window is not painted under it');
+    assert.match(window.textContent ?? '', /#12 Add a dark theme/);
+    assert.match(window.textContent ?? '', /dark-theme into main/);
+    assert.deepEqual(Array.from(document.querySelectorAll('[data-example-check]')).map((r) => r.getAttribute('data-example-check')), ['test', 'lint']);
+
+    // Only the failed check offers its log, read by the host.
+    assert.ok(!document.querySelector('[data-example-check="lint"] button'));
+    await m.click(document.querySelector('[data-example-check="test"] button[aria-label="Read the log of test"]'));
+    assert.match(document.querySelector('[data-example-check="test"]')?.textContent ?? '', /Error: boom/);
+    assert.ok(m.calls.some((c) => c.url.startsWith('/api/ui/projects/acme/pull-requests/12/check-log?')));
+
+    // A gesture goes through the widget, as from the row's menu: here the review brief.
+    assert.deepEqual(Array.from(document.querySelectorAll('[data-example-gesture]')).map((b) => b.getAttribute('data-example-gesture')), ['review', 'comment']);
+    await m.click(document.querySelector('[data-example-gesture="review"]'));
+    assert.ok(m.calls.some((c) => c.method === 'POST' && c.url === '/api/ui/projects/acme/pull-requests/12/review'));
+    assert.ok(m.calls.every((c) => c.url.startsWith('/api/ui/')), 'every call goes through the session proxy');
+    // The brief's dialog, then the template's window, closed while the page stands: their focus traps let go first.
+    await m.click(Array.from(document.querySelectorAll('button')).find((b) => b.textContent === 'Close') ?? null);
+    await m.key(document.activeElement ?? document.body, 'Escape');
+    assert.ok(!document.querySelector('[data-example-pull]'), 'the window closes');
+  } finally {
+    off();
+    await m.settle();
+    example.cleanup();
     await m.unmount();
   }
 });

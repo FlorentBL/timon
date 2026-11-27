@@ -18,6 +18,9 @@ import * as DialogPrimitive from '@radix-ui/react-dialog';
 import { X } from 'lucide-react';
 import { Dialog, DialogOverlay, DialogPortal, DialogTitle } from '@/components/ui/dialog';
 import { RoleBadge } from '@/components/role-badge';
+import { BrandMark } from '@/components/brand-mark';
+import { useBackendCatalog, type BackendCatalog } from '@/lib/backends';
+import { taskRunView } from '@/lib/task-runner';
 import { cn } from '@/lib/utils';
 import { t } from '@/lib/i18n';
 import {
@@ -96,10 +99,12 @@ function SatellitePill({
 function GraphNodeBox<T extends SeriesTask>({
   node,
   now,
+  catalog,
   onOpen,
 }: {
   node: SeriesGraphNode<T>;
   now: number;
+  catalog: BackendCatalog;
   onOpen: (task: T) => void;
 }) {
   const [expanded, setExpanded] = useState(false);
@@ -109,6 +114,7 @@ function GraphNodeBox<T extends SeriesTask>({
     task.status === 'IN_PROGRESS' && typeof task.updated_at === 'number'
       ? formatElapsed(task.updated_at, now)
       : null;
+  const run = taskRunView(catalog, task);
   return (
     <div
       className="absolute"
@@ -119,6 +125,7 @@ function GraphNodeBox<T extends SeriesTask>({
         tabIndex={0}
         onClick={() => onOpen(task)}
         onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') onOpen(task); }}
+        title={`${task.id.slice(0, 8)} · ${run.title}`}
         className={cn(
           'flex cursor-pointer flex-col gap-1.5 rounded-lg border px-2.5 py-2 transition-colors hover:border-muted-foreground/50',
           STATUS_TONE[task.status],
@@ -145,17 +152,33 @@ function GraphNodeBox<T extends SeriesTask>({
           )}
         </div>
         <div className="line-clamp-2 text-[11.5px] font-medium leading-snug">{task.title}</div>
-        <div className="mt-auto flex items-center gap-1.5 tabular-nums text-[9.5px] text-muted-foreground/80">
-          {/* Agent and elapsed time only where they mean something: on a task
-            * actually running. Elsewhere they are noise in a dense view. */}
-          {task.status === 'IN_PROGRESS' ? (
-            <>
-              <span className="truncate">{task.agent_name}</span>
-              {elapsed && <span className="ml-auto flex-none text-primary">{elapsed}</span>}
-            </>
-          ) : (
-            <span className="truncate text-muted-foreground/50">{task.id.slice(0, 8)}</span>
+        {/* Who runs the task and on what, as the card says it (#1203): the
+          * agent the roles hand it to, not always the one it names. Faded
+          * unless it is running; the id moved to the tooltip. */}
+        <div
+          data-task-runner={run.agent}
+          className={cn(
+            'mt-auto flex min-w-0 items-center gap-1.5 tabular-nums text-[9.5px]',
+            task.status === 'IN_PROGRESS' ? 'text-muted-foreground/80' : 'text-muted-foreground/55',
           )}
+        >
+          <span className="min-w-0 truncate">{run.agent}</span>
+          {run.model && (
+            <span className="inline-flex min-w-0 shrink items-center gap-1" data-task-model={run.model}>
+              {!run.mark.empty && (
+                <BrandMark
+                  icon={run.mark.icon}
+                  brand={run.mark.brand}
+                  slug={run.mark.slug}
+                  fallbackIcon={run.mark.fallbackIcon}
+                  fallbackBrand={run.mark.fallbackBrand}
+                  className="size-2.5 flex-none"
+                />
+              )}
+              <span className="truncate">{run.model}</span>
+            </span>
+          )}
+          {elapsed && <span className="ml-auto flex-none text-primary">{elapsed}</span>}
         </div>
       </div>
 
@@ -208,6 +231,7 @@ export function SeriesGraphDialog<T extends SeriesTask>({
   // page refreshes its task list. No clock of its own: a second timer would
   // redraw the graph between two identical states, for nothing.
   const now = Date.now();
+  const catalog = useBackendCatalog();
   const graph = useMemo(
     () => buildSeriesGraph(tasks, { seriesId, focusId }),
     [tasks, seriesId, focusId],
@@ -296,7 +320,7 @@ export function SeriesGraphDialog<T extends SeriesTask>({
                   })}
                 </svg>
                 {graph.nodes.map((n) => (
-                  <GraphNodeBox key={n.id} node={n} now={now} onOpen={onOpenTask} />
+                  <GraphNodeBox key={n.id} node={n} now={now} catalog={catalog} onOpen={onOpenTask} />
                 ))}
               </div>
             )}

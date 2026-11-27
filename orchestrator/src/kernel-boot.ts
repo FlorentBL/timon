@@ -63,7 +63,8 @@ import {
 } from './plugins-bundled/http/auth.js';
 import { createHost } from './host/index.js';
 import { stopSignalsFor } from './host/stop-signals.js';
-import { installDaemonShutdown } from './daemon-shutdown.js';
+import { stopRequestPath, stopRequestWatched, watchStopRequest } from './host/stop-request.js';
+import { installDaemonShutdown, onDaemonShutdown, requestDaemonShutdown } from './daemon-shutdown.js';
 import { inspectListenPort } from './host/listen-port.js';
 import { endRecordedMissionProcesses, missionProcessDir, sweepOpsFor } from './host/mission-processes.js';
 import { bus } from './bus.js';
@@ -435,4 +436,15 @@ try {
     process.exit(2);
   }
   throw err;
+}
+
+// The Windows installer asks the service's daemon to stop through a file,
+// with no credential (`host/stop-request.ts`). Watched once booted, so the
+// stop releases a whole tree; a request written during the boot still counts.
+if (stopRequestWatched(process.env, process.platform)) {
+  onDaemonShutdown(watchStopRequest({
+    file: stopRequestPath(TIMON_HOME),
+    startedAt: performance.timeOrigin,
+    request: requestDaemonShutdown,
+  }));
 }
