@@ -247,7 +247,10 @@ def act(win, req):
     states = acc.get_state_set()
     ifaces = interfaces(acc)
     parent_ifaces = interfaces(parent) if parent is not None else set()
-    can = possible(acc, '', ifaces, states, parent_ifaces)
+    # The same kind as the tree computed: with an empty one an editable text field never offered
+    # set_value here although the tree had announced it (CI run 46005658583).
+    kind = kind_of(acc, acc.get_role_name().lower(), ifaces, states)
+    can = possible(acc, kind, ifaces, states, parent_ifaces)
     if action not in can:
         return {'error': 'unsupported', 'actions': can}
     ok = False
