@@ -33,6 +33,7 @@ const enabledToken = agentWith('computer-on', { computer_use: true });
 const disabledToken = agentWith('computer-off', {});
 
 const forwarded: ({ allowedApps: string[] } | undefined)[] = [];
+const modes: (string | undefined)[] = [];
 const calls: { command: string; args: Record<string, unknown>; actor: string }[] = [];
 let desktop: 'up' | 'down' | 'stopped' | 'echo' = 'up';
 const app = express();
@@ -41,6 +42,7 @@ app.use(express.json());
 registerComputerRoutes(app, {
   call: async (command, args, actor, options) => {
     calls.push({ command, args, actor });
+    modes.push(options?.mode);
     forwarded.push(options?.allowedApps === undefined ? undefined : { allowedApps: [...options.allowedApps] });
     if (desktop === 'down') throw new NativeComputerError(apiError('computer_unavailable', 'down'), 503);
     if (desktop === 'stopped') throw new NativeComputerError(apiError('computer_stopped', 'stopped'), 409);
@@ -280,6 +282,18 @@ test('the agent\'s allowed applications travel with its commands, never a person
   await post('list_windows', {}, 'user');
   assert.equal(forwarded.at(-1), undefined, 'a person\'s command carries no list');
   assert.equal((await post('click', { x: 1, y: 2, allowedApps: ['*'] }, 'enabled')).status, 400, 'the body cannot add one');
+});
+
+test('the agent\'s mode travels with its commands, never a person\'s or the body\'s', async () => {
+  const background = agentWith('computer-bg', { computer_use: true, computer_use_mode: 'background' });
+  const send = (token: string, body: unknown) => fetch(`${base}/a11y_tree`, { method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` }, body: JSON.stringify(body) });
+  assert.equal((await send(background, {})).status, 200);
+  assert.equal(modes.at(-1), 'background');
+  await post('a11y_tree', {}, 'enabled');
+  assert.equal(modes.at(-1), 'foreground', 'no mode stored = foreground');
+  await post('list_windows', {}, 'user');
+  assert.equal(modes.at(-1), undefined, 'a person\'s command carries no mode');
+  assert.equal((await send(background, { mode: 'foreground' })).status, 400, 'the body cannot choose it');
 });
 
 test('list_windows is open to a person and an agent; focus_window only to an agent, with a plain id', async () => {

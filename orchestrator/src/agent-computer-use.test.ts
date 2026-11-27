@@ -49,3 +49,16 @@ test('an agent that never had a list reads an empty one', () => {
   upsertAgent({ name: 'cu-apps-never', system_prompt: 'x', config: { backend: 'claude' } });
   assert.deepEqual(getAgent('cu-apps-never')?.computer_use_apps, []);
 });
+
+test('computer_use_mode is read back by the details and the list, kept by a save that omits it, and defaults to foreground', () => {
+  const name = 'cu-mode-roundtrip';
+  upsertAgent({ name, system_prompt: 'x', config: { backend: 'claude', computer_use: true } });
+  assert.equal(getAgent(name)?.computer_use_mode, 'foreground');
+  upsertAgent({ name, system_prompt: 'x', config: { backend: 'claude', computer_use: true, computer_use_mode: 'background' } });
+  assert.equal(getAgent(name)?.computer_use_mode, 'background');
+  assert.equal(listAgents().find((agent) => agent.name === name)?.computer_use_mode, 'background');
+  upsertAgent({ name, system_prompt: 'x', config: { backend: 'claude', computer_use: true } });
+  assert.equal(getAgent(name)?.computer_use_mode, 'background', 'a save without the key keeps it');
+  upsertAgent({ name, system_prompt: 'x', config: { backend: 'claude', computer_use: true, computer_use_mode: 'foreground' } });
+  assert.equal(getAgent(name)?.computer_use_mode, 'foreground');
+});

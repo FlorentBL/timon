@@ -518,6 +518,7 @@ export type WideningRequest = {
   disallowed_tools?: unknown;
   computer_use?: unknown;
   computer_use_apps?: unknown;
+  computer_use_mode?: unknown;
 };
 
 export type WideningGrant = {
@@ -526,6 +527,7 @@ export type WideningGrant = {
   disallowed_tools?: readonly string[] | null;
   computer_use?: boolean | null;
   computer_use_apps?: readonly string[] | null;
+  computer_use_mode?: string | null;
 } | null;
 
 /**
@@ -574,6 +576,16 @@ export function agentWideningRefusal(
     if (grantedApps.includes(app.toLowerCase())) continue;
     return `${label('computer_use_apps')} adds ${app}: an agent's token cannot widen the applications an agent may control, whatever its account holds. `
       + 'A person edits the list from the Agents page of the app. Removing entries, or sending the list unchanged, is accepted';
+  }
+
+  // The mode decides whether the agent may take the user's screen, mouse and keyboard: only a person changes it.
+  if (wanted.computer_use_mode !== undefined && wanted.computer_use_mode !== null) {
+    if (wanted.computer_use_mode !== 'foreground' && wanted.computer_use_mode !== 'background') return `${label('computer_use_mode')} must be 'foreground' or 'background'`;
+    const current = granted?.computer_use_mode === 'background' ? 'background' : 'foreground';
+    if (wanted.computer_use_mode !== current) {
+      return `${label('computer_use_mode')} changes how the agent drives the screen: an agent's token cannot change it, whatever its account holds. `
+        + 'A person sets it from the Agents page of the app. Sending it unchanged is accepted';
+    }
   }
 
   const tools = listOf('allowed_tools');

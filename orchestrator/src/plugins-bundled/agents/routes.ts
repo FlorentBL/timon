@@ -30,7 +30,7 @@ import { defaultExcludedMcpIds, deleteMcp, getMcp, listMcp, mcpOAuthClient, miss
 import { buildAuthorizeUrl, discoverOAuth, dynamicRegister, exchangeCode, OAUTH_CALLBACK_PATH, OAuthExchangeError, oauthErrorCode, oauthRedirectUri, oauthReturnPath, oauthState, pkcePair, putPending, settleState, takePending, usedState, type OAuthReturn } from '../../oauth.js';
 import { apiPort } from '../../api-url.js';
 import { agentDir, skillFile } from '../../paths.js';
-import { computerUseAppsRefusal, findAgentFolder, isValidAgentName } from '../../agent-config.js';
+import { computerUseAppsRefusal, computerUseModeRefusal, findAgentFolder, isValidAgentName } from '../../agent-config.js';
 import { normalizeAgentName } from '../../agent-name.js';
 import { normalizeAgentNameParam } from '../../agent-name-param.js';
 import { buildInjections } from '../../prompt-injections.js';
@@ -1280,7 +1280,7 @@ export function registerRoutes(app: express.IRouter): void {
         'allowed_tools', 'disallowed_tools',
         'skills', 'mcp_servers', 'excluded_mcp_servers', 'project',
         'emoji', 'color', 'icon_url', 'look', 'avatar',
-        'role', 'directives', 'global_context', 'browser_profile_id', 'computer_use', 'computer_use_apps',
+        'role', 'directives', 'global_context', 'browser_profile_id', 'computer_use', 'computer_use_apps', 'computer_use_mode',
         'team', 'reports_to', 'memory_scope', 'reasoningEffort',
       ];
       const patch: Record<string, unknown> = {};
@@ -1291,6 +1291,10 @@ export function registerRoutes(app: express.IRouter): void {
       // dropped here, so the scope never changed.
       if ('computer_use_apps' in patch) {
         const refusal = computerUseAppsRefusal(patch.computer_use_apps);
+        if (refusal) { res.status(400).json(apiError('agent_update_refused', refusal, { detail: refusal })); return; }
+      }
+      if ('computer_use_mode' in patch) {
+        const refusal = computerUseModeRefusal(patch.computer_use_mode);
         if (refusal) { res.status(400).json(apiError('agent_update_refused', refusal, { detail: refusal })); return; }
       }
       if ('memory_scope' in patch && !['NONE', 'SESSION', 'AGENT', 'GLOBAL'].includes(patch.memory_scope as string)) {
@@ -1359,7 +1363,7 @@ export function registerRoutes(app: express.IRouter): void {
       const respawnTriggers = [
         'skills', 'mcp_servers', 'excluded_mcp_servers',
         'allowed_tools', 'disallowed_tools', 'model', 'permission_mode',
-        'role', 'directives', 'browser_profile_id', 'computer_use', 'computer_use_apps', 'memory_scope', 'reasoningEffort',
+        'role', 'directives', 'browser_profile_id', 'computer_use', 'computer_use_apps', 'computer_use_mode', 'memory_scope', 'reasoningEffort',
       ] as const;
       const needsRespawn = respawnTriggers.some((k) => k in patch);
       let killed = 0;

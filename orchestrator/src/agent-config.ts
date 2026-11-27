@@ -43,6 +43,9 @@ export type AgentConfig = {
    *  executable name, case ignored). Empty or absent = no keyboard or mouse action at all.
    *  Widening it is a person's act, like `computer_use`. */
   computer_use_apps?: string[];
+  /** How the agent drives the screen: `background` = accessibility only, never the user's screen,
+   *  mouse or keyboard. Absent = `foreground`. Changing it is a person's act, like `computer_use_apps`. */
+  computer_use_mode?: ComputerUseMode;
   /** DEFAULT LLM backend of the agent. 'claude' (default) = long-lived Claude
    *  CLI; 'codex' = one-shot OpenAI Codex CLI on the ChatGPT subscription.
    *  The agent is AGNOSTIC: this field is only a default, overridable per
@@ -346,6 +349,18 @@ export { isValidAgentName };
 
 export function validName(name: string): void {
   if (!isValidAgentName(name)) throw new Error(`invalid agent name: ${name}`);
+}
+
+export type ComputerUseMode = 'foreground' | 'background';
+
+/** The mode as stored, read defensively: anything but 'background' is the foreground. */
+export function storedComputerUseMode(cfg: Pick<AgentConfig, 'computer_use_mode'>): ComputerUseMode {
+  return cfg.computer_use_mode === 'background' ? 'background' : 'foreground';
+}
+
+/** Why a `computer_use_mode` value is not acceptable, or null. */
+export function computerUseModeRefusal(value: unknown): string | null {
+  return value === 'foreground' || value === 'background' ? null : "computer_use_mode must be 'foreground' or 'background'";
 }
 
 export const COMPUTER_USE_APPS_MAX = 100;
