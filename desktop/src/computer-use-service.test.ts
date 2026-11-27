@@ -89,6 +89,9 @@ test('Linux: wayland, missing tool and missing desktop are refused with a reason
   const reason = async (deps: Partial<ComputerUseDeps>) => ((await setup({ platform: 'linux', ...deps }).run('status')) as { available: boolean; reason?: string });
   assert.equal((await reason({ env: { XDG_SESSION_TYPE: 'wayland', DISPLAY: ':0' } })).reason, 'wayland');
   assert.equal((await reason({ env: { XDG_SESSION_TYPE: 'wayland' } })).reason, 'wayland');
+  // XWayland with the session type lost by the launcher is still Wayland; an explicit X11 session is not.
+  assert.equal((await reason({ env: { WAYLAND_DISPLAY: 'wayland-0', DISPLAY: ':0' } })).reason, 'wayland');
+  assert.equal((await reason({ env: { XDG_SESSION_TYPE: 'x11', WAYLAND_DISPLAY: 'wayland-0', DISPLAY: ':0' } })).available, true);
   assert.equal((await reason({ env: { DISPLAY: ':0' }, exec: async () => { throw new Error('ENOENT'); } })).reason, 'no-input-tool');
   assert.equal((await reason({ env: {} })).reason, 'no-desktop');
   assert.equal((await reason({ env: { DISPLAY: ':0' } })).available, true);

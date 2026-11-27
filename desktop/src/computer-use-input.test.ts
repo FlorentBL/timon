@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { imageToPoints, pointsToImage, screenshotSize } from './computer-use-geometry.js';
-import { MAC_INPUT_SCRIPT, WINDOWS_INPUT_SCRIPT, buildInputCommand, parseKeys } from './computer-use-input.js';
+import { MAC_INPUT_SCRIPT, WINDOWS_INPUT_SCRIPT, WINDOWS_WORKER_SCRIPT, buildInputCommand, parseKeys } from './computer-use-input.js';
 import { ComputerCommandError } from './computer-use-protocol.js';
 
 const retina = { width: 1440, height: 900, scaleFactor: 2 };
@@ -62,6 +62,11 @@ test('Windows: fixed encoded script, steps in the environment, absolute normalis
   assert.deepEqual(command.args.slice(0, 5), ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-EncodedCommand']);
   assert.equal(Buffer.from(command.args[5]!, 'base64').toString('utf16le'), WINDOWS_INPUT_SCRIPT);
   assert.equal(command.args.join(' ').includes('rm -rf'), false);
+  // The persistent form: same fixed script family, the request is one JSON line, never code.
+  assert.equal(Buffer.from(command.worker!.args[5]!, 'base64').toString('utf16le'), WINDOWS_WORKER_SCRIPT);
+  assert.equal(command.worker!.input, command.env!.TIMON_CU_STEPS);
+  assert.equal(command.worker!.input.includes('\n'), false);
+  assert.equal(/[^\x20-\x7e]/.test(command.worker!.input), false, 'ASCII only: the console code page cannot alter it');
   const steps = JSON.parse(command.env!.TIMON_CU_STEPS!) as Array<{ t: string; unit?: number; up?: boolean }>;
   const typed = steps.filter((s) => s.t === 'unicode' && !s.up).map((s) => String.fromCharCode(s.unit!)).join('');
   assert.equal(typed, NASTY.replace(/[\n\t]/g, ''));
@@ -70,6 +75,21 @@ test('Windows: fixed encoded script, steps in the environment, absolute normalis
   const key = JSON.parse(buildInputCommand('win32', { kind: 'key', keys: 'ctrl+shift+t' }, retina).env!.TIMON_CU_STEPS!);
   assert.deepEqual(key.map((s: { vk: number; up: boolean }) => [s.vk, s.up]),
     [[0x11, false], [0x10, false], [0x54, false], [0x54, true], [0x10, true], [0x11, true]]);
+});
+
+test('Windows: coordinates go through the physical pixel, so 125 % and 150 % displays land on it', () => {
+  const move = (display: { width: number; height: number; scaleFactor: number }, x: number, y: number) =>
+    JSON.parse(buildInputCommand('win32', { kind: 'move', x, y }, display).env!.TIMON_CU_STEPS!)[0] as { x: number; y: number };
+  // Windows reads value → floor(value × physical / 65536): the round trip must give the pixel back.
+  for (const display of [{ width: 1536, height: 864, scaleFactor: 1.25 }, { width: 1280, height: 720, scaleFactor: 1.5 }, { width: 1920, height: 1080, scaleFactor: 1 }]) {
+    const physical = { x: Math.round(display.width * display.scaleFactor), y: Math.round(display.height * display.scaleFactor) };
+    for (const [px, py] of [[0, 0], [1, 1], [333, 217], [physical.x - 1, physical.y - 1]] as const) {
+      const sent = move(display, px / display.scaleFactor, py / display.scaleFactor);
+      assert.equal(Math.floor(sent.x * physical.x / 65536), px, `x ${px} at ${display.scaleFactor}`);
+      assert.equal(Math.floor(sent.y * physical.y / 65536), py, `y ${py} at ${display.scaleFactor}`);
+    }
+  }
+  assert.deepEqual(move({ width: 100, height: 100, scaleFactor: 1 }, 5000, -5), { t: 'move', x: 64881, y: 0 });
 });
 
 test('Linux: argv only, text behind "--", coordinates in physical pixels', () => {

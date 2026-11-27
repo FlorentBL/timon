@@ -3,6 +3,9 @@ node_modules/
 # main checkout's dependencies): the form without `/` covers both.
 node_modules
 dist/
+# Build and report of desktop/scripts/computer-use-e2e.mjs.
+dist-e2e/
+computer-use-e2e-report.txt
 *.log
 *.tsbuildinfo
 .env
