@@ -357,7 +357,16 @@ while ($true) {
     $request = $line | ConvertFrom-Json
     if ($request.q) { [Console]::Out.WriteLine((Invoke-TimonQuery $request)) }
     else { Invoke-TimonSteps $request; [Console]::Out.WriteLine('ok') }
-  } catch { [Console]::Out.WriteLine('error') }
+  } catch {
+    # Diagnostic mode only: where it failed and which kind of error, never the request or the message
+    # (a parse error can quote typed text). The Win32 message is the one safe exception.
+    if ($env:TIMON_COMPUTER_USE_DEBUG -eq '1') {
+      $detail = $_.Exception.GetType().FullName + ' at line ' + $_.InvocationInfo.ScriptLineNumber + ': ' + $_.InvocationInfo.Line.Trim()
+      if ($_.Exception -is [System.ComponentModel.Win32Exception]) { $detail += ' / ' + $_.Exception.Message }
+      [Console]::Error.WriteLine('computer-use worker: ' + $detail)
+    }
+    [Console]::Out.WriteLine('error')
+  }
 }
 `;
 

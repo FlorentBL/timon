@@ -13,6 +13,7 @@ export function runSystemCommand(command: SystemCommand, timeoutMs = 20_000): Pr
   });
 }
 
+const DEBUG = process.env.TIMON_COMPUTER_USE_DEBUG === '1';
 const WORKER_READY_MS = 20_000;
 const WORKER_IDLE_MS = 120_000;
 
@@ -26,7 +27,9 @@ class LineWorker {
   private idle: NodeJS.Timeout | null = null;
 
   constructor(file: string, args: string[], env: Record<string, string> | undefined, private readonly onClose: () => void) {
-    this.child = spawn(file, args, { windowsHide: true, env: { ...process.env, ...env }, stdio: ['pipe', 'pipe', 'ignore'] });
+    this.child = spawn(file, args, { windowsHide: true, env: { ...process.env, ...env }, stdio: ['pipe', 'pipe', DEBUG ? 'pipe' : 'ignore'] });
+    // Diagnostic mode: the worker's error output goes to ours. It never carries typed text or arguments.
+    if (DEBUG) this.child.stderr?.on('data', (chunk: Buffer) => process.stderr.write(chunk));
     this.child.stdout?.setEncoding('utf8');
     this.child.stdout?.on('data', (chunk: string) => {
       this.pending += chunk;

@@ -27,6 +27,8 @@ jobs:
     # The capture must really be JPEG here: a silent fallback to PNG would hide the token cost again.
     env:
       TIMON_E2E_REQUIRE_JPEG: '1'
+      # The Windows worker's error output (never typed text) goes to the test log, so a failure is readable.
+      TIMON_COMPUTER_USE_DEBUG: '1'
     strategy:
       fail-fast: false
       matrix:

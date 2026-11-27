@@ -36,21 +36,27 @@ function run() {
 }
 `.trim();
 
-// Window ids are `<unix pid>:<index in the application's window list>`: System Events has no stable window number.
+// Both scripts avoid Apple Events (System Events), which need an Automation grant of their own:
+// the list reads the window server, the focus uses AppKit and the Accessibility API the input
+// already needs. Window ids are `<unix pid>:<CGWindowID>`.
 const MAC_LIST_SCRIPT = `
+ObjC.import('CoreGraphics');
+ObjC.import('AppKit');
 function run() {
-  const events = Application('System Events');
+  const infos = ObjC.deepUnwrap(ObjC.castRefToObject($.CGWindowListCopyWindowInfo($.kCGWindowListOptionOnScreenOnly | $.kCGWindowListExcludeDesktopElements, 0))) || [];
+  const front = $.NSWorkspace.sharedWorkspace.frontmostApplication;
+  const frontPid = front ? Number(front.processIdentifier) : -1;
   const out = [];
-  for (const process of events.processes.whose({ backgroundOnly: false })()) {
-    let windows = [];
-    try { windows = process.windows(); } catch (e) { continue; }
-    let pid = 0, name = '', bundle = '', front = false;
-    try { pid = process.unixId(); name = process.name(); bundle = process.bundleIdentifier() || ''; front = process.frontmost(); } catch (e) { continue; }
-    windows.forEach((window, index) => {
-      let title = '';
-      try { title = window.title() || ''; } catch (e) { /* untitled */ }
-      out.push({ id: pid + ':' + (index + 1), title, app: name, bundle, focused: front && index === 0 });
-    });
+  let frontSeen = false;
+  for (const info of infos) {
+    if (info.kCGWindowLayer !== 0) continue;
+    const pid = info.kCGWindowOwnerPID;
+    const app = $.NSRunningApplication.runningApplicationWithProcessIdentifier(pid);
+    const bundle = app && app.bundleIdentifier ? String(ObjC.unwrap(app.bundleIdentifier) || '') : '';
+    // The window list is ordered front to back: the first window of the front application is the focused one.
+    const focused = pid === frontPid && !frontSeen;
+    if (focused) frontSeen = true;
+    out.push({ id: pid + ':' + info.kCGWindowNumber, title: info.kCGWindowName || '', app: info.kCGWindowOwnerName || '', bundle, focused });
     if (out.length >= ${MAX_WINDOWS}) break;
   }
   return JSON.stringify(out);
@@ -58,13 +64,31 @@ function run() {
 `.trim();
 
 const MAC_FOCUS_SCRIPT = `
+ObjC.import('CoreGraphics');
+ObjC.import('AppKit');
+ObjC.import('ApplicationServices');
 function run(argv) {
-  const [pid, index] = JSON.parse(argv[0]);
-  const events = Application('System Events');
-  const process = events.processes.whose({ unixId: pid })()[0];
-  process.frontmost = true;
-  process.windows()[index - 1].actions.byName('AXRaise').perform();
-  return 'ok';
+  const [pid, number] = JSON.parse(argv[0]);
+  const app = $.NSRunningApplication.runningApplicationWithProcessIdentifier(pid);
+  if (!app) return 'gone';
+  app.activateWithOptions($.NSApplicationActivateIgnoringOtherApps);
+  // The title of that window, from the window server: the Accessibility windows are matched on it.
+  const infos = ObjC.deepUnwrap(ObjC.castRefToObject($.CGWindowListCopyWindowInfo($.kCGWindowListOptionAll, 0))) || [];
+  const mine = infos.find((info) => info.kCGWindowNumber === number);
+  const title = mine && mine.kCGWindowName ? mine.kCGWindowName : '';
+  const element = $.AXUIElementCreateApplication(pid);
+  const ref = Ref();
+  if ($.AXUIElementCopyAttributeValue(element, $('AXWindows'), ref) !== 0) return 'activated';
+  const windows = ObjC.castRefToObject(ref[0]);
+  const count = Number(windows.count);
+  for (let i = 0; i < count; i++) {
+    const window = windows.objectAtIndex(i);
+    const name = Ref();
+    $.AXUIElementCopyAttributeValue(window, $('AXTitle'), name);
+    const text = name[0] ? String(ObjC.unwrap(ObjC.castRefToObject(name[0])) || '') : '';
+    if (!title || text === title) { $.AXUIElementPerformAction(window, $('AXRaise')); return 'raised'; }
+  }
+  return 'activated';
 }
 `.trim();
 
@@ -131,6 +155,23 @@ async function linuxWindows(exec: Exec): Promise<WindowEntry[]> {
   return out;
 }
 
+const activeWindow = async (exec: Exec): Promise<string> => (await exec(xdotool('getactivewindow')).catch(() => ({ stdout: '' }))).stdout.trim();
+
+/**
+ * windowactivate asks the window manager (_NET_ACTIVE_WINDOW): with none running, as on a bare X
+ * server, it does nothing. The fallback maps, raises and focuses the window directly. Either way the
+ * result is read back, and a window that is still not active is an error, not a silent success.
+ */
+async function linuxFocus(exec: Exec, id: string): Promise<boolean> {
+  try { await exec(xdotool('windowactivate', '--sync', id)); } catch { /* handled below */ }
+  if (await activeWindow(exec) === id) return true;
+  for (const step of ['windowmap', 'windowraise', 'windowfocus']) {
+    try { await exec(xdotool(step, '--sync', id)); } catch { /* the check below says whether it worked */ }
+  }
+  if (await activeWindow(exec) === id) return true;
+  throw new Error('The window did not become active.');
+}
+
 // ── Per-OS entry points ────────────────────────────────────────────────────
 
 /** The application in front, or null when the system cannot tell. */
@@ -164,17 +205,15 @@ export async function windowApp(platform: InputPlatform, exec: Exec, id: string)
 /** Brings window `id` forward. Resolves false when the system did not (Windows reports it). */
 export async function focusWindow(platform: InputPlatform, exec: Exec, id: string): Promise<boolean> {
   if (platform === 'darwin') {
-    const [pid, index] = id.split(':').map(Number);
-    if (!Number.isInteger(pid) || !Number.isInteger(index)) return false;
-    await exec(macCommand(MAC_FOCUS_SCRIPT, [pid, index]));
-    return true;
+    const [pid, number] = id.split(':').map(Number);
+    if (!Number.isInteger(pid) || !Number.isInteger(number)) return false;
+    return (await exec(macCommand(MAC_FOCUS_SCRIPT, [pid, number]))).stdout.trim() !== 'gone';
   }
   if (platform === 'win32') {
     const answer = parseJson((await exec(windowsQueryCommand({ q: 'focus', id }))).stdout) as { ok?: unknown } | undefined;
     return answer?.ok === true;
   }
-  await exec(xdotool('windowactivate', '--sync', id));
-  return true;
+  return linuxFocus(exec, id);
 }
 
 // ── The allowed applications ───────────────────────────────────────────────

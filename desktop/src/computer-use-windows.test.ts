@@ -48,8 +48,23 @@ test('Linux: xdotool lists visible windows, names their application and activate
   assert.deepEqual(windows.map((w) => [w.id, w.title, w.app, w.focused]), [['4242', 'Docs - Firefox', 'Navigator', true], ['9001', 'Terminal', 'XTerm', false]]);
   assert.ok(!calls.some((line) => line.includes('rm -rf')), 'a line that is not a window number is never used');
   assert.deepEqual(await readForegroundApp('linux', exec), { name: 'Navigator', exe: 'firefox' });
-  assert.equal(await focusWindow('linux', exec, '9001'), true);
-  assert.equal(calls.at(-1), 'xdotool windowactivate --sync 9001');
+});
+
+test('Linux focus: falls back to map, raise and focus without a window manager, and checks the result', async () => {
+  let active = '4242';
+  const calls: string[] = [];
+  const exec = (works: string) => async (command: SystemCommand) => {
+    calls.push(command.args.join(' '));
+    const [verb, id] = command.args;
+    if (verb === 'getactivewindow') return { stdout: `${active}\n` };
+    if (verb === works) active = id === '--sync' ? command.args[2]! : id!;
+    if (verb === 'windowactivate') throw new Error('no window manager');
+    return { stdout: '' };
+  };
+  assert.equal(await focusWindow('linux', exec('windowfocus'), '9001'), true);
+  assert.deepEqual(calls.filter((line) => !line.startsWith('getactive')), ['windowactivate --sync 9001', 'windowmap --sync 9001', 'windowraise --sync 9001', 'windowfocus --sync 9001']);
+  active = '4242';
+  await assert.rejects(focusWindow('linux', exec('nothing'), '9001'), /did not become active/);
 });
 
 test('macOS: the foreground application and the window list come from fixed JXA scripts', async () => {

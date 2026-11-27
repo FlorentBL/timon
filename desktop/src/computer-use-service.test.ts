@@ -8,7 +8,7 @@ const display = { width: 1440, height: 900, scaleFactor: 2 };
 
 /** The application the simulated machine has in front, and the list an agent is given by default. */
 const FRONT = { bundle: 'com.apple.TextEdit', name: 'TextEdit', exe: 'TextEdit' };
-const isForegroundRead = (command: SystemCommand): boolean => command.file === 'osascript' && command.args.some((arg) => arg.includes('frontmostApplication'));
+const isForegroundRead = (command: SystemCommand): boolean => command.file === 'osascript' && command.args.some((arg) => arg.includes('frontmostApplication') && !arg.includes('CGWindowList'));
 
 function setup(overrides: Partial<ComputerUseDeps> = {}, allowedApps: readonly string[] = ['TextEdit']) {
   const calls: SystemCommand[] = [];
@@ -238,7 +238,7 @@ test('list_windows lists, and focus_window only reaches the windows of allowed a
   const focused: string[] = [];
   const exec = async (command: SystemCommand) => {
     if (command.args.some((arg) => arg.includes('AXRaise'))) { focused.push(command.args.at(-1)!); return { stdout: 'ok' }; }
-    if (command.args.some((arg) => arg.includes('process.windows()'))) return { stdout: JSON.stringify(windows) };
+    if (command.args.some((arg) => arg.includes('kCGWindowListOptionOnScreenOnly'))) return { stdout: JSON.stringify(windows) };
     return { stdout: 'true' };
   };
   const { run } = setup({ exec }, ['TextEdit']);
