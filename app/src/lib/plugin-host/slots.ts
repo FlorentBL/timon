@@ -668,9 +668,9 @@ export const CONFLICT_DIALOG_SLOT = 'forge.conflict.dialog';
  * slot like `kanban.job.dialog`: the product's window is the fallback and
  * comes back when a replacement leaves.
  *
- * Not in the plugin contract yet: API 19 shipped, so the hook would open a new
- * wave (docs/SDK-COMPAT.md §131). Until then only a bundled occupant, which
- * imports the context, can take the slot.
+ * Its hook joined the plugin contract at client API 20: 0.1.10 and 0.1.11
+ * shipped the slot without it, when only a bundled occupant could take it
+ * (docs/SDK-COMPAT.md §141).
  */
 export const PULL_REQUEST_DIALOG_SLOT = 'kanban.pull.dialog';
 
