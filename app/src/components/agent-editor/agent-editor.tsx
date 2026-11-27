@@ -32,6 +32,7 @@ import { BackendLimitsBadge } from '@/components/backend-limits-badge';
 import { t } from '@/lib/i18n';
 import { ComputerJournal, ComputerUseSetup } from './computer-use-setup';
 import { ComputerUseApps } from './computer-use-apps';
+import { ComputerUseMode } from './computer-use-mode';
 import { isValidAgentName, normalizeAgentName } from '@/lib/agent-name-rule';
 import { renameFollowUps } from '@/lib/agent-rename';
 import { agentSaveWarnings } from '@/lib/agent-save-warnings';
@@ -105,6 +106,7 @@ type AgentSummary = {
   computer_use?: boolean;
   /** The applications the agent may click and type in (absent or empty = none). */
   computer_use_apps?: string[];
+  computer_use_mode?: 'foreground' | 'background';
   /** Explicit manager (the canvas sets it) and team of bots (an id). */
   reports_to?: string | null;
   team?: string | null;
@@ -204,6 +206,7 @@ type Draft = {
   globalContext: boolean;
   computerUse: boolean;
   computerUseApps: string[];
+  computerUseMode: 'foreground' | 'background';
 };
 
 /** Auto-derive project slug from a cwd. Mirrors orchestrator helper. */
@@ -320,6 +323,7 @@ function toDraft(a: AgentSummary, cat: BackendCatalog): Draft {
     globalContext: a.global_context ?? false,
     computerUse: a.computer_use ?? false,
     computerUseApps: a.computer_use_apps ?? [],
+    computerUseMode: a.computer_use_mode === 'background' ? 'background' : 'foreground',
   };
 }
 
@@ -893,6 +897,7 @@ export function AgentEditor({ agent, isNew, onClose, onDirtyChange, initialTab }
           computer_use: draft.computerUse,
           // Always sent too: an empty list must say so, or the stored one is kept.
           computer_use_apps: draft.computerUseApps,
+          computer_use_mode: draft.computerUseMode,
         },
       };
       // Rename: if the name changed, RENAME the agent (moves the folder +
@@ -1456,6 +1461,7 @@ export function AgentEditor({ agent, isNew, onClose, onDirtyChange, initialTab }
                 </label>
                 {draft.computerUse && <ComputerUseSetup />}
                 {draft.computerUse && draft.name && <ComputerJournal agent={draft.name} />}
+                {draft.computerUse && <ComputerUseMode value={draft.computerUseMode} onChange={(next) => updateDraft('computerUseMode', next)} />}
                 {draft.computerUse && <ComputerUseApps values={draft.computerUseApps} onChange={(next) => updateDraft('computerUseApps', next)} />}
                 {draft.computerUse && (
                   <p
