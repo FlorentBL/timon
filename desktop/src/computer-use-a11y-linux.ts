@@ -221,7 +221,7 @@ def walk(win, max_depth, max_nodes):
     visit(win, '0', 0, set())
     return {'truncated': truncated, 'nodes': nodes}
 
-def write_text(acc, text):
+def write_text(acc, text, background=False):
     """EditableText.set_text_contents first; when the toolkit refuses, focus the field and replace
     its text by deleting then inserting."""
     try:
@@ -229,6 +229,9 @@ def write_text(acc, text):
             return True
     except Exception:
         pass
+    if background:
+        # Moving the focus could raise the window over the user's work.
+        return False
     try:
         Atspi.Component.grab_focus(acc)
         count = Atspi.Text.get_character_count(acc)
@@ -259,7 +262,7 @@ def act(win, req):
     elif action == 'focus':
         ok = Atspi.Component.grab_focus(acc)
     elif action == 'set_value':
-        ok = write_text(acc, req.get('value') or '')
+        ok = write_text(acc, req.get('value') or '', bool(req.get('background')))
     elif action == 'select':
         index = acc.get_index_in_parent()
         if 'Selection' in parent_ifaces:
@@ -353,7 +356,7 @@ export function linuxA11yBackend(exec: Exec): A11yBackend {
     },
     async act(args: A11yActArgs): Promise<void> {
       const ref = await windowRef(args.windowId);
-      refuse(await run({ op: 'act', ...ref, path: args.path, action: args.action, ...(args.value === undefined ? {} : { value: args.value }) }));
+      refuse(await run({ op: 'act', ...ref, path: args.path, action: args.action, ...(args.value === undefined ? {} : { value: args.value }), ...(args.background ? { background: true } : {}) }));
     },
   };
 }

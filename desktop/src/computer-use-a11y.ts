@@ -73,6 +73,8 @@ export interface A11yActArgs {
   path: string;
   action: A11yAction;
   value?: string;
+  /** Accessibility only: no fallback may use the keyboard or move the focus (the agent works in the background). */
+  background?: boolean;
 }
 
 export interface A11yBackend {

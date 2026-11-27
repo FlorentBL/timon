@@ -456,7 +456,7 @@ export type WindowsQuery =
   | { q: 'foreground' } | { q: 'windows' } | { q: 'focus'; id: string }
   | { q: 'a11y_probe' }
   | { q: 'a11y_tree'; id: string; maxDepth: number; maxNodes: number }
-  | { q: 'a11y_act'; id: string; path: string; action: string; value?: string };
+  | { q: 'a11y_act'; id: string; path: string; action: string; value?: string; background?: boolean };
 
 /** A read of the window system, answered as one JSON line, by the same worker as the input. */
 export function windowsQueryCommand(query: WindowsQuery): SystemCommand {
