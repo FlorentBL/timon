@@ -193,7 +193,10 @@ async function main() {
     if (status !== 200 || !body.ok) throw fail(`list_windows failed: HTTP ${status} ${JSON.stringify(body)}`);
     return body.result;
   };
-  const ours = (list) => list.find((w) => w.title === 'timon e2e');
+  // macOS hides window titles from an app without Screen Recording (the hosted runner): there, our
+  // window is the front one of this very process, whose pid starts the macOS window id.
+  const ours = (list) => list.find((w) => w.title === 'timon e2e')
+    ?? (process.platform === 'darwin' ? list.find((w) => !w.title && w.focused && String(w.id).startsWith(`${process.pid}:`)) : undefined);
   const listed = await windowsOf([]);
   const mine = ours(listed);
   if (!mine) throw fail(`The test window is not in list_windows (${listed.length} windows): ${JSON.stringify(listed.map((w) => [w.app, w.title]))}`);

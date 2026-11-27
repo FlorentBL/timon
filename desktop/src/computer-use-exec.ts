@@ -7,7 +7,10 @@ export function runSystemCommand(command: SystemCommand, timeoutMs = 20_000): Pr
     execFile(command.file, command.args, {
       timeout: timeoutMs, maxBuffer: 256 * 1024, windowsHide: true,
       env: { ...process.env, ...command.env },
-    }, (error, stdout) => {
+    }, (error, stdout, stderr) => {
+      // Diagnostic mode only: the error output of a failed system command (a PowerShell compile
+      // error, a missing tool). Steps carry numbers, never the typed text, so none can appear here.
+      if (error && DEBUG) console.error(`[computer-use] ${command.file} failed (${(error as NodeJS.ErrnoException).code ?? 'exit'}): ${String(stderr).slice(0, 1500)}`);
       if (error) reject(error); else resolve({ stdout: String(stdout) });
     });
   });
@@ -118,6 +121,7 @@ export function createSystemExecutor(): SystemExecutor {
     worker.kill();
     workers.delete(key);
     broken.add(key);
+    if (DEBUG) console.error(`[computer-use] ${command.file} worker never said ready: falling back to one command per process.`);
     return null;
   }
 
@@ -133,7 +137,10 @@ export function createSystemExecutor(): SystemExecutor {
         if (answer === null || answer === 'error') throw new Error('Input worker failed.');
         return { stdout: answer };
       }
-      if (answer !== 'ok') throw new Error('Input worker failed.');
+      if (answer !== 'ok') {
+        if (DEBUG) console.error(`[computer-use] worker answered ${answer === null ? 'nothing' : JSON.stringify(answer.slice(0, 80))} instead of ok.`);
+        throw new Error('Input worker failed.');
+      }
       return { stdout: '' };
     },
     dispose() {
