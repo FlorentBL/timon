@@ -1,4 +1,4 @@
-import { uiComputerPath } from '@/lib/computer-use';
+import { uiComputerUpstream } from '@/lib/computer-use';
 import { proxyJson } from '@/lib/ui/proxy';
 
 export const runtime = 'nodejs';
@@ -16,12 +16,12 @@ function refused(): Response {
 
 export async function GET(_req: Request, props: { params: Promise<{ command: string }> }): Promise<Response> {
   const { command } = await props.params;
-  const path = uiComputerPath('GET', command);
-  return path ? proxyJson('GET', path) : refused();
+  const upstream = uiComputerUpstream('GET', command);
+  return upstream ? proxyJson(upstream.method, upstream.path, {}) : refused();
 }
 
 export async function POST(_req: Request, props: { params: Promise<{ command: string }> }): Promise<Response> {
   const { command } = await props.params;
-  const path = uiComputerPath('POST', command);
-  return path ? proxyJson('POST', path, {}) : refused();
+  const upstream = uiComputerUpstream('POST', command);
+  return upstream ? proxyJson(upstream.method, upstream.path, {}) : refused();
 }

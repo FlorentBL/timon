@@ -53,3 +53,13 @@ test('the UI proxy only relays status, stop and resume, and refuses the agent co
   assert.equal(uiComputerPath('GET', 'stop'), null);
   assert.equal(uiComputerPath('GET', 'resume'), null);
 });
+
+test('the UI status poll (GET) is relayed upstream as POST /api/computer/status, the only route the daemon has', async () => {
+  const { uiComputerUpstream } = await import('./computer-use');
+  assert.deepEqual(uiComputerUpstream('GET', 'status'), { method: 'POST', path: '/api/computer/status' });
+  for (const command of ['status', 'stop', 'resume']) {
+    assert.deepEqual(uiComputerUpstream('POST', command), { method: 'POST', path: `/api/computer/${command}` });
+  }
+  assert.equal(uiComputerUpstream('GET', 'stop'), null);
+  assert.equal(uiComputerUpstream('GET', 'click'), null);
+});

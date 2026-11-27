@@ -55,3 +55,14 @@ const UI_ALLOWED: Record<'GET' | 'POST', ReadonlySet<string>> = {
 export function uiComputerPath(method: 'GET' | 'POST', command: string): string | null {
   return UI_ALLOWED[method].has(command) ? `/api/computer/${command}` : null;
 }
+
+/**
+ * The upstream call for a UI request. The daemon exposes only
+ * `POST /api/computer/:command` (no GET route), so the screen's status poll
+ * (GET) is relayed upstream as a POST: relaying it as a GET would 404 and the
+ * banner would never appear.
+ */
+export function uiComputerUpstream(method: 'GET' | 'POST', command: string): { method: 'POST'; path: string } | null {
+  const path = uiComputerPath(method, command);
+  return path ? { method: 'POST', path } : null;
+}
