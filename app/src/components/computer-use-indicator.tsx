@@ -62,9 +62,8 @@ export function ComputerUseIndicator(): React.ReactElement | null {
       // A hidden window needs no banner; skip the call, not the schedule.
       const next = document.visibilityState === 'hidden' ? null : await fetchComputerStatus();
       if (cancelled) return;
-      // A stop is sticky on this side until a resume: the daemon's `active` goes
-      // false after a stop, which would otherwise hide the resume button.
-      if (next) setStatus((cur) => ({ active: next.active, stopped: next.stopped || (cur.stopped && !next.active) }));
+      // The desktop reports `stopped` itself, so a reload keeps the Resume button.
+      if (next) setStatus(next);
       timer = setTimeout(tick, next?.active ? POLL_ACTIVE_MS : POLL_IDLE_MS);
     };
     void tick();

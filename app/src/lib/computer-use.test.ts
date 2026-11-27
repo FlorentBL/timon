@@ -39,3 +39,17 @@ test('status and controls go through the UI proxy; failures read as idle / refus
     globalThis.fetch = real;
   }
 });
+
+test('the UI proxy only relays status, stop and resume, and refuses the agent commands', async () => {
+  const { uiComputerPath } = await import('./computer-use');
+  assert.equal(uiComputerPath('GET', 'status'), '/api/computer/status');
+  for (const command of ['status', 'stop', 'resume']) {
+    assert.equal(uiComputerPath('POST', command), `/api/computer/${command}`);
+  }
+  for (const command of ['click', 'type', 'key', 'screenshot', 'move', 'drag', 'scroll', 'wait', '..%2Fstatus', '']) {
+    assert.equal(uiComputerPath('POST', command), null, command);
+    assert.equal(uiComputerPath('GET', command), null, command);
+  }
+  assert.equal(uiComputerPath('GET', 'stop'), null);
+  assert.equal(uiComputerPath('GET', 'resume'), null);
+});

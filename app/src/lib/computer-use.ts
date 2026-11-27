@@ -41,3 +41,17 @@ export async function sendComputerControl(command: 'stop' | 'resume'): Promise<b
     return false;
   }
 }
+
+/**
+ * What the UI proxy may forward to the daemon, by method. Every other command
+ * (click, type…) is the agent's and must never be reachable from a browser
+ * request: it answers null, and the route refuses with a 404 and forwards nothing.
+ */
+const UI_ALLOWED: Record<'GET' | 'POST', ReadonlySet<string>> = {
+  GET: new Set(['status']),
+  POST: new Set(['status', 'stop', 'resume']),
+};
+
+export function uiComputerPath(method: 'GET' | 'POST', command: string): string | null {
+  return UI_ALLOWED[method].has(command) ? `/api/computer/${command}` : null;
+}
