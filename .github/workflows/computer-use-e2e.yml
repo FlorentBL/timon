@@ -48,19 +48,37 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y xvfb xdotool
-          # Ubuntu 24.04 forbids the unprivileged user namespaces Chromium's sandbox needs, so Electron
-          # aborts on start ("SUID sandbox helper ... not configured correctly"). Runner-only setting.
-          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
 
+      # The verdict is read from the test's own output, not from its exit status: on the first Linux
+      # run the step passed although the test printed FAIL, the status being lost between Electron
+      # and xvfb-run. The runner's Chromium sandbox cannot start on Ubuntu 24.04 (SUID helper, then
+      # /dev/shm), so Linux runs Electron without it; the test page is a local static textarea.
       - name: Test computer use (Linux, X11 on xvfb)
         if: runner.os == 'Linux'
         working-directory: desktop
-        run: xvfb-run --auto-servernum --server-args="-screen 0 1280x800x24" npm run test:computer-use-e2e
+        shell: bash
+        run: |
+          set -o pipefail
+          npx tsc --outDir dist-e2e
+          xvfb-run --auto-servernum --server-args="-screen 0 1280x800x24" npx electron --no-sandbox scripts/computer-use-e2e.mjs 2>&1 | tee computer-use-e2e.log || true
+          grep -qx 'PASS' computer-use-e2e.log
 
-      - name: Test computer use
-        if: runner.os != 'Linux'
+      - name: Test computer use (Windows)
+        if: runner.os == 'Windows'
         working-directory: desktop
-        run: npm run test:computer-use-e2e
+        shell: bash
+        run: |
+          npm run test:computer-use-e2e 2>&1 | tee computer-use-e2e.log || true
+          grep -qx 'PASS' computer-use-e2e.log
+
+      # A hosted macOS runner has no Screen Recording grant: the clean refusal is the expected result.
+      - name: Test computer use (macOS, refusal without grants)
+        if: runner.os == 'macOS'
+        working-directory: desktop
+        shell: bash
+        run: |
+          npm run test:computer-use-e2e 2>&1 | tee computer-use-e2e.log || true
+          grep -qE '^(PASS|skipped: permissions)$' computer-use-e2e.log
 
       # The report holds the timing of every action; it carries no secret.
       - name: Upload the report
@@ -68,5 +86,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: computer-use-e2e-${{ matrix.os }}
-          path: desktop/computer-use-e2e-report.txt
+          path: |
+            desktop/computer-use-e2e-report.txt
+            desktop/computer-use-e2e.log
           if-no-files-found: ignore

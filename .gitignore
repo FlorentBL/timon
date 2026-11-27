@@ -6,6 +6,7 @@ dist/
 # Build and report of desktop/scripts/computer-use-e2e.mjs.
 dist-e2e/
 computer-use-e2e-report.txt
+computer-use-e2e.log
 *.log
 *.tsbuildinfo
 .env
