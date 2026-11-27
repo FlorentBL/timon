@@ -888,3 +888,25 @@ test('the service pause never lets the installer go on while the task is still e
   assert.ok(check < ps1.indexOf('# The net.'));
   assert.match(ps1, /\$taskNow = & \$taskState\s+if \(@\('Ready', 'Running', 'Queued'\) -contains \$taskNow\) \{\s+& \$note [^\n]+\s+exit \$stillRunning\s+\}/);
 });
+
+/**
+ * A `depends` list replaces electron-builder's default, and the default left
+ * libasound to a desktop: on a bare Ubuntu Server 24.04 the browser host died
+ * at every start, status 127 (recipe of 27/11/2026). The default must stay in
+ * the list, and both names of libasound with it: `libasound2t64` (Ubuntu 24.04,
+ * Debian 13), `libasound2` (Ubuntu 22.04, Debian 12).
+ */
+test('the Linux packages depend on every library Electron links against, libasound included', () => {
+  const require = createRequire(import.meta.url);
+  const yaml = require('js-yaml') as { load: (text: string) => unknown };
+  const config = yaml.load(yml) as { deb?: { depends?: string[] }; rpm?: { depends?: string[] } };
+  const deb = config.deb?.depends ?? [];
+  for (const name of ['libgtk-3-0', 'libnotify4', 'libnss3', 'libxss1', 'libxtst6', 'xdg-utils', 'libatspi2.0-0', 'libuuid1', 'libsecret-1-0', 'libgbm1']) {
+    assert.ok(deb.includes(name), `deb depends on ${name}`);
+  }
+  assert.ok(deb.includes('libasound2t64 | libasound2'), 'deb depends on libasound under both names, the t64 one first');
+  const rpm = config.rpm?.depends ?? [];
+  for (const name of ['gtk3', 'nss', '(libXtst or libXtst6)', 'libasound.so.2()(64bit)', 'libgbm.so.1()(64bit)']) {
+    assert.ok(rpm.includes(name), `rpm depends on ${name}`);
+  }
+});

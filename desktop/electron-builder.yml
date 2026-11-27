@@ -149,6 +149,30 @@ linux:
 # `linux-desktop.test.ts` renders both entries with electron-builder's own code.
 # A target's `desktop` is merged into the one of `linux`, key by key.
 deb:
+  # The package's dependencies. A `depends` list replaces electron-builder's
+  # default, so the default comes first, verbatim (app-builder's
+  # getDefaultDepends: Ubuntu 24.04 and Debian 13 satisfy its pre-t64 names
+  # through their packages' Provides). After it, two libraries Electron links
+  # against that the default leaves to a desktop: on a bare server the browser
+  # host died at every start, "libasound.so.2: cannot open shared object file",
+  # status 127 (recipe of 27/11/2026, Ubuntu Server 24.04). `libasound2t64`
+  # exists on Ubuntu 24.04 and Debian 13, `libasound2` on Ubuntu 22.04 and
+  # Debian 12; on 24.04 `libasound2` is also a virtual package with two
+  # providers, which apt will not pick between, hence the t64 name first.
+  # `libgbm1` (same name on all four) only arrived through Recommends:
+  # `--no-install-recommends` left it out. `packaging.test.ts` holds the list.
+  depends:
+    - libgtk-3-0
+    - libnotify4
+    - libnss3
+    - libxss1
+    - libxtst6
+    - xdg-utils
+    - libatspi2.0-0
+    - libuuid1
+    - libsecret-1-0
+    - libasound2t64 | libasound2
+    - libgbm1
   afterInstall: ../orchestrator/src/host/linux-cli-after-install.tpl
   afterRemove: ../orchestrator/src/host/linux-cli-after-remove.tpl
   desktop:
@@ -172,7 +196,22 @@ appImage:
         # AppImageLauncher and appimaged rewrite every Exec of the entry, the
         # action's included, to the path of the AppImage.
         Exec: AppRun --no-sandbox --new-window
+# Not built today (linux.target): kept in step with the deb. The default of
+# app-builder first, then the same two libraries by soname, which every rpm
+# distribution provides under its own package name (alsa-lib, libasound2;
+# mesa-libgbm, libgbm1). Timon ships 64-bit Linux builds only.
 rpm:
+  depends:
+    - gtk3
+    - libnotify
+    - nss
+    - libXScrnSaver
+    - (libXtst or libXtst6)
+    - xdg-utils
+    - at-spi2-core
+    - (libuuid or libuuid1)
+    - libasound.so.2()(64bit)
+    - libgbm.so.1()(64bit)
   afterInstall: ../orchestrator/src/host/linux-cli-after-install.tpl
   afterRemove: ../orchestrator/src/host/linux-cli-after-remove.tpl
 mac:
