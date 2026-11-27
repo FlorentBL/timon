@@ -115,6 +115,14 @@ extraResources:
   # `.next/cache` never travels: the standalone output does not contain it.
   - from: build-resources/app
     to: app
+  # electron-builder 26 drops the root `node_modules` of EVERY copy source,
+  # extraResources included (`createFilter`, app-builder-lib/out/util/filter.js):
+  # the entry above alone packed the app without a single dependency
+  # (0.1.12-rc.1). A source that IS `node_modules` keeps its content, as the
+  # orchestrator's always did. `afterPack` fails the pack when a file of either
+  # staged tree did not land (`assertPackagedStagedTrees`).
+  - from: build-resources/app/node_modules
+    to: app/node_modules
 linux:
   category: Development
   # The mission launcher (timon-fence), built and signed with the daemon

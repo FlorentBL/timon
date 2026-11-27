@@ -10,7 +10,7 @@ import { createRequire } from 'node:module';
 import { copyBuiltinPlugins, sealTree, releaseKeys, stageBuildInfo, stageFence } from './prepare-daemon-release.mjs';
 import { createBuildInfo, writeBuildInfo } from './build-info.mjs';
 import { RELEASE_MANIFEST_VERSION, verifyRelease } from './release-integrity.mjs';
-import { THIRD_PARTY_NOTICES, assertPackagedFence, assertPackagedPublicKey, assertPackagedReleaseCheck, assertPackagedSpeechEngine, assertPackagedThirdPartyNotices, beforePack, runtimeFuses } from './release-hooks.mjs';
+import { STAGED_TREES, THIRD_PARTY_NOTICES, assertPackagedFence, assertPackagedStagedTrees, assertPackagedPublicKey, assertPackagedReleaseCheck, assertPackagedSpeechEngine, assertPackagedThirdPartyNotices, beforePack, missingFromCopy, runtimeFuses } from './release-hooks.mjs';
 import { sherpaPackageName } from '../src/speech-paths.ts';
 import { checkMacSignature, describeSignature, parseSignatureDetails } from './mac-signature.mjs';
 import { FuseV1Options } from '@electron/fuses';
@@ -505,4 +505,62 @@ test('the keyring transform matches the real pubkey.ts, not only a fixture', asy
   const mod = await import(pathToFileURL(join(root, 'dist/license/pubkey.js')).href);
   assert.deepEqual(mod.activeKeyring(), ['pinned'], 'the pinned keyring only');
   assert.throws(() => mod.overrideKeyringForTests(['forged']), /unavailable in distributions/, 'no path left to a test keyring');
+});
+
+/** A `build-resources/` as prepare:deps leaves it: the app's standalone output and the daemon's rebuilt tree. */
+function stagedBuildResources(root) {
+  const files = [
+    'app/server.js', 'app/public/.gitkeep', 'app/.next/timon/server.cjs',
+    'app/node_modules/better-sqlite3/package.json', 'app/node_modules/better-sqlite3/build/Release/better_sqlite3.node',
+    'orchestrator/node_modules/node-pty/build/Release/pty.node', 'orchestrator/node_modules/a/node_modules/b/index.js',
+  ];
+  for (const file of files) {
+    mkdirSync(join(root, file, '..'), { recursive: true });
+    writeFileSync(join(root, file), file);
+  }
+  symlinkSync('../a/index.js', join(root, 'orchestrator/node_modules/a/node_modules/b/link.js'));
+}
+
+/**
+ * 0.1.12-rc.1: electron-builder 26 drops the root `node_modules` of every copy
+ * source, extraResources included. `from: build-resources/app` alone packed
+ * the app without a single dependency, on every OS. Copied here by the
+ * installed electron-builder's own code, from electron-builder.yml as written.
+ */
+test('0.1.12-rc.1: every file of the staged trees reaches resources/, through the installed electron-builder', async (t) => {
+  const require = createRequire(import.meta.url);
+  const { load } = require('js-yaml');
+  const { copyFiles, getFileMatchers } = require('app-builder-lib/out/fileMatcher.js');
+  const root = mkdtempSync(join(tmpdir(), 'timon-staged-trees-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const project = join(root, 'desktop');
+  stagedBuildResources(join(project, 'build-resources'));
+  const config = load(readFileSync(new URL('../electron-builder.yml', import.meta.url), 'utf8'));
+  const targets = new Set(STAGED_TREES.map(({ packaged }) => packaged.split('\\').join('/')));
+  config.extraResources = config.extraResources.filter((entry) => [...targets].some((to) => entry.to === to || entry.to.startsWith(`${to}/`)));
+  assert.deepEqual(config.extraResources.map((entry) => entry.to).sort(), ['app', 'app/node_modules', 'orchestrator/node_modules']);
+  const resources = join(root, 'resources');
+  const matchers = getFileMatchers(config, 'extraResources', resources, {
+    macroExpander: (text) => text, customBuildOptions: {}, globalOutDir: join(project, 'release'), defaultSrc: project,
+  });
+  await copyFiles(matchers, null);
+  assertPackagedStagedTrees(resources, join(project, 'build-resources'));
+  assert.ok(existsSync(join(resources, 'app/node_modules/better-sqlite3/build/Release/better_sqlite3.node')));
+});
+
+test('0.1.12-rc.1: a staged file missing from the package stops the pack, by name', (t) => {
+  const root = mkdtempSync(join(tmpdir(), 'timon-staged-missing-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const staged = join(root, 'build-resources');
+  stagedBuildResources(staged);
+  const resources = join(root, 'resources');
+  // What electron-builder 26 made of `from: build-resources/app` alone.
+  mkdirSync(join(resources, 'app', '.next', 'timon'), { recursive: true });
+  writeFileSync(join(resources, 'app', 'server.js'), '');
+  writeFileSync(join(resources, 'app', '.next', 'timon', 'server.cjs'), '');
+  assert.deepEqual(missingFromCopy(join(staged, 'app'), join(resources, 'app')).sort(), [
+    join('node_modules', 'better-sqlite3', 'build', 'Release', 'better_sqlite3.node'),
+    join('node_modules', 'better-sqlite3', 'package.json'),
+  ], '.gitkeep is never copied by electron-builder and is not asked for');
+  assert.throws(() => assertPackagedStagedTrees(resources, staged), /2 file\(s\) of .* did not reach .*better_sqlite3\.node/s);
 });
