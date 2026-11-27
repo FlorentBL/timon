@@ -3,7 +3,10 @@
  *
  * Electron starts the real service (the same `startComputerUse` the app runs), opens a window with a
  * textarea, then acts as the AGENT over the private HTTP transport: screenshot, click, type, shortcut,
- * and reads what really landed in the textarea. It finishes by pressing the stop shortcut through the
+ * and reads what really landed in the textarea. It then reads the window as an accessibility tree, finds
+ * a field and a button by name, writes the field and presses the button without touching the mouse,
+ * and reads the real values back (TIMON_E2E_REQUIRE_A11Y=1 makes a missing tree a failure; without it
+ * the step is skipped with a note). It finishes by pressing the stop shortcut through the
  * service itself and checks that the next agent command is refused.
  *
  * It types and clicks on the real screen, so it only runs on CI or when TIMON_COMPUTER_USE_E2E=1.
@@ -66,6 +69,8 @@ async function main() {
   home = await mkdtemp(join(tmpdir(), 'timon-cu-e2e-'));
   process.env.TIMON_HOME = home;
   await app.whenReady();
+  // Chromium builds its accessibility tree only when asked: without it a real backend sees an empty page.
+  app.setAccessibilitySupportEnabled(true);
 
   const { startComputerUse, COMPUTER_STOP_SHORTCUT } = await import('../dist-e2e/computer-use-electron.js');
   desktop = await startComputerUse(home, (key) => key);
@@ -109,7 +114,10 @@ async function main() {
     x: 120, y: 120, width: 640, height: 420, show: true, alwaysOnTop: true, frame: true, resizable: false,
     webPreferences: { sandbox: true, contextIsolation: true },
   });
-  const page = '<!doctype html><meta charset="utf-8"><title>timon e2e</title><body style="margin:0"><textarea id="t" style="position:absolute;left:40px;top:40px;width:480px;height:240px;font-size:24px"></textarea></body>';
+  const page = '<!doctype html><meta charset="utf-8"><title>timon e2e</title><body style="margin:0"><textarea id="t" style="position:absolute;left:40px;top:40px;width:480px;height:240px;font-size:24px"></textarea>'
+    + '<input aria-label="Nom" style="position:absolute;left:40px;top:300px;width:240px;height:32px;font-size:20px">'
+    + '<button id="go" style="position:absolute;left:300px;top:300px;height:36px;font-size:20px" onclick="document.getElementById(\'out\').textContent=\'clicked\'">Valider</button>'
+    + '<p id="out" style="position:absolute;left:40px;top:350px;margin:0;font-size:20px"></p></body>';
   await win.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(page)}`);
   win.show();
   win.focus();
@@ -210,6 +218,68 @@ async function main() {
   other.destroy();
   win.focus();
   await sleep(300);
+
+  log('accessibility: find by name, set_value, press, no mouse');
+  const a11yCheck = status.checks.a11y;
+  if (a11yCheck !== 'ok') {
+    if (process.env.TIMON_E2E_REQUIRE_A11Y === '1') throw fail(`The accessibility tree is required here, got checks.a11y=${a11yCheck}.`);
+    log(`  skipped: a11y (${a11yCheck})`);
+  } else {
+    const nameField = () => js('document.querySelector("input[aria-label=Nom]").value');
+    const findNode = async (query, accept) => {
+      let tree = null;
+      const until = Date.now() + 8000;
+      // Chromium publishes its tree a moment after accessibility was switched on.
+      while (Date.now() < until) {
+        tree = await agent('a11y_tree', { windowId: mine.id, query }, `a11y_tree (${query})`);
+        const found = tree.nodes.find(accept);
+        if (found) return { tree, found };
+        await sleep(400);
+      }
+      throw fail(`No element matching "${query}" in the accessibility tree: ${JSON.stringify(tree?.nodes.map((n) => [n.role, n.name]))}`);
+    };
+    const { tree: nameTree, found: field } = await findNode('Nom', (n) => n.name === 'Nom' && ['textfield', 'textarea', 'combobox'].includes(n.role));
+    if (nameTree.window.id !== mine.id || !nameTree.nodes.every((n) => typeof n.id === 'string' && n.id.startsWith(`${mine.id}#`))) throw fail('Element ids must be prefixed by the window id.');
+    if (!field.actions.includes('set_value')) throw fail(`The field does not offer set_value: ${JSON.stringify(field)}`);
+    const { found: button } = await findNode('Valider', (n) => n.role === 'button' && n.name === 'Valider');
+    if (!button.actions.includes('press')) throw fail(`The button does not offer press: ${JSON.stringify(button)}`);
+    log(`  ✓ found field ${field.id} and button ${button.id}`);
+    const started = performance.now();
+    await agent('a11y_tree', { windowId: mine.id, maxNodes: 400 }, 'a11y_tree (400 nodes)');
+    log(`  full tree read in ${Math.round(performance.now() - started)} ms (target: under 1500)`);
+
+    const pointer = () => agent('cursor_position', {}, 'cursor_position');
+    const before = await pointer();
+    for (const [label, list] of [['empty list', []], ['other application', ['definitely-not-this-app']]]) {
+      const refusedTree = await send('a11y_tree', { windowId: mine.id }, 'agent', `a11y_tree (${label})`, list);
+      const refusedSet = await send('a11y_action', { id: field.id, action: 'set_value', value: 'LEAK' }, 'agent', `a11y_action (${label})`, list);
+      const refusedPress = await send('a11y_action', { id: button.id, action: 'press' }, 'agent', `a11y_action press (${label})`, list);
+      for (const refused of [refusedTree, refusedSet, refusedPress]) {
+        if (refused.status !== 403 || refused.body.code !== 'computer_app_not_allowed') throw fail(`With an ${label} an accessibility command must get computer_app_not_allowed, got ${JSON.stringify(refused)}`);
+      }
+    }
+    if ((await nameField()) !== '' || (await js('document.getElementById("out").textContent')) !== '') throw fail('A refused accessibility action changed the page.');
+    log('  ✓ refused for an application that is not listed');
+
+    await agent('a11y_action', { id: field.id, action: 'set_value', value: 'timon' }, 'a11y_action set_value');
+    const until = Date.now() + 5000;
+    while ((await nameField()) !== 'timon' && Date.now() < until) await sleep(100);
+    if ((await nameField()) !== 'timon') throw fail(`set_value: the field holds ${JSON.stringify(await nameField())}, expected "timon".`);
+    log('  ✓ set_value wrote "timon" into the field');
+    await agent('a11y_action', { id: button.id, action: 'press' }, 'a11y_action press');
+    const pressed = Date.now() + 5000;
+    while ((await js('document.getElementById("out").textContent')) !== 'clicked' && Date.now() < pressed) await sleep(100);
+    if ((await js('document.getElementById("out").textContent')) !== 'clicked') throw fail('press: the button did not write "clicked".');
+    log('  ✓ press clicked the button');
+    const after = await pointer();
+    if (before.x !== after.x || before.y !== after.y) throw fail(`The accessibility actions moved the mouse: ${JSON.stringify(before)} -> ${JSON.stringify(after)}`);
+    await expectValue(TYPED, 'the accessibility actions left the textarea alone');
+    log('  ✓ the mouse did not move');
+
+    const stale = await send('a11y_action', { id: `${mine.id}#0.99.99`, action: 'press' }, 'agent', 'a11y_action (stale id)');
+    if (stale.status !== 409 || stale.body.code !== 'a11y_element_stale') throw fail(`A stale id must get a11y_element_stale, got ${JSON.stringify(stale)}`);
+    log('  ✓ a stale id is refused with a11y_element_stale');
+  }
 
   log(`stop: pressing ${COMPUTER_STOP_SHORTCUT} through the service`);
   await agent('key', { keys: COMPUTER_STOP_SHORTCUT }, 'key (stop shortcut)');
