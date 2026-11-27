@@ -30,6 +30,8 @@ export type ComputerCommand =
   | { command: 'type'; text: string }
   | { command: 'key'; keys: string }
   | { command: 'scroll'; x: number; y: number; deltaX: number; deltaY: number }
+  | { command: 'list_windows' }
+  | { command: 'focus_window'; id: string }
   | { command: 'wait'; ms: number }
   | { command: 'stop' }
   | { command: 'resume' }
@@ -37,7 +39,7 @@ export type ComputerCommand =
   | { command: 'restart_app' };
 
 const NAMES = new Set(['status', 'screenshot', 'cursor_position', 'move', 'click', 'double_click', 'drag',
-  'type', 'key', 'scroll', 'wait', 'stop', 'resume', 'request_permissions', 'restart_app']);
+  'type', 'key', 'scroll', 'list_windows', 'focus_window', 'wait', 'stop', 'resume', 'request_permissions', 'restart_app']);
 
 function coordinate(args: Record<string, unknown>, name: string): number {
   const value = args[name];
@@ -52,6 +54,15 @@ function optionalDelta(args: Record<string, unknown>, name: string): number {
   if (args[name] === undefined) return 0;
   const value = coordinate(args, name);
   return Math.max(-10_000, Math.min(10_000, value));
+}
+
+/** The applications an agent may act in, as the daemon sends them with each agent command. */
+export function parseAllowedApps(value: unknown): string[] {
+  if (value === undefined || value === null) return [];
+  if (!Array.isArray(value) || value.length > 100 || value.some((v) => typeof v !== 'string' || v.length > 200)) {
+    throw new ComputerCommandError('"allowedApps" must be an array of at most 100 short strings.');
+  }
+  return value as string[];
 }
 
 export function parseComputerActor(value: unknown): ComputerActor {
@@ -93,6 +104,11 @@ export function parseComputerCommand(name: unknown, rawArgs: unknown): ComputerC
     }
     case 'scroll':
       return { command: 'scroll', x: coordinate(args, 'x'), y: coordinate(args, 'y'), deltaX: optionalDelta(args, 'deltaX'), deltaY: optionalDelta(args, 'deltaY') };
+    case 'focus_window': {
+      // An opaque id from list_windows (a window number, `pid:index`).
+      if (typeof args.id !== 'string' || !/^[A-Za-z0-9:_.-]{1,64}$/.test(args.id)) throw new ComputerCommandError('"id" must be a window id returned by list_windows.');
+      return { command: 'focus_window', id: args.id };
+    }
     case 'wait': {
       const ms = coordinate(args, 'ms');
       if (ms < 0 || ms > COMPUTER_MAX_WAIT_MS) throw new ComputerCommandError(`"ms" must be between 0 and ${COMPUTER_MAX_WAIT_MS}.`);

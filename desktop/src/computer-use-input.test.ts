@@ -106,3 +106,14 @@ test('Linux: argv only, text behind "--", coordinates in physical pixels', () =>
   assert.deepEqual(buildInputCommand('linux', { kind: 'drag', fromX: 0, fromY: 0, toX: 5, toY: 6 }, { ...retina, scaleFactor: 1 }).args,
     ['mousemove', '0', '0', 'mousedown', '1', 'mousemove', '5', '6', 'mouseup', '1']);
 });
+
+test('the Windows worker answers reads on one ASCII JSON line and the one-shot form runs the same query', async () => {
+  const { WINDOWS_WORKER_SCRIPT, WINDOWS_QUERY_SCRIPT, windowsQueryCommand } = await import('./computer-use-input.js');
+  for (const script of [WINDOWS_WORKER_SCRIPT, WINDOWS_QUERY_SCRIPT]) {
+    for (const piece of ['EnumWindows', 'GetForegroundWindow', 'SetForegroundWindow', 'Invoke-TimonQuery']) assert.ok(script.includes(piece), piece);
+  }
+  assert.ok(WINDOWS_WORKER_SCRIPT.includes('\\u{0:x4}'), 'non-ASCII titles are escaped before they leave the worker');
+  const command = windowsQueryCommand({ q: 'focus', id: '42' });
+  assert.equal(command.worker?.input, '{"q":"focus","id":"42"}');
+  assert.equal(command.worker?.reply, true);
+});

@@ -6,12 +6,16 @@ import type { SystemCommand } from './computer-use-input.js';
 
 const display = { width: 1440, height: 900, scaleFactor: 2 };
 
-function setup(overrides: Partial<ComputerUseDeps> = {}) {
+/** The application the simulated machine has in front, and the list an agent is given by default. */
+const FRONT = { bundle: 'com.apple.TextEdit', name: 'TextEdit', exe: 'TextEdit' };
+const isForegroundRead = (command: SystemCommand): boolean => command.file === 'osascript' && command.args.some((arg) => arg.includes('frontmostApplication'));
+
+function setup(overrides: Partial<ComputerUseDeps> = {}, allowedApps: readonly string[] = ['TextEdit']) {
   const calls: SystemCommand[] = [];
+  const inner = overrides.exec ?? (async () => ({ stdout: 'true\n' }));
   const states: Array<{ active: boolean; stopped: boolean }> = [];
   const service = new ComputerUseService({
     platform: 'darwin', env: {},
-    exec: async (command) => { calls.push(command); return { stdout: 'true\n' }; },
     display: () => display,
     cursor: () => ({ x: 720, y: 450 }),
     capture: async () => Buffer.from([0xff, 0xd8, 0xff, 0x6a, 0x70, 0x67]),
@@ -20,8 +24,13 @@ function setup(overrides: Partial<ComputerUseDeps> = {}) {
     activeMs: 30,
     onState: (state) => states.push(state),
     ...overrides,
+    exec: async (command) => {
+      if (isForegroundRead(command)) return { stdout: JSON.stringify(FRONT) };
+      calls.push(command);
+      return inner(command);
+    },
   });
-  const run = (command: string, args?: unknown, actor: 'agent' | 'human' = 'agent') => service.handle(actor, parseComputerCommand(command, args));
+  const run = (command: string, args?: unknown, actor: 'agent' | 'human' = 'agent') => service.handle(actor, parseComputerCommand(command, args), allowedApps);
   return { service, calls, states, run };
 }
 
@@ -187,4 +196,61 @@ test('a capture that fell back to PNG is labelled as PNG', async () => {
   const { run } = setup({ capture: async () => Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a]) });
   const shot = await run('screenshot') as { mimeType: string };
   assert.equal(shot.mimeType, 'image/png');
+});
+
+test('keyboard and mouse actions are refused unless the foreground application is listed', async () => {
+  for (const command of [['click', { x: 1, y: 1 }], ['double_click', { x: 1, y: 1 }], ['move', { x: 1, y: 1 }], ['drag', { fromX: 1, fromY: 1, toX: 2, toY: 2 }],
+    ['type', { text: 'x' }], ['key', { keys: 'Enter' }], ['scroll', { x: 1, y: 1, deltaY: 3 }]] as const) {
+    const refused = setup({}, ['Notepad']);
+    await assert.rejects(refused.run(command[0], command[1]), (e: ComputerCommandError) =>
+      e.code === 'computer_app_not_allowed' && e.statusCode === 403 && /TextEdit \(com\.apple\.TextEdit\)/.test(e.message), command[0]);
+    assert.equal(refused.calls.length, 1, `${command[0]} ran nothing (only the Accessibility probe)`);
+    // Bundle id, displayed name and executable name all match, whatever the case.
+    for (const entry of ['com.apple.textedit', 'TEXTEDIT']) {
+      await setup({}, [entry]).run(command[0], command[1]);
+    }
+  }
+});
+
+test('an empty or absent list allows no keyboard or mouse action, a person is not gated, reads stay open', async () => {
+  const { run, calls } = setup({}, []);
+  await assert.rejects(run('type', { text: 'x' }), (e: ComputerCommandError) => e.code === 'computer_app_not_allowed' && /no allowed applications/.test(e.message));
+  await assert.rejects(run('click', { x: 1, y: 1 }), /computer_app_not_allowed|allowed/);
+  await run('click', { x: 1, y: 1 }, 'human');
+  await run('screenshot');
+  await run('wait', { ms: 0 });
+  assert.ok(calls.every((call) => !call.args.some((arg) => arg.includes('"t":"text"'))), 'nothing was typed');
+});
+
+test('an unreadable foreground application fails closed', async () => {
+  const { run } = setup({ platform: 'linux', env: { DISPLAY: ':0' }, exec: async (command) => {
+    if (command.args[0] === 'version') return { stdout: 'xdotool' };
+    throw new Error('xdotool failed');
+  } });
+  await assert.rejects(run('click', { x: 1, y: 1 }), (e: ComputerCommandError) => e.code === 'computer_app_not_allowed' && /could not be read/.test(e.message));
+});
+
+test('list_windows lists, and focus_window only reaches the windows of allowed applications', async () => {
+  const windows = [
+    { id: '10:1', title: 'Notes', app: 'TextEdit', bundle: 'com.apple.TextEdit', focused: true },
+    { id: '20:1', title: 'Inbox', app: 'Mail', bundle: 'com.apple.mail', focused: false },
+  ];
+  const focused: string[] = [];
+  const exec = async (command: SystemCommand) => {
+    if (command.args.some((arg) => arg.includes('AXRaise'))) { focused.push(command.args.at(-1)!); return { stdout: 'ok' }; }
+    if (command.args.some((arg) => arg.includes('process.windows()'))) return { stdout: JSON.stringify(windows) };
+    return { stdout: 'true' };
+  };
+  const { run } = setup({ exec }, ['TextEdit']);
+  assert.deepEqual(await run('list_windows'), [
+    { id: '10:1', title: 'Notes', app: 'TextEdit', focused: true },
+    { id: '20:1', title: 'Inbox', app: 'Mail', focused: false },
+  ]);
+  assert.deepEqual(await run('focus_window', { id: '10:1' }), { focused: true });
+  assert.deepEqual(focused, ['[10,1]']);
+  await assert.rejects(run('focus_window', { id: '20:1' }), (e: ComputerCommandError) => e.code === 'computer_app_not_allowed' && /Mail/.test(e.message));
+  await assert.rejects(run('focus_window', { id: '99:9' }), (e: ComputerCommandError) => e.code === 'window_not_found' && e.statusCode === 404);
+  assert.equal(focused.length, 1, 'the refused focus changed nothing');
+  // list_windows stays open with an empty list: it is how the person fills it.
+  assert.equal(((await setup({ exec }, []).run('list_windows')) as unknown[]).length, 2);
 });

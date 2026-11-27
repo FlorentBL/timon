@@ -18,7 +18,7 @@ export interface SystemCommand {
    * (the expensive part happens there), `input` is this request. An executor that has no such
    * process runs `file` and `args` as a plain one-shot command, which does the same thing.
    */
-  worker?: { args: string[]; input: string };
+  worker?: { args: string[]; input: string; /** The worker's answer line is the result (stdout), not just "ok". */ reply?: boolean };
 }
 export type InputPlatform = 'darwin' | 'win32' | 'linux';
 
@@ -241,7 +241,9 @@ const WINDOWS_INPUT_LIB = `
 $ErrorActionPreference = 'Stop'
 Add-Type -TypeDefinition @"
 using System;
+using System.Collections.Generic;
 using System.Runtime.InteropServices;
+using System.Text;
 public static class TimonInput {
   [StructLayout(LayoutKind.Sequential)] public struct MOUSEINPUT { public int dx; public int dy; public uint mouseData; public uint dwFlags; public uint time; public IntPtr dwExtraInfo; }
   [StructLayout(LayoutKind.Sequential)] public struct KEYBDINPUT { public ushort wVk; public ushort wScan; public uint dwFlags; public uint time; public IntPtr dwExtraInfo; }
@@ -256,6 +258,40 @@ public static class TimonInput {
   }
   public static void Key(ushort vk, ushort scan, uint flags) {
     INPUT i = new INPUT(); i.type = 1; i.u.ki.wVk = vk; i.u.ki.wScan = scan; i.u.ki.dwFlags = flags; Send(i);
+  }
+  delegate bool EnumProc(IntPtr h, IntPtr l);
+  [DllImport("user32.dll")] static extern IntPtr GetForegroundWindow();
+  [DllImport("user32.dll")] static extern uint GetWindowThreadProcessId(IntPtr h, out uint pid);
+  [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern int GetWindowText(IntPtr h, StringBuilder s, int max);
+  [DllImport("user32.dll")] static extern int GetWindowTextLength(IntPtr h);
+  [DllImport("user32.dll")] static extern bool IsWindowVisible(IntPtr h);
+  [DllImport("user32.dll")] static extern bool IsIconic(IntPtr h);
+  [DllImport("user32.dll")] static extern bool IsWindow(IntPtr h);
+  [DllImport("user32.dll")] static extern bool ShowWindow(IntPtr h, int cmd);
+  [DllImport("user32.dll")] static extern bool SetForegroundWindow(IntPtr h);
+  [DllImport("user32.dll")] static extern bool EnumWindows(EnumProc proc, IntPtr l);
+  [DllImport("user32.dll")] static extern void keybd_event(byte vk, byte scan, uint flags, UIntPtr extra);
+  public static long Foreground() { return GetForegroundWindow().ToInt64(); }
+  public static uint Pid(long h) { uint pid; GetWindowThreadProcessId(new IntPtr(h), out pid); return pid; }
+  public static string Title(long h) {
+    StringBuilder s = new StringBuilder(512); GetWindowText(new IntPtr(h), s, s.Capacity); return s.ToString();
+  }
+  public static long[] Visible() {
+    List<long> list = new List<long>();
+    EnumWindows(delegate (IntPtr h, IntPtr l) {
+      if (IsWindowVisible(h) && GetWindowTextLength(h) > 0) list.Add(h.ToInt64());
+      return true;
+    }, IntPtr.Zero);
+    return list.ToArray();
+  }
+  public static bool Focus(long handle) {
+    IntPtr h = new IntPtr(handle);
+    if (!IsWindow(h)) return false;
+    if (IsIconic(h)) ShowWindow(h, 9);
+    // Windows refuses SetForegroundWindow to a process that did not receive the last input: a bare Alt press lifts that lock.
+    keybd_event(0x12, 0, 0, UIntPtr.Zero); keybd_event(0x12, 0, 2, UIntPtr.Zero);
+    SetForegroundWindow(h);
+    return GetForegroundWindow() == h;
   }
 }
 "@
@@ -277,6 +313,29 @@ function Invoke-TimonSteps($steps) {
     }
   }
 }
+function Get-TimonApp([long]$h) {
+  $name = ''; $exe = ''
+  try {
+    $p = Get-Process -Id ([TimonInput]::Pid($h)) -ErrorAction Stop
+    $exe = $p.ProcessName; $name = $exe
+    try { if ($p.MainModule.FileVersionInfo.FileDescription) { $name = $p.MainModule.FileVersionInfo.FileDescription } } catch { }
+  } catch { }
+  @{ name = $name; exe = $exe }
+}
+function Invoke-TimonQuery($q) {
+  $result = $null
+  switch ($q.q) {
+    'foreground' { $result = Get-TimonApp ([TimonInput]::Foreground()) }
+    'windows' {
+      $fg = [TimonInput]::Foreground()
+      $result = @(foreach ($h in [TimonInput]::Visible()) { $a = Get-TimonApp $h; @{ id = [string]$h; title = [TimonInput]::Title($h); app = $a.name; exe = $a.exe; focused = ($h -eq $fg) } })
+    }
+    'focus' { $result = @{ ok = [TimonInput]::Focus([long]$q.id) } }
+  }
+  $json = ConvertTo-Json -InputObject $result -Compress -Depth 4
+  # ASCII only on the wire: the console code page must not alter a title.
+  [regex]::Replace($json, '[^\\x00-\\x7F]', { param($m) '\\u{0:x4}' -f [int][char]$m.Value })
+}
 `.trim();
 
 /** One-shot form: the steps arrive as JSON in TIMON_CU_STEPS. */
@@ -294,7 +353,11 @@ export const WINDOWS_WORKER_SCRIPT = `${WINDOWS_INPUT_LIB}
 while ($true) {
   $line = [Console]::In.ReadLine()
   if ($null -eq $line) { break }
-  try { Invoke-TimonSteps ($line | ConvertFrom-Json); [Console]::Out.WriteLine('ok') } catch { [Console]::Out.WriteLine('error') }
+  try {
+    $request = $line | ConvertFrom-Json
+    if ($request.q) { [Console]::Out.WriteLine((Invoke-TimonQuery $request)) }
+    else { Invoke-TimonSteps $request; [Console]::Out.WriteLine('ok') }
+  } catch { [Console]::Out.WriteLine('error') }
 }
 `;
 
@@ -362,6 +425,24 @@ function windowsSteps(action: InputAction, display: DisplayInfo): WinStep[] {
     case 'scroll':
       return [at(action.x, action.y), { t: 'wheel', dx: Math.round(action.deltaX) * 120, dy: -Math.round(action.deltaY) * 120 }];
   }
+}
+
+/** One-shot form of a query: the request arrives as JSON in TIMON_CU_QUERY and the answer is printed. */
+export const WINDOWS_QUERY_SCRIPT = `${WINDOWS_INPUT_LIB}
+Write-Output (Invoke-TimonQuery ($env:TIMON_CU_QUERY | ConvertFrom-Json))
+`;
+
+export type WindowsQuery = { q: 'foreground' } | { q: 'windows' } | { q: 'focus'; id: string };
+
+/** A read of the window system, answered as one JSON line, by the same worker as the input. */
+export function windowsQueryCommand(query: WindowsQuery): SystemCommand {
+  const json = JSON.stringify(query);
+  return {
+    file: 'powershell.exe',
+    args: powershellArgs(WINDOWS_QUERY_SCRIPT),
+    env: { TIMON_CU_QUERY: json },
+    worker: { args: powershellArgs(WINDOWS_WORKER_SCRIPT), input: json, reply: true },
+  };
 }
 
 /** -EncodedCommand is UTF-16LE base64: no quoting layer between us and PowerShell. */

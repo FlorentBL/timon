@@ -9,8 +9,8 @@ import { startComputerServer } from './computer-use-server.js';
 test('provider publishes a private descriptor, authenticates, validates, and cleans up', async () => {
   const home = await mkdtemp(join(tmpdir(), 'timon-computer-server-'));
   const seen: unknown[] = [];
-  const provider = await startComputerServer(home, async (actor, command) => {
-    seen.push([actor, command]);
+  const provider = await startComputerServer(home, async (actor, command, allowedApps) => {
+    seen.push(allowedApps.length ? [actor, command, allowedApps] : [actor, command]);
     if (command.command === 'stop') throw new ComputerCommandError('nope', 409, 'computer_stopped');
     return { done: true };
   });
@@ -30,6 +30,9 @@ test('provider publishes a private descriptor, authenticates, validates, and cle
     const ok = await post({ command: 'click', args: { x: 1, y: 2 }, actor: 'agent' });
     assert.deepEqual(await ok.json(), { ok: true, result: { done: true } });
     assert.deepEqual(seen[0], ['agent', { command: 'click', x: 1, y: 2, button: 'left' }]);
+    await post({ command: 'type', args: { text: 'x' }, actor: 'agent', allowedApps: ['Notepad'] });
+    assert.deepEqual(seen[1], ['agent', { command: 'type', text: 'x' }, ['Notepad']]);
+    assert.equal((await post({ command: 'type', args: { text: 'x' }, actor: 'agent', allowedApps: 'Notepad' })).status, 400);
     assert.equal((await post({ command: 'click', args: { x: 1 }, actor: 'agent' })).status, 400);
     assert.equal((await post({ command: 'click', args: { x: 1, y: 1 } })).status, 400);
     assert.equal((await post({ command: 'nope', actor: 'agent' })).status, 404);

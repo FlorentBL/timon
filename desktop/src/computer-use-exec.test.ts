@@ -42,3 +42,12 @@ test('commands without a worker run as one-shot', async () => {
     assert.equal((await executor.run({ file: process.execPath, args: ['-e', ONE_SHOT] })).stdout, 'one-shot');
   } finally { executor.dispose(); }
 });
+
+test('a read returns the worker answer line, and an error answer rejects', async () => {
+  const executor = createSystemExecutor();
+  const read = (input: string): SystemCommand => ({ file: process.execPath, args: ['-e', ONE_SHOT], worker: { args: ['-e', WORKER], input, reply: true } });
+  try {
+    assert.equal((await executor.run(read('[]'))).stdout, 'ok');
+    await assert.rejects(executor.run(read('boom')), /Input worker failed/);
+  } finally { executor.dispose(); }
+});

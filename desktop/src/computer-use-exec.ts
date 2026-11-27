@@ -125,6 +125,11 @@ export function createSystemExecutor(): SystemExecutor {
       if (!worker) return runSystemCommand(command);
       const answer = await worker.request(command.worker.input, 20_000);
       // Not retried as a one-shot: the input may already have been performed.
+      if (command.worker.reply) {
+        // A read: the answer line is the result. Reads can be repeated, unlike input.
+        if (answer === null || answer === 'error') throw new Error('Input worker failed.');
+        return { stdout: answer };
+      }
       if (answer !== 'ok') throw new Error('Input worker failed.');
       return { stdout: '' };
     },

@@ -8,6 +8,7 @@ import {
   COMPUTER_DEFAULT_MAX_WIDTH, ComputerCommandError, type ComputerActor, type ComputerCommand, type ComputerUnavailableReason,
 } from './computer-use-protocol.js';
 import { imageToPoints, pointsToImage, screenshotSize, type DisplayInfo, type ImageSize } from './computer-use-geometry.js';
+import { describeApp, focusWindow, isAppAllowed, listWindows, readForegroundApp, windowApp } from './computer-use-windows.js';
 import {
   MAC_TRUST_SCRIPT, buildInputCommand, macCommand, type InputAction, type InputPlatform, type SystemCommand,
 } from './computer-use-input.js';
@@ -72,6 +73,11 @@ const PROBE_TTL_MS = 3000;
 /** One system prompt per missing grant and per minute: an agent retrying must not stack dialogs. */
 const PERMISSION_ASK_INTERVAL_MS = 60_000;
 const INPUT_TIMEOUT_NOTE = 'Input command failed.';
+/**
+ * What acts on the screen with the keyboard or the mouse: refused unless the foreground application is
+ * on the agent's list. screenshot, list_windows and wait stay open (the capture shows the whole screen).
+ */
+const GATED = new Set(['click', 'double_click', 'move', 'drag', 'type', 'key', 'scroll']);
 
 export class ComputerUseService {
   private stopped = false;
@@ -209,13 +215,13 @@ export class ComputerUseService {
   }
 
   /** One command at a time: two inputs interleaved would be worse than a short wait. */
-  handle(actor: ComputerActor, command: ComputerCommand): Promise<unknown> {
-    const run = this.queue.then(() => this.dispatch(actor, command));
+  handle(actor: ComputerActor, command: ComputerCommand, allowedApps: readonly string[] = []): Promise<unknown> {
+    const run = this.queue.then(() => this.dispatch(actor, command, allowedApps));
     this.queue = run.catch(() => undefined);
     return run;
   }
 
-  private async dispatch(actor: ComputerActor, command: ComputerCommand): Promise<unknown> {
+  private async dispatch(actor: ComputerActor, command: ComputerCommand, allowedApps: readonly string[]): Promise<unknown> {
     if (command.command === 'status') return this.status();
     if (command.command === 'request_permissions' || command.command === 'restart_app') {
       if (actor !== 'human') throw new ComputerCommandError('Only a person can change the computer permissions or restart Timon.', 403, 'forbidden');
@@ -242,7 +248,15 @@ export class ComputerUseService {
     const display = this.deps.display();
     if (!display) throw new ComputerCommandError('Computer use is unavailable: no-desktop.', 503, 'computer_unavailable');
     if (actor === 'agent') this.touch();
+    const platform = this.deps.platform as InputPlatform;
+    // Everything is refused except an explicit list: an absent or empty one allows nothing.
+    if (actor === 'agent' && GATED.has(command.command)) {
+      const app = await readForegroundApp(platform, this.deps.exec);
+      if (!isAppAllowed(app, allowedApps)) throw this.notAllowed(app, allowedApps);
+    }
     switch (command.command) {
+      case 'list_windows': return this.windows(platform);
+      case 'focus_window': return this.focus(actor, platform, command.id, allowedApps);
       case 'screenshot': return this.screenshot(display, command.maxWidth);
       case 'cursor_position': {
         const point = this.deps.cursor();
@@ -253,6 +267,30 @@ export class ComputerUseService {
         return {};
       default: return this.input(display, command);
     }
+  }
+
+  private notAllowed(app: Parameters<typeof describeApp>[0], allowedApps: readonly string[], subject = 'The foreground application'): ComputerCommandError {
+    const where = app ? `${subject} is ${describeApp(app)}` : 'The foreground application could not be read';
+    const why = allowedApps.length === 0 ? 'this agent has no allowed applications' : 'it is not in this agent\'s allowed applications';
+    return new ComputerCommandError(`${where}, and ${why}, so this action is refused.`, 403, 'computer_app_not_allowed');
+  }
+
+  private async windows(platform: InputPlatform): Promise<unknown> {
+    try { return await listWindows(platform, this.deps.exec); }
+    catch { throw new ComputerCommandError('Listing the windows failed.', 502, 'windows_failed'); }
+  }
+
+  private async focus(actor: ComputerActor, platform: InputPlatform, id: string, allowedApps: readonly string[]): Promise<unknown> {
+    let app;
+    try { app = await windowApp(platform, this.deps.exec, id); }
+    catch { throw new ComputerCommandError('Reading the windows failed.', 502, 'windows_failed'); }
+    if (!app) throw new ComputerCommandError('No open window has this id.', 404, 'window_not_found');
+    // An agent only reaches the windows of the applications it may control.
+    if (actor === 'agent' && !isAppAllowed(app, allowedApps)) throw this.notAllowed(app, allowedApps, 'The application of that window');
+    let focused = false;
+    try { focused = await focusWindow(platform, this.deps.exec, id); }
+    catch { throw new ComputerCommandError('Bringing the window forward failed.', 502, 'windows_failed'); }
+    return { focused };
   }
 
   /**
