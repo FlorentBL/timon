@@ -4055,6 +4055,27 @@
       "laterHint": "Pas de souci — lancez la visite quand vous voulez depuis le menu d'apparence (icône palette de la barre du haut) › Visite guidée."
     }
   },
+  "computerProposal": {
+    "badge": "computer use",
+    "titleApps": "Autoriser {target} à contrôler {apps} en computer use",
+    "titleEnable": "Autoriser {target} à contrôler l'ordinateur",
+    "titleChange": "Modifier ce que {target} peut contrôler en computer use",
+    "now": "Actuellement",
+    "after": "Après",
+    "on": "Computer use activé",
+    "off": "Computer use désactivé",
+    "apps": "Applications autorisées : {apps}",
+    "noApps": "aucune",
+    "removed": "retirée : {apps}",
+    "openAs": "« {typed} » est ouverte sous le nom « {name} » sur cet ordinateur.",
+    "reminder": "L'agent pourra cliquer et taper dans ces applications quand elles sont au premier plan.",
+    "allow": "Autoriser",
+    "refuse": "Refuser",
+    "applied": "Computer use mis à jour",
+    "stateApplied": "Autorisé — accès mis à jour",
+    "stale": "Cette demande ne peut pas être appliquée : {reasons}",
+    "expired": "Cette demande a expiré : demandez à l'agent de la proposer de nouveau."
+  },
   "triggerProposal": {
     "badge": "script",
     "title": "{agent} demande à lancer un script",

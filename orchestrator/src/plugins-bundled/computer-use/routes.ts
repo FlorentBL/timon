@@ -5,6 +5,7 @@ import { apiError } from '../../api-error.js';
 import { dbApi } from '../../db.js';
 import { scopedDb } from '../../users/scoped-db.js';
 import { isPersonAuth, requireAuth, viewerFromRequest } from '../../users/identity.js';
+import { proposeComputerUse, registerComputerUseProposalKind } from './proposals.js';
 import { callNativeComputer, computerErrorBody, NativeComputerError, type ComputerActor } from '../../native-computer-provider.js';
 
 // Logical points of the screenshot's frame: bounded so a bad value never reaches the desktop's input driver.
@@ -114,6 +115,14 @@ function record(ctx: { agent: string; missionId: string } | null, command: Compu
 /** `call` is injected in HTTP tests; production never accepts a caller-selected endpoint. */
 export function registerComputerRoutes(app: Router, deps: { call?: typeof callNativeComputer } = {}): void {
   const call = deps.call ?? callNativeComputer;
+  registerComputerUseProposalKind();
+  // Before `/:command`, which would read "proposals" as an unknown command.
+  app.post('/api/computer/proposals', (req: Request, res: Response) => {
+    if (!requireAuth(req, res)) return;
+    res.setHeader('Cache-Control', 'no-store');
+    const out = proposeComputerUse(req, req.body);
+    res.status(out.status).json(out.body);
+  });
   // Read by people only (session or device): an agent's or a mission's token never reads its own journal.
   app.get('/api/computer/journal', (req: Request, res: Response) => {
     if (!requireAuth(req, res)) return;

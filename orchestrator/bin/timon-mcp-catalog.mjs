@@ -24,6 +24,7 @@ import * as kanbanTools from './mcp-tools-kanban.mjs';
 import * as projectTools from './mcp-tools-projects.mjs';
 import * as systemTools from './mcp-tools-system.mjs';
 import * as widgetTools from './mcp-tools-widgets.mjs';
+import * as computerUseTools from './mcp-tools-computer-use.mjs';
 import * as islandTools from './mcp-tools-islands.mjs';
 import * as navigateTools from './mcp-tools-navigate.mjs';
 import * as onboardingTools from './mcp-tools-onboarding.mjs';
@@ -1411,7 +1412,7 @@ const DEPRECATED_TOOL_ALIASES = {
   todo_later_delete: 'project_todo_delete',
 };
 
-const EXTRA_MODULES = [agentTools, missionTools, kanbanTools, projectTools, systemTools, widgetTools, islandTools, navigateTools, onboardingTools, setupTools, uiDocumentTools];
+const EXTRA_MODULES = [agentTools, missionTools, kanbanTools, projectTools, systemTools, widgetTools, computerUseTools, islandTools, navigateTools, onboardingTools, setupTools, uiDocumentTools];
 const EXTRA_HANDLERS = Object.assign({}, ...EXTRA_MODULES.map((m) => m.handlers));
 for (const m of EXTRA_MODULES) TOOLS.push(...m.tools);
 

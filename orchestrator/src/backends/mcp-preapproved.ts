@@ -89,6 +89,8 @@ export const PRE_APPROVED_MCP_TOOLS: readonly string[] = Object.freeze([
   'mcp__timon__widgets_get',
   'mcp__timon__widgets_propose',
   'mcp__timon__widgets_preset_save',
+  // Same for computer use: the proposal is a card, and only a person's click widens an agent's access.
+  'mcp__timon__computer_use_propose',
   'mcp__timon__islands_get',
   'mcp__timon__islands_propose',
   'mcp__timon__islands_preset_save',

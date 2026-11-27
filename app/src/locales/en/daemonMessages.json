@@ -314,7 +314,7 @@
       "body": "{why}. The web app could not stay running. Check the daemon logs for the startup error, exit code and signal. Once fixed, `timon app restart` or reopening the desktop app starts it again."
     },
     "layout_proposal_to_review": {
-      "title": "{kind, select, widgets {Widget arrangement} islands {Island layout} island_arrangement {Island arrangement} nav {Menu} navigate {Navigation} trigger {Trigger} other {Arrangement}} to review: {agent}",
+      "title": "{kind, select, widgets {Widget arrangement} islands {Island layout} island_arrangement {Island arrangement} nav {Menu} navigate {Navigation} trigger {Trigger} computer_use {Computer-use access} other {Arrangement}} to review: {agent}",
       "body": "{mission}{project, select, none {} other { ({project})}}{note, select, none {} other { — {note}}}"
     },
     "forge_proposal_pending": {

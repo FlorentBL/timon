@@ -129,9 +129,9 @@ export function LayoutProposalCard({
   }, [busy, shown.missionId, decide]);
 
   const Preview = kind?.Preview;
-  const title = useMemo(() => (shown.project
+  const title = useMemo(() => kind?.titleOf?.(shown.payload) ?? (shown.project
     ? t(kind?.labels?.titleFrom ?? 'layoutProposal.titleFrom', { agent: shown.agent, project: shown.project })
-    : t(kind?.labels?.title ?? 'layoutProposal.title', { agent: shown.agent })), [shown.agent, shown.project, kind]);
+    : t(kind?.labels?.title ?? 'layoutProposal.title', { agent: shown.agent })), [shown.agent, shown.project, shown.payload, kind]);
 
   return (
     <div
