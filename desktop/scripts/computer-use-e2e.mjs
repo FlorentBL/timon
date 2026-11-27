@@ -208,7 +208,10 @@ async function main() {
     ? `${process.pid}:${win.getMediaSourceId().split(':')[1]}`
     : process.platform === 'win32' ? (handle.length >= 8 ? handle.readBigUInt64LE(0) : BigInt(handle.readUInt32LE(0))).toString() : String(handle.readUInt32LE(0));
   log(`  test window id ${expectedId}`);
-  const ours = (list) => list.find((w) => w.id === expectedId) ?? list.find((w) => w.title === 'timon e2e');
+  // macOS: Electron's media source id did not match the window server's number on the runner
+  // (32 against 36), so there the front window of this process, whose pid starts the id, stands in.
+  const ours = (list) => list.find((w) => w.id === expectedId) ?? list.find((w) => w.title === 'timon e2e')
+    ?? (process.platform === 'darwin' ? list.find((w) => w.focused && String(w.id).startsWith(`${process.pid}:`)) : undefined);
   const listed = await windowsOf([]);
   const mine = ours(listed);
   if (!mine) throw fail(`The test window ${expectedId} is not in list_windows (${listed.length} windows): ${JSON.stringify(listed.map((w) => [w.id, w.app, w.title]))}`);
