@@ -30,10 +30,9 @@ jobs:
       TIMON_E2E_REQUIRE_JPEG: '1'
       # The Windows worker's error output (never typed text) goes to the test log, so a failure is readable.
       TIMON_COMPUTER_USE_DEBUG: '1'
-      # The accessibility steps of the test (find a field and a button by name, set_value, press) run
-      # when the platform's backend reports it can read the tree. Turn this on, on the three systems,
-      # once the three backends exist: a missing tree then fails the run instead of skipping the steps.
-      # TIMON_E2E_REQUIRE_A11Y: '1'
+      # The accessibility steps (find a field and a button by name, set_value, press, read back) are
+      # required on the three systems now that each has its backend: a missing tree fails the run.
+      TIMON_E2E_REQUIRE_A11Y: '1'
     strategy:
       fail-fast: false
       matrix:

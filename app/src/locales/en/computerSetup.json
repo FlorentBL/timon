@@ -14,7 +14,7 @@
     "a11y": "Accessibility tree (reads windows by element)",
     "a11yOptional": "Optional: without it the agent works from screenshots only.",
     "a11yUnsupported": "Not available on this system for now: the agent works from screenshots.",
-    "a11yLinux": "Turn accessibility on in the desktop session (GNOME: Settings › Accessibility, or run gsettings set org.gnome.desktop.interface toolkit-accessibility true), then reopen the applications.",
+    "a11yLinux": "Turn accessibility on in the desktop session (GNOME: Settings › Accessibility, or run gsettings set org.gnome.desktop.interface toolkit-accessibility true), then reopen the applications. If it is still missing, install the AT-SPI bindings: sudo apt install python3-gi gir1.2-atspi-2.0 at-spi2-core (Debian, Ubuntu), sudo dnf install python3-gobject at-spi2-core (Fedora) or sudo pacman -S python-gobject at-spi2-core (Arch).",
     "installXdotool": "Install it with the command of your distribution:",
     "pathLead": "Or follow:",
     "pathAccessibility": "System Settings › Privacy & Security › Accessibility, then turn Timon on.",

@@ -14,7 +14,7 @@
     "a11y": "Arbre d'accessibilité (lecture des fenêtres par éléments)",
     "a11yOptional": "Facultatif : sans lui, l'agent travaille uniquement à partir de captures d'écran.",
     "a11yUnsupported": "Indisponible sur ce système pour le moment : l'agent travaille à partir de captures d'écran.",
-    "a11yLinux": "Activez l'accessibilité dans la session de bureau (GNOME : Réglages › Accessibilité, ou lancez gsettings set org.gnome.desktop.interface toolkit-accessibility true), puis rouvrez les applications.",
+    "a11yLinux": "Activez l'accessibilité dans la session de bureau (GNOME : Réglages › Accessibilité, ou lancez gsettings set org.gnome.desktop.interface toolkit-accessibility true), puis rouvrez les applications. Si elle manque toujours, installez les liaisons AT-SPI : sudo apt install python3-gi gir1.2-atspi-2.0 at-spi2-core (Debian, Ubuntu), sudo dnf install python3-gobject at-spi2-core (Fedora) ou sudo pacman -S python-gobject at-spi2-core (Arch).",
     "installXdotool": "Installez-le avec la commande de votre distribution :",
     "pathLead": "Ou suivez :",
     "pathAccessibility": "Réglages Système › Confidentialité et sécurité › Accessibilité, puis activez Timon.",
