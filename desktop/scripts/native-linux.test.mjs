@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
@@ -8,7 +8,7 @@ import {
   containerBuildEnv, containerCommand, elfFilesUnder, elfVersionNeeds, glibcOffenders, nativeBuildImage, newestGlibc,
   requiredGlibc,
 } from './native-linux.mjs';
-import { LINUX_NATIVE_ARTEFACTS, pruneLinuxBuild } from './native-build.mjs';
+import { NATIVE_BUILD_ARTEFACTS } from './native-build.mjs';
 
 /**
  * A minimal 64-bit little-endian ELF holding only what `objdump -T` reads the
@@ -139,30 +139,10 @@ test('TIM-0162: both modules are built from source in the image, never from a pr
   assert.ok(env.npm_config_devdir.startsWith('/tmp/stage/home'));
 });
 
-test('TIM-0162: a source rebuild keeps only the addon that ships', () => {
-  const dir = mkdtempSync(join(tmpdir(), 'prune-'));
-  const release = join(dir, 'build', 'Release');
-  mkdirSync(join(release, 'obj.target'), { recursive: true });
-  mkdirSync(join(dir, 'build', 'node_gyp_bins'), { recursive: true });
-  writeFileSync(join(dir, 'build', 'Makefile'), '');
-  writeFileSync(join(release, 'better_sqlite3.node'), '');
-  writeFileSync(join(release, 'test_extension.node'), '');
-  assert.deepEqual(pruneLinuxBuild(dir, 'better-sqlite3'), [join(release, 'better_sqlite3.node')]);
-  assert.ok(!existsSync(join(release, 'test_extension.node')), 'a SQLite extension, not a Node addon: it cannot load');
-  assert.ok(!existsSync(join(release, 'obj.target')));
-  assert.ok(!existsSync(join(dir, 'build', 'Makefile')));
-  assert.ok(!existsSync(join(dir, 'build', 'node_gyp_bins')));
-
-  const empty = mkdtempSync(join(tmpdir(), 'prune-empty-'));
-  mkdirSync(join(empty, 'build', 'Release'), { recursive: true });
-  assert.throws(() => pruneLinuxBuild(empty, 'node-pty'), /no pty\.node/);
-  assert.throws(() => pruneLinuxBuild(empty, 'left-pad'), /no Linux native artefact declared/);
-});
-
 test('TIM-0162: the Linux package requires the terminal addon beside both database drivers', () => {
   const pty = LINUX_PACKAGE_NATIVES.find((path) => path.includes('node-pty'));
   assert.equal(pty, join('orchestrator', 'node_modules', 'node-pty', 'build', 'Release', 'pty.node'));
-  for (const [moduleName, files] of Object.entries(LINUX_NATIVE_ARTEFACTS)) {
+  for (const [moduleName, files] of Object.entries(NATIVE_BUILD_ARTEFACTS)) {
     for (const file of files) {
       assert.ok(LINUX_PACKAGE_NATIVES.some((path) => path.includes(moduleName) && path.endsWith(file)), `${moduleName}/${file}`);
     }

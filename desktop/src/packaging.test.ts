@@ -136,7 +136,10 @@ test('the rebuild never touches the tree the local daemon runs on', () => {
 test('TIM-0162: a Linux x64 package ships pty.node, built for the glibc it promises', async () => {
   const script = readFileSync(join(root, 'scripts', 'prepare-daemon-deps.mjs'), 'utf8');
   assert.match(script, /if \(LINUX\) assertContainerEngine\(\)/, 'no Linux package without the build image');
-  assert.match(script, /if \(LINUX\) pruneLinuxBuild\(/);
+  // Pruned on every platform, and only what survives is loaded: a macOS
+  // source build of better-sqlite3 left `test_extension.node` (0.1.12-rc.1).
+  assert.match(script, /for \(const artefact of pruneNativeBuild\(join\(staged, 'node_modules', moduleName\), moduleName\)\) loadUnderRuntime\(/);
+  assert.doesNotMatch(script, /if \(LINUX\) pruneNativeBuild/);
   assert.match(script, /assertGlibcFloor\(binaries\)/, 'prepare:deps checks what it built');
   const hooks = readFileSync(join(root, 'scripts', 'release-hooks.mjs'), 'utf8');
   assert.match(hooks, /assertPackagedLinuxNatives\(app, resources, platform\)/, 'afterPack checks what electron-builder packed');
