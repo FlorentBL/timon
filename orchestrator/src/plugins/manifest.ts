@@ -141,7 +141,9 @@ import { reservedRouteSegment } from './reserved-routes.js';
  * `pluginPolicy.publicImages`; a manifest declaring the permission must
  * declare 20. It also opens the `agent.folders` slot, an agent's or a
  * project's extra folders (`useAgentFolders`, docs/SDK-COMPAT.md §139): a
- * manifest naming it must declare 20.
+ * manifest naming it must declare 20. And a provider manifest may list up to
+ * 16 `provider.credentialDirs` instead of 4; more than 4 must declare 20
+ * (docs/SDK-COMPAT.md §140).
  */
 export const PLUGIN_API_VERSION = 20;
 
@@ -150,6 +152,23 @@ export const PUBLIC_IMAGES_API_VERSION = 20;
 
 /** First contract that knows `ctx.forge` and the `forge:read` / `forge:propose` permissions. */
 export const FORGE_API_VERSION = 19;
+
+/**
+ * Bound on a provider manifest's `provider.credentialDirs`, for the WHOLE plugin. Every folder listed is
+ * linked, writable, into the missions of the plugin's backends and is shown to the operator on the install
+ * screen: the bound keeps that list short enough to be read before accepting it. 16 is four backends with
+ * the four folders the product grants one of its own (`backends/builtin-declarations.ts`): a plugin
+ * launches at most four programs (`provider.binaries`). The former bound, 4 for the whole plugin, stopped
+ * a multi-backend plugin at its first folders (`provider-acp`, TODO #1164); a manifest listing more than
+ * {@link PROVIDER_CREDENTIAL_DIRS_LEGACY_MAX} declares {@link PROVIDER_CREDENTIAL_DIRS_API_VERSION}.
+ */
+export const PROVIDER_CREDENTIAL_DIRS_MAX = 16;
+
+/** What a manifest could list before {@link PROVIDER_CREDENTIAL_DIRS_API_VERSION}; an older daemon refuses more. */
+export const PROVIDER_CREDENTIAL_DIRS_LEGACY_MAX = 4;
+
+/** First contract that admits more than {@link PROVIDER_CREDENTIAL_DIRS_LEGACY_MAX} `provider.credentialDirs`. */
+export const PROVIDER_CREDENTIAL_DIRS_API_VERSION = 20;
 
 /** First contract that knows `kind: dictation` and its manifest block. */
 export const DICTATION_API_VERSION = 14;
@@ -629,7 +648,7 @@ const PluginProviderSchema = z.object({
     // Everything else (shape, the user's own key stores, a bare container) is refused at install.
     const why = credentialDirProblem(dir, Object.keys(BACKEND_HOME_DIRS));
     if (why) ctx.addIssue({ code: 'custom', message: why });
-  })).max(4).default([]),
+  })).max(PROVIDER_CREDENTIAL_DIRS_MAX, `at most ${PROVIDER_CREDENTIAL_DIRS_MAX} credential folders per plugin: the operator reads each one before accepting it`).default([]),
   /**
    * The backend ids a provider SHIPPED IN THE RELEASE brings, and what the product reads of each
    * before the plugin runs: the binary to look for, its sign-in folders, the first-run card, the
@@ -904,6 +923,10 @@ function kindMismatch(manifest: PluginManifest): string | null {
   if (kinds.includes('provider')) {
     if (!manifest.permissions.includes('backends:register')) {
       return '`kind: provider` needs the permission `backends:register` — a provider that cannot register a backend is not one.';
+    }
+    const dirs = manifest.provider?.credentialDirs.length ?? 0;
+    if (dirs > PROVIDER_CREDENTIAL_DIRS_LEGACY_MAX && manifest.apiVersion < PROVIDER_CREDENTIAL_DIRS_API_VERSION) {
+      return `\`provider.credentialDirs\` lists ${dirs} folders; more than ${PROVIDER_CREDENTIAL_DIRS_LEGACY_MAX} needs \`apiVersion: ${PROVIDER_CREDENTIAL_DIRS_API_VERSION}\` or later.`;
     }
   } else if (manifest.provider) {
     return '`provider` is read only for `kind: provider`.';

@@ -15,6 +15,7 @@ import { BRAND } from '../brand.js';
 import {
   readManifest, PLUGIN_API_VERSION, SLOT_API_VERSIONS, ALLOWED_INJECT, PLUGIN_PERMISSIONS, SENSITIVE_PLUGIN_PERMISSIONS, ORDINARY_PLUGIN_PERMISSIONS,
   dictationEgressLines, PluginManifestSchema, PLUGIN_KINDS,
+  PROVIDER_CREDENTIAL_DIRS_MAX, PROVIDER_CREDENTIAL_DIRS_LEGACY_MAX, PROVIDER_CREDENTIAL_DIRS_API_VERSION,
 } from './manifest.js';
 
 /** A plugin `package.json`, overriding only what the test observes. */
@@ -483,6 +484,35 @@ test('a provider binary is a bare name, never a path', () => {
       provider: { binaries: [{ name }] },
     }));
     assert.ok(!res.ok, `\`${name}\` must be refused`);
+  }
+});
+
+test('a provider lists up to 16 credential folders, more than 4 from API 20, each still checked (TODO #1164)', () => {
+  const read = (credentialDirs: string[], apiVersion = PROVIDER_CREDENTIAL_DIRS_API_VERSION) => readManifest(pkg({
+    kind: 'provider', apiVersion, permissions: ['backends:register'], provider: { binaries: [], credentialDirs },
+  }));
+  const folders = (n: number) => Array.from({ length: n }, (_, i) => `.acme-${i}`);
+  assert.equal(PROVIDER_CREDENTIAL_DIRS_MAX, 16);
+
+  const atBound = read(folders(PROVIDER_CREDENTIAL_DIRS_MAX));
+  assert.ok(atBound.ok, atBound.ok ? '' : atBound.message);
+  assert.equal(atBound.manifest.provider?.credentialDirs.length, PROVIDER_CREDENTIAL_DIRS_MAX);
+
+  const beyond = read(folders(PROVIDER_CREDENTIAL_DIRS_MAX + 1));
+  assert.ok(!beyond.ok);
+  assert.match(beyond.message, /at most 16 credential folders per plugin/);
+
+  // Up to the former bound, any API the product still admits; beyond it, the manifest says 20.
+  const legacy = read(folders(PROVIDER_CREDENTIAL_DIRS_LEGACY_MAX), 12);
+  assert.ok(legacy.ok, legacy.ok ? '' : legacy.message);
+  const young = read(folders(PROVIDER_CREDENTIAL_DIRS_LEGACY_MAX + 1), PROVIDER_CREDENTIAL_DIRS_API_VERSION - 1);
+  assert.ok(!young.ok);
+  assert.match(young.message, /lists 5 folders; more than 4 needs `apiVersion: 20`/);
+
+  // The bound grants no folder: a dangerous one among fifteen safe ones is refused all the same.
+  for (const bad of ['/etc', '../outside', '.acme/../.ssh', '.ssh', '.aws', '.config', '.gnupg', '.config/gcloud']) {
+    const res = read([...folders(PROVIDER_CREDENTIAL_DIRS_MAX - 1), bad]);
+    assert.ok(!res.ok, `\`${bad}\` must be refused`);
   }
 });
 
