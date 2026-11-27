@@ -8,7 +8,8 @@ export const dynamic = 'force-dynamic';
  * Computer use, as the screen needs it: the state of the desktop control and
  * the human's stop / resume. Every other command (click, type…) is the agent's
  * and goes through its mission token, never through a browser request, so this
- * proxy only relays the three the daemon opens to a signed-in person.
+ * proxy only relays what the daemon opens to a signed-in person: those three,
+ * and the setup of the machine (system permission prompts, restart).
  */
 function refused(): Response {
   return Response.json({ error: 'not_found' }, { status: 404, headers: { 'cache-control': 'no-store' } });

@@ -1,0 +1,29 @@
+{
+  "computerSetup": {
+    "title": "Configuration sur cet ordinateur",
+    "desktop": "L'application Timon desktop est ouverte",
+    "desktopHint": "Ouvrez l'application Timon desktop sur cet ordinateur : le contrôle de l'ordinateur ne marche que tant qu'elle tourne.",
+    "desktopNoScreen": "Aucun écran n'a été trouvé pour l'application desktop.",
+    "accessibility": "Accessibilité (souris et clavier)",
+    "screen": "Enregistrement de l'écran (captures)",
+    "inputToolMac": "Contrôle de la saisie (osascript)",
+    "inputToolLinux": "xdotool est installé",
+    "session": "Session X11",
+    "needX11": "Une session X11 est requise : Wayland n'est pas pris en charge. Déconnectez-vous et choisissez une session X11.",
+    "noSession": "Aucune session graphique n'a été trouvée.",
+    "installXdotool": "Installez-le avec la commande de votre distribution :",
+    "pathLead": "Ou suivez :",
+    "pathAccessibility": "Réglages Système › Confidentialité et sécurité › Accessibilité, puis activez Timon.",
+    "pathScreen": "Réglages Système › Confidentialité et sécurité › Enregistrement de l'écran, puis activez Timon.",
+    "allow": "Autoriser",
+    "allowHint": "macOS demande chaque autorisation. Si rien ne s'ouvre, suivez le chemin sous la ligne manquante.",
+    "allowFailed": "Impossible de demander les autorisations. L'application Timon desktop est-elle ouverte ?",
+    "restart": "Redémarrer Timon",
+    "restartHint": "macOS n'applique l'Enregistrement de l'écran qu'après le redémarrage de Timon.",
+    "restartFailed": "Impossible de redémarrer Timon. Quittez-le et rouvrez-le.",
+    "restartMaybe": "Après avoir autorisé l'Enregistrement de l'écran, macOS peut demander de quitter et rouvrir Timon : un bouton Redémarrer apparaît ici.",
+    "ready": "Prêt : l'agent peut contrôler cet ordinateur.",
+    "stateOk": "Fait :",
+    "stateMissing": "À faire :"
+  }
+}

@@ -1666,7 +1666,12 @@ async function main(): Promise<void> {
   stopBrowserProvider = browserProvider.close;
   // The computer-native service never blocks startup: the daemon answers `computer_unavailable` without it.
   try {
-    stopComputerUse = (await startComputerUse(desktopHome, (key, vars) => shellText(uiLocale())(key, vars))).close;
+    stopComputerUse = (await startComputerUse(desktopHome, (key, vars) => shellText(uiLocale())(key, vars), () => {
+      // Screen Recording only takes effect in a new process: same relaunch as after an update.
+      const options = relaunchOptions(process.platform, process.env, process.argv);
+      if (options.execPath) queueAppImageRelaunch(options.execPath, options.args, desktopHome); else app.relaunch(options);
+      app.quit();
+    })).close;
   } catch (error) {
     console.error('[computer-use] The computer-native service did not start.', error);
   }

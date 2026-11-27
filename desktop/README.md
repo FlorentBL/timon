@@ -185,6 +185,14 @@ Coordinates are in the pixels of the last screenshot; the shell converts them to
   Screen Recording grants (`permission-accessibility`, `permission-screen`).
 - Safety: only a person (`actor: "human"`) can `stop` or `resume`. `Control+Option+Command+Escape` (macOS) or `Ctrl+Alt+Shift+Escape` (Windows, Linux) stops from anywhere, and a
   small always-on-top bar with a Stop button shows while the agent is acting.
+- Setup: `status` also returns `checks` (`desktop`, and per platform `accessibility`, `screen`, `inputTool`, `session`, each
+  `ok` | `missing` | `unsupported`) and `needsRestart` (Screen Recording granted while the app ran). Two commands are
+  reserved to people (`actor: "human"`, 403 otherwise): `request_permissions` (macOS: shows the Accessibility prompt and the
+  Screen Recording prompt, or opens Settings once already asked; elsewhere it only returns the status) and `restart_app`.
+  The agent editor's setup card calls them through `/api/ui/computer/<command>`. On macOS 26 the Settings link may open
+  "General" instead of the right pane, which cannot be detected: the card always prints the path.
+  An agent's refused action answers `computer_unavailable` with what to ask the user (allow Timon under Privacy & Security,
+  install `xdotool`, the desktop app must be running).
 - Code: `desktop/src/computer-use-*.ts`. Scripts are fixed text fed with JSON; typed text never reaches a script or a shell.
 
 ## Uninstall

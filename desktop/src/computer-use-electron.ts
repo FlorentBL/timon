@@ -85,6 +85,9 @@ const SETTINGS_PANES = {
  * macOS shows its prompt only for a grant it never asked about; once refused, only the Settings
  * pane can change it, so that pane is opened instead.
  */
+/** The Accessibility prompt shows once per launch; a second ask opens the pane instead. */
+let accessibilityPrompted = false;
+
 async function requestMacPermission(reason: 'permission-screen' | 'permission-accessibility'): Promise<void> {
   if (process.platform !== 'darwin') return;
   if (reason === 'permission-screen') {
@@ -93,8 +96,9 @@ async function requestMacPermission(reason: 'permission-screen' | 'permission-ac
       await desktopCapturer.getSources({ types: ['screen'], thumbnailSize: { width: 1, height: 1 } });
       return;
     }
-  } else if (!systemPreferences.isTrustedAccessibilityClient(false)) {
+  } else if (!systemPreferences.isTrustedAccessibilityClient(false) && !accessibilityPrompted) {
     // `true` shows the Accessibility prompt, which itself offers to open Settings.
+    accessibilityPrompted = true;
     systemPreferences.isTrustedAccessibilityClient(true);
     return;
   }
@@ -103,7 +107,7 @@ async function requestMacPermission(reason: 'permission-screen' | 'permission-ac
 
 export interface ComputerUseDesktop { close: () => Promise<void>; service: ComputerUseService }
 
-export async function startComputerUse(home: string, t: ShellText): Promise<ComputerUseDesktop> {
+export async function startComputerUse(home: string, t: ShellText, restart?: () => void): Promise<ComputerUseDesktop> {
   let indicator: Indicator | null = null;
   const service: ComputerUseService = new ComputerUseService({
     platform: process.platform,
@@ -118,6 +122,7 @@ export async function startComputerUse(home: string, t: ShellText): Promise<Comp
       return status === 'granted' || status === 'not-determined' || status === 'unknown' ? status : 'denied';
     },
     requestPermission: requestMacPermission,
+    restart,
     onState: ({ active }) => { if (active) indicator?.show(); else indicator?.hide(); },
   });
   indicator = new Indicator(t, () => service.stop());

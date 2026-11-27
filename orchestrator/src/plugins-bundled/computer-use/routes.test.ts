@@ -14,7 +14,7 @@ import { issueMissionApiToken } from '../../users/api-tokens.js';
 import { hashSessionToken, SESSION_COOKIE } from '../../users/session.js';
 import { createDaemonAuthMiddleware } from '../http/auth.js';
 import { registerComputerRoutes } from './routes.js';
-import { callNativeComputer, NativeComputerError } from '../../native-computer-provider.js';
+import { callNativeComputer, computerUnavailableHint, NativeComputerError } from '../../native-computer-provider.js';
 import { apiError } from '../../api-error.js';
 import { agentWideningRefusal } from '../../users/privileged-overrides.js';
 
@@ -145,4 +145,56 @@ test('only a person turns computer_use on', () => {
   assert.equal(agentWideningRefusal({ computer_use: true }, { computer_use: true }), null);
   assert.equal(agentWideningRefusal({ computer_use: false }, null), null);
   assert.match(agentWideningRefusal({ computer_use: 'yes' }, null) ?? '', /boolean/);
+});
+
+test('setting up the computer is reserved to people: an agent and an anonymous caller are refused', async () => {
+  for (const command of ['request_permissions', 'restart_app']) {
+    const agent = await post(command, {}, 'enabled');
+    assert.equal(agent.status, 403);
+    assert.equal(agent.json.code, 'computer_command_user_only');
+    assert.equal((await post(command, {}, 'anonymous')).status, 401);
+    assert.equal((await post(command, {}, 'daemon')).status, 403);
+    assert.equal((await post(command, { actor: 'agent' }, 'user')).json.code, 'computer_args_invalid');
+  }
+  const before = calls.length;
+  assert.equal((await post('request_permissions', {}, 'disabled')).status, 403);
+  assert.equal(calls.length, before);
+  const person = await post('request_permissions', {}, 'user');
+  assert.equal(person.status, 200);
+  assert.deepEqual(calls.at(-1), { command: 'request_permissions', args: {}, actor: 'human' });
+  assert.equal((await post('restart_app', {}, 'user')).status, 200);
+});
+
+test('an unavailable desktop tells the agent what to ask the user, without echoing the desktop text', async () => {
+  const server = (await import('node:http')).createServer((_req, res) => {
+    res.statusCode = 503;
+    res.setHeader('content-type', 'application/json');
+    res.end(JSON.stringify({ ok: false, code: 'computer_unavailable', error: 'Computer use is unavailable: permission-screen. /Users/secret' }));
+  });
+  server.listen(0, '127.0.0.1');
+  await once(server, 'listening');
+  const { mkdtempSync, mkdirSync: mk, writeFileSync: write } = await import('node:fs');
+  const { join } = await import('node:path');
+  const { tmpdir } = await import('node:os');
+  const home = mkdtempSync(join(tmpdir(), 'computer-home-'));
+  mk(join(home, 'computer-native'));
+  write(join(home, 'computer-native', 'provider.json'), JSON.stringify({ version: 1, origin: `http://127.0.0.1:${(server.address() as AddressInfo).port}`, token: 'x'.repeat(40), pid: 1 }));
+  try {
+    await assert.rejects(callNativeComputer('screenshot', {}, 'agent', { home }), (error: NativeComputerError) => {
+      assert.equal(error.status, 503);
+      assert.equal(error.body.code, 'computer_unavailable');
+      assert.match(error.body.error, /Ask the user to allow Timon under System Settings › Privacy & Security › Screen Recording/);
+      assert.doesNotMatch(error.body.error, /secret/);
+      return true;
+    });
+  } finally { server.close(); }
+});
+
+test('every unavailable reason has an instruction for the agent', () => {
+  assert.match(computerUnavailableHint('permission-accessibility'), /Accessibility/);
+  assert.match(computerUnavailableHint('no-input-tool'), /install xdotool/);
+  assert.match(computerUnavailableHint('wayland'), /X11/);
+  assert.match(computerUnavailableHint('no-desktop'), /desktop app must be running/);
+  assert.match(computerUnavailableHint('weird'), /setup card/);
+  assert.match(computerUnavailableHint(null), /setup card/);
 });

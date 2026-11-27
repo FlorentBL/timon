@@ -43,14 +43,39 @@ export function readComputerProvider(home = TIMON_HOME): ComputerProvider | null
   } catch { return null; }
 }
 
+const MAC_PRIVACY = 'System Settings › Privacy & Security';
+
+/**
+ * What an agent should ask the user for, by reason. Text for the agent only: it names a setting
+ * or a package, never a path, a window title or anything typed.
+ */
+const UNAVAILABLE_HINTS: Readonly<Record<string, string>> = {
+  'permission-screen': `Ask the user to allow Timon under ${MAC_PRIVACY} › Screen Recording, then to restart Timon.`,
+  'permission-accessibility': `Ask the user to allow Timon under ${MAC_PRIVACY} › Accessibility.`,
+  'no-input-tool': 'Ask the user to install xdotool (sudo apt install xdotool, sudo dnf install xdotool or sudo pacman -S xdotool).',
+  'wayland': 'Ask the user to log in to an X11 session: computer use does not work under Wayland.',
+  'no-desktop': 'Ask the user to open Timon on a machine with a desktop session: the Timon desktop app must be running.',
+};
+
+/** The instruction for an agent whose action was refused because the machine is not ready. */
+export function computerUnavailableHint(reason: string | null): string {
+  return (reason && Object.hasOwn(UNAVAILABLE_HINTS, reason) ? UNAVAILABLE_HINTS[reason] : undefined)
+    ?? 'Ask the user to open the Computer use setup card in this agent\'s settings.';
+}
+
 /** The desktop answers with a code (`computer_stopped`) or with prose; both end as a coded refusal. */
-function desktopRefusal(error: unknown, status: number, secrets: readonly string[]): NativeComputerError {
-  const record = error && typeof error === 'object' ? error as { code?: unknown; message?: unknown } : null;
-  const code = typeof error === 'string' ? error : typeof record?.code === 'string' ? record.code : '';
+function desktopRefusal(body: { error?: unknown; code?: unknown }, status: number, secrets: readonly string[]): NativeComputerError {
+  const message = typeof body.error === 'string' ? body.error : undefined;
+  const code = typeof body.code === 'string' ? body.code : '';
   if (code === 'computer_stopped') {
     return new NativeComputerError(apiError('computer_stopped', 'Computer use was stopped by the user. They must resume it first.'), 409);
   }
-  let detail = typeof error === 'string' ? error : typeof record?.message === 'string' ? record.message : `HTTP ${status}`;
+  if (code === 'computer_unavailable') {
+    // The reason is the only thing read from the desktop's text: a closed list, never echoed as is.
+    const reason = (message ? /unavailable: ([a-z-]+)/.exec(message)?.[1] : undefined) ?? null;
+    return new NativeComputerError(apiError('computer_unavailable', `Computer use is unavailable on this machine. ${computerUnavailableHint(reason)}`), 503);
+  }
+  let detail = message ?? `HTTP ${status}`;
   // What the agent typed never travels back in an error text, which ends in logs.
   for (const secret of secrets) if (secret) detail = detail.split(secret).join('[redacted]');
   return new NativeComputerError(apiError('computer_command_failed', `Computer command failed: ${detail}`, { detail }), 502);
@@ -67,7 +92,7 @@ export async function callNativeComputer(
   options: { home?: string; timeoutMs?: number } = {},
 ): Promise<unknown> {
   const provider = readComputerProvider(options.home);
-  if (!provider) throw new NativeComputerError(apiError('computer_unavailable', 'Open Timon desktop on the host machine to use computer control.'), 503);
+  if (!provider) throw new NativeComputerError(apiError('computer_unavailable', 'Computer use is unavailable: the Timon desktop app must be running on the host machine. Ask the user to open it.'), 503);
   const typed = typeof args.text === 'string' ? [args.text] : [];
   let response: Response;
   try {
@@ -77,10 +102,10 @@ export async function callNativeComputer(
       redirect: 'error',
     });
   } catch {
-    throw new NativeComputerError(apiError('computer_unavailable', 'The desktop computer control is unavailable. Reopen Timon on its host machine.'), 503);
+    throw new NativeComputerError(apiError('computer_unavailable', 'Computer use is unavailable: the Timon desktop app must be running on the host machine. Ask the user to reopen it.'), 503);
   }
-  let body: { ok?: unknown; result?: unknown; error?: unknown };
+  let body: { ok?: unknown; result?: unknown; error?: unknown; code?: unknown };
   try { body = await response.json() as typeof body; } catch { body = {}; }
-  if (!response.ok || body.ok === false) throw desktopRefusal(body.error, response.status, typed);
+  if (!response.ok || body.ok === false) throw desktopRefusal(body, response.status, typed);
   return body.result;
 }

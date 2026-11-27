@@ -26,14 +26,17 @@ const SCHEMAS = {
   wait: z.object({ ms: z.number().int().min(0).max(10_000) }).strict(),
   stop: empty,
   resume: empty,
+  request_permissions: empty,
+  restart_app: empty,
 } as const;
 type ComputerCommand = keyof typeof SCHEMAS;
 
 const isCommand = (value: string): value is ComputerCommand => Object.hasOwn(SCHEMAS, value);
 // A person's session may read the state and use the stop switch; nothing else.
-const personCommands = new Set<ComputerCommand>(['status', 'stop', 'resume']);
+const personCommands = new Set<ComputerCommand>(['status', 'stop', 'resume', 'request_permissions', 'restart_app']);
 // The user's switch: an agent never stops or resumes itself.
-const humanOnly = new Set<ComputerCommand>(['stop', 'resume']);
+// Setting up the machine (system prompts, restart) is the person's too.
+const humanOnly = new Set<ComputerCommand>(['stop', 'resume', 'request_permissions', 'restart_app']);
 
 export const COMPUTER_COMMANDS: readonly string[] = Object.freeze(Object.keys(SCHEMAS));
 
@@ -51,7 +54,7 @@ function actorOf(req: Request, command: ComputerCommand): ComputerActor {
   if (req.auth?.kind !== 'api-token' || !req.auth.missionId) {
     refuse(apiError('computer_mission_token_required', 'A mission-bound token is required to control the computer.'), 403);
   }
-  if (humanOnly.has(command)) refuse(apiError('computer_command_user_only', 'Stopping and resuming computer control is reserved for the user.'), 403);
+  if (humanOnly.has(command)) refuse(apiError('computer_command_user_only', 'Stopping, resuming and setting up computer control is reserved for the user.'), 403);
   const mission = scopedDb(viewerFromRequest(req)).getMission(req.auth.missionId);
   let enabled = false;
   try { enabled = !!mission && loadConfig(mission.agent_name).computer_use === true; } catch { /* an unreadable config grants nothing */ }
