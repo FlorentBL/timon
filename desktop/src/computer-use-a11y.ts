@@ -191,3 +191,19 @@ export function buildTree(
   }
   return { window, truncated, nodes };
 }
+
+/** Whether an application is worth driving from the background: how rich its accessibility tree is. */
+export type A11yVerdict = 'rich' | 'poor' | 'empty';
+export const A11Y_PROBE_MAX_NODES = 200;
+/** Actionable elements needed to call a tree rich. */
+export const A11Y_RICH_MIN_ACTIONABLE = 3;
+
+/**
+ * Judges a window's tree. `empty`: nothing but the window itself (games and canvas applications);
+ * `rich`: at least three elements that accept an action; `poor`: something in between.
+ */
+export function probeVerdict(nodes: readonly Pick<A11yNode, 'actions' | 'depth'>[]): { nodes: number; actionable: number; verdict: A11yVerdict } {
+  const actionable = nodes.filter((node) => node.depth > 0 && node.actions.length > 0).length;
+  const verdict: A11yVerdict = nodes.length <= 1 ? 'empty' : actionable >= A11Y_RICH_MIN_ACTIONABLE ? 'rich' : 'poor';
+  return { nodes: nodes.length, actionable, verdict };
+}

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { ComputerCommandError, parseComputerCommand } from './computer-use-protocol.js';
+import { ComputerCommandError, parseComputerCommand, type AllowedApp } from './computer-use-protocol.js';
 import { createFakeA11yBackend } from './computer-use-a11y-fake.js';
 import { ComputerUseService, type ComputerUseDeps } from './computer-use-service.js';
 import type { SystemCommand } from './computer-use-input.js';
@@ -11,7 +11,7 @@ const display = { width: 1440, height: 900, scaleFactor: 2 };
 const FRONT = { bundle: 'com.apple.TextEdit', name: 'TextEdit', exe: 'TextEdit' };
 const isForegroundRead = (command: SystemCommand): boolean => command.file === 'osascript' && command.args.some((arg) => arg.includes('frontmostApplication') && !arg.includes('CGWindowList'));
 
-function setup(overrides: Partial<ComputerUseDeps> = {}, allowedApps: readonly string[] = ['TextEdit']) {
+function setup(overrides: Partial<ComputerUseDeps> = {}, allowedApps: readonly (string | AllowedApp)[] = ['TextEdit']) {
   const calls: SystemCommand[] = [];
   const inner = overrides.exec ?? (async () => ({ stdout: 'true\n' }));
   const states: Array<{ active: boolean; stopped: boolean }> = [];
@@ -221,7 +221,8 @@ test('an empty or absent list allows no keyboard or mouse action, a person is no
   await assert.rejects(run('type', { text: 'x' }), (e: ComputerCommandError) => e.code === 'computer_app_not_allowed' && /no allowed applications/.test(e.message));
   await assert.rejects(run('click', { x: 1, y: 1 }), /computer_app_not_allowed|allowed/);
   await run('click', { x: 1, y: 1 }, 'human');
-  await run('screenshot');
+  await assert.rejects(run('screenshot'), (e: ComputerCommandError) => e.code === 'computer_app_not_allowed', 'a screenshot is gated too');
+  await run('screenshot', undefined, 'human');
   await run('wait', { ms: 0 });
   assert.ok(calls.every((call) => !call.args.some((arg) => arg.includes('"t":"text"'))), 'nothing was typed');
 });
@@ -257,4 +258,75 @@ test('list_windows lists, and focus_window only reaches the windows of allowed a
   assert.equal(focused.length, 1, 'the refused focus changed nothing');
   // list_windows stays open with an empty list: it is how the person fills it.
   assert.equal(((await setup({ exec }, []).run('list_windows')) as unknown[]).length, 2);
+});
+
+const PIXEL_COMMANDS = [['screenshot', {}], ['cursor_position', {}], ['click', { x: 1, y: 1 }], ['double_click', { x: 1, y: 1 }], ['move', { x: 1, y: 1 }],
+  ['drag', { fromX: 1, fromY: 1, toX: 2, toY: 2 }], ['type', { text: 'x' }], ['key', { keys: 'Enter' }], ['scroll', { x: 1, y: 1, deltaY: 3 }]] as const;
+
+test('pixel and keyboard actions need the application in front allowed in the foreground mode: the combinations', async () => {
+  // In front: TextEdit. 1) allowed in the foreground: everything passes.
+  const fg = setup({}, [{ app: 'TextEdit', mode: 'foreground' }, { app: 'Notes', mode: 'background' }]);
+  for (const [command, args] of PIXEL_COMMANDS) await fg.run(command, args);
+  // 2) allowed in the background: refused with computer_background_only, and the message says what to do.
+  const bg = setup({}, [{ app: 'TextEdit', mode: 'background' }, { app: 'Notes', mode: 'foreground' }]);
+  for (const [command, args] of PIXEL_COMMANDS) {
+    await assert.rejects(bg.run(command, args), (e: ComputerCommandError) => e.code === 'computer_background_only' && e.statusCode === 403 && /TextEdit is allowed in the background only: use a11y_tree \/ a11y_action/.test(e.message), command);
+  }
+  // 3) not listed: computer_app_not_allowed, whatever the other applications' modes.
+  const none = setup({}, [{ app: 'Notes', mode: 'foreground' }, { app: 'Mail', mode: 'background' }]);
+  for (const [command, args] of PIXEL_COMMANDS) {
+    await assert.rejects(none.run(command, args), (e: ComputerCommandError) => e.code === 'computer_app_not_allowed', command);
+  }
+  // 4) a person is never gated, and list_windows / wait stay open.
+  await bg.run('click', { x: 1, y: 1 }, 'human');
+  await bg.run('list_windows');
+  await bg.run('wait', { ms: 0 });
+  await none.run('list_windows');
+});
+
+test('focus_window is judged on the application of the window it targets', async () => {
+  const windows = [
+    { id: '10:1', title: 'Notes', app: 'TextEdit', bundle: 'com.apple.TextEdit', focused: true },
+    { id: '20:1', title: 'Inbox', app: 'Mail', bundle: 'com.apple.mail', focused: false },
+    { id: '30:1', title: 'Chat', app: 'Discord', bundle: 'com.hnc.Discord', focused: false },
+  ];
+  const focused: string[] = [];
+  const exec = async (command: SystemCommand) => {
+    if (command.args.some((arg) => arg.includes('AXRaise'))) { focused.push(command.args.at(-1)!); return { stdout: 'ok' }; }
+    if (command.args.some((arg) => arg.includes('kCGWindowListOptionOnScreenOnly'))) return { stdout: JSON.stringify(windows) };
+    return { stdout: 'true' };
+  };
+  const { run } = setup({ exec }, [{ app: 'TextEdit', mode: 'background' }, { app: 'Discord', mode: 'foreground' }]);
+  // The window in front is a background application: the target's mode is what counts.
+  assert.deepEqual(await run('focus_window', { id: '30:1' }), { focused: true });
+  await assert.rejects(run('focus_window', { id: '10:1' }), (e: ComputerCommandError) => e.code === 'computer_background_only');
+  await assert.rejects(run('focus_window', { id: '20:1' }), (e: ComputerCommandError) => e.code === 'computer_app_not_allowed');
+  assert.deepEqual(focused, ['[30,1]']);
+});
+
+test('a bare name takes the default mode of the agent, an object its own', async () => {
+  const service = new ComputerUseService({
+    platform: 'darwin', env: {}, display: () => display, cursor: () => ({ x: 0, y: 0 }), capture: async () => Buffer.from([0xff, 0xd8]),
+    screenPermission: () => 'granted', sleep: async () => {}, a11y: createFakeA11yBackend({}, 'unsupported'),
+    exec: async (command) => ({ stdout: isForegroundRead(command) ? JSON.stringify(FRONT) : 'true' }),
+  });
+  const click = parseComputerCommand('click', { x: 1, y: 1 });
+  await service.handle('agent', click, ['TextEdit']);
+  await assert.rejects(service.handle('agent', click, ['TextEdit'], 'background'), (e: ComputerCommandError) => e.code === 'computer_background_only');
+  await service.handle('agent', click, [{ app: 'TextEdit', mode: 'foreground' }], 'background');
+});
+
+test('a11y_probe_app is a person\'s command and judges the tree', async () => {
+  const window = { path: '0', role: 'window', name: 'W', enabled: true, actions: [] };
+  const button = (path: string) => ({ path, role: 'button', name: 'B', enabled: true, actions: ['press'] });
+  const a11y = createFakeA11yBackend({
+    '10:1': [window, button('0.0'), button('0.1'), { ...button('0.2'), role: 'textfield', actions: ['set_value'] }],
+    '20:1': [window],
+    '30:1': [window, button('0.0')],
+  });
+  const { run } = setup({ a11y });
+  assert.deepEqual(await run('a11y_probe_app', { windowId: '10:1' }, 'human'), { nodes: 4, actionable: 3, verdict: 'rich' });
+  assert.deepEqual(await run('a11y_probe_app', { windowId: '20:1' }, 'human'), { nodes: 1, actionable: 0, verdict: 'empty' });
+  assert.deepEqual(await run('a11y_probe_app', { windowId: '30:1' }, 'human'), { nodes: 2, actionable: 1, verdict: 'poor' });
+  await assert.rejects(run('a11y_probe_app', { windowId: '10:1' }), (e: ComputerCommandError) => e.code === 'forbidden');
 });

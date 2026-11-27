@@ -33,7 +33,7 @@ test('provider publishes a private descriptor, authenticates, validates, and cle
     assert.deepEqual(await ok.json(), { ok: true, result: { done: true } });
     assert.deepEqual(seen[0], ['agent', { command: 'click', x: 1, y: 2, button: 'left' }]);
     await post({ command: 'type', args: { text: 'x' }, actor: 'agent', allowedApps: ['Notepad'] });
-    assert.deepEqual(seen[1], ['agent', { command: 'type', text: 'x' }, ['Notepad']]);
+    assert.deepEqual(seen[1], ['agent', { command: 'type', text: 'x' }, [{ app: 'Notepad', mode: 'foreground' }]]);
     assert.equal((await post({ command: 'type', args: { text: 'x' }, actor: 'agent', allowedApps: 'Notepad' })).status, 400);
     assert.equal(modes.at(-1), 'foreground', 'no mode sent = the foreground');
     await post({ command: 'a11y_tree', actor: 'agent', allowedApps: ['Notepad'], mode: 'background' });

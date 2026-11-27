@@ -302,12 +302,30 @@ export async function focusWindow(platform: InputPlatform, exec: Exec, id: strin
 /** Case and a trailing ".exe" never matter: "Notepad", "notepad.exe" and "NOTEPAD.EXE" are one name. */
 const normalize = (value: string): string => value.trim().toLowerCase().replace(/\.exe$/, '');
 
-/** The list is explicit: an empty or absent one allows nothing. Any of the app's three names may be listed. */
-export function isAppAllowed(app: AppIdentity | null, allowed: readonly string[]): boolean {
-  if (!app) return false;
-  const wanted = new Set(allowed.map(normalize).filter(Boolean));
-  if (wanted.size === 0) return false;
-  return [app.bundle, app.name, app.exe].some((name) => !!name && wanted.has(normalize(name)));
+type AllowedEntry = string | { app: string; mode: 'foreground' | 'background' };
+
+/**
+ * How the list allows this application: the mode of the entries that name it (any of its three names),
+ * or null when none does. An empty or absent list allows nothing. When two entries name the same
+ * application with different modes, the background one wins: the stricter reading.
+ */
+export function appMode(app: AppIdentity | null, allowed: readonly AllowedEntry[], fallback: 'foreground' | 'background' = 'foreground'): 'foreground' | 'background' | null {
+  if (!app) return null;
+  const names = [app.bundle, app.name, app.exe].filter((name): name is string => !!name).map(normalize);
+  let found: 'foreground' | 'background' | null = null;
+  for (const entry of allowed) {
+    const { app: listed, mode } = typeof entry === 'string' ? { app: entry, mode: fallback } : entry;
+    const wanted = normalize(listed);
+    if (!wanted || !names.includes(wanted)) continue;
+    if (mode === 'background') return 'background';
+    found = 'foreground';
+  }
+  return found;
+}
+
+/** The list is explicit: an empty or absent one allows nothing. Any of the app's three names may be listed, in any mode. */
+export function isAppAllowed(app: AppIdentity | null, allowed: readonly AllowedEntry[]): boolean {
+  return appMode(app, allowed) !== null;
 }
 
 /** How an application is named in a refusal: what the agent can read back into the list. */

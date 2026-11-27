@@ -36,6 +36,7 @@ export type ComputerCommand =
   | { command: 'focus_window'; id: string }
   | { command: 'a11y_tree'; windowId?: string; maxDepth: number; maxNodes: number; query?: string }
   | { command: 'a11y_action'; id: string; action: A11yAction; value?: string }
+  | { command: 'a11y_probe_app'; windowId: string }
   | { command: 'wait'; ms: number }
   | { command: 'stop' }
   | { command: 'resume' }
@@ -43,7 +44,7 @@ export type ComputerCommand =
   | { command: 'restart_app' };
 
 const NAMES = new Set(['status', 'screenshot', 'cursor_position', 'move', 'click', 'double_click', 'drag',
-  'type', 'key', 'scroll', 'list_windows', 'focus_window', 'a11y_tree', 'a11y_action', 'wait', 'stop', 'resume', 'request_permissions', 'restart_app']);
+  'type', 'key', 'scroll', 'list_windows', 'focus_window', 'a11y_tree', 'a11y_action', 'a11y_probe_app', 'wait', 'stop', 'resume', 'request_permissions', 'restart_app']);
 
 function coordinate(args: Record<string, unknown>, name: string): number {
   const value = args[name];
@@ -60,18 +61,30 @@ function optionalDelta(args: Record<string, unknown>, name: string): number {
   return Math.max(-10_000, Math.min(10_000, value));
 }
 
-/** The applications an agent may act in, as the daemon sends them with each agent command. */
-export function parseAllowedApps(value: unknown): string[] {
-  if (value === undefined || value === null) return [];
-  if (!Array.isArray(value) || value.length > 100 || value.some((v) => typeof v !== 'string' || v.length > 200)) {
-    throw new ComputerCommandError('"allowedApps" must be an array of at most 100 short strings.');
-  }
-  return value as string[];
-}
-
 export type ComputerUseMode = 'foreground' | 'background';
 
-/** The agent's mode as the daemon sends it with each agent command; absent means the foreground. */
+/** An allowed application with the mode it is driven in. */
+export interface AllowedApp { app: string; mode: ComputerUseMode }
+
+/**
+ * The applications an agent may act in, as the daemon sends them with each agent command: `{ app, mode }`
+ * objects. A bare string is accepted and takes `fallback` (the agent's default mode).
+ */
+export function parseAllowedApps(value: unknown, fallback: ComputerUseMode = 'foreground'): AllowedApp[] {
+  if (value === undefined || value === null) return [];
+  const bad = () => new ComputerCommandError('"allowedApps" must be an array of at most 100 short names or { app, mode } objects.');
+  if (!Array.isArray(value) || value.length > 100) throw bad();
+  return value.map((entry): AllowedApp => {
+    if (typeof entry === 'string' && entry.length <= 200) return { app: entry, mode: fallback };
+    if (entry && typeof entry === 'object' && !Array.isArray(entry)) {
+      const { app, mode } = entry as { app?: unknown; mode?: unknown };
+      if (typeof app === 'string' && app.length <= 200 && (mode === 'foreground' || mode === 'background')) return { app, mode };
+    }
+    throw bad();
+  });
+}
+
+/** The agent's default mode as the daemon sends it with each agent command; absent means the foreground. */
 export function parseComputerMode(value: unknown): ComputerUseMode {
   if (value === undefined || value === null || value === 'foreground') return 'foreground';
   if (value === 'background') return 'background';
@@ -141,6 +154,10 @@ export function parseComputerCommand(name: unknown, rawArgs: unknown): ComputerC
         if (args.query.trim()) out.query = args.query;
       }
       return out;
+    }
+    case 'a11y_probe_app': {
+      if (typeof args.windowId !== 'string' || !/^[A-Za-z0-9:_.-]{1,64}$/.test(args.windowId)) throw new ComputerCommandError('"windowId" must be a window id returned by list_windows.');
+      return { command: 'a11y_probe_app', windowId: args.windowId };
     }
     case 'a11y_action': {
       if (typeof args.id !== 'string' || !parseElementId(args.id)) throw new ComputerCommandError('"id" must be an element id returned by a11y_tree.');
