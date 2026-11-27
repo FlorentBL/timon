@@ -143,7 +143,9 @@ import { reservedRouteSegment } from './reserved-routes.js';
  * project's extra folders (`useAgentFolders`, docs/SDK-COMPAT.md §139): a
  * manifest naming it must declare 20. And a provider manifest may list up to
  * 16 `provider.credentialDirs` instead of 4; more than 4 must declare 20
- * (docs/SDK-COMPAT.md §140).
+ * (docs/SDK-COMPAT.md §140). The `kanban.pull.dialog` slot, a pull request's
+ * detail window (`usePullRequestDialog`, docs/SDK-COMPAT.md §141), joins it:
+ * a manifest naming it must declare 20.
  */
 export const PLUGIN_API_VERSION = 20;
 
@@ -195,6 +197,7 @@ export const SLOT_API_VERSIONS: Readonly<Record<string, number>> = Object.freeze
   'project.settings': 19,
   'chat.fence': 19,
   'agent.folders': 20,
+  'kanban.pull.dialog': 20,
 });
 
 /** A public path relative to the plugin prefix: lowercase segments or `:name` parameters, never a wildcard. */
