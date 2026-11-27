@@ -5,7 +5,7 @@ import { MAC_INPUT_SCRIPT, WINDOWS_INPUT_SCRIPT, buildInputCommand, parseKeys } 
 import { ComputerCommandError } from './computer-use-protocol.js';
 
 const retina = { width: 1440, height: 900, scaleFactor: 2 };
-const NASTY = `'; rm -rf ~ #" $(touch /tmp/pwn) \`id\` \\ \n\t é 😀 -- --version`;
+const NASTY = `'; rm -rf ~ #" $(touch /tmp/pwn) \`id\` \\ \n\t é 😀 -- --version`; // french-ok: non-ASCII input must survive escaping
 
 test('screenshot size keeps the ratio, never upscales, and conversions round-trip on Retina', () => {
   assert.deepEqual(screenshotSize(retina, 1280), { width: 1280, height: 800 });

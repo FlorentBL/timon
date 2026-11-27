@@ -41,6 +41,13 @@
     "docExists": "That doc already exists.",
     "saved": "{name} saved",
     "saveWarningsToast": "{name} saved, with {count, plural, one {a warning} other {# warnings}} about its permissions",
-    "saveWarningsOpen": "Show"
+    "saveWarningsOpen": "Show",
+    "computerUse": "Computer use",
+    "computerUseToggle": "Let this agent control the computer",
+    "computerUseHint": "Gives the agent a screenshot of your main screen and control of the mouse and keyboard, through the Timon desktop app. Off by default.",
+    "computerUseWarning": "Warning: the agent really moves your mouse and types on your keyboard, in whatever is open on your screen. Watch it work, never leave it with sensitive windows open, and know that you can stop it at any time. It never types a password for you.",
+    "computerUseMac": "macOS: allow Timon under System Settings › Privacy & Security › Accessibility and › Screen Recording.",
+    "computerUseLinux": "Linux: an X11 session with xdotool installed. Wayland is not supported.",
+    "computerUseNeedsDesktop": "Only works while the Timon desktop app is running on this machine."
   }
 }

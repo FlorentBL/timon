@@ -41,6 +41,13 @@
     "docExists": "Ce document existe déjà.",
     "saved": "{name} enregistré",
     "saveWarningsToast": "{name} enregistré, avec {count, plural, one {un avertissement} other {# avertissements}} sur ses permissions",
-    "saveWarningsOpen": "Voir"
+    "saveWarningsOpen": "Voir",
+    "computerUse": "Computer use",
+    "computerUseToggle": "Laisser cet agent contrôler l'ordinateur",
+    "computerUseHint": "Donne à l'agent une capture de votre écran principal et le contrôle de la souris et du clavier, via l'application de bureau Timon. Désactivé par défaut.",
+    "computerUseWarning": "Attention : l'agent déplace réellement votre souris et tape sur votre clavier, dans tout ce qui est ouvert à l'écran. Surveillez-le, ne le laissez pas travailler devant des fenêtres sensibles, et sachez que vous pouvez l'arrêter à tout moment. Il ne saisit jamais de mot de passe à votre place.",
+    "computerUseMac": "macOS : autorisez Timon dans Réglages Système › Confidentialité et sécurité › Accessibilité et › Enregistrement de l'écran.",
+    "computerUseLinux": "Linux : une session X11 avec xdotool installé. Wayland n'est pas pris en charge.",
+    "computerUseNeedsDesktop": "Ne fonctionne que si l'application de bureau Timon tourne sur cette machine."
   }
 }

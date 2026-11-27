@@ -33,6 +33,7 @@ import { AgentEditorModal } from '@/components/agent-editor/agent-editor-modal';
 import { UnsavedDocumentDialog } from '@/components/chat/unsaved-document-dialog';
 import { ConfirmDialogHost } from '@/components/confirm-dialog/confirm-dialog';
 import { NoticesHost } from '@/components/notices/notices-host';
+import { ComputerUseIndicator } from '@/components/computer-use-indicator';
 import { UpdatePreviewHost } from '@/components/updates/update-preview-host';
 import { APPEARANCE_SCOPE, DEFAULT_APPEARANCE, effectiveGlass, readNativeAppearance } from '@/plugins-client/ui-theme-variants';
 import { BACKGROUND_SCOPE } from '@/components/background/background-model';
@@ -344,6 +345,8 @@ export default async function RootLayout({
               one host for every page, beside the toaster, inside the shell
               so they follow it when the browser panel is pinned. */}
           <NoticesHost />
+          {/* Shown only while an agent controls the mouse and keyboard, with the stop button. */}
+          <ComputerUseIndicator />
           {/* The update window's preview (`?update-preview=1`): paints
               nothing unless the address asks for it. */}
           <UpdatePreviewHost />
