@@ -209,6 +209,7 @@ export const BUNDLED_IDENTITY: Readonly<Record<string, BundledIdentity>> = Objec
   '@timon/browser-recording': identity('behavior', { slots: ['browser.toolbar', 'browser.drawer'] }),
   // The ✎ button and its pill, the annotation drawer, and the layer that points and highlights on the PWA's picture.
   '@timon/browser-annotations': identity('behavior', { slots: ['browser.toolbar', 'browser.drawer', 'browser.surface'] }),
+  '@timon/computer-use': identity('behavior'),
   '@timon/terminal-native': identity('behavior'),
   '@timon/terminal-web': identity('behavior'),
   // The chat card arrives with volet 3 of MCPUI: until then, routes and the ui_render tool only.

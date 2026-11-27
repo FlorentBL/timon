@@ -1,0 +1,106 @@
+/**
+ * Electron half of computer use: screen capture, the global stop shortcut and the on-screen indicator.
+ * What can be decided without Electron lives in `computer-use-service.ts`; this file only wires it.
+ */
+import { BrowserWindow, desktopCapturer, globalShortcut, screen, systemPreferences } from 'electron';
+import { ComputerUseService } from './computer-use-service.js';
+import { startComputerServer } from './computer-use-server.js';
+import { runSystemCommand } from './computer-use-exec.js';
+import type { DisplayInfo, ImageSize } from './computer-use-geometry.js';
+
+export type ShellText = (key: string, vars?: Record<string, string | number>) => string;
+
+export const COMPUTER_STOP_SHORTCUT = 'CommandOrControl+Shift+Escape';
+
+function primaryDisplay(): DisplayInfo {
+  const display = screen.getPrimaryDisplay();
+  return { width: display.bounds.width, height: display.bounds.height, scaleFactor: display.scaleFactor, originX: display.bounds.x, originY: display.bounds.y };
+}
+
+async function capturePrimary(size: ImageSize): Promise<Buffer | null> {
+  const display = screen.getPrimaryDisplay();
+  // Asked at the physical size, then resized once with the best filter: the thumbnail is the only capture API.
+  const sources = await desktopCapturer.getSources({
+    types: ['screen'],
+    thumbnailSize: { width: Math.round(display.bounds.width * display.scaleFactor), height: Math.round(display.bounds.height * display.scaleFactor) },
+  });
+  const source = sources.find((candidate) => candidate.display_id === String(display.id)) ?? sources[0];
+  if (!source || source.thumbnail.isEmpty()) return null;
+  const image = source.thumbnail.getSize().width === size.width ? source.thumbnail : source.thumbnail.resize({ width: size.width, height: size.height, quality: 'best' });
+  return image.toPNG();
+}
+
+/** Small always-on-top bar with a Stop button. Hidden from captures so the agent never reads it as part of the task. */
+class Indicator {
+  private window: BrowserWindow | null = null;
+  constructor(private readonly t: ShellText, private readonly onStop: () => void) {}
+
+  show(): void {
+    if (this.window && !this.window.isDestroyed()) { this.window.showInactive(); return; }
+    const area = screen.getPrimaryDisplay().workArea;
+    const width = 420;
+    const window = new BrowserWindow({
+      width, height: 44, x: Math.round(area.x + (area.width - width) / 2), y: area.y + 8,
+      frame: false, transparent: true, resizable: false, movable: false, minimizable: false, maximizable: false,
+      skipTaskbar: true, focusable: false, show: false, hasShadow: true, alwaysOnTop: true,
+      webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false, javascript: false },
+    });
+    window.setAlwaysOnTop(true, 'screen-saver');
+    window.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
+    window.setContentProtection(true);
+    // The button is a link: the navigation is the click, no script and no preload in this page.
+    window.webContents.on('will-navigate', (event) => { event.preventDefault(); this.onStop(); });
+    window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+    void window.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(this.page())}`);
+    window.once('ready-to-show', () => window.showInactive());
+    this.window = window;
+  }
+
+  hide(): void {
+    if (this.window && !this.window.isDestroyed()) this.window.close();
+    this.window = null;
+  }
+
+  private page(): string {
+    const escape = (value: string): string => value.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]!);
+    const hint = this.t('computerUse.shortcutHint', { shortcut: process.platform === 'darwin' ? '⌘⇧Esc' : 'Ctrl+Shift+Esc' });
+    return `<!doctype html><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'">
+<body style="margin:0;font:13px system-ui,sans-serif;color:#fff"><div style="display:flex;align-items:center;gap:12px;height:44px;box-sizing:border-box;padding:0 12px 0 16px;background:#b3261e;border-radius:22px">
+<span style="flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis" title="${escape(hint)}">${escape(this.t('computerUse.indicator'))}</span>
+<a href="timon-computer-stop:" style="background:#fff;color:#b3261e;text-decoration:none;font-weight:600;padding:6px 14px;border-radius:14px">${escape(this.t('computerUse.stop'))}</a></div></body>`;
+  }
+}
+
+export interface ComputerUseDesktop { close: () => Promise<void>; service: ComputerUseService }
+
+export async function startComputerUse(home: string, t: ShellText): Promise<ComputerUseDesktop> {
+  let indicator: Indicator | null = null;
+  const service: ComputerUseService = new ComputerUseService({
+    platform: process.platform,
+    env: process.env,
+    exec: (command) => runSystemCommand(command),
+    display: () => { try { return primaryDisplay(); } catch { return null; } },
+    cursor: () => screen.getCursorScreenPoint(),
+    capture: capturePrimary,
+    screenPermission: () => {
+      if (process.platform !== 'darwin') return 'granted';
+      const status = systemPreferences.getMediaAccessStatus('screen');
+      return status === 'granted' ? 'granted' : status === 'unknown' ? 'unknown' : 'denied';
+    },
+    onState: ({ active }) => { if (active) indicator?.show(); else indicator?.hide(); },
+  });
+  indicator = new Indicator(t, () => service.stop());
+  // A person can always stop, even when the agent has focus on another window.
+  const registered = globalShortcut.register(COMPUTER_STOP_SHORTCUT, () => service.stop());
+  if (!registered) console.warn('[computer-use] The global stop shortcut is taken by another application; the indicator button still stops.');
+  const provider = await startComputerServer(home, (actor, command) => service.handle(actor, command));
+  return {
+    service,
+    close: async () => {
+      if (registered) globalShortcut.unregister(COMPUTER_STOP_SHORTCUT);
+      service.dispose();
+      indicator?.hide();
+      await provider.close();
+    },
+  };
+}
