@@ -147,3 +147,18 @@ test("an agent's token cannot change computer_use_mode, a person can", async () 
   assert.equal(set.status, 200, JSON.stringify(set.json));
   assert.equal(stored('apps.helper').computer_use_mode, 'background');
 });
+
+test("an agent's token cannot move an application from background to foreground, nor add one in either mode; it can move it to background", async () => {
+  const seed = await call('PATCH', '/api/agents/apps.lead/config', { bearer: TOKEN, body: { computer_use_apps: [{ app: 'Notes', mode: 'background' }, { app: 'Discord', mode: 'foreground' }] } });
+  assert.equal(seed.status, 200, JSON.stringify(seed.json));
+  const widen = await call('PATCH', '/api/agents/apps.lead/config', { bearer: leadToken, body: { computer_use_apps: [{ app: 'notes', mode: 'foreground' }, { app: 'Discord', mode: 'foreground' }] } });
+  assert.equal(widen.status, 403, JSON.stringify(widen.json));
+  assert.match(JSON.stringify(widen.json), /background to foreground/);
+  const add = await call('PATCH', '/api/agents/apps.lead/config', { bearer: leadToken, body: { computer_use_apps: [{ app: 'Notes', mode: 'background' }, { app: 'Mail', mode: 'background' }] } });
+  assert.equal(add.status, 403, JSON.stringify(add.json));
+  const narrow = await call('PATCH', '/api/agents/apps.lead/config', { bearer: leadToken, body: { computer_use_apps: [{ app: 'Notes', mode: 'background' }, { app: 'Discord', mode: 'background' }] } });
+  assert.equal(narrow.status, 200, JSON.stringify(narrow.json));
+  assert.deepEqual(stored('apps.lead').computer_use_apps, [{ app: 'Notes', mode: 'background' }, { app: 'Discord', mode: 'background' }]);
+  const bad = await call('PATCH', '/api/agents/apps.lead/config', { bearer: TOKEN, body: { computer_use_apps: [{ app: 'Notes', mode: 'sideways' }] } });
+  assert.equal(bad.status, 400);
+});

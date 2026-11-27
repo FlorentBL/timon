@@ -114,7 +114,7 @@ export async function callNativeComputer(
   command: string,
   args: Record<string, unknown>,
   actor: ComputerActor,
-  options: { home?: string; timeoutMs?: number; allowedApps?: readonly string[]; mode?: 'foreground' | 'background' } = {},
+  options: { home?: string; timeoutMs?: number; allowedApps?: readonly { app: string; mode: 'foreground' | 'background' }[]; mode?: 'foreground' | 'background' } = {},
 ): Promise<unknown> {
   const provider = readComputerProvider(options.home);
   if (!provider) throw new NativeComputerError(apiError('computer_unavailable', 'Computer use is unavailable: the Timon desktop app must be running on the host machine. Ask the user to open it.'), 503);

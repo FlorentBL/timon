@@ -1,6 +1,6 @@
 import type { Request, Response, Router } from 'express';
 import { z } from 'zod';
-import { loadConfig, storedComputerUseApps, storedComputerUseMode, type ComputerUseMode } from '../../agent-config.js';
+import { loadConfig, storedComputerUseApps, storedComputerUseMode, type ComputerUseApp, type ComputerUseMode } from '../../agent-config.js';
 import { apiError } from '../../api-error.js';
 import { dbApi } from '../../db.js';
 import { scopedDb } from '../../users/scoped-db.js';
@@ -41,6 +41,8 @@ const SCHEMAS = {
     action: z.enum(['press', 'focus', 'set_value', 'select', 'expand', 'collapse', 'show_menu', 'scroll_into_view']),
     value: z.string().max(2000).optional(),
   }).strict().refine((args) => (args.action === 'set_value') === (args.value !== undefined), { message: 'value is required by set_value and refused by every other action' }),
+  // A person's question when adding an application: is its tree rich enough for the background mode?
+  a11y_probe_app: z.object({ windowId: z.string().regex(/^[A-Za-z0-9:_.-]{1,64}$/) }).strict(),
   wait: z.object({ ms: z.number().int().min(0).max(10_000) }).strict(),
   stop: empty,
   resume: empty,
@@ -51,10 +53,10 @@ type ComputerCommand = keyof typeof SCHEMAS;
 
 const isCommand = (value: string): value is ComputerCommand => Object.hasOwn(SCHEMAS, value);
 // A person's session may read the state, list the open windows (to fill the allowed applications) and use the stop switch; nothing else.
-const personCommands = new Set<ComputerCommand>(['status', 'list_windows', 'stop', 'resume', 'request_permissions', 'restart_app']);
+const personCommands = new Set<ComputerCommand>(['status', 'list_windows', 'a11y_probe_app', 'stop', 'resume', 'request_permissions', 'restart_app']);
 // The user's switch: an agent never stops or resumes itself.
 // Setting up the machine (system prompts, restart) is the person's too.
-const humanOnly = new Set<ComputerCommand>(['stop', 'resume', 'request_permissions', 'restart_app']);
+const humanOnly = new Set<ComputerCommand>(['stop', 'resume', 'request_permissions', 'restart_app', 'a11y_probe_app']);
 
 export const COMPUTER_COMMANDS: readonly string[] = Object.freeze(Object.keys(SCHEMAS));
 
@@ -64,7 +66,7 @@ function refuse(error: ReturnType<typeof apiError>, status: number): never {
 }
 
 /** Who the desktop sees behind a command: the daemon's reading of the authentication, never the caller's. */
-function actorOf(req: Request, command: ComputerCommand): { actor: ComputerActor; allowedApps?: string[]; mode?: ComputerUseMode } {
+function actorOf(req: Request, command: ComputerCommand): { actor: ComputerActor; allowedApps?: ComputerUseApp[]; mode?: ComputerUseMode } {
   if (isPersonAuth(req.auth)) {
     if (!personCommands.has(command)) refuse(apiError('computer_mission_token_required', 'A mission-bound token is required to control the computer.'), 403);
     return { actor: 'human' };
@@ -75,7 +77,7 @@ function actorOf(req: Request, command: ComputerCommand): { actor: ComputerActor
   if (humanOnly.has(command)) refuse(apiError('computer_command_user_only', 'Stopping, resuming and setting up computer control is reserved for the user.'), 403);
   const mission = scopedDb(viewerFromRequest(req)).getMission(req.auth.missionId);
   let enabled = false;
-  let allowedApps: string[] = [];
+  let allowedApps: ComputerUseApp[] = [];
   let mode: ComputerUseMode = 'foreground';
   try {
     const config = mission ? loadConfig(mission.agent_name) : null;

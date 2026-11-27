@@ -32,7 +32,7 @@ function agentWith(name: string, config: object): string {
 const enabledToken = agentWith('computer-on', { computer_use: true });
 const disabledToken = agentWith('computer-off', {});
 
-const forwarded: ({ allowedApps: string[] } | undefined)[] = [];
+const forwarded: ({ allowedApps: { app: string; mode: string }[] } | undefined)[] = [];
 const modes: (string | undefined)[] = [];
 const calls: { command: string; args: Record<string, unknown>; actor: string }[] = [];
 let desktop: 'up' | 'down' | 'stopped' | 'echo' = 'up';
@@ -273,10 +273,10 @@ test('the journal is bounded to its last 5000 rows', () => {
 });
 
 test('the agent\'s allowed applications travel with its commands, never a person\'s or the body\'s', async () => {
-  const listed = agentWith('computer-apps', { computer_use: true, computer_use_apps: ['TextEdit', ' ', 3] });
+  const listed = agentWith('computer-apps', { computer_use: true, computer_use_apps: ['TextEdit', ' ', 3, { app: 'Notes', mode: 'background' }, { app: 'textedit', mode: 'background' }] });
   const listedRes = await fetch(`${base}/click`, { method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${listed}` }, body: JSON.stringify({ x: 1, y: 2 }) });
   assert.equal(listedRes.status, 200);
-  assert.deepEqual(forwarded.at(-1), { allowedApps: ['TextEdit'] });
+  assert.deepEqual(forwarded.at(-1), { allowedApps: [{ app: 'TextEdit', mode: 'foreground' }, { app: 'Notes', mode: 'background' }] }, 'a bare name takes the default mode, an object its own');
   await post('click', { x: 1, y: 2 }, 'enabled');
   assert.deepEqual(forwarded.at(-1), { allowedApps: [] }, 'no list stored = nothing allowed');
   await post('list_windows', {}, 'user');
@@ -305,6 +305,14 @@ test('list_windows is open to a person and an agent; focus_window only to an age
   assert.equal((await post('focus_window', { id: '12:3' }, 'user')).status, 403);
   assert.equal((await post('focus_window', { id: '../etc' }, 'enabled')).json.code, 'computer_args_invalid');
   assert.equal((await post('focus_window', {}, 'enabled')).json.code, 'computer_args_invalid');
+});
+
+test('a11y_probe_app is a person\'s command: an agent\'s token and an anonymous caller are refused, the window id is validated', async () => {
+  assert.equal((await post('a11y_probe_app', { windowId: '12:3' }, 'user')).status, 200);
+  assert.equal((await post('a11y_probe_app', { windowId: '12:3' }, 'enabled')).json.code, 'computer_command_user_only');
+  assert.equal((await post('a11y_probe_app', { windowId: '12:3' }, 'anonymous')).status, 401);
+  assert.equal((await post('a11y_probe_app', { windowId: '../x' }, 'user')).json.code, 'computer_args_invalid');
+  assert.equal((await post('a11y_probe_app', {}, 'user')).json.code, 'computer_args_invalid');
 });
 
 test('a11y_tree and a11y_action validate their arguments and are refused to anonymous callers and to people', async () => {

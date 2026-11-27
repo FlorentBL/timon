@@ -42,7 +42,7 @@ export type AgentConfig = {
   /** The only applications the agent may type or click in (bundle id, displayed name or
    *  executable name, case ignored). Empty or absent = no keyboard or mouse action at all.
    *  Widening it is a person's act, like `computer_use`. */
-  computer_use_apps?: string[];
+  computer_use_apps?: ComputerUseAppEntry[];
   /** How the agent drives the screen: `background` = accessibility only, never the user's screen,
    *  mouse or keyboard. Absent = `foreground`. Changing it is a person's act, like `computer_use_apps`. */
   computer_use_mode?: ComputerUseMode;
@@ -366,17 +366,53 @@ export function computerUseModeRefusal(value: unknown): string | null {
 export const COMPUTER_USE_APPS_MAX = 100;
 export const COMPUTER_USE_APP_MAX_LENGTH = 200;
 
-/** The allowed applications as stored, read defensively: only non-empty strings survive. */
-export function storedComputerUseApps(cfg: Pick<AgentConfig, 'computer_use_apps'>): string[] {
+/** One entry of `computer_use_apps`: a bare name keeps the agent's default mode, an object carries its own. */
+export type ComputerUseAppEntry = string | { app: string; mode: ComputerUseMode };
+
+/** An allowed application with the mode it is driven in (the normalised form). */
+export type ComputerUseApp = { app: string; mode: ComputerUseMode };
+
+/**
+ * The allowed applications as stored, read defensively and normalised: a bare name takes the
+ * agent's default mode (`computer_use_mode`), an object keeps its own. Only non-empty names
+ * survive; a repeated name keeps its first entry.
+ */
+export function storedComputerUseApps(cfg: Pick<AgentConfig, 'computer_use_apps' | 'computer_use_mode'>): ComputerUseApp[] {
   const raw: unknown = cfg.computer_use_apps;
   if (!Array.isArray(raw)) return [];
-  return raw.filter((v): v is string => typeof v === 'string').map((v) => v.trim()).filter(Boolean).slice(0, COMPUTER_USE_APPS_MAX);
+  const fallback = storedComputerUseMode(cfg);
+  const seen = new Set<string>();
+  const out: ComputerUseApp[] = [];
+  for (const entry of raw) {
+    let app: string;
+    let mode: ComputerUseMode = fallback;
+    if (typeof entry === 'string') app = entry.trim();
+    else if (entry && typeof entry === 'object' && typeof (entry as { app?: unknown }).app === 'string') {
+      app = (entry as { app: string }).app.trim();
+      const own = (entry as { mode?: unknown }).mode;
+      if (own === 'foreground' || own === 'background') mode = own;
+    } else continue;
+    if (!app || seen.has(app.toLowerCase())) continue;
+    seen.add(app.toLowerCase());
+    out.push({ app, mode });
+    if (out.length >= COMPUTER_USE_APPS_MAX) break;
+  }
+  return out;
 }
 
 /** Why a `computer_use_apps` value is not acceptable, or null. */
 export function computerUseAppsRefusal(value: unknown): string | null {
-  if (!Array.isArray(value) || value.some((v) => typeof v !== 'string' || v.trim() === '' || v.length > COMPUTER_USE_APP_MAX_LENGTH)) {
-    return `computer_use_apps must be an array of non-empty strings of at most ${COMPUTER_USE_APP_MAX_LENGTH} characters`;
+  const shape = `computer_use_apps must be an array of non-empty names of at most ${COMPUTER_USE_APP_MAX_LENGTH} characters, `
+    + "each a string or an object { app, mode: 'foreground' | 'background' }";
+  if (!Array.isArray(value)) return shape;
+  for (const entry of value) {
+    if (typeof entry === 'string') {
+      if (entry.trim() === '' || entry.length > COMPUTER_USE_APP_MAX_LENGTH) return shape;
+    } else if (entry && typeof entry === 'object' && !Array.isArray(entry)) {
+      const { app, mode } = entry as { app?: unknown; mode?: unknown };
+      if (typeof app !== 'string' || app.trim() === '' || app.length > COMPUTER_USE_APP_MAX_LENGTH) return shape;
+      if (mode !== 'foreground' && mode !== 'background') return shape;
+    } else return shape;
   }
   if (value.length > COMPUTER_USE_APPS_MAX) return `computer_use_apps holds at most ${COMPUTER_USE_APPS_MAX} applications`;
   return null;
