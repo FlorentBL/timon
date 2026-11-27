@@ -19,7 +19,7 @@ function Initialize-TimonUia {
   $A = [System.Windows.Automation.AutomationElement]
   $cr = New-Object System.Windows.Automation.CacheRequest
   foreach ($p in @($A::NameProperty, $A::ControlTypeProperty, $A::IsEnabledProperty, $A::BoundingRectangleProperty,
-      $A::HasKeyboardFocusProperty, $A::IsKeyboardFocusableProperty, $A::IsPasswordProperty,
+      $A::ClassNameProperty, $A::HasKeyboardFocusProperty, $A::IsKeyboardFocusableProperty, $A::IsPasswordProperty,
       $A::IsInvokePatternAvailableProperty, $A::IsValuePatternAvailableProperty, $A::IsTogglePatternAvailableProperty,
       $A::IsSelectionItemPatternAvailableProperty, $A::IsExpandCollapsePatternAvailableProperty, $A::IsScrollItemPatternAvailableProperty,
       [System.Windows.Automation.ValuePattern]::ValueProperty, [System.Windows.Automation.ValuePattern]::IsReadOnlyProperty,
@@ -27,6 +27,7 @@ function Initialize-TimonUia {
   $cr.TreeScope = [System.Windows.Automation.TreeScope]::Element
   $script:uiaCache = $cr
   $script:uiaWalker = [System.Windows.Automation.TreeWalker]::ControlViewWalker
+  $script:uiaRaw = [System.Windows.Automation.TreeWalker]::RawViewWalker
   $script:uiaReady = $true
 }
 function Get-TimonUiaRole($typeName) {
@@ -70,6 +71,26 @@ function Get-TimonUiaRoot($id) {
     return $root.GetUpdatedCache($script:uiaCache)
   } catch { return $null }
 }
+# Chromium (Chrome, Electron, VS Code, Slack) builds the web content's UI Automation tree only after a
+# client has asked for it, and fills it a moment later. Its web area is the child window of class
+# Chrome_RenderWidgetHostHWND (named "Chrome Legacy Window"): reading its first child is the ask, and
+# it is read again for up to about 2 seconds while it is still empty. The Raw view is tried when the
+# Control view shows nothing, since the MSAA bridge can mark its first elements as non-control.
+function Get-TimonUiaFirstChild($el) {
+  $child = $script:uiaWalker.GetFirstChild($el, $script:uiaCache)
+  if ($null -ne $child) { return $child }
+  $class = [string](Get-TimonUiaCached $el ([System.Windows.Automation.AutomationElement]::ClassNameProperty))
+  if ($class -ne 'Chrome_RenderWidgetHostHWND' -and $class -notlike 'Chrome_WidgetWin_*') {
+    return $null
+  }
+  for ($try = 0; $try -lt 12; $try++) {
+    $child = $script:uiaWalker.GetFirstChild($el, $script:uiaCache)
+    if ($null -eq $child) { $child = $script:uiaRaw.GetFirstChild($el, $script:uiaCache) }
+    if ($null -ne $child) { return $child }
+    Start-Sleep -Milliseconds 170
+  }
+  return $null
+}
 function Add-TimonUiaNode($el, [string]$path, [int]$depth, $state) {
   if ($state.nodes.Count -ge $state.maxNodes) { $state.truncated = $true; return }
   if ($depth -ge $state.maxDepth) { $state.truncated = $true; return }
@@ -91,7 +112,7 @@ function Add-TimonUiaNode($el, [string]$path, [int]$depth, $state) {
   }
   [void]$state.nodes.Add($node)
   $i = 0
-  $child = $script:uiaWalker.GetFirstChild($el, $script:uiaCache)
+  $child = Get-TimonUiaFirstChild $el
   while ($null -ne $child) {
     if ($state.nodes.Count -ge $state.maxNodes) { $state.truncated = $true; break }
     Add-TimonUiaNode $child ($path + '.' + $i) ($depth + 1) $state
@@ -105,7 +126,7 @@ function Get-TimonUiaElement($id, [string]$path) {
   $steps = $path.Split('.')
   for ($k = 1; $k -lt $steps.Length; $k++) {
     $want = [int]$steps[$k]
-    $el = $script:uiaWalker.GetFirstChild($el, $script:uiaCache)
+    $el = Get-TimonUiaFirstChild $el
     for ($j = 0; $j -lt $want -and $null -ne $el; $j++) { $el = $script:uiaWalker.GetNextSibling($el, $script:uiaCache) }
     if ($null -eq $el) { return $null }
   }
