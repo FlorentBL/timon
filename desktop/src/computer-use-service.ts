@@ -38,6 +38,7 @@ export interface ComputerStatus {
   reason?: ComputerUnavailableReason;
   display: { width: number; height: number; scaleFactor: number };
   active: boolean;
+  stopped: boolean;
 }
 
 const PROBE_TTL_MS = 3000;
@@ -130,6 +131,7 @@ export class ComputerUseService {
       ...(reason ? { reason } : {}),
       display: { width: display?.width ?? 0, height: display?.height ?? 0, scaleFactor: display?.scaleFactor ?? 1 },
       active: this.isActive,
+      stopped: this.stopped,
     };
   }
 

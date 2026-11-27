@@ -39,7 +39,7 @@ test('screenshot sets the frame later coordinates are expressed in', async () =>
 
 test('status reports platform, display, availability and activity', async () => {
   const { run } = setup();
-  assert.deepEqual(await run('status'), { platform: 'darwin', available: true, display, active: false });
+  assert.deepEqual(await run('status'), { platform: 'darwin', available: true, display, active: false, stopped: false });
   await run('move', { x: 1, y: 1 });
   assert.equal(((await run('status')) as { active: boolean }).active, true);
 });
@@ -52,7 +52,7 @@ test('stop refuses agent commands with computer_stopped until a person resumes',
   await assert.rejects(run('click', { x: 1, y: 1 }), (e: ComputerCommandError) => e.code === 'computer_stopped' && e.statusCode === 409);
   const before = calls.length;
   assert.equal(calls.length, before, 'a refused command runs nothing');
-  await run('status'); // status stays readable
+  assert.equal(((await run('status')) as { stopped: boolean }).stopped, true); // status stays readable and reports it
   await assert.rejects(run('resume'), (e: ComputerCommandError) => e.statusCode === 403);
   await assert.rejects(run('stop'), (e: ComputerCommandError) => e.statusCode === 403);
   await run('resume', undefined, 'human');
@@ -77,7 +77,7 @@ test('indicator goes off after the idle delay', async () => {
 
 test('macOS permissions are reported as reasons and refuse commands', async () => {
   const noAccessibility = setup({ exec: async () => ({ stdout: 'false\n' }) });
-  assert.deepEqual(await noAccessibility.run('status'), { platform: 'darwin', available: false, reason: 'permission-accessibility', display, active: false });
+  assert.deepEqual(await noAccessibility.run('status'), { platform: 'darwin', available: false, reason: 'permission-accessibility', display, active: false, stopped: false });
   await assert.rejects(noAccessibility.run('click', { x: 1, y: 1 }), (e: ComputerCommandError) => e.code === 'computer_unavailable' && /permission-accessibility/.test(e.message));
   const noScreen = setup({ screenPermission: () => 'denied' });
   assert.equal(((await noScreen.run('status')) as { reason: string }).reason, 'permission-screen');
