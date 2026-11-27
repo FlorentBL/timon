@@ -6,6 +6,7 @@
  * text that read their steps as JSON (an argument, an environment variable), and the Linux command
  * is an argv array behind `--`. That is what keeps `type { text }` from becoming code.
  */
+import { WINDOWS_UIA_LIB } from './computer-use-a11y-win32-script.js';
 import { ComputerCommandError, type MouseButton } from './computer-use-protocol.js';
 import type { DisplayInfo } from './computer-use-geometry.js';
 
@@ -322,6 +323,7 @@ function Get-TimonApp([long]$h) {
   } catch { }
   @{ name = $name; exe = $exe }
 }
+${WINDOWS_UIA_LIB}
 function Invoke-TimonQuery($q) {
   $result = $null
   switch ($q.q) {
@@ -331,8 +333,11 @@ function Invoke-TimonQuery($q) {
       $result = @(foreach ($h in [TimonInput]::Visible()) { $a = Get-TimonApp $h; @{ id = [string]$h; title = [TimonInput]::Title($h); app = $a.name; exe = $a.exe; focused = ($h -eq $fg) } })
     }
     'focus' { $result = @{ ok = [TimonInput]::Focus([long]$q.id) } }
+    'a11y_probe' { try { Initialize-TimonUia; $result = @{ ok = $true } } catch { $result = @{ ok = $false } } }
+    'a11y_tree' { $result = Invoke-TimonUiaTree $q }
+    'a11y_act' { $result = Invoke-TimonUiaAct $q }
   }
-  $json = ConvertTo-Json -InputObject $result -Compress -Depth 4
+  $json = ConvertTo-Json -InputObject $result -Compress -Depth 6
   if ($null -eq $json) { $json = 'null' }
   # ASCII only on the wire: the console code page must not alter a title. A plain loop: Windows
   # PowerShell 5.1 does not bind a script block to [regex]::Replace (MethodInvocationException, CI run 45988561718).
@@ -447,7 +452,11 @@ export const WINDOWS_QUERY_SCRIPT = `${WINDOWS_INPUT_LIB}
 Write-Output (Invoke-TimonQuery ($env:TIMON_CU_QUERY | ConvertFrom-Json))
 `;
 
-export type WindowsQuery = { q: 'foreground' } | { q: 'windows' } | { q: 'focus'; id: string };
+export type WindowsQuery =
+  | { q: 'foreground' } | { q: 'windows' } | { q: 'focus'; id: string }
+  | { q: 'a11y_probe' }
+  | { q: 'a11y_tree'; id: string; maxDepth: number; maxNodes: number }
+  | { q: 'a11y_act'; id: string; path: string; action: string; value?: string };
 
 /** A read of the window system, answered as one JSON line, by the same worker as the input. */
 export function windowsQueryCommand(query: WindowsQuery): SystemCommand {

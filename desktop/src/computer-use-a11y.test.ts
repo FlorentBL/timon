@@ -141,7 +141,7 @@ test('status reports the accessibility check, and a missing one refuses the comm
 
 test('the platform backends are selected by platform and report unsupported until they are written', async () => {
   const exec = async () => ({ stdout: '' });
-  for (const platform of ['darwin', 'win32', 'linux', 'freebsd'] as const) assert.equal(await selectA11yBackend(platform, exec).probe(), 'unsupported');
+  for (const platform of ['darwin', 'linux', 'freebsd'] as const) assert.equal(await selectA11yBackend(platform, exec).probe(), 'unsupported');
 });
 
 test('arguments are validated', () => {
