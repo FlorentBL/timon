@@ -1012,7 +1012,9 @@
     "glassTintReset": "Flächenfarbe",
     "glassTuningReset": "Standard für Unschärfe und Transparenz",
     "glassTuningTitle": "Glas-Feinabstimmung",
-    "glassTuningHint": "Unschärfe, Transparenz und Farbe des Glases, für alles zugleich oder Zone für Zone.",
+    "glassTuningAdjust": "Anpassen",
+    "glassTuningClose": "Fertig",
+    "glassTuningStatus": "Unschärfe {blur} px · Transparenz {transparency} %",
     "glassZones": {
       "general": "Allgemein",
       "chrome": "Rahmen",
@@ -1020,18 +1022,10 @@
       "widgets": "Widgets",
       "bubbles": "Blasen"
     },
-    "glassZoneOwn": "Eigens abgestimmt",
-    "glassZoneHints": {
-      "general": "Was jede Zone nutzt, solange sie nicht eigens abgestimmt ist.",
-      "chrome": "Obere Leiste, Seitenmenü und die Abstände zwischen Inseln.",
-      "islands": "Die Milchglasplatte jeder Insel, getrennt vom Rahmen weichgezeichnet.",
-      "widgets": "Widget-Karten, die Lesespalte des Chats und Pop-ups.",
-      "bubbles": "Chatnachrichten."
-    },
     "glassZoneFollow": "Der allgemeinen Abstimmung folgen",
+    "glassZoneFollows": "Folgt „Allgemein“",
     "glassFloor": "Lesbarkeitsuntergrenze",
     "glassFloorOff": "Aus",
-    "glassFloorHint": "Die minimale Deckkraft von Inseln, Widgets und Blasen, unabhängig von ihrer Transparenz, damit Text auf hellem Hintergrundbild lesbar bleibt.",
     "glassProfiles": {
       "title": "Glasprofile",
       "hint": "Der ganze Glas-Look unter einem Namen: Schalter, Bereich, Abstimmung jeder Zone und Lesbarkeitsuntergrenze. Gespeicherte Profile erscheinen auch im Menü „Oberfläche anpassen“.",
@@ -1787,6 +1781,7 @@
       "titlePlanned": "Zugewiesen an {named}, wird ausgeführt von {agent}: {reason}",
       "detail": "Ausgeführt von {agent}",
       "detailPlanned": "Wird ausgeführt von {agent}",
+      "on": "{agent} mit {model}",
       "reasonPinned": "das Projekt heftet diese Rolle an {agent} (roles.json)",
       "reasonMissing": "{named} existiert nicht",
       "reasonOtherProject": "{named} gehört nicht zum Projekt der Aufgabe",

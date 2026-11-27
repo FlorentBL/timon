@@ -15,6 +15,8 @@ interface Rendered {
   text: string;
   headings: string[];
   labels: string[];
+  /** Per queued row: its runner, its model and the chat it links to (#1203). */
+  queued: { runner: string | null; model: string | null; href: string | null; title: string | null }[];
 }
 
 async function renderRail(locale: string, feed: Feed): Promise<Rendered> {
@@ -63,6 +65,12 @@ async function renderRail(locale: string, feed: Feed): Promise<Rendered> {
       text: container.textContent ?? '',
       headings: Array.from(container.querySelectorAll('h3')).map((h) => (h.textContent ?? '').trim()),
       labels: Array.from(container.querySelectorAll('[aria-label]')).map((el) => el.getAttribute('aria-label') ?? ''),
+      queued: Array.from(container.querySelectorAll('[data-task-runner]')).map((row) => ({
+        runner: row.getAttribute('data-task-runner'),
+        model: row.querySelector('[data-task-model]')?.getAttribute('data-task-model') ?? null,
+        href: row.closest('a')?.getAttribute('href') ?? null,
+        title: row.getAttribute('title'),
+      })),
     };
   } finally {
     await React.act(async () => { root.unmount(); });
@@ -112,4 +120,26 @@ test('the counters and activity labels read in French', async () => {
   assert.match(r.text, /Validation requise/);
   assert.ok(r.labels.includes('Validation requise'), r.labels.join(', '));
   assert.doesNotMatch(r.text, /in progress|queued/);
+});
+
+// #1203: a queued task names the agent the roles hand it to and the model it
+// will run on, and opens that agent's chat, where its mission will land.
+test('a queued task shows the agent and the model that will really run it', async () => {
+  const r = await renderRail('en', {
+    missions: [],
+    tasks: [{
+      id: 't2', title: 'review the thing', agent_name: 'timon.reviewer-ui', status: 'PENDING', type: 'review',
+      run_by: { agent: 'timon.reviewer', source: 'pinned', reason: 'pinned', planned: true },
+      effective_backend: 'claude', effective_model: 'claude-opus-4-7',
+    }],
+  });
+  assert.equal(r.queued.length, 1);
+  const row = r.queued[0];
+  assert.ok(row, 'one queued row');
+  assert.equal(row.runner, 'timon.reviewer');
+  assert.equal(row.model, 'opus');
+  assert.match(row.href ?? '', /timon\.reviewer(?!-ui)/);
+  assert.match(row.title ?? '', /timon\.reviewer on claude \/ claude-opus-4-7/);
+  assert.match(row.title ?? '', /Assigned to timon\.reviewer-ui, will be run by timon\.reviewer/);
+  assert.match(r.text, /timon\.reviewer/);
 });

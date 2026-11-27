@@ -788,7 +788,9 @@
     "glassTintReset": "Surface colour",
     "glassTuningReset": "Default blur and transparency",
     "glassTuningTitle": "Glass tuning",
-    "glassTuningHint": "Blur, transparency and colour of the glass, for everything at once or zone by zone.",
+    "glassTuningAdjust": "Adjust",
+    "glassTuningClose": "Done",
+    "glassTuningStatus": "Blur {blur} px · transparency {transparency} %",
     "glassZones": {
       "general": "General",
       "chrome": "Frame",
@@ -796,18 +798,10 @@
       "widgets": "Widgets",
       "bubbles": "Bubbles"
     },
-    "glassZoneOwn": "Tuned apart",
-    "glassZoneHints": {
-      "general": "What every zone uses unless it is tuned apart.",
-      "chrome": "Top bar, side menu and the gaps between islands.",
-      "islands": "The frosted plate of each island, blurred apart from the frame.",
-      "widgets": "Widget cards, the chat's reading column and popups.",
-      "bubbles": "Chat messages."
-    },
     "glassZoneFollow": "Follow the general tuning",
+    "glassZoneFollows": "Follows General",
     "glassFloor": "Readability floor",
     "glassFloorOff": "Off",
-    "glassFloorHint": "The least opacity of islands, widgets and bubbles, whatever their transparency, so text stays readable over a bright wallpaper.",
     "glassProfiles": {
       "title": "Glass profiles",
       "hint": "The whole glass look under a name: switches, scope, the tuning of every zone and the readability floor. Saved profiles are also offered in the Customize interface menu.",
@@ -1567,6 +1561,7 @@
       "titlePlanned": "Assigned to {named}, will be run by {agent}: {reason}",
       "detail": "Run by {agent}",
       "detailPlanned": "Will be run by {agent}",
+      "on": "{agent} on {model}",
       "reasonPinned": "the project pins this role to {agent} (roles.json)",
       "reasonMissing": "{named} does not exist",
       "reasonOtherProject": "{named} does not belong to the task's project",

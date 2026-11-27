@@ -119,7 +119,7 @@ async function mount(reply: Reply = () => undefined) {
 }
 
 /** The plugin's bundle, its two platform imports pointed at the app's own modules. */
-async function loadClient(): Promise<{ apply: (ctx: unknown) => () => void; cleanup: () => void }> {
+async function loadClient(kit?: object): Promise<{ apply: (ctx: unknown) => () => void; cleanup: () => void }> {
   const source = readFileSync(resolve(process.cwd(), '..', 'plugins', 'github-issues', 'lib', 'client.js'), 'utf8');
   const platform = source
     .replace(/import React, \{([^}]*)\} from "react";\n/, 'const React = globalThis.__issuesTestReact;\nconst {$1} = React;\n')
@@ -127,7 +127,7 @@ async function loadClient(): Promise<{ apply: (ctx: unknown) => () => void; clea
   assert.ok(!/from "(react|@timon\/ui)"/.test(platform), 'the bundle imports nothing but react and @timon/ui');
   const React = await import('react');
   const { UI_KIT } = await import('@/lib/plugin-host/ui-kit');
-  Object.assign(globalThis, { __issuesTestReact: React, __issuesTestUi: UI_KIT });
+  Object.assign(globalThis, { __issuesTestReact: React, __issuesTestUi: kit ?? UI_KIT });
   const dir = mkdtempSync(join(tmpdir(), 'plugin-github-issues-'));
   const file = join(dir, 'client.mjs');
   writeFileSync(file, platform);
@@ -394,6 +394,70 @@ test('stacked, the count goes to the tab, the reload to the menu, and a hidden t
     Date.now = realNow;
     await m.React.act(async () => { dispose(); });
     pickStackProject(null);
+    client.cleanup();
+    await m.unmount();
+  }
+});
+
+test('a hidden Issues tab remounted after a change of account reads its own list, not the last account\'s', async () => {
+  const { announceAccount } = await import('@/lib/account-change');
+  announceAccount('alice');
+  const m = await mount();
+  const client = await loadClient();
+  const { clientContext } = await import('@/lib/plugin-host/loader');
+  const { pickStackProject } = await import('@/plugins-client/kanban/git-stack-project');
+  const { WidgetSelfProvider } = await import('@/components/widget-host/widget-self');
+  const dispose = client.apply(clientContext(manifest.timon.id, manifest.timon.client.slots));
+  try {
+    pickStackProject('acme');
+    const entry = m.slots.slotEntries('cockpit.widget').find((e) => e.pluginId === PLUGIN && e.key === 'issues');
+    const Widget = entry!.Component as ComponentType<{ handle?: unknown }>;
+    const counts: Array<number | null> = [];
+    const hidden = () => m.React.createElement(WidgetSelfProvider, { value: {
+      id: 'plugin:github-issues:issues', tabbed: true, selected: false,
+      publishCount: (_id: string, count: number | null) => { counts.push(count); },
+      publishMenu: () => {}, publishAttention: () => {},
+    } }, m.React.createElement(Widget, { handle: null }));
+    const reads = () => m.calls.filter((c) => c.url === `${BASE}candidates?project=acme`).length;
+
+    await m.render(hidden());
+    await m.until(() => counts.includes(2), 'the count read for the tab');
+    assert.equal(reads(), 1);
+    // The same account, within the minute: the list it has is enough.
+    await m.render(m.React.createElement('div'));
+    announceAccount('alice');
+    await m.render(hidden());
+    await m.until(() => counts.at(-1) === 2, 'the count kept');
+    assert.equal(reads(), 1, 'the same account announced again empties nothing');
+
+    // Another person signs in on the page: the list read for the last one is gone.
+    await m.render(m.React.createElement('div'));
+    announceAccount('bob');
+    await m.render(hidden());
+    await m.until(() => reads() === 2, 'the new account\'s list read');
+  } finally {
+    await m.React.act(async () => { dispose(); });
+    pickStackProject(null);
+    client.cleanup();
+    await m.unmount();
+    announceAccount(null);
+  }
+});
+
+test('the browser half still loads on a host older than the account signal', async () => {
+  const m = await mount();
+  const { UI_KIT } = await import('@/lib/plugin-host/ui-kit');
+  const { onAccountChange, ...older } = UI_KIT;
+  assert.equal(typeof onAccountChange, 'function');
+  const client = await loadClient(older);
+  const { clientContext } = await import('@/lib/plugin-host/loader');
+  let dispose: (() => void) | null = null;
+  try {
+    dispose = client.apply(clientContext(manifest.timon.id, manifest.timon.client.slots));
+    assert.ok(m.slots.slotEntries('cockpit.widget').some((e) => e.pluginId === PLUGIN && e.key === 'issues'));
+  } finally {
+    const stop = dispose;
+    if (stop) await m.React.act(async () => { stop(); });
     client.cleanup();
     await m.unmount();
   }

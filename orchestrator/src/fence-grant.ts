@@ -61,6 +61,12 @@ export type FenceGrantResolution = {
   scope?: FenceGrantScope | null;
   /** The project it joined, when `scope` is `project`. */
   project?: string | null;
+  /**
+   * True when the accord put back the Kanban task the refusal blocked, so a
+   * replay of the thread says it again; absent on an answer recorded before
+   * TODO #1189 and on a refusal.
+   */
+  requeued?: boolean;
   resolvedAt: number;
 };
 
@@ -188,6 +194,7 @@ const resolutionSchema = z.object({
   mode: z.enum(['read', 'write']).nullable(),
   scope: z.enum(['agent', 'project']).nullable().optional(),
   project: z.string().nullable().optional(),
+  requeued: z.boolean().optional(),
   resolvedAt: z.number(),
 }).passthrough();
 

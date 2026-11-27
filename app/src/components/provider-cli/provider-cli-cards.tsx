@@ -188,6 +188,7 @@ function ProviderCliCard({ cli, job }: { cli: ProviderCli; job: InstallJob | nul
   const [dialog, setDialog] = useState(false);
   const [outcome, setOutcome] = useState<ProviderCliSignInOutcome | null>(null);
   const [commandShown, setCommandShown] = useState(false);
+  const [pathShown, setPathShown] = useState(false);
   const state = providerCliState(cli);
   const running = job?.state === 'running';
   const failed = job?.state === 'failed' ? job : null;
@@ -207,6 +208,9 @@ function ProviderCliCard({ cli, job }: { cli: ProviderCli; job: InstallJob | nul
   const menuUpdate = !running && primary !== 'update' && canUpdate;
   const menuCommand = signingIn && !commandShown && outcome !== 'failed';
   const steps = signingIn && (commandShown || outcome === 'failed');
+  // Where the program lives is a diagnosis, not a status: it waits in the menu (settings page rule).
+  const menuPath = Boolean(cli.path) && !pathShown;
+  const menu = menuInstall || menuUpdate || menuCommand || menuPath;
 
   const terminalSignIn = (): void => {
     if (!host) return;
@@ -224,7 +228,7 @@ function ProviderCliCard({ cli, job }: { cli: ProviderCli; job: InstallJob | nul
           {t(`providerClis.state.${state}`)}
         </span>
         {cli.version && <span className="text-xs tabular-nums text-muted-foreground">{t('providerClis.version', { version: cli.version })}</span>}
-        {primary || menuInstall || menuUpdate || menuCommand ? (
+        {primary || menu ? (
           <div className="ml-auto flex items-center gap-1">
             {primary === 'install' && (
               <Button type="button" size="sm" disabled={blocked} onClick={() => void host?.install(cli.name)}>
@@ -247,11 +251,17 @@ function ProviderCliCard({ cli, job }: { cli: ProviderCli; job: InstallJob | nul
                 <LogIn className="size-4" aria-hidden />{t('providerClis.signIn')}
               </Button>
             )}
-            {menuInstall || menuUpdate || menuCommand ? (
+            {menu ? (
               <ProviderSettingMenu>
-                {menuInstall && <DropdownMenuItem disabled={blocked} onSelect={() => void host?.install(cli.name)}>{t('providerClis.install')}</DropdownMenuItem>}
+                {/* Next to the desktop app, Timon's installer adds the vendor's standalone CLI: the item says so. */}
+                {menuInstall && (
+                  <DropdownMenuItem disabled={blocked} onSelect={() => void host?.install(cli.name)}>
+                    {t(state === 'bundled' ? 'providerClis.installStandalone' : 'providerClis.install')}
+                  </DropdownMenuItem>
+                )}
                 {menuUpdate && <DropdownMenuItem disabled={blocked} onSelect={() => void host?.install(cli.name)}>{t('providerClis.update')}</DropdownMenuItem>}
                 {menuCommand && <DropdownMenuItem onSelect={() => setCommandShown(true)}>{t('providerPage.connection.showCommand')}</DropdownMenuItem>}
+                {menuPath && <DropdownMenuItem onSelect={() => setPathShown(true)}>{t('providerClis.showPath')}</DropdownMenuItem>}
               </ProviderSettingMenu>
             ) : null}
           </div>
@@ -263,7 +273,14 @@ function ProviderCliCard({ cli, job }: { cli: ProviderCli; job: InstallJob | nul
       {cli.updateAvailable && cli.latest && !cli.unsupportedVersion && (
         <p className="text-xs text-amber-700 dark:text-amber-300">{t('providerClis.updateAvailable', { latest: cli.latest })}</p>
       )}
-      {cli.path && <p className="break-all text-xs text-muted-foreground">{t('providerClis.path', { path: cli.path })}</p>}
+      {cli.path && pathShown && (
+        <div className="flex items-center gap-2" data-cli-path>
+          <p className="min-w-0 flex-1 break-all text-xs text-muted-foreground">{t('providerClis.path', { path: cli.path })}</p>
+          <Button type="button" size="sm" variant="ghost" className="h-7 shrink-0 text-xs" onClick={() => setPathShown(false)}>
+            {t('providerPage.connection.hideSteps')}
+          </Button>
+        </div>
+      )}
       {job && (running || failed) && <InstallConsole job={job} />}
       {failed && (
         <p role="alert" className="whitespace-pre-wrap break-words text-xs text-destructive">

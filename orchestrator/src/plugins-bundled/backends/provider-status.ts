@@ -37,8 +37,11 @@ export type ProviderStatusInput = {
  * then the sign-in. A refusal outranks a missing program because installing
  * would not lift it; a missing program outranks a failed plugin because a
  * provider plugin fails to mount precisely when its program is absent.
- * `connected` outranks `not-connected`: one signed-in account is enough for a
- * mission to run, even when the host itself is signed out.
+ * A missing key comes before any sign-in: a provider that reads a key runs on
+ * nothing else, so a turn that once worked or a session of the CLI it borrows
+ * cannot stand for it. Then `connected` outranks `not-connected`: one
+ * signed-in account is enough for a mission to run, even when the host itself
+ * is signed out.
  */
 export function providerStatus(input: ProviderStatusInput): ProviderStatus {
   if (input.disabled) return 'disabled';
@@ -46,6 +49,7 @@ export function providerStatus(input: ProviderStatusInput): ProviderStatus {
   if (input.programMissing) return 'not-installed';
   if (input.needsAuthorization) return 'needs-authorization';
   if (input.failed) return 'blocked';
+  if (input.secretRequired && !input.secretPresent) return 'not-connected';
   if (input.signedIn === true || input.accountConnected) return 'connected';
   if (input.secretRequired && input.secretPresent && input.usable) return 'connected';
   if (input.signedIn === false || (input.secretRequired && !input.secretPresent) || !input.usable) return 'not-connected';

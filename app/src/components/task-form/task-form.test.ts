@@ -33,7 +33,31 @@ type Call = { method: string; url: string; body: Record<string, unknown> | null 
 /** The daemon's own English text, which must never reach the screen. */
 const DAEMON_TEXT = 'EIO: write failed at /var/lib/store';
 
-async function mount(opts: { task?: TaskFormSource | null; attachments?: TaskAttachment[]; refuse?: boolean } = {}) {
+/** The app's global stream, held by `sse-stream.ts`: `emit` delivers a named frame. */
+class FakeEventSource {
+  static CLOSED = 2;
+  static current: FakeEventSource | null = null;
+  readyState = 1;
+  private listeners = new Map<string, Set<(event: MessageEvent) => void>>();
+  constructor() { FakeEventSource.current = this; }
+  addEventListener(type: string, fn: (event: MessageEvent) => void) {
+    if (!this.listeners.has(type)) this.listeners.set(type, new Set());
+    this.listeners.get(type)!.add(fn);
+  }
+  removeEventListener(type: string, fn: (event: MessageEvent) => void) { this.listeners.get(type)?.delete(fn); }
+  close() { this.readyState = FakeEventSource.CLOSED; }
+  emit(type: string, body: object) {
+    for (const fn of this.listeners.get(type) ?? []) fn({ data: JSON.stringify(body) } as MessageEvent);
+  }
+}
+
+async function mount(opts: {
+  task?: TaskFormSource | null;
+  attachments?: TaskAttachment[];
+  refuse?: boolean;
+  /** What `GET /api/ui/tasks/:id` answers, read again on a permission event. */
+  reread?: () => Partial<TaskFormSource>;
+} = {}) {
   const { JSDOM } = await import('jsdom');
   const dom = new JSDOM('<button id="opener">open</button><div id="root"></div>', { url: 'http://localhost/', pretendToBeVisual: true });
   const saved = new Map<string, PropertyDescriptor | undefined>();
@@ -50,6 +74,7 @@ async function mount(opts: { task?: TaskFormSource | null; attachments?: TaskAtt
   install('requestAnimationFrame', dom.window.requestAnimationFrame.bind(dom.window));
   install('cancelAnimationFrame', dom.window.cancelAnimationFrame.bind(dom.window));
   install('ResizeObserver', class { observe() {} unobserve() {} disconnect() {} });
+  install('EventSource', FakeEventSource);
   install('IS_REACT_ACT_ENVIRONMENT', true);
   // jsdom lays nothing out: every element counts as visible to the focus trap.
   dom.window.HTMLElement.prototype.getClientRects = function () { return [{}] as unknown as DOMRectList; };
@@ -77,6 +102,7 @@ async function mount(opts: { task?: TaskFormSource | null; attachments?: TaskAtt
     if (/\/attachments\/[^/]+$/.test(url) && method === 'DELETE') return json({ ok: true });
     if (url === '/api/ui/tasks' && method === 'POST') return json({ task: { id: 'new-task' } }, 201);
     if (url.startsWith('/api/ui/tasks/') && method === 'PUT') return json({ task: {} });
+    if (opts.reread && opts.task && url === `/api/ui/tasks/${opts.task.id}`) return json({ task: { ...opts.task, ...opts.reread() } });
     if (url === '/api/ui/tasks') return json({ tasks: [{ id: 'dep-1', title: 'Write the routes', status: 'PENDING' }, { id: 'old', title: 'Old', status: 'DONE' }] });
     return json({ error: 'not found' }, 404);
   });
@@ -388,6 +414,44 @@ test('a rerouted task names the agent that will run it under the agent field', a
     await m.until(() => !!m.$('[data-agent-card="timon.coder"]'), 'the agent list');
     await m.click(m.$('[data-agent-card="timon.coder"]'));
     assert.equal(m.$('[data-task-runner]'), null);
+  } finally {
+    await m.unmount();
+  }
+});
+
+test('a running task says what its mission waits on, and the line follows the card events', async () => {
+  const since = Date.now() - 3 * 60_000;
+  let pending: TaskFormSource['pending_permission'] = {
+    kind: 'permission', tool_name: 'Bash', since, expires_at: Date.now() + 7.5 * 60_000, remaining_ms: 7 * 60_000, count: 1,
+  };
+  const m = await mount({
+    task: { ...TASK, status: 'IN_PROGRESS', mission_id: 'mission-1', pending_permission: pending },
+    reread: () => ({ pending_permission: pending }),
+  });
+  try {
+    await m.until(() => !!m.$('[data-pending-permission="Bash"]'), 'the waiting line');
+    const line = m.$('[data-pending-permission="Bash"]')!;
+    assert.match(line.textContent ?? '', /^Waiting for a permission \(Bash\) for 3\u00a0min · auto-deny in 7\u00a0min$/);
+    assert.equal(line.tagName, 'P', 'one status line, not a block');
+    // Another mission's card changes nothing; this one's resolution clears the line.
+    pending = null;
+    await m.React.act(async () => { FakeEventSource.current?.emit('permission_resolved', { kind: 'permission_resolved', missionId: 'other' }); });
+    await new Promise((r) => setTimeout(r, 300));
+    assert.ok(m.$('[data-pending-permission]'), 'still waiting for its own card');
+    await m.React.act(async () => { FakeEventSource.current?.emit('permission_resolved', { kind: 'permission_resolved', missionId: 'mission-1' }); });
+    await m.until(() => m.$('[data-pending-permission]') === null, 'the line gone');
+  } finally {
+    await m.unmount();
+  }
+});
+
+test('a task that does not run shows no waiting line, whatever it was read with', async () => {
+  const m = await mount({ task: { ...TASK, status: 'DONE', mission_id: 'mission-1', pending_permission: {
+    kind: 'question', tool_name: 'ask_user', since: Date.now(), expires_at: null, remaining_ms: null, count: 1,
+  } } });
+  try {
+    await m.until(() => !!m.$('[data-task-status]') || !!m.title(), 'the form');
+    assert.equal(m.$('[data-pending-permission]'), null);
   } finally {
     await m.unmount();
   }

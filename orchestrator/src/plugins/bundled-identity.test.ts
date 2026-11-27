@@ -53,7 +53,7 @@ test('Agent chat is a widget, Settings a page, the kernel a backend', () => {
     assert.deepEqual(bundledIdentity(id).slots, ['chat.right.widget'], id);
     assert.equal(bundledIdentity(id).route, null, id);
   }
-  assert.deepEqual(bundledIdentity('@timon/agents').slots, ['nav.item', 'cockpit.widget', 'settings.agenttrash', 'agent.mascot', 'agent.lookstyler']);
+  assert.deepEqual(bundledIdentity('@timon/agents').slots, ['nav.item', 'cockpit.widget', 'settings.agenttrash', 'agent.mascot', 'agent.lookstyler', 'agent.folders']);
   // A host module that also occupies the browser's chrome (TODO #461): still `behavior`, its slots named.
   assert.deepEqual(bundledIdentity('@timon/browser-recording').kind, ['behavior']);
   assert.deepEqual(bundledIdentity('@timon/browser-recording').slots, ['browser.toolbar', 'browser.drawer']);

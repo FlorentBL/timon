@@ -43,7 +43,11 @@ test('the series graph icon only on series tasks, focused on its task; no series
   });
   const tasks = [
     task('s1-aaaaaaaa', { title: 'Series head', series_id: 'series-0001-abcd' }),
-    task('s2-bbbbbbbb', { title: 'Series tail', series_id: 'series-0001-abcd', deps: '["s1-aaaaaaaa"]' }),
+    task('s2-bbbbbbbb', {
+      title: 'Series tail', series_id: 'series-0001-abcd', deps: '["s1-aaaaaaaa"]',
+      run_by: { agent: 'demo.builder', source: 'pinned', reason: 'pinned', planned: true },
+      effective_backend: 'claude', effective_model: 'claude-opus-4-7',
+    }),
     task('lone-cccccc', { title: 'Isolated task', series_id: null }),
   ];
   const calls: string[] = [];
@@ -114,6 +118,10 @@ test('the series graph icon only on series tasks, focused on its task; no series
     const focused = origins()[0]!.closest('[role="button"]');
     assert.match(focused?.textContent ?? '', /Series tail/, 'the origin is the clicked task');
     assert.ok(!document.querySelector('form'), 'the task editor did not open behind the graph');
+    // #1203: the node names the agent and the model that will really run it.
+    const runner = focused?.querySelector('[data-task-runner]');
+    assert.equal(runner?.getAttribute('data-task-runner'), 'demo.builder', 'the node names the runner, not the assigned agent');
+    assert.equal(runner?.querySelector('[data-task-model]')?.getAttribute('data-task-model'), 'opus', 'the node names the model');
 
     await React.act(async () => {
       document.activeElement?.dispatchEvent(new dom.window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));

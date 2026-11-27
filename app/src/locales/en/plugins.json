@@ -506,6 +506,7 @@
       "archive": "The archive was refused as unsafe.",
       "command-missing": "The program named by the registry is not in the archive.",
       "definition-refused": "Timon refused this agent: its description contradicts itself.",
+      "withReason": "{sentence} ({reason})",
       "authorize-failed": "The program could not be authorized. The Timon log has the details.",
       "failed": "The operation failed. The Timon log has the details.",
       "not-ready": "This agent is not ready to run: reinstall it first.",

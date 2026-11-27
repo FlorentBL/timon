@@ -15,7 +15,7 @@
 
 import { useCallback, useEffect, useId, useMemo, useRef, useState, type KeyboardEvent, type ReactElement } from 'react';
 import { toast } from 'sonner';
-import { ShieldCheck, Shuffle, Trash2, X } from 'lucide-react';
+import { ShieldAlert, ShieldCheck, Shuffle, Trash2, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 import { t } from '@/lib/i18n';
@@ -26,6 +26,8 @@ import { BrandMark } from '@/components/brand-mark';
 import { ModelPickerPopover, pickLabel, type ModelPick, type ModelPickerTriggerProps } from '@/components/model-picker';
 import { taskModelPick, taskOverrides } from '@/lib/task-model-pick';
 import { runByTitle } from '@/lib/task-runner';
+import { pendingPermissionLine } from '@/lib/kanban-card';
+import { useTaskPendingPermission } from '@/lib/pending-permission-events';
 import { MarkMergedSection } from '@/components/mark-merged-section';
 import { canMarkMerged } from '@/lib/mark-merged';
 import { DateTimePicker } from '@/components/date-time-picker';
@@ -78,6 +80,8 @@ function TaskForm({ host }: { host: TaskFormValue }): ReactElement {
   const [mcps, setMcps] = useState<McpSummary[]>([]);
   const [existingTasks, setExistingTasks] = useState<DepCandidate[]>([]);
   const catalog = useBackendCatalog();
+  const live = useTaskPendingPermission(isEdit ? task : null);
+  const waiting = live.pending ? pendingPermissionLine(live.pending, live.now) : null;
   const [form, setForm] = useState<FormState>(() => buildInitial(task, host.defaultAgent, host.agents));
   const [tab, setTab] = useState<TaskFormTab>('general');
   const [problems, setProblems] = useState<FormProblem[]>([]);
@@ -281,6 +285,20 @@ function TaskForm({ host }: { host: TaskFormValue }): ReactElement {
             <p data-task-todo="" className="line-clamp-3 rounded-lg bg-muted/40 px-2.5 py-1.5 text-xs text-muted-foreground">{todoText}</p>
           )}
           <SummaryRow label={t('taskForm.summary.status')}><StatusLabel status={isEdit ? task.status ?? null : null} /></SummaryRow>
+          {/* What the running mission waits on, live: the board's line, the same words. */}
+          {waiting && (
+            <p
+              data-pending-permission={live.pending?.tool_name}
+              title={waiting.title}
+              className="flex min-w-0 items-start gap-1.5 rounded-lg bg-warning/10 px-2.5 py-1.5 text-xs text-warning"
+            >
+              <ShieldAlert className="mt-px size-3.5 flex-none animate-pulse" aria-hidden />
+              <span className="min-w-0 tabular-nums">
+                <span className="font-semibold">{waiting.label}</span>
+                {waiting.deadline && <span className="whitespace-nowrap text-muted-foreground"> · {waiting.deadline}</span>}
+              </span>
+            </p>
+          )}
           {files.items.length > 0 && (
             <SummaryRow label={t('taskForm.summary.attachments')}><span className="tabular-nums">{files.items.length}</span></SummaryRow>
           )}

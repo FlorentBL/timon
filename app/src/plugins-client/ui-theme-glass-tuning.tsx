@@ -1,8 +1,9 @@
 'use client';
 
 import { useState, type ReactElement } from 'react';
+import { ProviderSection, ProviderSettingRow } from '@/components/provider-page/provider-section';
+import { Button } from '@/components/ui/button';
 import { Switch } from '@/components/ui/switch';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { t } from '@/lib/i18n';
 import { cn } from '@/lib/utils';
 import {
@@ -71,11 +72,14 @@ function TuningControls({ tab, tuning, disabled, scheme, onChange, onReset }: {
 }
 
 /**
- * The glass of each zone, one tab per zone: General, then Chrome, Islands,
- * Widgets and Bubbles, each following the general tuning until its switch
- * says otherwise; and the readability floor under the zones that carry text.
- * Writes go through the Appearance screen's own preview and reset, so a drag
- * repaints through inline properties and the row is written once.
+ * The glass of each zone, as a settings card: one row for General, then one
+ * for Frame, Islands, Widgets and Bubbles (each following General until its
+ * switch says otherwise), then the readability floor under the zones that
+ * carry text. A row shows its value; its sliders unfold under it on "Adjust",
+ * one row at a time, in place rather than in a dialog so the glass stays in
+ * sight while it is dragged. Writes go through the Appearance screen's own
+ * preview and reset, so a drag repaints through inline properties and the
+ * row is written once.
  */
 export function GlassTuningSettings({ native, disabled, scheme, onPreview, onReset }: {
   native: NativeAppearance;
@@ -84,7 +88,7 @@ export function GlassTuningSettings({ native, disabled, scheme, onPreview, onRes
   onPreview: (patch: Partial<NativeAppearance>) => void;
   onReset: (patch: Partial<NativeAppearance>) => void;
 }): ReactElement {
-  const [tab, setTab] = useState<Tab>('general');
+  const [open, setOpen] = useState<Tab | 'floor' | null>(null);
   const generalPatch = (patch: Partial<GlassTuning>): Partial<NativeAppearance> => ({
     ...('blur' in patch ? { glassBlur: patch.blur } : {}),
     ...('transparency' in patch ? { glassTransparency: patch.transparency } : {}),
@@ -96,50 +100,73 @@ export function GlassTuningSettings({ native, disabled, scheme, onPreview, onRes
     else zones[zone] = { ...glassTuningOf(native, zone), ...patch };
     return { glassZones: zones };
   };
+  const toggle = (row: Tab | 'floor') => setOpen((current) => (current === row ? null : row));
+  const adjust = (row: Tab | 'floor') => (
+    <Button
+      type="button"
+      size="sm"
+      variant="ghost"
+      className="h-8"
+      disabled={disabled}
+      aria-expanded={open === row}
+      onClick={() => toggle(row)}
+      data-glass-adjust={row}
+    >
+      {open === row ? t('appearance.glassTuningClose') : t('appearance.glassTuningAdjust')}
+    </Button>
+  );
   return (
-    <div className="mt-6">
-      <span className="text-[13px] font-medium leading-snug">{t('appearance.glassTuningTitle')}</span>
-      <p className="mt-0.5 max-w-[65ch] text-[12px] leading-snug text-muted-foreground">{t('appearance.glassTuningHint')}</p>
-      <Tabs value={tab} onValueChange={(value) => setTab(value as Tab)} className="mt-3">
-        <TabsList className="h-auto flex-wrap justify-start">
-          {TABS.map((id) => (
-            <TabsTrigger key={id} value={id} data-glass-tab={id} className="gap-1.5 text-[12px]">
-              {t(`appearance.glassZones.${id}`)}
-              {id !== 'general' && native.glassZones[id] && <span aria-label={t('appearance.glassZoneOwn')} className="size-1.5 rounded-full bg-primary" />}
-            </TabsTrigger>
-          ))}
-        </TabsList>
-        {TABS.map((id) => {
-          const follows = id !== 'general' && !native.glassZones[id];
-          return (
-            <TabsContent key={id} value={id} className="mt-3 max-w-xl">
-              <p className="mb-3 text-[11px] leading-snug text-muted-foreground">{t(`appearance.glassZoneHints.${id}`)}</p>
-              {id !== 'general' && <label className="mb-3 flex cursor-pointer items-start gap-3">
-                <Switch
-                  checked={follows}
-                  disabled={disabled}
-                  onCheckedChange={(on) => onReset(zonePatch(id, on ? null : {}))}
-                  className="mt-0.5"
-                />
+    <ProviderSection title={t('appearance.glassTuningTitle')} className="mt-6">
+      {TABS.map((id) => {
+        const follows = id !== 'general' && !native.glassZones[id];
+        const tuning = glassTuningOf(native, id);
+        return (
+          <ProviderSettingRow
+            key={id}
+            data-glass-zone={id}
+            data-glass-own={id !== 'general' && !follows ? '' : undefined}
+            title={t(`appearance.glassZones.${id}`)}
+            status={follows ? t('appearance.glassZoneFollows') : <TuningStatus tuning={tuning} />}
+            action={adjust(id)}
+          >
+            {open === id && !disabled && <div className="flex max-w-xl flex-col gap-3">
+              {id !== 'general' && <label className="flex cursor-pointer items-center gap-3">
+                <Switch checked={follows} onCheckedChange={(on) => onReset(zonePatch(id, on ? null : {}))} />
                 <span className="text-[13px] leading-snug">{t('appearance.glassZoneFollow')}</span>
               </label>}
               <TuningControls
                 tab={id}
-                tuning={glassTuningOf(native, id)}
-                disabled={disabled || follows}
+                tuning={tuning}
+                disabled={follows}
                 scheme={scheme}
                 onChange={(patch) => onPreview(id === 'general' ? generalPatch(patch) : zonePatch(id, patch))}
                 onReset={(patch) => onReset(id === 'general' ? generalPatch(patch) : zonePatch(id, patch))}
               />
-            </TabsContent>
-          );
-        })}
-      </Tabs>
-      <label className={cn('mt-5 flex max-w-xl flex-col gap-1 text-[13px] leading-snug', disabled && 'pointer-events-none opacity-60')}>
-        <span className="flex items-center justify-between gap-3">{t('appearance.glassFloor')}<span className="tabular-nums text-[12px] text-muted-foreground">{native.glassFloor === 0 ? t('appearance.glassFloorOff') : `${native.glassFloor} %`}</span></span>
-        <input type="range" min={GLASS_FLOOR_RANGE.min} max={GLASS_FLOOR_RANGE.max} value={native.glassFloor} disabled={disabled} onChange={(e) => onPreview({ glassFloor: Number(e.target.value) })} className="w-full accent-primary" />
-        <span className="text-[11px] text-muted-foreground">{t('appearance.glassFloorHint')}</span>
-      </label>
-    </div>
+            </div>}
+          </ProviderSettingRow>
+        );
+      })}
+      <ProviderSettingRow
+        data-glass-zone="floor"
+        title={t('appearance.glassFloor')}
+        status={native.glassFloor === 0 ? t('appearance.glassFloorOff') : `${native.glassFloor} %`}
+        action={adjust('floor')}
+      >
+        {open === 'floor' && !disabled && <label className="flex max-w-xl flex-col gap-1">
+          <span className="sr-only">{t('appearance.glassFloor')}</span>
+          <input id="glass-floor" type="range" min={GLASS_FLOOR_RANGE.min} max={GLASS_FLOOR_RANGE.max} value={native.glassFloor} onChange={(e) => onPreview({ glassFloor: Number(e.target.value) })} className="w-full accent-primary" />
+        </label>}
+      </ProviderSettingRow>
+    </ProviderSection>
+  );
+}
+
+/** A zone's own values on one line: blur, transparency, and a swatch when it carries a colour. */
+function TuningStatus({ tuning }: { tuning: GlassTuning }): ReactElement {
+  return (
+    <span className="flex items-center gap-1.5 tabular-nums">
+      {t('appearance.glassTuningStatus', { blur: tuning.blur, transparency: tuning.transparency })}
+      {tuning.tint && <span aria-label={t('appearance.glassTint')} className="size-3 rounded-sm" style={{ background: tuning.tint }} />}
+    </span>
   );
 }

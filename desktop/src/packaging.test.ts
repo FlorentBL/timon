@@ -824,3 +824,64 @@ test('the silent update flag of the shell is the one installer.nsh reads', async
   assert.deepEqual(NSIS_SILENT_ARGS.slice(0, 3), ['/S', '--updated', '--force-run']);
   assert.match(nsh, /\$\{If\} \$\{isUpdated\}\s+Goto timon_task_done/);
 });
+
+// The service pause ended the daemon with taskkill only, which runs no
+// handler: every update was read as an unknown exit at the next start. The
+// cooperative stop through the daemon token was refused for an elevated
+// script. The installer now asks through a file, written as the user, that
+// the daemon of the service watches (orchestrator/src/host/stop-request.ts).
+test('the installer asks the service daemon to stop through a file, with no token and no elevated write', async () => {
+  const nsh = readFileSync(join(root, 'build', 'installer.nsh'), 'utf8');
+  const ps1 = readFileSync(join(root, 'build', 'timon-service-pause.ps1'), 'utf8');
+  const daemon = await import(new URL('../../orchestrator/src/host/stop-request.ts', import.meta.url).href) as {
+    STOP_REQUEST_FILE: string; STOP_REQUEST_POLL_MS: number;
+  };
+  const shutdown = await import(new URL('../../orchestrator/src/daemon-shutdown.ts', import.meta.url).href) as { SHUTDOWN_GRACE_MS: number };
+
+  // One name on both sides.
+  const write = nsh.match(/!macro timonRequestStop\s+([\s\S]*?)!macroend/)?.[1] ?? '';
+  assert.ok(write.includes(`FileOpen $5 "$3\\run\\${daemon.STOP_REQUEST_FILE}" w`), 'the installer writes the name the daemon reads');
+  assert.ok(ps1.includes(`Join-Path $TimonHome 'run\\${daemon.STOP_REQUEST_FILE}'`), 'the pause looks at the same file');
+  // Written only by an installer that runs as the user, and only once its script runs.
+  assert.match(write, /^\s*\$\{If\} \$6 != ""/);
+  const pause = nsh.match(/!macro timonPauseService\s+([\s\S]*?)!macroend/)?.[1] ?? '';
+  assert.match(pause, /StrCpy \$6 ""\s+\$\{IfNot\} \$\{UAC_IsAdmin\}\s+StrCpy \$6 " -StopRequested"\s+\$\{EndIf\}\s+\$\{Do\}/);
+  assert.equal((pause.match(/-TimonHome "\$3"\$6'/g) ?? []).length, 2, 'both runs are told');
+  const written = [...pause.matchAll(/\$\{If\} \$1 == "ok"\s+!insertmacro timonRequestStop\s+\$\{StdUtils\.WaitForProcEx\} \$0 \$2/g)];
+  assert.equal(written.length, 2, 'after each start of the script, before waiting for it');
+  assert.match(pause, /Push \$5\s+Push \$6[\s\S]*Pop \$6\s+Pop \$5/, 'the register it borrows is given back');
+  // The script never writes there and never reads a token.
+  assert.doesNotMatch(ps1, /daemon-token|Authorization|Invoke-WebRequest|Invoke-RestMethod|TcpClient/);
+  const request = ps1.slice(ps1.indexOf("$request = Join-Path $TimonHome"), ps1.indexOf('Stop-ScheduledTask -TaskName'));
+  assert.ok(request.length > 0);
+  assert.doesNotMatch(request, /Set-Content|Add-Content|Out-File|New-Item|Remove-Item|Copy-Item|Move-Item/, 'only waits');
+  assert.match(request, /Test-Path -LiteralPath \$request -PathType Leaf/);
+
+  // The order: task disabled, daemon waited for, then the task stopped and the kills.
+  const disable = ps1.indexOf('Disable-ScheduledTask -TaskName');
+  const wait = ps1.indexOf('if ($StopRequested -and $TimonHome) {');
+  assert.ok(disable > 0 && disable < wait, 'a daemon that leaves is not started again by the trigger');
+  assert.ok(wait < ps1.indexOf('Stop-ScheduledTask -TaskName'), 'the launcher is not ended under its daemon');
+  assert.ok(wait < ps1.indexOf('taskkill.exe'), 'nothing is ended by force before the wait');
+  assert.ok(wait > ps1.indexOf('if ($Resume) {'), 'the stop phase only');
+
+  // The waits cover the daemon's: one look, then its own bounded stop.
+  const stopWait = Number(ps1.match(/^\$stopWait = (\d+)$/m)?.[1]);
+  const requestTaken = Number(ps1.match(/^\$requestTaken = (\d+)$/m)?.[1]);
+  assert.ok(stopWait * 1000 >= daemon.STOP_REQUEST_POLL_MS + shutdown.SHUTDOWN_GRACE_MS + 2000, `${stopWait} s covers a look and the grace`);
+  assert.ok(requestTaken * 1000 >= daemon.STOP_REQUEST_POLL_MS * 2, 'a daemon that reads it has removed it by then');
+  assert.ok(requestTaken < stopWait);
+  assert.match(ps1, /if \(@\(& \$daemonsOfAccount\)\.Count -eq 0\) \{ \$outcome = '[^']+'; break \}/, 'ends as soon as the daemon is gone');
+  assert.match(ps1, /\$_\.CommandLine\.ToLowerInvariant\(\)\.Contains\('\\dist\\boot\.js'\) -and \(& \$mine \$_\)/, 'only this account\'s daemon is waited for');
+  assert.match(ps1, /& \$note \("pause: stop request: \{0\} \(\{1:N1\} s\)" -f \$outcome/, 'the journal says how it ended');
+});
+
+// A daemon that left on the request under a refused elevation leaves an S4U
+// task enabled: its trigger would start it again from half-replaced files.
+test('the service pause never lets the installer go on while the task is still enabled', () => {
+  const ps1 = readFileSync(join(root, 'build', 'timon-service-pause.ps1'), 'utf8');
+  const check = ps1.indexOf('$taskNow = & $taskState');
+  assert.ok(check > ps1.lastIndexOf('MethodName Create'), 'after the resume is started: it enables the task again');
+  assert.ok(check < ps1.indexOf('# The net.'));
+  assert.match(ps1, /\$taskNow = & \$taskState\s+if \(@\('Ready', 'Running', 'Queued'\) -contains \$taskNow\) \{\s+& \$note [^\n]+\s+exit \$stillRunning\s+\}/);
+});

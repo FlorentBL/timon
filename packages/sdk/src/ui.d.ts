@@ -465,8 +465,20 @@ declare module '@timon/ui' {
     status: 'pending' | 'allowed' | 'refused';
     /** After an accord given in this window: whether the mission started again; `null` otherwise. */
     relaunched: boolean | null;
+    /**
+     * The agent's project an accord may open the folder to; `null` when the
+     * card offers the agent alone (client API 20, absent on an older host).
+     */
+    project?: string | null;
+    /** Whose extra folders the accord joined; `null` while pending or refused (client API 20). */
+    scope?: 'agent' | 'project' | null;
+    /**
+     * `true` when the accord put back the Kanban task the refusal blocked,
+     * also after a reload of the thread; `null` when unknown (client API 20).
+     */
+    requeued?: boolean | null;
   };
-  /** What a `chat.fence` occupant is rendered for, and its two answers (client API 19). */
+  /** What a `chat.fence` occupant is rendered for, and its answers (client API 19). */
   export type FenceGrantValue = {
     grant: FenceGrantView;
     busy: boolean;
@@ -477,6 +489,13 @@ declare module '@timon/ui' {
      * once recorded.
      */
     allow(): Promise<boolean>;
+    /**
+     * Opens the folder to every agent of `grant.project`, with the same checks
+     * and relaunch as `allow`; it also takes the person's right to manage
+     * projects. `null` when the card offers no project. Client API 20: absent
+     * on an older host, so test `typeof allowProject === 'function'`.
+     */
+    allowProject?: (() => Promise<boolean>) | null;
     /** Closes the card; nothing is opened. */
     refuse(): Promise<boolean>;
   };
@@ -1955,6 +1974,20 @@ declare module '@timon/ui' {
    */
   export function useWidgetInFront(): boolean;
 
+  /**
+   * Calls `listener` each time the person signed in on this page becomes
+   * another account, or signs out (client API 20). Never for the first
+   * account, nor when the same one signs in again, and the listener learns no
+   * id. Your plugin is not loaded again on a change of account: a value read
+   * from the daemon and kept at module level, or in `apply`'s closure, would
+   * be shown to the next person. Empty it here. Returns the unsubscribe: call
+   * it from the disposer `apply` returns.
+   *
+   * Absent on a Timon older than API 20: declare `apiVersion: 20`, or import
+   * the module as a namespace and test `typeof ui.onAccountChange === 'function'`.
+   */
+  export function onAccountChange(listener: () => void): () => void;
+
   /** A heading of a list page, as the `page.toc` occupant lists it. Client API 15. */
   export type PageTocEntry = {
     /** The heading's `id`, also its anchor. */
@@ -2106,6 +2139,252 @@ declare module '@timon/ui' {
     /** A whole look drawn at random from `choices`, packs included. */
     random(): AgentLook;
   } | null;
+
+  /** Whose extra folders a list holds: one agent's, or a whole project's (client API 20). */
+  export type AgentFolderOwner = { kind: 'agent'; name: string } | { kind: 'project'; slug: string };
+  /** One folder of an `agent.folders` section (client API 20). */
+  export type AgentFolderRow = {
+    owner: AgentFolderOwner;
+    /** The full path, as stored. Show it on demand (a title, a menu), not on the row. */
+    path: string;
+    /** Its last segment, the name a row shows. */
+    name: string;
+    mode: 'read' | 'write';
+    /** Why a launch leaves this stored folder out now (the daemon's reason, in English); `null` when applied. */
+    dropped: string | null;
+  };
+  /** The answer of a gesture of `useAgentFolders()`: recorded, or refused with the daemon's message. */
+  export type AgentFoldersResult = { ok: true } | { ok: false; message: string };
+  /** What an `agent.folders` occupant is painted for, and its gestures (client API 20). */
+  export type AgentFoldersValue = {
+    /** The agents whose folders are listed: one on an agent's page, every agent of a project in its settings. */
+    agents: readonly string[];
+    /** The project whose own folders are listed first, in its settings; `null` on an agent's page. */
+    project: string | null;
+    /** Name the owner on each row: the project's list mixes several. */
+    showAgent: boolean;
+    /** The screen's own words for an empty list; `null` for yours. */
+    emptyStatus: string | null;
+    /** To put on your root. */
+    className: string | undefined;
+    /** `loading` until the first read; `error` when it failed (`reload` tries again). */
+    status: 'loading' | 'ready' | 'error';
+    /** Every folder, the project's first, in each list's order. */
+    rows: readonly AgentFolderRow[];
+    /** Whose lists a folder may be added to; empty while nothing is loaded. */
+    owners: readonly AgentFolderOwner[];
+    /** A gesture is running. */
+    busy: boolean;
+    reload(): Promise<void>;
+    /**
+     * Adds a folder to `owner`'s list, or changes its access when the path is
+     * already there. Timon checks the path again (absolute, not the Timon
+     * home nor a credential folder) and says why it refuses.
+     */
+    add(owner: AgentFolderOwner, folder: { path: string; mode: 'read' | 'write' }): Promise<AgentFoldersResult>;
+    /** Changes the access of a folder of `owner`'s list. */
+    setMode(owner: AgentFolderOwner, path: string, mode: 'read' | 'write'): Promise<AgentFoldersResult>;
+    /** Takes a folder out of `owner`'s list. */
+    remove(owner: AgentFolderOwner, path: string): Promise<AgentFoldersResult>;
+    /**
+     * Opens the folder browser of the active machine at `current` and resolves
+     * the folder chosen, or `null` when it was closed (Timon already told the
+     * person when it could not open).
+     */
+    browse(current: string): Promise<string | null>;
+  };
+  /**
+   * An agent's or a project's extra folders, as the `agent.folders` slot
+   * receives them (client API 20): the Workspace tab of the agent's page, and
+   * the project's settings. `null` outside that slot. Timon announces each
+   * change once recorded; a refusal comes back to you in the result, to show
+   * where it fits. A change applies from the agent's next mission.
+   */
+  export function useAgentFolders(): AgentFoldersValue | null;
+
+  /** A label of a pull request, its colour as GitHub gives it (`rrggbb`), or `null` (client API 20). */
+  export type PullRequestLabel = { name: string; color: string | null };
+  /** How many people reacted to a text with one emoji (client API 20). */
+  export type PullRequestReaction = {
+    content: 'thumbs_up' | 'thumbs_down' | 'laugh' | 'hooray' | 'confused' | 'heart' | 'rocket' | 'eyes';
+    count: number;
+  };
+  /**
+   * One entry of a pull request's conversation (client API 20): a comment, a
+   * review, a label added or removed, or its branch rewritten. Every text was
+   * written by someone on GitHub: render it as text, or as markdown without
+   * raw HTML. `bodyTruncated` says Timon cut a long text; `reactions` is
+   * absent from an older daemon.
+   */
+  export type PullRequestTimelineItem =
+    | { kind: 'comment'; author: string | null; body: string; bodyTruncated: boolean; createdAt: string; url: string | null; hidden: boolean; reactions?: PullRequestReaction[] }
+    | { kind: 'review'; author: string | null; state: 'approved' | 'changes_requested' | 'commented' | 'dismissed' | 'pending'; body: string; bodyTruncated: boolean; createdAt: string; reactions?: PullRequestReaction[] }
+    | { kind: 'labeled' | 'unlabeled'; actor: string | null; createdAt: string; label: PullRequestLabel }
+    | { kind: 'force_pushed'; actor: string | null; createdAt: string; before: string | null; after: string | null; url: string | null };
+  /** A review thread on a line of the diff (client API 20); `commentsMore` counts the comments not read. */
+  export type PullRequestThread = {
+    path: string | null;
+    line: number | null;
+    resolved: boolean;
+    outdated: boolean;
+    comments: Array<{ author: string | null; body: string; bodyTruncated: boolean; createdAt: string; url: string | null; reactions?: PullRequestReaction[] }>;
+    commentsMore: number;
+  };
+  /** A check of the pull request's head (client API 20); `workflow` names the CI workflow of a job. */
+  export type PullRequestCheck = {
+    name: string;
+    status: 'pass' | 'fail' | 'pending' | 'skipped';
+    url: string | null;
+    workflow: string | null;
+    startedAt: string | null;
+    completedAt: string | null;
+  };
+  /**
+   * GitHub's page of a pull request, read through the daemon (client API 20).
+   * Dates are ISO strings. Each list is cut at the daemon's bound: its `…More`
+   * counts what was left out. `threadsError` says why the review threads
+   * could not be read (in English), the rest of the page standing.
+   */
+  export type PullRequestPage = {
+    number: number;
+    title: string;
+    url: string;
+    state: 'open' | 'closed' | 'merged';
+    isDraft: boolean;
+    author: string | null;
+    createdAt: string;
+    updatedAt: string;
+    mergedAt: string | null;
+    closedAt: string | null;
+    baseRef: string;
+    headRef: string;
+    headSha: string | null;
+    headOwner: string | null;
+    headRepository: string | null;
+    isCrossRepository: boolean;
+    maintainerCanModify: boolean;
+    mergeable: 'mergeable' | 'conflicting' | 'unknown';
+    /** GitHub's `mergeStateStatus`, lower case (`clean`, `dirty`, `behind`, `blocked`…). */
+    mergeStateStatus: string;
+    reviewDecision: 'approved' | 'changes_requested' | 'review_required' | null;
+    additions: number;
+    deletions: number;
+    changedFiles: number;
+    body: string;
+    bodyTruncated: boolean;
+    reactions?: PullRequestReaction[];
+    labels: PullRequestLabel[];
+    milestone: { title: string; url: string | null } | null;
+    assignees: string[];
+    assigneesMore: number;
+    reviewRequests: string[];
+    reviewRequestsMore: number;
+    /** The issues it closes once merged; `repo` is `null` for one of the same repository. */
+    closingIssues: Array<{ repo: string | null; number: number; url: string | null }>;
+    timeline: PullRequestTimelineItem[];
+    timelineMore: number;
+    commits: Array<{ sha: string; headline: string; author: string | null; date: string; url: string | null }>;
+    commitsMore: number;
+    files: Array<{ path: string; additions: number; deletions: number }>;
+    filesMore: number;
+    checks: PullRequestCheck[];
+    checksMore: number;
+    threads: PullRequestThread[];
+    threadsMore: number;
+    threadsError: string | null;
+  };
+  /**
+   * A row of the Pull requests widget (client API 20): what the list read,
+   * before the page. `review` is Timon's own review of it (a brief, a running
+   * review, its verdict), `null` when none was asked. `links`,
+   * `mergeStateStatus` and `gestures` are absent from an older daemon.
+   */
+  export type PullRequestRow = {
+    number: number;
+    title: string;
+    author: string | null;
+    url: string;
+    isDraft: boolean;
+    updatedAt: string;
+    headOwner: string | null;
+    /** Opened from a fork: Timon writes to its branch only as the contributor allows. */
+    external: boolean;
+    review: {
+      id: string;
+      number: number;
+      state: 'draft' | 'running' | 'done' | 'failed';
+      agent: string;
+      verdict: 'mergeable' | 'changes_requested' | 'reject' | 'product_decision' | null;
+      report: string | null;
+      mission_id: string | null;
+      /** The pull request's `updatedAt` the review read: an older one than the row's means the code moved since. */
+      pr_updated_at: string | null;
+      updated_at: number;
+    } | null;
+    /** Timon's job behind it and the ideas it carries, as far as the reader may see them. */
+    links?: KanbanJobLinks & { job_id: string | null };
+    mergeStateStatus?: string;
+    gestures?: { update_branch: boolean; ask_contributor: boolean; resolve_conflict: boolean; locked?: 'not_allowed' | 'fork_deleted' | null };
+  };
+  /**
+   * A gesture on a pull request (client API 20), the same from its row's menu
+   * and from its window: resolve a conflict, update the branch, prepare or
+   * read Timon's review, ask the contributor, comment, open it on GitHub.
+   */
+  export type PullRequestActionId = 'resolveConflict' | 'updateBranch' | 'review' | 'report' | 'askContributor' | 'comment' | 'forge';
+  /**
+   * One gesture as the host places it. `blocked`: show it greyed with its
+   * reason (`not_allowed`, `fork_deleted`: the branch cannot be written from
+   * here; `branch_busy`: another branch gesture runs; `review_running`), or
+   * `null`. `busy`: this very gesture is under way.
+   */
+  export type PullRequestAction = {
+    id: PullRequestActionId;
+    blocked: 'not_allowed' | 'fork_deleted' | 'branch_busy' | 'review_running' | null;
+    busy: boolean;
+  };
+  /** The gestures, placed: the one the state calls for (`primary`, or none), a few beside it, the rest in a "…" menu. */
+  export type PullRequestActions = { primary: PullRequestAction | null; secondary: PullRequestAction[]; overflow: PullRequestAction[] };
+  /** A read through the daemon: its value, or its refusal in the reader's language. */
+  export type PullRequestRead<T> = { ok: true; value: T } | { ok: false; message: string };
+  /**
+   * The pull request a `kanban.pull.dialog` occupant paints (client API 20),
+   * opened by a click on its row in the Pull requests widget. The occupant
+   * draws the whole window (`Dialog` from this module) and calls `close()`
+   * when it is dismissed.
+   *
+   * The reads and the gestures stay the host's: the occupant holds no access
+   * to GitHub or to the daemon. `run(id)` goes through the widget that opened
+   * the window, as from the row's menu, on a person's click only: Timon opens
+   * what it needs (a brief, the "Publish on GitHub" window, a conflict) and
+   * nothing reaches GitHub without that person's own confirmation there.
+   */
+  export type PullRequestDialogValue = {
+    project: string;
+    /** `owner/name` of the project's repository, when known. */
+    repo: string | null;
+    /** The row the window was opened from: its title shows before the page is read; its links and review come from the list. */
+    pull: PullRequestRow;
+    /** GitHub's page: being read, refused (`message` in the reader's language), or read. */
+    load: { kind: 'loading' } | { kind: 'error'; message: string } | { kind: 'ready'; page: PullRequestPage };
+    /** A fresh read asked by `refresh` is under way; `load` keeps the last page meanwhile. */
+    refreshing: boolean;
+    /** Reads the page again from GitHub, past the host's short cache. */
+    refresh(): Promise<void>;
+    actions: PullRequestActions;
+    run(id: PullRequestActionId): void;
+    /** The end of a failed check's log (`checkUrl`: a check's `url`), for a job of the repository's own CI. */
+    readCheckLog(checkUrl: string): Promise<PullRequestRead<{ tail: string; truncated: boolean }>>;
+    /** The pull request's whole diff, as text, cut past the daemon's bound. */
+    readDiff(): Promise<PullRequestRead<{ diff: string; truncated: boolean }>>;
+    close(): void;
+    /** Close the window, then open Timon's job behind the pull request (`links.job_id`). */
+    openJob(id: string): void;
+    /** Close the window, then open one of the TO DO ideas it carries (`links.todos`). */
+    openTodo(id: number): void;
+  };
+  /** The pull request a `kanban.pull.dialog` occupant paints, and the host's gestures (client API 20); `null` outside the slot. */
+  export function usePullRequestDialog(): PullRequestDialogValue | null;
 
   /**
    * A provider's one status line (client API 16), the same verdict on the list
