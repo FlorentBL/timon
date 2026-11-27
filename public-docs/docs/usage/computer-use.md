@@ -50,6 +50,18 @@ The same list of allowed applications applies: the tree of a window, or an actio
 
 The setup card has an optional **Accessibility tree** line. Without it, or where the system does not offer it yet, the agent works from screenshots as before. On Linux, accessibility must be turned on in the desktop session; Electron and Chromium applications build their tree only when accessibility is on, which Timon asks them for where the system allows it.
 
+## Work in the background
+
+By default an agent works in the **foreground**: it sees your screen and may click and type like you do. In the setup card of the agent, **Working mode** lets you choose **Background (accessibility only, never touches your screen)** instead. Only a person can change it, never an agent.
+
+A background agent keeps your screen, mouse and keyboard yours, so you can keep working while it acts:
+
+- Allowed: `computer_list_windows`, `computer_a11y_tree`, `computer_a11y_action` (`press`, `set_value` written directly into the field, `select`, `expand`, `collapse`, `show_menu`, `scroll_into_view`) and `computer_wait`. The agent acts by window `id`, without bringing the window to the front.
+- Refused with `computer_background_only` (HTTP 403): screenshots, click, double-click, move, drag, type, key, scroll, cursor position, `computer_focus_window` and the `focus` accessibility action, which would take your focus or show your screen.
+- When a toolkit refuses to write a field through accessibility, the keyboard fallback is not used: the agent gets `a11y_failed` and tries another element, or asks you to switch it to the foreground.
+
+The list of allowed applications still applies.
+
 ## Allow Timon on your system
 
 | System | What to do |
