@@ -46,11 +46,13 @@ jobs:
         run: npm ci --include=dev
 
       # xdotool is the Linux input tool computer use needs; the display is a fixed-size X11 server.
-      - name: Install xvfb and xdotool
+      # openbox is the window manager: without one there is no active window to read, which the
+      # allowed-applications guard and focus_window both need.
+      - name: Install xvfb, xdotool and a window manager
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y xvfb xdotool
+          sudo apt-get install -y xvfb xdotool openbox
 
       # The verdict is read from the test's own output, not from its exit status: on the first Linux
       # run the step passed although the test printed FAIL, the status being lost between Electron
@@ -63,7 +65,7 @@ jobs:
         run: |
           set -o pipefail
           npx tsc --outDir dist-e2e
-          xvfb-run --auto-servernum --server-args="-screen 0 1280x800x24" npx electron --no-sandbox scripts/computer-use-e2e.mjs 2>&1 | tee computer-use-e2e.log || true
+          xvfb-run --auto-servernum --server-args="-screen 0 1280x800x24" bash -c 'openbox & sleep 2; exec npx electron --no-sandbox scripts/computer-use-e2e.mjs' 2>&1 | tee computer-use-e2e.log || true
           grep -qx 'PASS' computer-use-e2e.log
 
       - name: Test computer use (Windows)

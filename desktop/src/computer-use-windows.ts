@@ -138,7 +138,9 @@ export async function readForegroundApp(platform: InputPlatform, exec: Exec): Pr
   try {
     if (platform === 'darwin') return identityOf(parseJson((await exec(macCommand(MAC_FOREGROUND_SCRIPT))).stdout));
     if (platform === 'win32') return identityOf(parseJson((await exec(windowsQueryCommand({ q: 'foreground' }))).stdout));
-    const active = (await exec(xdotool('getactivewindow'))).stdout.trim();
+    // Without a window manager there is no active window: the window holding the input focus is the next best.
+    let active = (await exec(xdotool('getactivewindow')).catch(() => ({ stdout: '' }))).stdout.trim();
+    if (!/^\d+$/.test(active)) active = (await exec(xdotool('getwindowfocus'))).stdout.trim();
     return /^\d+$/.test(active) ? await linuxIdentity(exec, active) : null;
   } catch { return null; }
 }
