@@ -275,7 +275,7 @@ export class ComputerUseService {
       case 'list_windows': return this.windows(platform);
       case 'focus_window': return this.focus(actor, platform, command.id, allowedApps);
       case 'a11y_tree': return this.a11yTree(actor, platform, display, command, allowedApps);
-      case 'a11y_action': return this.a11yAction(actor, platform, command, allowedApps);
+      case 'a11y_action': return this.a11yAction(actor, platform, command, allowedApps, display);
       case 'screenshot': return this.screenshot(display, command.maxWidth);
       case 'cursor_position': {
         const point = this.deps.cursor();
@@ -340,6 +340,7 @@ export class ComputerUseService {
 
   private async a11yAction(
     actor: ComputerActor, platform: InputPlatform, command: Extract<ComputerCommand, { command: 'a11y_action' }>, allowedApps: readonly string[],
+    display?: DisplayInfo,
   ): Promise<unknown> {
     await this.requireA11y();
     const target = parseElementId(command.id);
@@ -351,7 +352,26 @@ export class ComputerUseService {
     if (actor === 'agent' && !isAppAllowed(app, allowedApps)) throw this.notAllowed(app, allowedApps, 'The application of that element');
     try {
       await this.a11y.act({ windowId: target.windowId, path: target.path, action: command.action, ...(command.value === undefined ? {} : { value: command.value }) });
-    } catch (error) { throw this.a11yFailure(error, 'The accessibility action failed.'); }
+    } catch (error) {
+      // Some toolkits refuse to write a field's text through accessibility (Chromium under Linux did,
+      // CI run 46006353531): focus the element through accessibility, then select its content and type
+      // the value with the keyboard. The keyboard goes to the application in front, so the allowed
+      // applications are checked again on it, as for any typed text.
+      if (command.action !== 'set_value' || !(error instanceof A11yError) || error.kind !== 'failed' || !display) {
+        throw this.a11yFailure(error, 'The accessibility action failed.');
+      }
+      try { await this.a11y.act({ windowId: target.windowId, path: target.path, action: 'focus' }); }
+      catch (focusError) { throw this.a11yFailure(focusError, 'The accessibility action failed.'); }
+      await (this.deps.sleep ?? ((ms) => new Promise<void>((resolve) => setTimeout(resolve, ms))))(150);
+      if (actor === 'agent') {
+        const front = await readForegroundApp(platform, this.deps.exec);
+        if (!isAppAllowed(front, allowedApps)) throw this.notAllowed(front, allowedApps);
+      }
+      await this.input(display, { command: 'key', keys: platform === 'darwin' ? 'cmd+a' : 'ctrl+a' });
+      if ((command.value ?? '') !== '') await this.input(display, { command: 'type', text: command.value ?? '' });
+      else await this.input(display, { command: 'key', keys: 'Backspace' });
+      return { ok: true, via: 'keyboard' };
+    }
     return { ok: true };
   }
 

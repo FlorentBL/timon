@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { ComputerCommandError, parseComputerCommand } from './computer-use-protocol.js';
 import { ComputerUseService, type ComputerUseDeps } from './computer-use-service.js';
-import { buildTree, elementId, filterByQuery, parseElementId, type A11yRawNode } from './computer-use-a11y.js';
+import { A11yError, buildTree, elementId, filterByQuery, parseElementId, type A11yRawNode } from './computer-use-a11y.js';
 import { createFakeA11yBackend } from './computer-use-a11y-fake.js';
 import { selectA11yBackend } from './computer-use-a11y-select.js';
 import type { SystemCommand } from './computer-use-input.js';
@@ -129,6 +129,27 @@ test('the value a backend refuses with never travels back in the error', async (
   const { run, backend } = setup();
   backend.act = async () => { throw new Error('boom secret-value'); };
   await assert.rejects(run('a11y_action', { id: '10:1#0.0.0', action: 'set_value', value: 'secret-value' }), (e: ComputerCommandError) => e.code === 'a11y_failed' && !/secret/.test(e.message));
+});
+
+test('a field the toolkit will not write is focused through accessibility, then typed into with the keyboard', async () => {
+  const { run, backend, calls } = setup();
+  const acts: string[] = [];
+  backend.act = async (args) => {
+    acts.push(args.action);
+    if (args.action === 'set_value') throw new A11yError('failed', 'refused');
+  };
+  assert.deepEqual(await run('a11y_action', { id: '10:1#0.0.0', action: 'set_value', value: 'timon' }), { ok: true, via: 'keyboard' });
+  assert.deepEqual(acts, ['set_value', 'focus']);
+  // Select all, then the value, through the input script (the front application was checked first).
+  const inputs = calls.filter((c) => c.args.some((arg) => arg.includes('CGEventPost') || arg.includes('keystroke')));
+  assert.ok(inputs.length >= 2, 'select-all and typing went through the keyboard');
+});
+
+test('the keyboard fallback is refused when the application in front is not allowed', async () => {
+  const { run, backend } = setup(['Mail']);
+  backend.act = async (args) => { if (args.action === 'set_value') throw new A11yError('failed', 'refused'); };
+  // The element's application is checked first: TextEdit is not on this list either.
+  await assert.rejects(run('a11y_action', { id: '10:1#0.0.0', action: 'set_value', value: 'x' }), (e: ComputerCommandError) => e.code === 'computer_app_not_allowed');
 });
 
 test('status reports the accessibility check, and a missing one refuses the commands without blocking the rest', async () => {
