@@ -17,9 +17,15 @@ export const DOCK_ICON_CHANNELS = {
 /** A shell preference of this computer, next to `machine-schemes.json`: the daemon has no say in the Dock. */
 const DOCK_ICON_FILE = 'dock-icon.json';
 
-/** Next to the classic icon in `app/public`, packaged or not. */
-const DOCK_ICON_PICTURES: Record<Exclude<DockIcon, 'classic'>, string> = {
-  dark: 'icon-512-dark.png',
+/**
+ * Next to the classic icon in `app/public`, packaged or not. Not the app
+ * icons themselves: those fill their canvas, while `dock.setIcon` draws a
+ * picture edge to edge, so the Dock needs Apple's margin baked in (an 824 px
+ * body on a 1024 px canvas) to match the size of the other apps.
+ */
+const DOCK_ICON_PICTURES: Record<DockIcon, string> = {
+  classic: 'icon-dock-512.png',
+  dark: 'icon-dock-512-dark.png',
 };
 
 export function isDockIcon(value: unknown): value is DockIcon {
@@ -45,9 +51,9 @@ export function writeDockIcon(home: string, icon: DockIcon): boolean {
   }
 }
 
-/** The picture of `icon`, found beside the classic one. */
+/** The Dock picture of `icon`, found beside the classic app icon. */
 export function dockIconPath(classicPath: string, icon: DockIcon): string {
-  return icon === 'classic' ? classicPath : join(dirname(classicPath), DOCK_ICON_PICTURES[icon]);
+  return join(dirname(classicPath), DOCK_ICON_PICTURES[icon]);
 }
 
 /** A page's request, checked: one of the known icons, nothing else. */

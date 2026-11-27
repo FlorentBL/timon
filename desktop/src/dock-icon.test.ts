@@ -35,6 +35,10 @@ test('a page names an icon, never a path', () => {
 
 test('every icon has its picture beside the classic one in app/public', () => {
   const classic = fileURLToPath(new URL('../../app/public/icon-512.png', import.meta.url));
-  assert.equal(dockIconPath(classic, 'classic'), classic);
-  for (const icon of DOCK_ICONS) assert.ok(existsSync(dockIconPath(classic, icon)), `${icon} has no picture`);
+  for (const icon of DOCK_ICONS) {
+    const picture = dockIconPath(classic, icon);
+    assert.ok(existsSync(picture), `${icon} has no picture`);
+    // The app icon fills its canvas: drawn as is, it stands taller than every other app in the Dock.
+    assert.notEqual(picture, classic, `${icon} uses the app icon, which has no Dock margin`);
+  }
 });
