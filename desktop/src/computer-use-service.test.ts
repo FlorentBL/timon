@@ -109,3 +109,22 @@ test('arguments are validated', () => {
   assert.throws(() => parseComputerCommand('rm', {}), /Unknown/);
   assert.deepEqual(parseComputerCommand('screenshot', {}), { command: 'screenshot', maxWidth: 1280 });
 });
+
+test('a refused action asks for the missing grant, at most once a minute', async () => {
+  let now = 1_000_000;
+  const asked: string[] = [];
+  const { run } = setup({
+    screenPermission: () => 'not-determined',
+    now: () => now,
+    requestPermission: async (reason) => { asked.push(reason); },
+  });
+  await assert.rejects(run('screenshot'), (error: unknown) => error instanceof ComputerCommandError && error.code === 'computer_unavailable');
+  await assert.rejects(run('click', { x: 1, y: 1 }));
+  assert.deepEqual(asked, ['permission-screen'], 'an agent retrying does not stack system prompts');
+  now += 61_000;
+  await assert.rejects(run('screenshot'));
+  assert.deepEqual(asked, ['permission-screen', 'permission-screen']);
+  // Status is read by the interface every few seconds: it reports, it never asks.
+  await run('status', undefined, 'human');
+  assert.equal(asked.length, 2);
+});

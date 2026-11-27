@@ -2,7 +2,7 @@
  * Electron half of computer use: screen capture, the global stop shortcut and the on-screen indicator.
  * What can be decided without Electron lives in `computer-use-service.ts`; this file only wires it.
  */
-import { BrowserWindow, desktopCapturer, globalShortcut, screen, systemPreferences } from 'electron';
+import { BrowserWindow, desktopCapturer, globalShortcut, screen, shell, systemPreferences } from 'electron';
 import { ComputerUseService } from './computer-use-service.js';
 import { startComputerServer } from './computer-use-server.js';
 import { runSystemCommand } from './computer-use-exec.js';
@@ -71,6 +71,31 @@ class Indicator {
   }
 }
 
+const SETTINGS_PANES = {
+  'permission-screen': 'x-apple.systempreferences:com.apple.settings.PrivacySecurity.extension?Privacy_ScreenCapture',
+  'permission-accessibility': 'x-apple.systempreferences:com.apple.settings.PrivacySecurity.extension?Privacy_Accessibility',
+} as const;
+
+/**
+ * macOS shows its prompt only for a grant it never asked about; once refused, only the Settings
+ * pane can change it, so that pane is opened instead.
+ */
+async function requestMacPermission(reason: 'permission-screen' | 'permission-accessibility'): Promise<void> {
+  if (process.platform !== 'darwin') return;
+  if (reason === 'permission-screen') {
+    if (systemPreferences.getMediaAccessStatus('screen') === 'not-determined') {
+      // Asking for a capture is what registers the app and shows the Screen Recording prompt.
+      await desktopCapturer.getSources({ types: ['screen'], thumbnailSize: { width: 1, height: 1 } });
+      return;
+    }
+  } else if (!systemPreferences.isTrustedAccessibilityClient(false)) {
+    // `true` shows the Accessibility prompt, which itself offers to open Settings.
+    systemPreferences.isTrustedAccessibilityClient(true);
+    return;
+  }
+  await shell.openExternal(SETTINGS_PANES[reason]);
+}
+
 export interface ComputerUseDesktop { close: () => Promise<void>; service: ComputerUseService }
 
 export async function startComputerUse(home: string, t: ShellText): Promise<ComputerUseDesktop> {
@@ -85,8 +110,9 @@ export async function startComputerUse(home: string, t: ShellText): Promise<Comp
     screenPermission: () => {
       if (process.platform !== 'darwin') return 'granted';
       const status = systemPreferences.getMediaAccessStatus('screen');
-      return status === 'granted' ? 'granted' : status === 'unknown' ? 'unknown' : 'denied';
+      return status === 'granted' || status === 'not-determined' || status === 'unknown' ? status : 'denied';
     },
+    requestPermission: requestMacPermission,
     onState: ({ active }) => { if (active) indicator?.show(); else indicator?.hide(); },
   });
   indicator = new Indicator(t, () => service.stop());

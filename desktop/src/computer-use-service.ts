@@ -23,8 +23,13 @@ export interface ComputerUseDeps {
   cursor: () => { x: number; y: number };
   /** A PNG of the primary display at exactly this size, or null when the system gave an empty frame. */
   capture: (size: ImageSize) => Promise<Buffer | null>;
-  /** macOS Screen Recording grant. */
-  screenPermission: () => 'granted' | 'denied' | 'unknown';
+  /** macOS Screen Recording grant. `not-determined`: never asked yet, so asking shows the system prompt. */
+  screenPermission: () => 'granted' | 'denied' | 'not-determined' | 'unknown';
+  /**
+   * Asks the system for the missing grant: the macOS prompt when it was never asked,
+   * the matching Settings pane when the person already said no. Absent where nothing can be asked.
+   */
+  requestPermission?: (reason: 'permission-screen' | 'permission-accessibility') => Promise<void>;
   sleep?: (ms: number) => Promise<void>;
   now?: () => number;
   /** How long an agent action keeps the indicator on. */
@@ -42,6 +47,8 @@ export interface ComputerStatus {
 }
 
 const PROBE_TTL_MS = 3000;
+/** One system prompt per missing grant and per minute: an agent retrying must not stack dialogs. */
+const PERMISSION_ASK_INTERVAL_MS = 60_000;
 const INPUT_TIMEOUT_NOTE = 'Input command failed.';
 
 export class ComputerUseService {
@@ -52,6 +59,7 @@ export class ComputerUseService {
   private probe: { at: number; reason: ComputerUnavailableReason | null } | null = null;
   private queue: Promise<unknown> = Promise.resolve();
   private reported = { active: false, stopped: false };
+  private asked = new Map<string, number>();
 
   constructor(private readonly deps: ComputerUseDeps) {}
 
@@ -105,7 +113,8 @@ export class ComputerUseService {
     const { platform, env } = this.deps;
     if (this.deps.display() === null) return 'no-desktop';
     if (platform === 'darwin') {
-      if (this.deps.screenPermission() === 'denied') return 'permission-screen';
+      const screen = this.deps.screenPermission();
+      if (screen === 'denied' || screen === 'not-determined') return 'permission-screen';
       try {
         const out = await this.deps.exec(macCommand(MAC_TRUST_SCRIPT));
         if (out.stdout.trim() !== 'true') return 'permission-accessibility';
@@ -153,7 +162,10 @@ export class ComputerUseService {
       throw new ComputerCommandError('Computer use was stopped by the user.', 409, 'computer_stopped');
     }
     const reason = await this.unavailableReason();
-    if (reason) throw new ComputerCommandError(`Computer use is unavailable: ${reason}.`, 503, 'computer_unavailable');
+    if (reason) {
+      if (reason === 'permission-screen' || reason === 'permission-accessibility') await this.askPermission(reason);
+      throw new ComputerCommandError(`Computer use is unavailable: ${reason}.`, 503, 'computer_unavailable');
+    }
     const display = this.deps.display();
     if (!display) throw new ComputerCommandError('Computer use is unavailable: no-desktop.', 503, 'computer_unavailable');
     if (actor === 'agent') this.touch();
@@ -168,6 +180,21 @@ export class ComputerUseService {
         return {};
       default: return this.input(display, command);
     }
+  }
+
+  /**
+   * The first refused action is what shows the person the system prompt: without it, a grant
+   * that was never asked for stays missing and nothing tells them where to give it.
+   */
+  private async askPermission(reason: 'permission-screen' | 'permission-accessibility'): Promise<void> {
+    const request = this.deps.requestPermission;
+    if (!request) return;
+    const last = this.asked.get(reason);
+    if (last !== undefined && this.now() - last < PERMISSION_ASK_INTERVAL_MS) return;
+    this.asked.set(reason, this.now());
+    // The grant changes outside the app: probe again at the next command rather than in 3 s.
+    this.probe = null;
+    try { await request(reason); } catch { /* A failed prompt leaves the refusal as it is. */ }
   }
 
   private currentFrame(display: DisplayInfo): ImageSize {
