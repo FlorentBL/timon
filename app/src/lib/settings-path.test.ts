@@ -21,6 +21,8 @@ const NOT_TIMON_SETTINGS: ReadonlySet<string> = new Set([
   'pluginsPage.install.errors.unreadable', // macOS System Settings
   'projectsPage.cwdWarnDenied', // macOS System Settings
   'desktop.uninstall.finishWindows', // Windows Settings (desktop shell, desktop.json)
+  'computerSetup.pathAccessibility', // macOS System Settings
+  'computerSetup.pathScreen', // macOS System Settings
 ]);
 
 type LocaleString = { file: string; key: string; value: string };

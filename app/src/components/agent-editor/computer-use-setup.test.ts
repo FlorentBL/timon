@@ -59,9 +59,9 @@ test('macOS: a line per grant, Allow, the Settings path, and Restart once requir
     assert.match(text, /Privacy & Security › Screen Recording/);
     await React.act(async () => { (doc.querySelector('[data-computer-use-allow]') as HTMLElement).click(); });
     assert.deepEqual(calls, ['allow']);
-    assert.equal(doc.querySelector('[data-computer-use-restart]'), null);
+    assert.ok(!doc.querySelector('[data-computer-use-restart]'));
     await render(mac({ desktop: 'ok', accessibility: 'ok', screen: 'ok', inputTool: 'ok' }, { needsRestart: true }));
-    assert.equal(doc.querySelector('[data-computer-use-allow]'), null);
+    assert.ok(!doc.querySelector('[data-computer-use-allow]'));
     await React.act(async () => { doc.querySelector('[data-computer-use-restart] button')!.dispatchEvent(new (doc.defaultView as unknown as { MouseEvent: typeof MouseEvent }).MouseEvent('click', { bubbles: true })); });
     assert.deepEqual(calls, ['allow', 'restart']);
     await render(mac({ desktop: 'ok', accessibility: 'ok', screen: 'ok', inputTool: 'ok' }, { available: true }));
@@ -80,7 +80,7 @@ test('Linux: install commands without xdotool, X11 message under Wayland, no All
     await render({ desktop: 'ok', session: 'ok', inputTool: 'missing' });
     const text = doc.body.textContent ?? '';
     for (const command of ['sudo apt install xdotool', 'sudo dnf install xdotool', 'sudo pacman -S xdotool']) assert.ok(text.includes(command), command);
-    assert.equal(doc.querySelector('[data-computer-use-allow]'), null);
+    assert.ok(!doc.querySelector('[data-computer-use-allow]'));
     await render({ desktop: 'ok', session: 'unsupported', inputTool: 'missing' });
     assert.match(doc.body.textContent ?? '', /X11 session is required/);
   });
