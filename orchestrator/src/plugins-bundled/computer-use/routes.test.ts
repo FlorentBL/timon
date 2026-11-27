@@ -143,6 +143,12 @@ test('typed text never reaches the logs', async () => {
 test('only a person turns computer_use on', () => {
   assert.match(agentWideningRefusal({ computer_use: true }, null) ?? '', /computer_use/);
   assert.equal(agentWideningRefusal({ computer_use: true }, { computer_use: true }), null);
+  // The list of allowed applications: kept or narrowed by an agent's token, never widened.
+  assert.match(agentWideningRefusal({ computer_use_apps: ['Notepad'] }, null) ?? '', /computer_use_apps/);
+  assert.match(agentWideningRefusal({ computer_use_apps: ['Notepad', 'Calc'] }, { computer_use_apps: ['notepad'] }) ?? '', /adds Calc/);
+  assert.equal(agentWideningRefusal({ computer_use_apps: ['NOTEPAD'] }, { computer_use_apps: ['Notepad', 'Calc'] }), null);
+  assert.equal(agentWideningRefusal({ computer_use_apps: [] }, null), null);
+  assert.match(agentWideningRefusal({ computer_use_apps: 'Notepad' }, null) ?? '', /array of strings/);
   assert.equal(agentWideningRefusal({ computer_use: false }, null), null);
   assert.match(agentWideningRefusal({ computer_use: 'yes' }, null) ?? '', /boolean/);
 });
