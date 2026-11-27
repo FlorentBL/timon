@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { ComputerCommandError, parseComputerCommand } from './computer-use-protocol.js';
+import { createFakeA11yBackend } from './computer-use-a11y-fake.js';
 import { ComputerUseService, type ComputerUseDeps } from './computer-use-service.js';
 import type { SystemCommand } from './computer-use-input.js';
 
@@ -23,6 +24,9 @@ function setup(overrides: Partial<ComputerUseDeps> = {}, allowedApps: readonly s
     sleep: async () => {},
     activeMs: 30,
     onState: (state) => states.push(state),
+    // The real accessibility backends of the three systems would run on this fake executor and record
+    // their calls: these tests are about the service, so its accessibility check is fixed here.
+    a11y: createFakeA11yBackend({}, 'unsupported'),
     ...overrides,
     exec: async (command) => {
       if (isForegroundRead(command)) return { stdout: JSON.stringify(FRONT) };
