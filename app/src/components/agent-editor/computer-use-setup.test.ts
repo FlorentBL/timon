@@ -40,6 +40,9 @@ test('setupIncomplete drives the polling: only a complete setup stops it', async
   const { setupIncomplete } = await import('./computer-use-setup');
   assert.equal(setupIncomplete(mac({ desktop: 'ok', screen: 'ok', accessibility: 'ok', inputTool: 'ok' }, { available: true })), false);
   assert.equal(setupIncomplete(mac({ desktop: 'ok', screen: 'missing' })), true);
+  // The accessibility tree is optional: polling goes on for a missing one, not for an unsupported one.
+  assert.equal(setupIncomplete(mac({ desktop: 'ok', screen: 'ok', accessibility: 'ok', inputTool: 'ok', a11y: 'unsupported' }, { available: true })), false);
+  assert.equal(setupIncomplete(mac({ desktop: 'ok', screen: 'ok', accessibility: 'ok', inputTool: 'ok', a11y: 'missing' }, { available: true })), true);
   assert.equal(setupIncomplete(mac({ desktop: 'ok', screen: 'ok' }, { needsRestart: true })), true);
   assert.equal(setupIncomplete({ reachable: false, platform: '', available: false, checks: { desktop: 'missing' }, needsRestart: false }), true);
 });
@@ -152,5 +155,29 @@ test('allowed applications: no window to offer says so', async () => {
     await React.act(async () => { root.render(React.createElement(ComputerUseApps, { values: ['Mail'], onChange: () => {}, load: async () => null })); });
     await React.act(async () => { (doc.querySelector('[data-computer-use-apps-load]') as HTMLElement).click(); });
     assert.match(doc.querySelector('[data-computer-use-apps-none]')?.textContent ?? '', /Timon desktop app/);
+  });
+});
+
+test('the accessibility line explains what is missing, per system, and stays optional', async () => {
+  await withDom(async ({ React, root, doc }) => {
+    const { ComputerUseSetupView } = await import('./computer-use-setup');
+    const render = (platform: string, checks: ComputerSetup['checks']) => React.act(async () => {
+      root.render(React.createElement(ComputerUseSetupView, {
+        setup: { reachable: true, platform, available: true, needsRestart: false, checks }, busy: false, onAllow: () => {}, onRestart: () => {},
+      }));
+    });
+    await render('darwin', { desktop: 'ok', accessibility: 'ok', screen: 'ok', inputTool: 'ok', a11y: 'missing' });
+    let text = doc.body.textContent ?? '';
+    assert.match(text, /Accessibility tree/);
+    assert.match(text, /without it the agent works from screenshots only/);
+    assert.match(text, /Privacy & Security › Accessibility/);
+    await render('linux', { desktop: 'ok', session: 'ok', inputTool: 'ok', a11y: 'missing' });
+    assert.match(doc.body.textContent ?? '', /toolkit-accessibility true/);
+    await render('win32', { desktop: 'ok', a11y: 'unsupported' });
+    text = doc.body.textContent ?? '';
+    assert.match(text, /Not available on this system for now/);
+    assert.ok(doc.querySelector('[data-computer-use-ready]'), 'the setup stays ready without the tree');
+    await render('linux', { desktop: 'ok', session: 'ok', inputTool: 'ok', a11y: 'ok' });
+    assert.doesNotMatch(doc.body.textContent ?? '', /works from screenshots/);
   });
 });

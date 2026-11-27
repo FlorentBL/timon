@@ -43,7 +43,7 @@ export async function sendComputerControl(command: 'stop' | 'resume'): Promise<b
 }
 
 export type ComputerCheck = 'ok' | 'missing' | 'unsupported';
-export const COMPUTER_CHECK_KEYS = ['desktop', 'accessibility', 'screen', 'inputTool', 'session'] as const;
+export const COMPUTER_CHECK_KEYS = ['desktop', 'accessibility', 'screen', 'inputTool', 'session', 'a11y'] as const;
 export type ComputerCheckKey = (typeof COMPUTER_CHECK_KEYS)[number];
 
 /** What the setup card shows: one entry per prerequisite the desktop reported. */
