@@ -1,0 +1,100 @@
+/**
+ * The setup card lists each prerequisite with ✅/❌, offers Allow and the exact
+ * Settings path on macOS, the install commands on Linux, and stops polling once complete.
+ */
+import assert from 'node:assert/strict';
+import test from 'node:test';
+import type { ComputerSetup } from '@/lib/computer-use';
+
+async function withDom<T>(run: (ctx: { React: typeof import('react'); root: import('react-dom/client').Root; doc: Document }) => Promise<T>): Promise<T> {
+  const { JSDOM } = await import('jsdom');
+  const dom = new JSDOM('<div id="root"></div>', { url: 'http://localhost/' });
+  const saved = new Map<string, PropertyDescriptor | undefined>();
+  const install = (key: string, value: unknown) => {
+    if (!saved.has(key)) saved.set(key, Object.getOwnPropertyDescriptor(globalThis, key));
+    Object.defineProperty(globalThis, key, { value, configurable: true, writable: true });
+  };
+  for (const key of ['window', 'document', 'navigator', 'HTMLElement', 'Node', 'Event', 'MouseEvent']) {
+    install(key, key === 'window' ? dom.window : (dom.window as unknown as Record<string, unknown>)[key]);
+  }
+  install('self', dom.window);
+  install('IS_REACT_ACT_ENVIRONMENT', true);
+  const React = await import('react');
+  install('React', React);
+  const { createRoot } = await import('react-dom/client');
+  const root = createRoot(dom.window.document.getElementById('root')!);
+  try {
+    return await run({ React, root, doc: dom.window.document });
+  } finally {
+    await React.act(async () => root.unmount());
+    for (const [key, desc] of saved) {
+      if (desc) Object.defineProperty(globalThis, key, desc); else delete (globalThis as Record<string, unknown>)[key];
+    }
+  }
+}
+
+const mac = (checks: ComputerSetup['checks'], extra: Partial<ComputerSetup> = {}): ComputerSetup =>
+  ({ reachable: true, platform: 'darwin', available: false, needsRestart: false, checks, ...extra });
+
+test('setupIncomplete drives the polling: only a complete setup stops it', async () => {
+  const { setupIncomplete } = await import('./computer-use-setup');
+  assert.equal(setupIncomplete(mac({ desktop: 'ok', screen: 'ok', accessibility: 'ok', inputTool: 'ok' }, { available: true })), false);
+  assert.equal(setupIncomplete(mac({ desktop: 'ok', screen: 'missing' })), true);
+  assert.equal(setupIncomplete(mac({ desktop: 'ok', screen: 'ok' }, { needsRestart: true })), true);
+  assert.equal(setupIncomplete({ reachable: false, platform: '', available: false, checks: { desktop: 'missing' }, needsRestart: false }), true);
+});
+
+test('macOS: a line per grant, Allow, the Settings path, and Restart once required', async () => {
+  await withDom(async ({ React, root, doc }) => {
+    const { ComputerUseSetupView } = await import('./computer-use-setup');
+    const calls: string[] = [];
+    const render = (setup: ComputerSetup) => React.act(async () => {
+      root.render(React.createElement(ComputerUseSetupView, { setup, busy: false, onAllow: () => calls.push('allow'), onRestart: () => calls.push('restart') }));
+    });
+    await render(mac({ desktop: 'ok', accessibility: 'missing', screen: 'missing', inputTool: 'ok' }));
+    const states = Array.from(doc.querySelectorAll('[data-computer-check-state]')).map((li) => li.getAttribute('data-computer-check-state'));
+    assert.deepEqual(states, ['ok', 'missing', 'missing', 'ok']);
+    const text = doc.body.textContent ?? '';
+    assert.match(text, /Privacy & Security › Accessibility/);
+    assert.match(text, /Privacy & Security › Screen Recording/);
+    await React.act(async () => { (doc.querySelector('[data-computer-use-allow]') as HTMLElement).click(); });
+    assert.deepEqual(calls, ['allow']);
+    assert.equal(doc.querySelector('[data-computer-use-restart]'), null);
+    await render(mac({ desktop: 'ok', accessibility: 'ok', screen: 'ok', inputTool: 'ok' }, { needsRestart: true }));
+    assert.equal(doc.querySelector('[data-computer-use-allow]'), null);
+    await React.act(async () => { doc.querySelector('[data-computer-use-restart] button')!.dispatchEvent(new (doc.defaultView as unknown as { MouseEvent: typeof MouseEvent }).MouseEvent('click', { bubbles: true })); });
+    assert.deepEqual(calls, ['allow', 'restart']);
+    await render(mac({ desktop: 'ok', accessibility: 'ok', screen: 'ok', inputTool: 'ok' }, { available: true }));
+    assert.ok(doc.querySelector('[data-computer-use-ready]'));
+  });
+});
+
+test('Linux: install commands without xdotool, X11 message under Wayland, no Allow button', async () => {
+  await withDom(async ({ React, root, doc }) => {
+    const { ComputerUseSetupView } = await import('./computer-use-setup');
+    const render = (checks: ComputerSetup['checks']) => React.act(async () => {
+      root.render(React.createElement(ComputerUseSetupView, {
+        setup: { reachable: true, platform: 'linux', available: false, needsRestart: false, checks }, busy: false, onAllow: () => {}, onRestart: () => {},
+      }));
+    });
+    await render({ desktop: 'ok', session: 'ok', inputTool: 'missing' });
+    const text = doc.body.textContent ?? '';
+    for (const command of ['sudo apt install xdotool', 'sudo dnf install xdotool', 'sudo pacman -S xdotool']) assert.ok(text.includes(command), command);
+    assert.equal(doc.querySelector('[data-computer-use-allow]'), null);
+    await render({ desktop: 'ok', session: 'unsupported', inputTool: 'missing' });
+    assert.match(doc.body.textContent ?? '', /X11 session is required/);
+  });
+});
+
+test('desktop not reachable: the only line is the desktop one, with its instruction', async () => {
+  await withDom(async ({ React, root, doc }) => {
+    const { ComputerUseSetupView } = await import('./computer-use-setup');
+    await React.act(async () => {
+      root.render(React.createElement(ComputerUseSetupView, {
+        setup: { reachable: false, platform: '', available: false, needsRestart: false, checks: { desktop: 'missing' } }, busy: false, onAllow: () => {}, onRestart: () => {},
+      }));
+    });
+    assert.equal(doc.querySelectorAll('[data-computer-check-state]').length, 1);
+    assert.match(doc.body.textContent ?? '', /Open the Timon desktop app/);
+  });
+});
