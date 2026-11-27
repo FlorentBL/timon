@@ -1,5 +1,6 @@
 # Proves on real Windows, Linux and macOS machines that computer use acts on the screen: a real
-# Electron window, the real service, an agent clicking, typing and pressing the stop shortcut over
+# Electron window, the real service, an agent clicking, typing, acting on elements through the
+# accessibility tree and pressing the stop shortcut over
 # the private transport (desktop/scripts/computer-use-e2e.mjs). macOS has no screen grant on a
 # runner, so there the test checks the clean refusal. No secret is used.
 name: Computer use e2e
@@ -29,6 +30,10 @@ jobs:
       TIMON_E2E_REQUIRE_JPEG: '1'
       # The Windows worker's error output (never typed text) goes to the test log, so a failure is readable.
       TIMON_COMPUTER_USE_DEBUG: '1'
+      # The accessibility steps of the test (find a field and a button by name, set_value, press) run
+      # when the platform's backend reports it can read the tree. Turn this on, on the three systems,
+      # once the three backends exist: a missing tree then fails the run instead of skipping the steps.
+      # TIMON_E2E_REQUIRE_A11Y: '1'
     strategy:
       fail-fast: false
       matrix:

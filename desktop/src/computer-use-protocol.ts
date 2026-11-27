@@ -1,5 +1,7 @@
 /** Commands of the computer-native service: validation of what the daemon sends, and the shared error type. */
 
+import { A11Y_ACTIONS, A11Y_DEFAULT_MAX_DEPTH, A11Y_DEFAULT_MAX_NODES, A11Y_MAX_DEPTH, A11Y_MAX_NODES, A11Y_MAX_QUERY, A11Y_MAX_VALUE, parseElementId, type A11yAction } from './computer-use-a11y.js';
+
 export const COMPUTER_MAX_TEXT = 2000;
 export const COMPUTER_MAX_WAIT_MS = 10_000;
 /**
@@ -32,6 +34,8 @@ export type ComputerCommand =
   | { command: 'scroll'; x: number; y: number; deltaX: number; deltaY: number }
   | { command: 'list_windows' }
   | { command: 'focus_window'; id: string }
+  | { command: 'a11y_tree'; windowId?: string; maxDepth: number; maxNodes: number; query?: string }
+  | { command: 'a11y_action'; id: string; action: A11yAction; value?: string }
   | { command: 'wait'; ms: number }
   | { command: 'stop' }
   | { command: 'resume' }
@@ -39,7 +43,7 @@ export type ComputerCommand =
   | { command: 'restart_app' };
 
 const NAMES = new Set(['status', 'screenshot', 'cursor_position', 'move', 'click', 'double_click', 'drag',
-  'type', 'key', 'scroll', 'list_windows', 'focus_window', 'wait', 'stop', 'resume', 'request_permissions', 'restart_app']);
+  'type', 'key', 'scroll', 'list_windows', 'focus_window', 'a11y_tree', 'a11y_action', 'wait', 'stop', 'resume', 'request_permissions', 'restart_app']);
 
 function coordinate(args: Record<string, unknown>, name: string): number {
   const value = args[name];
@@ -108,6 +112,37 @@ export function parseComputerCommand(name: unknown, rawArgs: unknown): ComputerC
       // An opaque id from list_windows (a window number, `pid:index`).
       if (typeof args.id !== 'string' || !/^[A-Za-z0-9:_.-]{1,64}$/.test(args.id)) throw new ComputerCommandError('"id" must be a window id returned by list_windows.');
       return { command: 'focus_window', id: args.id };
+    }
+    case 'a11y_tree': {
+      const bounded = (name: string, fallback: number, max: number): number => {
+        if (args[name] === undefined) return fallback;
+        const value = args[name];
+        if (typeof value !== 'number' || !Number.isInteger(value) || value < 1 || value > max) throw new ComputerCommandError(`"${name}" must be an integer between 1 and ${max}.`);
+        return value;
+      };
+      const out: Extract<ComputerCommand, { command: 'a11y_tree' }> = {
+        command: 'a11y_tree', maxDepth: bounded('maxDepth', A11Y_DEFAULT_MAX_DEPTH, A11Y_MAX_DEPTH), maxNodes: bounded('maxNodes', A11Y_DEFAULT_MAX_NODES, A11Y_MAX_NODES),
+      };
+      if (args.windowId !== undefined) {
+        if (typeof args.windowId !== 'string' || !/^[A-Za-z0-9:_.-]{1,64}$/.test(args.windowId)) throw new ComputerCommandError('"windowId" must be a window id returned by list_windows.');
+        out.windowId = args.windowId;
+      }
+      if (args.query !== undefined) {
+        if (typeof args.query !== 'string' || args.query.length > A11Y_MAX_QUERY) throw new ComputerCommandError(`"query" must be a string of at most ${A11Y_MAX_QUERY} characters.`);
+        if (args.query.trim()) out.query = args.query;
+      }
+      return out;
+    }
+    case 'a11y_action': {
+      if (typeof args.id !== 'string' || !parseElementId(args.id)) throw new ComputerCommandError('"id" must be an element id returned by a11y_tree.');
+      if (typeof args.action !== 'string' || !(A11Y_ACTIONS as readonly string[]).includes(args.action)) throw new ComputerCommandError(`"action" must be one of ${A11Y_ACTIONS.join(', ')}.`);
+      const action = args.action as A11yAction;
+      if (action !== 'set_value') {
+        if (args.value !== undefined) throw new ComputerCommandError('"value" is only for set_value.');
+        return { command: 'a11y_action', id: args.id, action };
+      }
+      if (typeof args.value !== 'string' || args.value.length > A11Y_MAX_VALUE) throw new ComputerCommandError(`set_value needs a "value" string of at most ${A11Y_MAX_VALUE} characters.`);
+      return { command: 'a11y_action', id: args.id, action, value: args.value };
     }
     case 'wait': {
       const ms = coordinate(args, 'ms');

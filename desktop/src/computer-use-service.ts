@@ -8,6 +8,8 @@ import {
   COMPUTER_DEFAULT_MAX_WIDTH, ComputerCommandError, type ComputerActor, type ComputerCommand, type ComputerUnavailableReason,
 } from './computer-use-protocol.js';
 import { imageToPoints, pointsToImage, screenshotSize, type DisplayInfo, type ImageSize } from './computer-use-geometry.js';
+import { A11yError, buildTree, parseElementId, type A11yBackend } from './computer-use-a11y.js';
+import { selectA11yBackend } from './computer-use-a11y-select.js';
 import { describeApp, focusWindow, isAppAllowed, listWindows, readForegroundApp, windowApp } from './computer-use-windows.js';
 import {
   MAC_TRUST_SCRIPT, buildInputCommand, macCommand, type InputAction, type InputPlatform, type SystemCommand,
@@ -31,6 +33,8 @@ export interface ComputerUseDeps {
    * the matching Settings pane when the person already said no. Absent where nothing can be asked.
    */
   requestPermission?: (reason: 'permission-screen' | 'permission-accessibility') => Promise<void>;
+  /** The accessibility backend; the one of the platform when absent. */
+  a11y?: A11yBackend;
   /** Quits and starts the app again; absent where the shell cannot (tests). */
   restart?: () => void;
   sleep?: (ms: number) => Promise<void>;
@@ -53,6 +57,8 @@ export interface ComputerChecks {
   inputTool?: ComputerCheck;
   /** Linux: an X11 session (Wayland is `unsupported`). */
   session?: ComputerCheck;
+  /** The accessibility tree. Optional: without it the agent works from screenshots. */
+  a11y?: ComputerCheck;
 }
 
 export interface ComputerStatus {
@@ -90,7 +96,11 @@ export class ComputerUseService {
   private reported = { active: false, stopped: false };
   private asked = new Map<string, number>();
 
-  constructor(private readonly deps: ComputerUseDeps) {}
+  private readonly a11y: A11yBackend;
+
+  constructor(private readonly deps: ComputerUseDeps) {
+    this.a11y = deps.a11y ?? selectA11yBackend(deps.platform, deps.exec);
+  }
 
   private now(): number { return (this.deps.now ?? Date.now)(); }
   private get activeMs(): number { return this.deps.activeMs ?? 8000; }
@@ -144,6 +154,13 @@ export class ComputerUseService {
 
   /** Every prerequisite is checked, not only the first one missing: the setup card lists them all. */
   private async probeSystem(): Promise<Probe> {
+    const probe = await this.probePlatform();
+    // Never a reason to refuse the other commands: the screen and the input work without the tree.
+    try { probe.checks.a11y = await this.a11y.probe(); } catch { probe.checks.a11y = 'missing'; }
+    return probe;
+  }
+
+  private async probePlatform(): Promise<Probe> {
     const { platform, env } = this.deps;
     const checks: ComputerChecks = { desktop: this.deps.display() === null ? 'missing' : 'ok' };
     if (platform === 'darwin') {
@@ -257,6 +274,8 @@ export class ComputerUseService {
     switch (command.command) {
       case 'list_windows': return this.windows(platform);
       case 'focus_window': return this.focus(actor, platform, command.id, allowedApps);
+      case 'a11y_tree': return this.a11yTree(actor, platform, display, command, allowedApps);
+      case 'a11y_action': return this.a11yAction(actor, platform, command, allowedApps);
       case 'screenshot': return this.screenshot(display, command.maxWidth);
       case 'cursor_position': {
         const point = this.deps.cursor();
@@ -278,6 +297,62 @@ export class ComputerUseService {
   private async windows(platform: InputPlatform): Promise<unknown> {
     try { return await listWindows(platform, this.deps.exec); }
     catch { throw new ComputerCommandError('Listing the windows failed.', 502, 'windows_failed'); }
+  }
+
+  /** The accessibility check as the commands need it: a refusal, with what the person can do, when the tree cannot be read. */
+  private async requireA11y(): Promise<void> {
+    const check = (await this.probed()).checks.a11y;
+    if (check === 'ok') return;
+    throw new ComputerCommandError(`The accessibility tree is unavailable on this machine (${check ?? 'missing'}). Work from screenshots instead.`, 503, 'a11y_unavailable');
+  }
+
+  private a11yFailure(error: unknown, fallback: string): ComputerCommandError {
+    if (error instanceof A11yError) {
+      if (error.kind === 'stale') return new ComputerCommandError('That element or window no longer exists: read the tree again with a11y_tree.', 409, 'a11y_element_stale');
+      if (error.kind === 'unsupported') {
+        const possible = error.actions.length ? ` Possible actions: ${error.actions.join(', ')}.` : ' This element accepts no action.';
+        return new ComputerCommandError(`That element cannot do this.${possible}`, 422, 'a11y_action_unsupported');
+      }
+    }
+    // Never the backend's text: for set_value it could carry the value.
+    return new ComputerCommandError(fallback, 502, 'a11y_failed');
+  }
+
+  private async a11yTree(
+    actor: ComputerActor, platform: InputPlatform, display: DisplayInfo, command: Extract<ComputerCommand, { command: 'a11y_tree' }>, allowedApps: readonly string[],
+  ): Promise<unknown> {
+    await this.requireA11y();
+    let windows;
+    try { windows = await listWindows(platform, this.deps.exec); }
+    catch { throw new ComputerCommandError('Listing the windows failed.', 502, 'windows_failed'); }
+    const info = command.windowId ? windows.find((window) => window.id === command.windowId) : windows.find((window) => window.focused);
+    if (!info) throw new ComputerCommandError(command.windowId ? 'No open window has this id.' : 'No window is in front.', 404, 'window_not_found');
+    let app;
+    try { app = await windowApp(platform, this.deps.exec, info.id); }
+    catch { throw new ComputerCommandError('Reading the windows failed.', 502, 'windows_failed'); }
+    if (actor === 'agent' && !isAppAllowed(app, allowedApps)) throw this.notAllowed(app, allowedApps, 'The application of that window');
+    const query = command.query?.trim().toLowerCase();
+    let raw;
+    try { raw = await this.a11y.tree({ windowId: info.id, maxDepth: command.maxDepth, maxNodes: command.maxNodes, ...(query ? { query } : {}) }); }
+    catch (error) { throw this.a11yFailure(error, 'Reading the accessibility tree failed.'); }
+    return buildTree({ id: info.id, title: info.title, app: info.app }, raw, { maxDepth: command.maxDepth, maxNodes: command.maxNodes, ...(query ? { query } : {}) }, display, this.currentFrame(display));
+  }
+
+  private async a11yAction(
+    actor: ComputerActor, platform: InputPlatform, command: Extract<ComputerCommand, { command: 'a11y_action' }>, allowedApps: readonly string[],
+  ): Promise<unknown> {
+    await this.requireA11y();
+    const target = parseElementId(command.id);
+    if (!target) throw new ComputerCommandError('"id" must be an element id returned by a11y_tree.');
+    let app;
+    try { app = await windowApp(platform, this.deps.exec, target.windowId); }
+    catch { throw new ComputerCommandError('Reading the windows failed.', 502, 'windows_failed'); }
+    if (!app) throw this.a11yFailure(new A11yError('stale', 'No such window.'), '');
+    if (actor === 'agent' && !isAppAllowed(app, allowedApps)) throw this.notAllowed(app, allowedApps, 'The application of that element');
+    try {
+      await this.a11y.act({ windowId: target.windowId, path: target.path, action: command.action, ...(command.value === undefined ? {} : { value: command.value }) });
+    } catch (error) { throw this.a11yFailure(error, 'The accessibility action failed.'); }
+    return { ok: true };
   }
 
   private async focus(actor: ComputerActor, platform: InputPlatform, id: string, allowedApps: readonly string[]): Promise<unknown> {

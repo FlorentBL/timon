@@ -48,7 +48,7 @@ test('screenshot sets the frame later coordinates are expressed in', async () =>
 
 test('status reports platform, display, availability and activity', async () => {
   const { run } = setup();
-  assert.deepEqual(await run('status'), { platform: 'darwin', available: true, display, active: false, stopped: false, checks: { desktop: 'ok', screen: 'ok', inputTool: 'ok', accessibility: 'ok' }, needsRestart: false });
+  assert.deepEqual(await run('status'), { platform: 'darwin', available: true, display, active: false, stopped: false, checks: { desktop: 'ok', screen: 'ok', inputTool: 'ok', accessibility: 'ok', a11y: 'unsupported' }, needsRestart: false });
   await run('move', { x: 1, y: 1 });
   assert.equal(((await run('status')) as { active: boolean }).active, true);
 });
@@ -86,7 +86,7 @@ test('indicator goes off after the idle delay', async () => {
 
 test('macOS permissions are reported as reasons and refuse commands', async () => {
   const noAccessibility = setup({ exec: async () => ({ stdout: 'false\n' }) });
-  assert.deepEqual(await noAccessibility.run('status'), { platform: 'darwin', available: false, reason: 'permission-accessibility', display, active: false, stopped: false, checks: { desktop: 'ok', screen: 'ok', inputTool: 'ok', accessibility: 'missing' }, needsRestart: false });
+  assert.deepEqual(await noAccessibility.run('status'), { platform: 'darwin', available: false, reason: 'permission-accessibility', display, active: false, stopped: false, checks: { desktop: 'ok', screen: 'ok', inputTool: 'ok', accessibility: 'missing', a11y: 'unsupported' }, needsRestart: false });
   await assert.rejects(noAccessibility.run('click', { x: 1, y: 1 }), (e: ComputerCommandError) => e.code === 'computer_unavailable' && /permission-accessibility/.test(e.message));
   const noScreen = setup({ screenPermission: () => 'denied' });
   assert.equal(((await noScreen.run('status')) as { reason: string }).reason, 'permission-screen');
@@ -145,13 +145,13 @@ test('status details every prerequisite, even when several are missing', async (
   const both = setup({ screenPermission: () => 'denied', exec: async () => ({ stdout: 'false' }) });
   const status = await both.run('status') as { reason: string; checks: Record<string, string> };
   assert.equal(status.reason, 'permission-screen');
-  assert.deepEqual(status.checks, { desktop: 'ok', screen: 'missing', inputTool: 'ok', accessibility: 'missing' });
+  assert.deepEqual(status.checks, { desktop: 'ok', screen: 'missing', inputTool: 'ok', accessibility: 'missing', a11y: 'unsupported' });
   const noTool = setup({ platform: 'linux', env: { DISPLAY: ':0' }, exec: async () => { throw new Error('ENOENT'); } });
-  assert.deepEqual(((await noTool.run('status')) as { checks: unknown }).checks, { desktop: 'ok', session: 'ok', inputTool: 'missing' });
+  assert.deepEqual(((await noTool.run('status')) as { checks: unknown }).checks, { desktop: 'ok', session: 'ok', inputTool: 'missing', a11y: 'unsupported' });
   const wayland = setup({ platform: 'linux', env: { XDG_SESSION_TYPE: 'wayland', DISPLAY: ':0' } });
-  assert.deepEqual(((await wayland.run('status')) as { checks: unknown }).checks, { desktop: 'ok', session: 'unsupported', inputTool: 'missing' });
+  assert.deepEqual(((await wayland.run('status')) as { checks: unknown }).checks, { desktop: 'ok', session: 'unsupported', inputTool: 'missing', a11y: 'unsupported' });
   const windows = setup({ platform: 'win32' });
-  assert.deepEqual(((await windows.run('status')) as { checks: unknown }).checks, { desktop: 'ok' });
+  assert.deepEqual(((await windows.run('status')) as { checks: unknown }).checks, { desktop: 'ok', a11y: 'unsupported' });
 });
 
 test('request_permissions is reserved to people and asks for each missing macOS grant', async () => {

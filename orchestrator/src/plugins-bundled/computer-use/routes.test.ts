@@ -292,3 +292,70 @@ test('list_windows is open to a person and an agent; focus_window only to an age
   assert.equal((await post('focus_window', { id: '../etc' }, 'enabled')).json.code, 'computer_args_invalid');
   assert.equal((await post('focus_window', {}, 'enabled')).json.code, 'computer_args_invalid');
 });
+
+test('a11y_tree and a11y_action validate their arguments and are refused to anonymous callers and to people', async () => {
+  const before = calls.length;
+  assert.equal((await post('a11y_tree', {}, 'anonymous')).status, 401);
+  assert.equal((await post('a11y_tree', {}, 'user')).json.code, 'computer_mission_token_required');
+  assert.equal((await post('a11y_action', { id: 'w#0', action: 'press' }, 'user')).status, 403);
+  assert.equal((await post('a11y_tree', {}, 'disabled')).json.code, 'computer_use_disabled');
+  for (const bad of [{ maxDepth: 16 }, { maxNodes: 0 }, { maxNodes: 1501 }, { windowId: 'a b' }, { query: 'x'.repeat(201) }, { extra: 1 }, { actor: 'human' }]) {
+    assert.equal((await post('a11y_tree', bad)).json.code, 'computer_args_invalid', JSON.stringify(bad));
+  }
+  for (const bad of [{ id: 'nope', action: 'press' }, { id: '1:1#0', action: 'hover' }, { id: '1:1#0', action: 'set_value' },
+    { id: '1:1#0', action: 'press', value: 'x' }, { id: '1:1#0', action: 'set_value', value: 'x'.repeat(2001) }, { id: '1:1#0', action: 'press', extra: 1 }]) {
+    assert.equal((await post('a11y_action', bad)).json.code, 'computer_args_invalid', JSON.stringify(bad));
+  }
+  assert.equal(calls.length, before, 'nothing reached the desktop');
+  const ok = await post('a11y_tree', { windowId: '10:1', maxDepth: 3, query: 'Nom' });
+  assert.equal(ok.status, 200);
+  assert.deepEqual(calls.at(-1), { command: 'a11y_tree', args: { windowId: '10:1', maxDepth: 3, query: 'Nom' }, actor: 'agent' });
+  assert.equal((await post('a11y_action', { id: '10:1#0.2', action: 'set_value', value: '' })).status, 200);
+  assert.equal(forwarded.at(-1)?.allowedApps.length, 0);
+});
+
+test('the journal keeps the length of a set value, never the value', async () => {
+  const secret = 'a11y-secret-value';
+  await post('a11y_action', { id: '10:1#0.2', action: 'set_value', value: secret });
+  desktop = 'echo';
+  await post('a11y_action', { id: '10:1#0.2', action: 'set_value', value: secret });
+  desktop = 'up';
+  const res = await getJournal('computer-on', 'user');
+  assert.equal(JSON.stringify(res.json).includes(secret), false);
+  assert.deepEqual(res.json.entries[0].args, { id: '10:1#0.2', action: 'set_value', valueLength: secret.length });
+  await post('a11y_action', { id: '10:1#0.1', action: 'press' });
+  assert.deepEqual((await getJournal('computer-on', 'user')).json.entries[0].args, { id: '10:1#0.1', action: 'press' });
+});
+
+test('the desktop\'s accessibility refusals keep their own codes', async () => {
+  const answers: Record<string, { status: number; code: string; error: string }> = {
+    stale: { status: 409, code: 'a11y_element_stale', error: 'gone' },
+    unsupported: { status: 422, code: 'a11y_action_unsupported', error: 'That element cannot do this. Possible actions: press, focus.' },
+    unavailable: { status: 503, code: 'a11y_unavailable', error: 'The accessibility tree is unavailable on this machine (missing).' },
+  };
+  let current = answers.stale!;
+  const server = (await import('node:http')).createServer((_req, res) => {
+    res.statusCode = current.status;
+    res.setHeader('content-type', 'application/json');
+    res.end(JSON.stringify({ ok: false, code: current.code, error: current.error }));
+  });
+  server.listen(0, '127.0.0.1');
+  await once(server, 'listening');
+  const { mkdtempSync, mkdirSync: mk, writeFileSync: write } = await import('node:fs');
+  const { join } = await import('node:path');
+  const { tmpdir } = await import('node:os');
+  const home = mkdtempSync(join(tmpdir(), 'computer-home-'));
+  mk(join(home, 'computer-native'));
+  write(join(home, 'computer-native', 'provider.json'), JSON.stringify({ version: 1, origin: `http://127.0.0.1:${(server.address() as AddressInfo).port}`, token: 'x'.repeat(40), pid: 1 }));
+  try {
+    for (const [name, status, match] of [['stale', 409, /a11y_tree again/], ['unsupported', 422, /Possible actions: press, focus/], ['unavailable', 503, /setup card/]] as const) {
+      current = answers[name]!;
+      await assert.rejects(callNativeComputer('a11y_action', {}, 'agent', { home }), (error: NativeComputerError) => {
+        assert.equal(error.status, status);
+        assert.equal(error.body.code, current.code);
+        assert.match(error.body.error, match);
+        return true;
+      });
+    }
+  } finally { server.close(); }
+});

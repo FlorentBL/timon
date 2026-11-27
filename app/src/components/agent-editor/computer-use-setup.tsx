@@ -27,7 +27,9 @@ const MAC_PATHS: Partial<Record<ComputerCheckKey, string>> = {
 
 /** Whether anything still needs the person: drives the polling. */
 export function setupIncomplete(setup: ComputerSetup): boolean {
-  return !setup.reachable || setup.needsRestart || Object.values(setup.checks).some((state) => state !== 'ok');
+  // The accessibility tree is optional (the agent falls back to screenshots): only a missing one is worth polling for, never an unsupported one.
+  const { a11y, ...required } = setup.checks;
+  return !setup.reachable || setup.needsRestart || a11y === 'missing' || Object.values(required).some((state) => state !== 'ok');
 }
 
 function Line({ label, state, children }: { label: string; state: ComputerCheck; children?: React.ReactNode }): React.ReactElement {
@@ -79,6 +81,13 @@ export function ComputerUseSetupView({
                       </li>
                     ))}
                   </ul>
+                </div>
+              )}
+              {key === 'a11y' && (
+                <div className="text-[11.5px] text-muted-foreground">
+                  <p>{t(state === 'unsupported' ? 'computerSetup.a11yUnsupported' : 'computerSetup.a11yOptional')}</p>
+                  {state === 'missing' && mac && <p>{t('computerSetup.pathLead')} {t('computerSetup.pathAccessibility')}</p>}
+                  {state === 'missing' && setup.platform === 'linux' && <p>{t('computerSetup.a11yLinux')}</p>}
                 </div>
               )}
               {key === 'session' && <p className="text-[11.5px] text-muted-foreground">{t(state === 'unsupported' ? 'computerSetup.needX11' : 'computerSetup.noSession')}</p>}

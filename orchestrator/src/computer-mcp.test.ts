@@ -41,13 +41,14 @@ test('computer MCP lists its tools and warns about screenshots, tokens and passw
   const { call } = await harness(t, () => ({ body: {} }));
   const { result } = await call('tools/list');
   assert.deepEqual(result.tools.map((x: any) => x.name).sort(), [
-    'computer_actions', 'computer_click', 'computer_cursor_position', 'computer_double_click', 'computer_drag', 'computer_focus_window', 'computer_key',
+    'computer_a11y_action', 'computer_a11y_tree', 'computer_actions', 'computer_click', 'computer_cursor_position', 'computer_double_click', 'computer_drag', 'computer_focus_window', 'computer_key',
     'computer_list_windows', 'computer_move', 'computer_screenshot', 'computer_scroll', 'computer_type', 'computer_wait',
   ]);
   const text = result.tools.map((x: any) => x.description).join(' ');
   assert.match(text, /screenshot/i);
   assert.match(text, /Never type a password/);
   assert.match(text, /save tokens/);
+  assert.match(text, /Read the window first with computer_a11y_tree and act by element\. Take a screenshot and click in pixels only if the element is missing from the tree\./);
 });
 
 test('computer MCP posts to /api/computer/:command with the mission token and returns screenshots as images', async (t) => {
@@ -111,4 +112,38 @@ test('computer_actions accepts focus_window as a step, and the window tools reac
   await call('tools/call', { name: 'computer_list_windows', arguments: {} });
   await call('tools/call', { name: 'computer_focus_window', arguments: { id: '7' } });
   assert.deepEqual(requests.map((r) => r.path), ['/api/computer/focus_window', '/api/computer/type', '/api/computer/list_windows', '/api/computer/focus_window']);
+});
+
+const TREE = {
+  window: { id: '10:1', title: 'Form', app: 'TextEdit' }, truncated: false,
+  nodes: [
+    { id: '10:1#0', parent: null, depth: 0, role: 'window', name: 'Form', enabled: true, actions: [], bounds: { x: 0, y: 0, width: 400, height: 300 } },
+    { id: '10:1#0.0', parent: '10:1#0', depth: 1, role: 'textfield', name: 'Nom', value: 'abc', enabled: true, focused: true, actions: ['focus', 'set_value'], bounds: { x: 20, y: 30, width: 100, height: 20 } },
+    { id: '10:1#0.1', parent: '10:1#0', depth: 1, role: 'button', name: '', enabled: false, actions: ['press'] },
+  ],
+};
+
+test('computer_a11y_tree renders an indented text, with positions only on request', async (t) => {
+  const { requests, call } = await harness(t, () => ({ body: { ok: true, result: TREE } }));
+  const plain = await call('tools/call', { name: 'computer_a11y_tree', arguments: { query: 'nom', maxDepth: 3 } });
+  assert.equal(plain.result.content.length, 1);
+  assert.equal(plain.result.content[0].text, [
+    'window #10:1 "Form" (TextEdit)',
+    '#10:1#0 window "Form"',
+    '  #10:1#0.0 textfield "Nom" = "abc" (focused) [focus,set_value]',
+    '  #10:1#0.1 button (disabled) [press]',
+  ].join('\n'));
+  const bounded = await call('tools/call', { name: 'computer_a11y_tree', arguments: { withBounds: true } });
+  assert.match(bounded.result.content[0].text, /\[focus,set_value\] @20,30/);
+  assert.deepEqual(requests.map((r) => [r.path, r.body]), [['/api/computer/a11y_tree', { query: 'nom', maxDepth: 3 }], ['/api/computer/a11y_tree', {}]]);
+});
+
+test('computer_a11y_action reaches its command, with or without the # an id is shown with, also as a step', async (t) => {
+  const { requests, call } = await harness(t, () => ({ body: { ok: true, result: { ok: true } } }));
+  await call('tools/call', { name: 'computer_a11y_action', arguments: { id: '#10:1#0.0', action: 'set_value', value: 'timon' } });
+  await call('tools/call', { name: 'computer_actions', arguments: { screenshot: false, steps: [{ action: 'a11y_action', id: '10:1#0.1', do: 'press' }] } });
+  assert.deepEqual(requests.map((r) => [r.path, r.body]), [
+    ['/api/computer/a11y_action', { id: '10:1#0.0', action: 'set_value', value: 'timon' }],
+    ['/api/computer/a11y_action', { id: '10:1#0.1', action: 'press' }],
+  ]);
 });
