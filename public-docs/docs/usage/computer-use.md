@@ -11,6 +11,7 @@ Computer use needs the **Timon desktop app** running on the machine to control. 
 
 1. Open the agent's settings and go to **Permissions**.
 2. Switch on **Computer use**.
+3. Follow the setup card that appears under the switch: it checks each requirement (desktop app connected, system permissions, input tool) and marks it ✅ or ❌. On macOS, **Allow** shows the system prompt; when macOS asks for it, **Restart Timon** reopens the app. Elsewhere the card gives the exact steps or the install command. It updates by itself when you come back from System Settings.
 
 Only that agent gets the screen and input tools; other agents are unaffected. Switching it off removes them at the agent's next conversation. The agent can take a screenshot (resized, 1280 px wide by default), move the pointer, click, double-click, drag, scroll, type text and press key combinations.
 
@@ -18,15 +19,15 @@ Only that agent gets the screen and input tools; other agents are unaffected. Sw
 
 | System | What to do |
 |---|---|
-| macOS | In **System Settings › Privacy & Security**, allow Timon under **Accessibility** (mouse and keyboard) and **Screen Recording** (screenshots). Restart Timon if macOS asks. |
+| macOS | Allow Timon under **Accessibility** (mouse and keyboard) and **Screen Recording** (screenshots), from the setup card or in **System Settings › Privacy & Security**. If the first agent action happens before, macOS asks then. Restart Timon after granting Screen Recording. |
 | Windows | Nothing to grant. Windows does not let Timon type into an application running as administrator unless Timon runs as administrator too. |
-| Linux | An **X11** session with the `xdotool` tool installed. |
+| Linux | An **X11** session with the `xdotool` tool installed (`sudo apt install xdotool`, `sudo dnf install xdotool` or `sudo pacman -S xdotool`). |
 
 **Wayland is not supported**: under Wayland the system does not let an application inject mouse and keyboard events, so Computer use reports itself as unavailable. Log in to an X11 session instead. The same happens when `xdotool` is missing or when macOS permissions are not granted yet; the agent's settings tell you which.
 
 ## Stop it at any time
 
-While the agent is in control, a banner with a **Stop** button is visible in Timon, and a small always-on-top bar shows on the screen. You can also press **Cmd+Shift+Esc** (macOS) or **Ctrl+Shift+Esc** (Windows and Linux) from any application.
+While the agent is in control, a banner with a **Stop** button is visible in Timon, and a small always-on-top bar shows on the screen. You can also press **Control+Option+Command+Esc** (macOS) or **Ctrl+Alt+Shift+Esc** (Windows and Linux) from any application.
 
 After a stop, every Computer use action of every agent is refused until you resume it from the banner. Only a person can stop or resume; an agent cannot. If another application already uses the shortcut, the button still works.
 
