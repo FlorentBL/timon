@@ -884,7 +884,8 @@ export function AgentEditor({ agent, isNew, onClose, onDirtyChange, initialTab }
           role: draft.role || 'coder',
           reasoningEffort: draft.reasoningEffort || undefined,
           global_context: draft.globalContext || undefined,
-          computer_use: draft.computerUse || undefined,
+          // Always sent: an absent key keeps the stored value, so switching it off must say `false`.
+          computer_use: draft.computerUse,
         },
       };
       // Rename: if the name changed, RENAME the agent (moves the folder +
