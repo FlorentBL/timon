@@ -480,6 +480,7 @@
     "computer_args_invalid": "Invalid arguments for this computer command.",
     "computer_journal_people_only": "The computer-use journal is reserved to people.",
     "computer_app_not_allowed": "{detail}",
+    "computer_background_only": "This agent works in the background: use a11y_tree and a11y_action. The screen, the mouse, the keyboard and focusing a window are refused.",
     "computer_window_not_found": "That window no longer exists. List the open windows again.",
     "a11y_element_stale": "That element no longer exists: the window changed. Read the tree again.",
     "a11y_action_unsupported": "{detail}",

@@ -480,6 +480,7 @@
     "computer_args_invalid": "Arguments invalides pour cette commande d'ordinateur.",
     "computer_journal_people_only": "Le journal de computer-use est réservé aux personnes.",
     "computer_app_not_allowed": "{detail}",
+    "computer_background_only": "Cet agent travaille en arrière-plan : utilisez a11y_tree et a11y_action. L'écran, la souris, le clavier et la mise au premier plan d'une fenêtre sont refusés.",
     "computer_window_not_found": "Cette fenêtre n'existe plus. Listez de nouveau les fenêtres ouvertes.",
     "a11y_element_stale": "Cet élément n'existe plus : la fenêtre a changé. Relisez l'arbre.",
     "a11y_action_unsupported": "{detail}",
