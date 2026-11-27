@@ -3,7 +3,7 @@ title: Example cookbook
 sidebar_position: 18
 ---
 
-46 supplied packages demonstrate the public contract. Commentary is written for this guide; code excerpts are copied verbatim from the named files. Some original strings are French. Regenerate excerpts with `node scripts/gen-examples.mjs`.
+47 supplied packages demonstrate the public contract. Commentary is written for this guide; code excerpts are copied verbatim from the named files. Some original strings are French. Regenerate excerpts with `node scripts/gen-examples.mjs`.
 
 Obtain the example tree with your developer distribution. There is no public repository link. Use a licensed test instance and follow [Testing](testing.md) before installing third-party code.
 
@@ -1703,6 +1703,77 @@ function PlainPublishDialog() {
 /** @param {import('@timon-ai/sdk').ClientContext} ctx */
 export function apply(ctx) {
   return ctx.slots.register({ slot: 'forge.publish.dialog' }, PlainPublishDialog)
+}
+```
+
+## Replace a pull request's window {#pull-request-dialog}
+
+Source: `examples/plugin-pull-request-dialog`. Manifest ID: `example-pull-request-dialog`. Minimum API: **20**.
+
+API 20. One registration in the single kanban.pull.dialog slot replaces the detail window a click on a row of the Pull requests widget opens. This template draws a compact one: where the pull request stands, its checks one line each with the end of a failed check's log on demand, and its gestures, the one its state calls for filled, a few beside it, the rest in a menu, a blocked one greyed with its reason. The component reads usePullRequestDialog(): the row, GitHub's page read through Timon, refresh(), the placed actions and run(id), readCheckLog(), readDiff(), openJob(), openTodo() and close(). The plugin holds no access to GitHub or to the daemon: Timon reads the page, and run(id) goes through the widget, as from the row's menu. The component draws the whole window with Dialog from @timon/ui. Remove the plugin and Timon's own window comes back.
+
+Permissions: none. Read the [related guide](slots.md).
+
+`timon plugin add ./examples/plugin-pull-request-dialog` installs this package on the target instance.
+
+From `examples/plugin-pull-request-dialog/lib/client.js`, line 73 (excerpt):
+
+```js
+function CompactPullRequest() {
+  const host = usePullRequestDialog()
+  if (!host) return null
+  const { pull, load, actions } = host
+  const page = load.kind === 'ready' ? load.page : null
+
+  const gesture = (action, variant) => React.createElement(Button, {
+    key: action.id,
+    type: 'button',
+    size: 'sm',
+    variant,
+    disabled: action.blocked !== null || action.busy,
+    title: action.blocked ? t(action.blocked) : undefined,
+    'data-example-gesture': action.id,
+    onClick: () => host.run(action.id),
+  }, t(action.id))
+
+  const state = page ? (page.isDraft && page.state === 'open' ? t('draft') : t(page.state)) : null
+  return React.createElement(Dialog, { open: true, onOpenChange: (open) => { if (!open) host.close() } },
+    React.createElement(DialogContent, { className: 'flex max-h-[85vh] max-w-[560px] flex-col gap-3', 'data-example-pull': pull.number },
+      React.createElement('div', { className: 'flex items-start gap-2' },
+        React.createElement(DialogTitle, { className: 'min-w-0 flex-1' }, t('title', { number: pull.number, title: page?.title ?? pull.title })),
+        React.createElement('button', {
+          type: 'button',
+          'aria-label': t('refresh'),
+          title: t('refresh'),
+          disabled: host.refreshing,
+          onClick: () => void host.refresh(),
+          className: 'rounded-md px-1.5 text-muted-foreground hover:text-foreground',
+        }, '↻')),
+      React.createElement(DialogDescription, null,
+        page ? `${state} · ${t('into', { head: page.headRef, base: page.baseRef })}` : load.kind === 'error' ? load.message : t('loading')),
+      page ? React.createElement('section', { className: 'min-h-0 overflow-auto rounded-xl bg-card p-1' },
+        React.createElement('div', { className: 'px-2 pt-1 text-xs text-muted-foreground' }, t('checks')),
+        page.checks.length === 0
+          ? React.createElement('p', { className: 'px-2 py-1 text-sm text-muted-foreground' }, t('noCheck'))
+          : React.createElement('ul', null, page.checks.map((check) => React.createElement(CheckRow, { key: check.name, check, readLog: host.readCheckLog })))) : null,
+      React.createElement('div', { className: 'flex flex-wrap items-center justify-end gap-2' },
+        pull.links?.job_id ? React.createElement(Button, { type: 'button', size: 'sm', variant: 'ghost', onClick: () => host.openJob(pull.links.job_id) }, t('job')) : null,
+        actions.overflow.length > 0 ? React.createElement(DropdownMenu, null,
+          React.createElement(DropdownMenuTrigger, { asChild: true },
+            React.createElement(Button, { type: 'button', size: 'sm', variant: 'ghost', 'aria-label': t('more'), title: t('more') }, '…')),
+          React.createElement(DropdownMenuContent, { align: 'end' }, actions.overflow.map((action) => React.createElement(DropdownMenuItem, {
+            key: action.id,
+            disabled: action.blocked !== null || action.busy,
+            title: action.blocked ? t(action.blocked) : undefined,
+            onSelect: () => host.run(action.id),
+          }, t(action.id))))) : null,
+        actions.secondary.map((action) => gesture(action, 'outline')),
+        actions.primary ? gesture(actions.primary, 'default') : null)))
+}
+
+/** @param {import('@timon-ai/sdk').ClientContext} ctx */
+export function apply(ctx) {
+  return ctx.slots.register({ slot: 'kanban.pull.dialog' }, CompactPullRequest)
 }
 ```
 
