@@ -478,6 +478,7 @@
     "computer_mission_token_required": "Un jeton de mission est requis pour contrôler l'ordinateur.",
     "computer_use_disabled": "Le contrôle de l'ordinateur est désactivé pour cet agent.",
     "computer_args_invalid": "Arguments invalides pour cette commande d'ordinateur.",
+    "computer_journal_people_only": "Le journal de computer-use est réservé aux personnes.",
     "browser_desktop_unavailable": "Ouvrez Timon desktop sur la machine hôte pour utiliser ce navigateur.",
     "browser_profile_invalid": "Ce profil de navigateur est invalide.",
     "browser_profile_not_found": "Profil de navigateur introuvable.",
