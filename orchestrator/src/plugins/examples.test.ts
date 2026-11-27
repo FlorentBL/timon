@@ -377,6 +377,17 @@ test('plugin-agent-folders: a browser-only replacement of `agent.folders` loads 
   });
 });
 
+test('plugin-pull-request-dialog: a browser-only replacement of `kanban.pull.dialog` loads at API 20', async () => {
+  await withExample('plugin-pull-request-dialog', '@timon-ai/plugin-pull-request-dialog', async (url) => {
+    const gallery = await (await fetch(url('/api/plugins/example-pull-request-dialog'))).json() as {
+      state: string; kind: string[]; client: { slots: string[] } | null;
+    };
+    assert.equal(gallery.state, 'active');
+    assert.deepEqual(gallery.kind, ['behavior']);
+    assert.deepEqual(gallery.client?.slots, ['kanban.pull.dialog']);
+  });
+});
+
 test('plugin-mascot-pack: its declared parts load at API 15 and become valid in a look', async () => {
   const { parseAgentLook } = await import('../agent-look.js');
   const { mascotPartsOf } = await import('./mascot-packs.js');
