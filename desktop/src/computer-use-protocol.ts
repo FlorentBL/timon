@@ -28,10 +28,12 @@ export type ComputerCommand =
   | { command: 'scroll'; x: number; y: number; deltaX: number; deltaY: number }
   | { command: 'wait'; ms: number }
   | { command: 'stop' }
-  | { command: 'resume' };
+  | { command: 'resume' }
+  | { command: 'request_permissions' }
+  | { command: 'restart_app' };
 
 const NAMES = new Set(['status', 'screenshot', 'cursor_position', 'move', 'click', 'double_click', 'drag',
-  'type', 'key', 'scroll', 'wait', 'stop', 'resume']);
+  'type', 'key', 'scroll', 'wait', 'stop', 'resume', 'request_permissions', 'restart_app']);
 
 function coordinate(args: Record<string, unknown>, name: string): number {
   const value = args[name];

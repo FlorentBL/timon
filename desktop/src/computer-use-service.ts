@@ -30,11 +30,28 @@ export interface ComputerUseDeps {
    * the matching Settings pane when the person already said no. Absent where nothing can be asked.
    */
   requestPermission?: (reason: 'permission-screen' | 'permission-accessibility') => Promise<void>;
+  /** Quits and starts the app again; absent where the shell cannot (tests). */
+  restart?: () => void;
   sleep?: (ms: number) => Promise<void>;
   now?: () => number;
   /** How long an agent action keeps the indicator on. */
   activeMs?: number;
   onState?: (state: { active: boolean; stopped: boolean }) => void;
+}
+
+/** One prerequisite as the setup card shows it. `unsupported`: nothing the person can do on this machine. */
+export type ComputerCheck = 'ok' | 'missing' | 'unsupported';
+
+export interface ComputerChecks {
+  desktop: ComputerCheck;
+  /** macOS Accessibility grant. */
+  accessibility?: ComputerCheck;
+  /** macOS Screen Recording grant. */
+  screen?: ComputerCheck;
+  /** `osascript` on macOS, `xdotool` on Linux. */
+  inputTool?: ComputerCheck;
+  /** Linux: an X11 session (Wayland is `unsupported`). */
+  session?: ComputerCheck;
 }
 
 export interface ComputerStatus {
@@ -44,7 +61,12 @@ export interface ComputerStatus {
   display: { width: number; height: number; scaleFactor: number };
   active: boolean;
   stopped: boolean;
+  checks: ComputerChecks;
+  /** macOS: Screen Recording was granted while the app ran, and captures stay empty until it restarts. */
+  needsRestart: boolean;
 }
+
+interface Probe { reason: ComputerUnavailableReason | null; checks: ComputerChecks }
 
 const PROBE_TTL_MS = 3000;
 /** One system prompt per missing grant and per minute: an agent retrying must not stack dialogs. */
@@ -56,7 +78,8 @@ export class ComputerUseService {
   private lastAgentAt = 0;
   private activeTimer: NodeJS.Timeout | null = null;
   private frame: ImageSize | null = null;
-  private probe: { at: number; reason: ComputerUnavailableReason | null } | null = null;
+  private probe: ({ at: number } & Probe) | null = null;
+  private screenWasMissing = false;
   private queue: Promise<unknown> = Promise.resolve();
   private reported = { active: false, stopped: false };
   private asked = new Map<string, number>();
@@ -102,38 +125,56 @@ export class ComputerUseService {
     this.activeTimer = null;
   }
 
-  private async unavailableReason(): Promise<ComputerUnavailableReason | null> {
-    if (this.probe && this.now() - this.probe.at < PROBE_TTL_MS) return this.probe.reason;
-    const reason = await this.probeReason();
-    this.probe = { at: this.now(), reason };
-    return reason;
+  private async probed(): Promise<Probe> {
+    if (this.probe && this.now() - this.probe.at < PROBE_TTL_MS) return this.probe;
+    const result = await this.probeSystem();
+    this.probe = { at: this.now(), ...result };
+    return this.probe;
   }
 
-  private async probeReason(): Promise<ComputerUnavailableReason | null> {
+  private async unavailableReason(): Promise<ComputerUnavailableReason | null> {
+    return (await this.probed()).reason;
+  }
+
+  /** Every prerequisite is checked, not only the first one missing: the setup card lists them all. */
+  private async probeSystem(): Promise<Probe> {
     const { platform, env } = this.deps;
-    if (this.deps.display() === null) return 'no-desktop';
+    const checks: ComputerChecks = { desktop: this.deps.display() === null ? 'missing' : 'ok' };
     if (platform === 'darwin') {
       const screen = this.deps.screenPermission();
-      if (screen === 'denied' || screen === 'not-determined') return 'permission-screen';
+      checks.screen = screen === 'granted' || screen === 'unknown' ? 'ok' : 'missing';
+      if (checks.screen === 'missing') this.screenWasMissing = true;
+      checks.inputTool = 'ok';
       try {
         const out = await this.deps.exec(macCommand(MAC_TRUST_SCRIPT));
-        if (out.stdout.trim() !== 'true') return 'permission-accessibility';
-      } catch { return 'no-input-tool'; }
-      return null;
+        checks.accessibility = out.stdout.trim() === 'true' ? 'ok' : 'missing';
+      } catch { checks.inputTool = 'missing'; checks.accessibility = 'missing'; }
+      const reason = checks.desktop === 'missing' ? 'no-desktop'
+        : checks.screen === 'missing' ? 'permission-screen'
+        : checks.inputTool === 'missing' ? 'no-input-tool'
+        : checks.accessibility === 'missing' ? 'permission-accessibility' : null;
+      return { reason, checks };
     }
-    if (platform === 'win32') return null;
+    if (platform === 'win32') return { reason: checks.desktop === 'missing' ? 'no-desktop' : null, checks };
     if (platform === 'linux') {
-      if (env.XDG_SESSION_TYPE === 'wayland') return 'wayland';
-      if (!env.DISPLAY) return env.WAYLAND_DISPLAY ? 'wayland' : 'no-desktop';
-      try { await this.deps.exec({ file: 'xdotool', args: ['version'] }); } catch { return 'no-input-tool'; }
-      return null;
+      const wayland = env.XDG_SESSION_TYPE === 'wayland' || (!env.DISPLAY && !!env.WAYLAND_DISPLAY);
+      checks.session = wayland ? 'unsupported' : env.DISPLAY ? 'ok' : 'missing';
+      checks.inputTool = 'missing';
+      if (checks.session === 'ok') {
+        try { await this.deps.exec({ file: 'xdotool', args: ['version'] }); checks.inputTool = 'ok'; } catch { /* absent */ }
+      }
+      const reason = checks.desktop === 'missing' ? 'no-desktop'
+        : wayland ? 'wayland'
+        : checks.session === 'missing' ? 'no-desktop'
+        : checks.inputTool === 'missing' ? 'no-input-tool' : null;
+      return { reason, checks };
     }
-    return 'no-desktop';
+    return { reason: 'no-desktop', checks: { desktop: 'unsupported' } };
   }
 
   async status(): Promise<ComputerStatus> {
     const display = this.deps.display();
-    const reason = await this.unavailableReason();
+    const { reason, checks } = await this.probed();
     return {
       platform: this.deps.platform,
       available: reason === null,
@@ -141,7 +182,28 @@ export class ComputerUseService {
       display: { width: display?.width ?? 0, height: display?.height ?? 0, scaleFactor: display?.scaleFactor ?? 1 },
       active: this.isActive,
       stopped: this.stopped,
+      checks,
+      needsRestart: this.screenWasMissing && checks.screen === 'ok',
     };
+  }
+
+  /**
+   * The person pressed "Allow": ask for every missing macOS grant now (no rate limit, a person asked).
+   * Elsewhere nothing can be asked, so the status alone comes back.
+   */
+  private async requestPermissions(): Promise<unknown> {
+    this.probe = null;
+    const { checks } = await this.probed();
+    const requested: Array<'permission-screen' | 'permission-accessibility'> = [];
+    if (this.deps.platform === 'darwin' && this.deps.requestPermission) {
+      if (checks.accessibility === 'missing' && checks.inputTool !== 'missing') requested.push('permission-accessibility');
+      if (checks.screen === 'missing') requested.push('permission-screen');
+      for (const reason of requested) {
+        try { await this.deps.requestPermission(reason); } catch { /* the status shows what is still missing */ }
+      }
+    }
+    this.probe = null;
+    return { ...(await this.status()), requested };
   }
 
   /** One command at a time: two inputs interleaved would be worse than a short wait. */
@@ -153,6 +215,15 @@ export class ComputerUseService {
 
   private async dispatch(actor: ComputerActor, command: ComputerCommand): Promise<unknown> {
     if (command.command === 'status') return this.status();
+    if (command.command === 'request_permissions' || command.command === 'restart_app') {
+      if (actor !== 'human') throw new ComputerCommandError('Only a person can change the computer permissions or restart Timon.', 403, 'forbidden');
+      if (command.command === 'request_permissions') return this.requestPermissions();
+      const restart = this.deps.restart;
+      if (!restart) throw new ComputerCommandError('Restarting is not available here.', 501, 'restart_unavailable');
+      // After the answer left: the app quits right away.
+      setTimeout(restart, 300).unref();
+      return { restarting: true };
+    }
     if (command.command === 'stop' || command.command === 'resume') {
       if (actor !== 'human') throw new ComputerCommandError('Only a person can stop or resume computer use.', 403, 'forbidden');
       if (command.command === 'stop') this.stop(); else this.resume();

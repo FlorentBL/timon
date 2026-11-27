@@ -39,7 +39,7 @@ test('screenshot sets the frame later coordinates are expressed in', async () =>
 
 test('status reports platform, display, availability and activity', async () => {
   const { run } = setup();
-  assert.deepEqual(await run('status'), { platform: 'darwin', available: true, display, active: false, stopped: false });
+  assert.deepEqual(await run('status'), { platform: 'darwin', available: true, display, active: false, stopped: false, checks: { desktop: 'ok', screen: 'ok', inputTool: 'ok', accessibility: 'ok' }, needsRestart: false });
   await run('move', { x: 1, y: 1 });
   assert.equal(((await run('status')) as { active: boolean }).active, true);
 });
@@ -77,7 +77,7 @@ test('indicator goes off after the idle delay', async () => {
 
 test('macOS permissions are reported as reasons and refuse commands', async () => {
   const noAccessibility = setup({ exec: async () => ({ stdout: 'false\n' }) });
-  assert.deepEqual(await noAccessibility.run('status'), { platform: 'darwin', available: false, reason: 'permission-accessibility', display, active: false, stopped: false });
+  assert.deepEqual(await noAccessibility.run('status'), { platform: 'darwin', available: false, reason: 'permission-accessibility', display, active: false, stopped: false, checks: { desktop: 'ok', screen: 'ok', inputTool: 'ok', accessibility: 'missing' }, needsRestart: false });
   await assert.rejects(noAccessibility.run('click', { x: 1, y: 1 }), (e: ComputerCommandError) => e.code === 'computer_unavailable' && /permission-accessibility/.test(e.message));
   const noScreen = setup({ screenPermission: () => 'denied' });
   assert.equal(((await noScreen.run('status')) as { reason: string }).reason, 'permission-screen');
@@ -127,4 +127,55 @@ test('a refused action asks for the missing grant, at most once a minute', async
   // Status is read by the interface every few seconds: it reports, it never asks.
   await run('status', undefined, 'human');
   assert.equal(asked.length, 2);
+});
+
+test('status details every prerequisite, even when several are missing', async () => {
+  const both = setup({ screenPermission: () => 'denied', exec: async () => ({ stdout: 'false' }) });
+  const status = await both.run('status') as { reason: string; checks: Record<string, string> };
+  assert.equal(status.reason, 'permission-screen');
+  assert.deepEqual(status.checks, { desktop: 'ok', screen: 'missing', inputTool: 'ok', accessibility: 'missing' });
+  const noTool = setup({ platform: 'linux', env: { DISPLAY: ':0' }, exec: async () => { throw new Error('ENOENT'); } });
+  assert.deepEqual(((await noTool.run('status')) as { checks: unknown }).checks, { desktop: 'ok', session: 'ok', inputTool: 'missing' });
+  const wayland = setup({ platform: 'linux', env: { XDG_SESSION_TYPE: 'wayland', DISPLAY: ':0' } });
+  assert.deepEqual(((await wayland.run('status')) as { checks: unknown }).checks, { desktop: 'ok', session: 'unsupported', inputTool: 'missing' });
+  const windows = setup({ platform: 'win32' });
+  assert.deepEqual(((await windows.run('status')) as { checks: unknown }).checks, { desktop: 'ok' });
+});
+
+test('request_permissions is reserved to people and asks for each missing macOS grant', async () => {
+  let screen: 'granted' | 'denied' = 'denied';
+  const asked: string[] = [];
+  const { run } = setup({
+    screenPermission: () => screen,
+    exec: async () => ({ stdout: 'false' }),
+    requestPermission: async (reason) => { asked.push(reason); if (reason === 'permission-screen') screen = 'granted'; },
+  });
+  await assert.rejects(run('request_permissions'), (e: ComputerCommandError) => e.statusCode === 403 && e.code === 'forbidden');
+  assert.deepEqual(asked, []);
+  const answer = await run('request_permissions', undefined, 'human') as { requested: string[]; checks: Record<string, string>; needsRestart: boolean };
+  assert.deepEqual(answer.requested, ['permission-accessibility', 'permission-screen']);
+  assert.equal(answer.checks.screen, 'ok');
+  assert.equal(answer.needsRestart, true, 'a grant given while the app runs needs a restart');
+  // Asked again at once: a person pressed the button, so no one-minute limit applies.
+  await run('request_permissions', undefined, 'human');
+  assert.equal(asked.filter((reason) => reason === 'permission-accessibility').length, 2);
+});
+
+test('request_permissions asks nothing outside macOS and only reports the status', async () => {
+  const asked: string[] = [];
+  const { run } = setup({ platform: 'linux', env: { DISPLAY: ':0' }, requestPermission: async (r) => { asked.push(r); } });
+  const answer = await run('request_permissions', undefined, 'human') as { requested: string[]; available: boolean };
+  assert.deepEqual(answer.requested, []);
+  assert.equal(answer.available, true);
+  assert.deepEqual(asked, []);
+});
+
+test('restart_app is reserved to people and calls the shell restart', async () => {
+  let restarted = 0;
+  const { run } = setup({ restart: () => { restarted++; } });
+  await assert.rejects(run('restart_app'), (e: ComputerCommandError) => e.statusCode === 403);
+  assert.deepEqual(await run('restart_app', undefined, 'human'), { restarting: true });
+  await new Promise((resolve) => setTimeout(resolve, 400));
+  assert.equal(restarted, 1);
+  await assert.rejects(setup().run('restart_app', undefined, 'human'), (e: ComputerCommandError) => e.statusCode === 501);
 });
