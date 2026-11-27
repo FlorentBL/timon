@@ -446,6 +446,20 @@ test('images go to a model that takes them, in Pi\'s format', async () => {
   peer.driver.close();
 });
 
+test('a prompt asks Pi to queue it, so one sent while Pi is still busy is delivered instead of refused', async () => {
+  const peer = manual();
+  await peer.start();
+  const turn = peer.driver.prompt('next');
+  const prompt = await peer.waitSent('prompt');
+  assert.equal(prompt.streamingBehavior, 'followUp');
+  peer.write({ id: prompt.id, type: 'response', command: 'prompt', success: true, data: { disposition: 'queued' } });
+  peer.write({ type: 'message_end', message: { role: 'assistant', content: [{ type: 'text', text: 'done' }], stopReason: 'stop', usage: { input: 1, output: 1, totalTokens: 2, cost: { total: 0 } } } });
+  peer.write({ type: 'agent_settled', aborted: false });
+  assert.deepEqual(await turn, { stopReason: 'end_turn' });
+  assert.equal(results(peer.events).length, 1);
+  peer.driver.close();
+});
+
 test('a model switch decides the next prompt\'s images: text only leaves them out, back to images sends them', async () => {
   const peer = manual();
   await peer.start();

@@ -151,10 +151,10 @@ test('prune keeps the 7 most recent by date name', () => {
   ]);
 });
 
-test('runNightlyBackup writes under TIMON_HOME/backups, not a real home', () => {
+test('runNightlyBackup writes under TIMON_HOME/backups, not a real home', async () => {
   seedConfig();
   const when = new Date(2026, 7, 21, 3, 30, 0);
-  const result = runNightlyBackup(when);
+  const result = await runNightlyBackup(when);
   const expected = join(HOME, 'backups', 'timon-2026-08-21.tar.gz');
   assert.equal(result.out, expected);
   assert.ok(existsSync(expected), 'archive created');
@@ -165,14 +165,14 @@ test('runNightlyBackup writes under TIMON_HOME/backups, not a real home', () => 
   assert.ok(listing.length > 0);
 });
 
-test('runNightlyBackup keeps only 7 archives', () => {
+test('runNightlyBackup keeps only 7 archives', async () => {
   const dir = backupsDir();
   mkdirSync(dir, { recursive: true });
   for (let day = 1; day <= 8; day++) {
     const n = String(day).padStart(2, '0');
     writeFileSync(join(dir, `timon-2026-07-${n}.tar.gz`), `old-${n}`);
   }
-  const result = runNightlyBackup(new Date(2026, 7, 22, 3, 30, 0));
+  const result = await runNightlyBackup(new Date(2026, 7, 22, 3, 30, 0));
   assert.ok(existsSync(result.out));
   const archives = readdirSync(dir).filter((n) => /^timon-\d{4}-\d{2}-\d{2}\.tar\.gz$/.test(n)).sort();
   assert.equal(archives.length, 7);

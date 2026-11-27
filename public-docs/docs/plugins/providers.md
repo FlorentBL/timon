@@ -469,6 +469,10 @@ published checksum · verified 1.5.0 available to replace it*.
 - **Checked on every start.** Timon keeps a digest of the installed files, and of
   where each link points, and compares it each time it registers the agent. A file changed afterwards is
   never launched; the line says its files changed and **Reinstall** repairs it.
+- **Refused installs.** When an install or an update is refused (download,
+  checksum, archive, program or description), the message says why in
+  parentheses, and the Timon log records it on a line starting with
+  `[acp-registry] install`.
 - **Updates.** A newer version appears on the line; installing it keeps the
   working version until the new one is verified, then swaps them. The previous
   version is kept until the next update.

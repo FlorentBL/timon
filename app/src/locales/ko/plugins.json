@@ -432,6 +432,7 @@
       "archive": "아카이브가 안전하지 않아 거부되었습니다.",
       "command-missing": "레지스트리가 지정한 프로그램이 아카이브에 없습니다.",
       "definition-refused": "Timon이 이 에이전트를 거부했습니다: 설명 내용이 서로 모순됩니다.",
+      "withReason": "{sentence} ({reason})",
       "authorize-failed": "프로그램을 승인할 수 없습니다. 자세한 내용은 Timon 로그에 있습니다.",
       "failed": "작업에 실패했습니다. 자세한 내용은 Timon 로그에 있습니다."
     }

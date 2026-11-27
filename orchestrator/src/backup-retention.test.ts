@@ -3,7 +3,7 @@
  * `TIMON_BACKUP_MAX_AGE_DAYS`), pruned right after each archive, instead of a
  * hard-coded 7.
  */
-import { existsSync, mkdtempSync, mkdirSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, mkdirSync, readdirSync, rmSync, truncateSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -72,7 +72,7 @@ test('a numeric retention still means a count (older callers)', () => {
   assert.deepEqual(archivesIn(dir), ['timon-2026-08-03.tar.gz', 'timon-2026-08-04.tar.gz']);
 });
 
-test('settings drive the status and the prune that follows a backup', () => {
+test('settings drive the status and the prune that follows a backup', async () => {
   assert.deepEqual(setSetting('TIMON_BACKUP_KEEP', '3'), { ok: true });
   assert.deepEqual(setSetting('TIMON_BACKUP_MAX_AGE_DAYS', '30'), { ok: true });
   try {
@@ -83,7 +83,7 @@ test('settings drive the status and the prune that follows a backup', () => {
     mkdirSync(join(HOME, 'agents', 'witness'), { recursive: true });
     writeFileSync(join(HOME, 'agents', 'witness', 'config.json'), '{}\n');
     seedDays(backupsDir(), '08', 15, 21);
-    const result = runNightlyBackup(new Date(2026, 7, 22, 3, 30, 0));
+    const result = await runNightlyBackup(new Date(2026, 7, 22, 3, 30, 0));
     assert.ok(result.bytes > 0);
     assert.deepEqual(archivesIn(backupsDir()), [
       'timon-2026-08-20.tar.gz', 'timon-2026-08-21.tar.gz', 'timon-2026-08-22.tar.gz',
@@ -105,6 +105,9 @@ test('keeping zero archives is refused at write time', () => {
 
 const routines = await import('./routines.js');
 const { dbApi } = await import('./db.js');
+const { config } = await import('./config/load.js');
+const { assertBackupSpace } = await import('./backup-archives.js');
+const { freeBytes } = await import('./storage-failure.js');
 
 function backupAlerts() {
   return dbApi.listActiveNotificationsByAnchorPrefix(routines.BACKUP_ALERT_ANCHOR, 'alert');
@@ -119,24 +122,24 @@ function resetBackupDir(): string {
   return dir;
 }
 
-const failingExport: typeof import('./export.js').exportTimon = (opts) => {
-  writeFileSync(opts.out, 'truncated');
-  throw new Error('tar failed (2): gzip: stdout: No space left on device');
-};
+function failTar(t: import('node:test').TestContext): void {
+  const pins = config().host.binaries;
+  const tar = pins.tar ?? null;
+  pins.tar = process.execPath; // Node rejects tar's -czf argument.
+  t.after(() => { pins.tar = tar; });
+}
 
-test('a failed export leaves no archive under the day name and evicts nothing', () => {
+test('a failed export leaves no archive under the day name and evicts nothing', async (t) => {
   const dir = resetBackupDir();
   seedDays(dir, '08', 15, 21);
-  assert.throws(
-    () => runNightlyBackup(new Date(2026, 7, 22, 3, 30, 0), { exportArchive: failingExport, freeBytes: () => null }),
-    /No space left/,
-  );
-  assert.deepEqual(readdirSync(dir).sort(), archivesIn(dir));
+  failTar(t);
+  await assert.rejects(runNightlyBackup(new Date(2026, 7, 22, 3, 30, 0)), /tar failed/);
+  assert.deepEqual(readdirSync(dir).filter((name) => !name.startsWith('.')).sort(), archivesIn(dir));
   assert.equal(archivesIn(dir).length, 7);
   assert.equal(archivesIn(dir)[6], 'timon-2026-08-21.tar.gz');
 });
 
-test('an unfinished export is not counted and is cleared by the next run', () => {
+test('an unfinished export is not counted and is cleared by the next run', async () => {
   const dir = resetBackupDir();
   seedDays(dir, '08', 18, 20);
   writeFileSync(join(dir, `timon-2026-08-21.tar.gz${routines.BACKUP_PARTIAL_SUFFIX}`), 'cut');
@@ -144,68 +147,73 @@ test('an unfinished export is not counted and is cleared by the next run', () =>
   pruneBackupArchives(dir, { keep: 3, maxAgeDays: 0 });
   assert.deepEqual(archivesIn(dir), ['timon-2026-08-18.tar.gz', 'timon-2026-08-19.tar.gz', 'timon-2026-08-20.tar.gz']);
 
-  const result = runNightlyBackup(new Date(2026, 7, 22, 3, 30, 0), { freeBytes: () => null });
+  const result = await runNightlyBackup(new Date(2026, 7, 22, 3, 30, 0));
   assert.equal(result.out, join(dir, 'timon-2026-08-22.tar.gz'));
   assert.ok(existsSync(result.out));
   assert.ok(!readdirSync(dir).some((n) => n.startsWith('timon-') && n.endsWith('.partial')));
   assert.ok(existsSync(join(dir, 'other.partial')), 'a file the backup did not write stays');
 });
 
-test('the prune runs even when the export fails', () => {
+test('the prune runs even when the export fails', async (t) => {
   const dir = resetBackupDir();
   seedDays(dir, '08', 1, 12);
-  assert.throws(() => runNightlyBackup(new Date(2026, 7, 13, 3, 30, 0), { exportArchive: failingExport, freeBytes: () => null }));
+  failTar(t);
+  await assert.rejects(runNightlyBackup(new Date(2026, 7, 13, 3, 30, 0)), /tar failed/);
   assert.deepEqual(archivesIn(dir), [
     'timon-2026-08-06.tar.gz', 'timon-2026-08-07.tar.gz', 'timon-2026-08-08.tar.gz', 'timon-2026-08-09.tar.gz',
     'timon-2026-08-10.tar.gz', 'timon-2026-08-11.tar.gz', 'timon-2026-08-12.tar.gz',
   ]);
 });
 
-test('not enough free space: no export, an alert at once', () => {
+test('not enough free space: no export, an alert at once', { skip: process.platform === 'win32' }, async () => {
   const dir = resetBackupDir();
-  writeFileSync(join(dir, 'timon-2026-08-20.tar.gz'), Buffer.alloc(1000));
-  let exported = false;
+  const archive = join(dir, 'timon-2026-08-20.tar.gz');
+  writeFileSync(archive, Buffer.alloc(1000));
   assert.throws(
-    () => runNightlyBackup(new Date(2026, 7, 21, 3, 30, 0), {
-      freeBytes: () => 1400,
-      exportArchive: (opts) => { exported = true; return failingExport(opts); },
-    }),
+    () => assertBackupSpace(dir, 1400),
     (err: unknown) => err instanceof routines.BackupSpaceError && err.needed === 1500 && err.free === 1400,
   );
-  assert.equal(exported, false);
-  assert.deepEqual(readdirSync(dir), ['timon-2026-08-20.tar.gz']);
+  const available = freeBytes(dir);
+  assert.notEqual(available, null);
+  // A sparse file exercises the actual worker preflight without filling the test disk.
+  truncateSync(archive, (available ?? 0) + 1024);
+  await assert.rejects(runNightlyBackup(new Date(2026, 7, 21, 3, 30, 0)), routines.BackupSpaceError);
+  assert.deepEqual(readdirSync(dir).filter((name) => !name.startsWith('.')), ['timon-2026-08-20.tar.gz']);
   const alerts = backupAlerts();
   assert.equal(alerts.length, 1);
   assert.match(alerts[0].title, /disk almost full/);
 
-  assert.throws(() => runNightlyBackup(new Date(2026, 7, 22, 3, 30, 0), { freeBytes: () => 1400 }));
+  await assert.rejects(runNightlyBackup(new Date(2026, 7, 22, 3, 30, 0)), routines.BackupSpaceError);
   assert.equal(backupAlerts().length, 1, 'one card while the first is open');
 });
 
-test('enough free space: the export runs', () => {
+test('enough free space: the export runs', async () => {
   const dir = resetBackupDir();
   writeFileSync(join(dir, 'timon-2026-08-20.tar.gz'), Buffer.alloc(1000));
-  const result = runNightlyBackup(new Date(2026, 7, 21, 3, 30, 0), { freeBytes: () => 1500 });
+  assert.doesNotThrow(() => assertBackupSpace(dir, 1500));
+  const result = await runNightlyBackup(new Date(2026, 7, 21, 3, 30, 0));
   assert.ok(existsSync(result.out));
 });
 
-test('three failed nights in a row raise an alert, a success clears it', () => {
+test('three failed nights in a row raise an alert, a success clears it', async (t) => {
   resetBackupDir();
-  const fail = (day: number) => assert.throws(() =>
-    runNightlyBackup(new Date(2026, 7, day, 3, 30, 0), { exportArchive: failingExport, freeBytes: () => null }));
-  fail(10);
-  fail(11);
+  const tar = config().host.binaries.tar ?? null;
+  failTar(t);
+  const fail = (day: number) => assert.rejects(runNightlyBackup(new Date(2026, 7, day, 3, 30, 0)), /tar failed/);
+  await fail(10);
+  await fail(11);
   assert.equal(backupAlerts().length, 0, 'two bad nights stay quiet');
-  fail(12);
+  await fail(12);
   const alerts = backupAlerts();
   assert.equal(alerts.length, 1);
   assert.match(alerts[0].title, /failed 3 nights in a row/);
-  assert.match(alerts[0].body ?? '', /No space left/);
-  fail(13);
+  assert.match(alerts[0].body ?? '', /tar failed/);
+  await fail(13);
   assert.equal(backupAlerts().length, 1);
   assert.equal(dbApi.getAllSettings()[routines.BACKUP_FAILURES_KEY], '4');
 
-  runNightlyBackup(new Date(2026, 7, 14, 3, 30, 0), { freeBytes: () => null });
+  config().host.binaries.tar = tar;
+  await runNightlyBackup(new Date(2026, 7, 14, 3, 30, 0));
   assert.equal(backupAlerts().length, 0);
   assert.equal(dbApi.getAllSettings()[routines.BACKUP_FAILURES_KEY], undefined);
 });

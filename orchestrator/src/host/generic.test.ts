@@ -11,6 +11,12 @@ const { createGenericHost, unresolvedBinaryPath } = await import('./generic.js')
 
 const host = createGenericHost(TimonConfigSchema.parse({}));
 
+test('sync exec never reports a process killed by a signal as successful', { skip: process.platform === 'win32' }, () => {
+  const result = host.exec(process.execPath, ['-e', 'process.kill(process.pid, "SIGKILL")']);
+  assert.notEqual(result.code, 0);
+  assert.match(result.stderr, /SIGKILL/);
+});
+
 test('generic confine keeps the command and its arguments', () => {
   assert.deepEqual(host.confine('/bin/echo', ['ok'], 'unit'), { cmd: '/bin/echo', args: ['ok'] });
 });
