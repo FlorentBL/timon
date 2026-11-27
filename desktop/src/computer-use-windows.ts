@@ -43,7 +43,10 @@ const MAC_LIST_SCRIPT = `
 ObjC.import('CoreGraphics');
 ObjC.import('AppKit');
 function run() {
-  const infos = ObjC.deepUnwrap(ObjC.castRefToObject($.CGWindowListCopyWindowInfo($.kCGWindowListOptionOnScreenOnly | $.kCGWindowListExcludeDesktopElements, 0))) || [];
+  const read = (option) => ObjC.deepUnwrap(ObjC.castRefToObject($.CGWindowListCopyWindowInfo(option, 0))) || [];
+  // On-screen first; some systems report none there for a window another Space or a runner shows.
+  let infos = read($.kCGWindowListOptionOnScreenOnly | $.kCGWindowListExcludeDesktopElements);
+  if (!infos.some((info) => info.kCGWindowLayer === 0)) infos = read($.kCGWindowListOptionAll);
   const front = $.NSWorkspace.sharedWorkspace.frontmostApplication;
   const frontPid = front ? Number(front.processIdentifier) : -1;
   const out = [];
@@ -187,7 +190,12 @@ export async function readForegroundApp(platform: InputPlatform, exec: Exec): Pr
 }
 
 async function entries(platform: InputPlatform, exec: Exec): Promise<WindowEntry[]> {
-  if (platform === 'darwin') return entriesOf(parseJson((await exec(macCommand(MAC_LIST_SCRIPT))).stdout));
+  if (platform === 'darwin') {
+    const { stdout } = await exec(macCommand(MAC_LIST_SCRIPT));
+    // CI diagnostics only (TIMON_COMPUTER_USE_DEBUG=1): an empty list on a runner said nothing about why.
+    if (process.env.TIMON_COMPUTER_USE_DEBUG === '1') console.error(`[computer-use] macOS window list: ${stdout.length} bytes: ${stdout.slice(0, 400)}`);
+    return entriesOf(parseJson(stdout));
+  }
   if (platform === 'win32') return entriesOf(parseJson((await exec(windowsQueryCommand({ q: 'windows' }))).stdout));
   return linuxWindows(exec);
 }

@@ -333,8 +333,12 @@ function Invoke-TimonQuery($q) {
     'focus' { $result = @{ ok = [TimonInput]::Focus([long]$q.id) } }
   }
   $json = ConvertTo-Json -InputObject $result -Compress -Depth 4
-  # ASCII only on the wire: the console code page must not alter a title.
-  [regex]::Replace($json, '[^\\x00-\\x7F]', { param($m) '\\u{0:x4}' -f [int][char]$m.Value })
+  if ($null -eq $json) { $json = 'null' }
+  # ASCII only on the wire: the console code page must not alter a title. A plain loop: Windows
+  # PowerShell 5.1 does not bind a script block to [regex]::Replace (MethodInvocationException, CI run 45988561718).
+  $sb = New-Object System.Text.StringBuilder
+  foreach ($c in $json.ToCharArray()) { if ([int]$c -gt 127) { [void]$sb.AppendFormat('\\u{0:x4}', [int]$c) } else { [void]$sb.Append($c) } }
+  $sb.ToString()
 }
 `.trim();
 

@@ -193,10 +193,10 @@ async function main() {
     if (status !== 200 || !body.ok) throw fail(`list_windows failed: HTTP ${status} ${JSON.stringify(body)}`);
     return body.result;
   };
-  const ours = (list) => list.find((w) => typeof w.title === 'string' && w.title.includes('timon e2e'));
+  const ours = (list) => list.find((w) => w.title === 'timon e2e');
   const listed = await windowsOf([]);
   const mine = ours(listed);
-  if (!mine) throw fail(`The test window is not in list_windows: ${JSON.stringify(listed.map((w) => w.title))}`);
+  if (!mine) throw fail(`The test window is not in list_windows (${listed.length} windows): ${JSON.stringify(listed.map((w) => [w.app, w.title]))}`);
   log(`  ✓ listed: ${JSON.stringify(mine)}`);
   // Put another window in front, then ask for ours back.
   const other = new BrowserWindow({ x: 200, y: 200, width: 400, height: 300, show: true, webPreferences: { sandbox: true, contextIsolation: true } });
@@ -210,7 +210,8 @@ async function main() {
   let focusedNow = false;
   const focusDeadline = Date.now() + 5000;
   while (!focusedNow && Date.now() < focusDeadline) {
-    focusedNow = ours(await windowsOf())?.focused === true;
+    // By id: the other window's title ("timon e2e other") contains ours.
+    focusedNow = (await windowsOf()).find((w) => w.id === mine.id)?.focused === true;
     if (!focusedNow) await sleep(250);
   }
   if (!focusedNow) throw fail('focus_window did not bring the test window to the front (list_windows never reported it focused).');
