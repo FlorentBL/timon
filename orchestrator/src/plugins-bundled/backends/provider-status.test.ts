@@ -27,6 +27,8 @@ const CASES: [string, Partial<ProviderStatusInput>, ProviderStatus][] = [
   ['account signed in, sign-in unknown', { accountConnected: true }, 'connected'],
   ['key required and present', { secretRequired: true, secretPresent: true }, 'connected'],
   ['key required and missing', { secretRequired: true, secretPresent: false, usable: false }, 'not-connected'],
+  ['key required and missing, a sign-in known', { signedIn: true, secretRequired: true, secretPresent: false, usable: false }, 'not-connected'],
+  ['key required and missing, backend still listed', { signedIn: true, secretRequired: true, secretPresent: false }, 'not-connected'],
   ['key present but backend still inactive', { secretRequired: true, secretPresent: true, usable: false }, 'not-connected'],
   ['no backend active, no reason known', { usable: false }, 'not-connected'],
   ['program missing', { programMissing: true, usable: false }, 'not-installed'],
