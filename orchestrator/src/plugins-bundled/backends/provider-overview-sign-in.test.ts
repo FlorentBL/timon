@@ -74,3 +74,15 @@ test('the host CLIs are signed in; the profiles that ride on them with a missing
     resetProviderSignInForTest();
   }
 });
+
+test('a turn that once worked does not make a provider whose key is gone connected', () => {
+  resetProviderSignInForTest();
+  try {
+    noteProviderSignedIn('zai');
+    const zai = overview().get('provider-zai')!;
+    assert.equal(zai.connection.signedIn, null, 'the "This computer" row does not show it signed in either');
+    assert.equal(zai.status, 'not-connected', 'the missing key outranks the remembered turn');
+  } finally {
+    resetProviderSignInForTest();
+  }
+});
