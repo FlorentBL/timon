@@ -77,6 +77,21 @@ test('Windows: fixed encoded script, steps in the environment, absolute normalis
     [[0x11, false], [0x10, false], [0x54, false], [0x54, true], [0x10, true], [0x11, true]]);
 });
 
+test('Windows: coordinates go through the physical pixel, so 125 % and 150 % displays land on it', () => {
+  const move = (display: { width: number; height: number; scaleFactor: number }, x: number, y: number) =>
+    JSON.parse(buildInputCommand('win32', { kind: 'move', x, y }, display).env!.TIMON_CU_STEPS!)[0] as { x: number; y: number };
+  // Windows reads value → floor(value × physical / 65536): the round trip must give the pixel back.
+  for (const display of [{ width: 1536, height: 864, scaleFactor: 1.25 }, { width: 1280, height: 720, scaleFactor: 1.5 }, { width: 1920, height: 1080, scaleFactor: 1 }]) {
+    const physical = { x: Math.round(display.width * display.scaleFactor), y: Math.round(display.height * display.scaleFactor) };
+    for (const [px, py] of [[0, 0], [1, 1], [333, 217], [physical.x - 1, physical.y - 1]] as const) {
+      const sent = move(display, px / display.scaleFactor, py / display.scaleFactor);
+      assert.equal(Math.floor(sent.x * physical.x / 65536), px, `x ${px} at ${display.scaleFactor}`);
+      assert.equal(Math.floor(sent.y * physical.y / 65536), py, `y ${py} at ${display.scaleFactor}`);
+    }
+  }
+  assert.deepEqual(move({ width: 100, height: 100, scaleFactor: 1 }, 5000, -5), { t: 'move', x: 64881, y: 0 });
+});
+
 test('Linux: argv only, text behind "--", coordinates in physical pixels', () => {
   const type = buildInputCommand('linux', { kind: 'type', text: NASTY }, retina);
   assert.equal(type.file, 'xdotool');

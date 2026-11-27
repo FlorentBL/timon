@@ -303,10 +303,20 @@ type WinStep =
   | { t: 'wheel'; dx: number; dy: number } | { t: 'key'; vk: number; up: boolean }
   | { t: 'unicode'; unit: number; up: boolean } | { t: 'sleep'; ms: number };
 
-const normalize = (value: number, size: number): number => Math.round(Math.min(Math.max(value, 0), size - 1) * 65535 / size);
+/**
+ * Screen points → SendInput absolute coordinates (0..65535 over the primary monitor). Windows maps
+ * them back as floor(value × physicalSize / 65536), so the point goes through the physical pixel
+ * first (points × scaleFactor, as Electron reports them) and is rounded up to land inside it:
+ * a plain ratio drifts by a pixel or two on 125 % and 150 % displays.
+ */
+const normalize = (value: number, points: number, scaleFactor: number): number => {
+  const physical = Math.max(1, Math.round(points * scaleFactor));
+  const pixel = Math.min(Math.max(Math.round(value * scaleFactor), 0), physical - 1);
+  return Math.min(65535, Math.ceil(pixel * 65536 / physical));
+};
 
 function windowsSteps(action: InputAction, display: DisplayInfo): WinStep[] {
-  const at = (x: number, y: number): WinStep => ({ t: 'move', x: normalize(x, display.width), y: normalize(y, display.height) });
+  const at = (x: number, y: number): WinStep => ({ t: 'move', x: normalize(x, display.width, display.scaleFactor), y: normalize(y, display.height, display.scaleFactor) });
   switch (action.kind) {
     case 'move': return [at(action.x, action.y)];
     case 'click': {
