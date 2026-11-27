@@ -116,6 +116,61 @@ export async function fetchComputerWindows(): Promise<ComputerWindow[] | null> {
   }
 }
 
+export type ComputerAppMode = 'foreground' | 'background';
+
+/** An allowed application with the mode it is driven in. */
+export interface AllowedApp { app: string; mode: ComputerAppMode }
+
+/**
+ * The list as the daemon sends it (`{ app, mode }`), or as an older one stored it (bare names, which take
+ * `fallback`). Blank names and repeats (case apart) are dropped.
+ */
+export function normalizeAllowedApps(raw: unknown, fallback: ComputerAppMode = 'foreground'): AllowedApp[] {
+  if (!Array.isArray(raw)) return [];
+  const seen = new Set<string>();
+  const out: AllowedApp[] = [];
+  for (const item of raw) {
+    let app = '';
+    let mode = fallback;
+    if (typeof item === 'string') app = item;
+    else if (item && typeof item === 'object' && typeof (item as { app?: unknown }).app === 'string') {
+      app = (item as { app: string }).app;
+      const own = (item as { mode?: unknown }).mode;
+      if (own === 'foreground' || own === 'background') mode = own;
+    }
+    app = app.trim();
+    if (!app || seen.has(app.toLowerCase())) continue;
+    seen.add(app.toLowerCase());
+    out.push({ app, mode });
+  }
+  return out;
+}
+
+/** How rich an application's accessibility tree is: `rich` can be driven in the background. */
+export type AppVerdict = 'rich' | 'poor' | 'empty';
+
+/** The mode a verdict suggests: only a rich tree works without the screen. */
+export const modeForVerdict = (verdict: AppVerdict): ComputerAppMode => (verdict === 'rich' ? 'background' : 'foreground');
+
+/** Reads an `a11y_probe_app` answer defensively. */
+export function parseProbeVerdict(raw: unknown): AppVerdict | null {
+  const result = raw && typeof raw === 'object' ? (raw as Record<string, unknown>).result : undefined;
+  const verdict = result && typeof result === 'object' ? (result as Record<string, unknown>).verdict : undefined;
+  return verdict === 'rich' || verdict === 'poor' || verdict === 'empty' ? verdict : null;
+}
+
+/** Asks the desktop whether an open window's application is eligible for the background. Null when it cannot answer. */
+export async function probeComputerApp(windowId: string): Promise<AppVerdict | null> {
+  try {
+    const r = await fetch('/api/ui/computer/a11y_probe_app', {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ windowId }),
+    });
+    return r.ok ? parseProbeVerdict(await r.json()) : null;
+  } catch {
+    return null;
+  }
+}
+
 /** "Allow": the desktop shows the system prompts, or opens the Settings pane. */
 export async function requestComputerPermissions(): Promise<boolean> {
   try {
@@ -143,11 +198,18 @@ const UI_ALLOWED: Record<'GET' | 'POST', ReadonlySet<string>> = {
   GET: new Set(['status']),
   // The person's setup of the machine: system prompts and the restart they may need.
   // list_windows is read-only: a person fills the agent's allowed applications from it. focus_window stays the agent's.
-  POST: new Set(['status', 'list_windows', 'stop', 'resume', 'request_permissions', 'restart_app']),
+  POST: new Set(['status', 'list_windows', 'a11y_probe_app', 'stop', 'resume', 'request_permissions', 'restart_app']),
 };
 
 export function uiComputerPath(method: 'GET' | 'POST', command: string): string | null {
   return UI_ALLOWED[method].has(command) ? `/api/computer/${command}` : null;
+}
+
+/** The only body the UI proxy forwards: a window id for the probe, nothing for every other command. */
+export function uiComputerBody(command: string, raw: unknown): Record<string, unknown> | null {
+  if (command !== 'a11y_probe_app') return {};
+  const id = raw && typeof raw === 'object' ? (raw as Record<string, unknown>).windowId : undefined;
+  return typeof id === 'string' && /^[A-Za-z0-9:_.-]{1,64}$/.test(id) ? { windowId: id } : null;
 }
 
 /**

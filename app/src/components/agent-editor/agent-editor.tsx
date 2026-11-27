@@ -33,6 +33,7 @@ import { t } from '@/lib/i18n';
 import { ComputerJournal, ComputerUseSetup } from './computer-use-setup';
 import { ComputerUseApps } from './computer-use-apps';
 import { ComputerUseMode } from './computer-use-mode';
+import { normalizeAllowedApps, type AllowedApp } from '@/lib/computer-use';
 import { isValidAgentName, normalizeAgentName } from '@/lib/agent-name-rule';
 import { renameFollowUps } from '@/lib/agent-rename';
 import { agentSaveWarnings } from '@/lib/agent-save-warnings';
@@ -105,7 +106,7 @@ type AgentSummary = {
   /** Lets the agent drive the desktop's mouse and keyboard (absent = off). */
   computer_use?: boolean;
   /** The applications the agent may click and type in (absent or empty = none). */
-  computer_use_apps?: string[];
+  computer_use_apps?: (string | { app: string; mode: 'foreground' | 'background' })[];
   computer_use_mode?: 'foreground' | 'background';
   /** Explicit manager (the canvas sets it) and team of bots (an id). */
   reports_to?: string | null;
@@ -205,7 +206,7 @@ type Draft = {
   /** Injects the cross-project digest at spawn (business agents / _main). */
   globalContext: boolean;
   computerUse: boolean;
-  computerUseApps: string[];
+  computerUseApps: AllowedApp[];
   computerUseMode: 'foreground' | 'background';
 };
 
@@ -322,7 +323,7 @@ function toDraft(a: AgentSummary, cat: BackendCatalog): Draft {
     role: a.role || '',
     globalContext: a.global_context ?? false,
     computerUse: a.computer_use ?? false,
-    computerUseApps: a.computer_use_apps ?? [],
+    computerUseApps: normalizeAllowedApps(a.computer_use_apps, a.computer_use_mode === 'background' ? 'background' : 'foreground'),
     computerUseMode: a.computer_use_mode === 'background' ? 'background' : 'foreground',
   };
 }
@@ -1462,7 +1463,7 @@ export function AgentEditor({ agent, isNew, onClose, onDirtyChange, initialTab }
                 {draft.computerUse && <ComputerUseSetup />}
                 {draft.computerUse && draft.name && <ComputerJournal agent={draft.name} />}
                 {draft.computerUse && <ComputerUseMode value={draft.computerUseMode} onChange={(next) => updateDraft('computerUseMode', next)} />}
-                {draft.computerUse && <ComputerUseApps values={draft.computerUseApps} onChange={(next) => updateDraft('computerUseApps', next)} />}
+                {draft.computerUse && <ComputerUseApps values={draft.computerUseApps} defaultMode={draft.computerUseMode} onChange={(next) => updateDraft('computerUseApps', next)} />}
                 {draft.computerUse && (
                   <p
                     role="note"

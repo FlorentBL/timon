@@ -5,14 +5,17 @@
  * daemon are separate packages, no import possible.
  */
 
+import { normalizeAllowedApps, type AllowedApp } from './computer-use';
+
 export const COMPUTER_USE_PROPOSAL_KIND = 'computer-use';
 
 export type ComputerUseProposal = {
   agent: string;
-  addApps: string[];
+  /** Each with the mode it will get (a card drawn before the modes existed holds bare names: the foreground). */
+  addApps: AllowedApp[];
   removeApps: string[];
   enable?: boolean;
-  before: { enabled: boolean; apps: string[] };
+  before: { enabled: boolean; apps: AllowedApp[]; defaultMode: AllowedApp['mode'] };
   expiresAt: number;
 };
 
@@ -24,12 +27,13 @@ export function parseComputerUseProposal(payload: unknown): ComputerUseProposal 
   if (typeof payload !== 'object' || payload === null) return null;
   const p = payload as Record<string, unknown>;
   const before = p.before as Record<string, unknown> | undefined;
-  const addApps = strings(p.addApps);
   const removeApps = strings(p.removeApps);
-  const apps = before ? strings(before.apps) : null;
-  if (typeof p.agent !== 'string' || !addApps || !removeApps || !before || typeof before.enabled !== 'boolean' || !apps) return null;
+  const entries = (value: unknown): boolean => Array.isArray(value) && value.every((v) => typeof v === 'string' || (typeof v === 'object' && v !== null && typeof (v as { app?: unknown }).app === 'string'));
+  if (typeof p.agent !== 'string' || !entries(p.addApps) || !removeApps || !before || typeof before.enabled !== 'boolean' || !entries(before.apps)) return null;
+  const defaultMode = before.defaultMode === 'background' ? 'background' : 'foreground';
   return {
-    agent: p.agent, addApps, removeApps, before: { enabled: before.enabled, apps },
+    agent: p.agent, addApps: normalizeAllowedApps(p.addApps, defaultMode), removeApps,
+    before: { enabled: before.enabled, apps: normalizeAllowedApps(before.apps, defaultMode), defaultMode },
     ...(typeof p.enable === 'boolean' ? { enable: p.enable } : {}),
     expiresAt: typeof p.expiresAt === 'number' ? p.expiresAt : 0,
   };
@@ -37,10 +41,17 @@ export function parseComputerUseProposal(payload: unknown): ComputerUseProposal 
 
 const same = (a: string, b: string): boolean => a.trim().toLowerCase() === b.trim().toLowerCase();
 
-/** The allowed applications once the proposal is applied: additions last, no duplicate, removals by name. */
-export function appsAfter(proposal: ComputerUseProposal): string[] {
-  const kept = proposal.before.apps.filter((app) => !proposal.removeApps.some((gone) => same(gone, app)));
-  for (const app of proposal.addApps) if (!kept.some((have) => same(have, app))) kept.push(app.trim());
+/**
+ * The allowed applications once the proposal is applied: additions last, no duplicate, removals by name;
+ * adding one already listed sets its mode (the first spelling stays).
+ */
+export function appsAfter(proposal: ComputerUseProposal): AllowedApp[] {
+  const kept = proposal.before.apps.filter((entry) => !proposal.removeApps.some((gone) => same(gone, entry.app)));
+  for (const wanted of proposal.addApps) {
+    const at = kept.findIndex((have) => same(have.app, wanted.app));
+    if (at >= 0) kept[at] = { app: kept[at]!.app, mode: wanted.mode };
+    else kept.push({ app: wanted.app.trim(), mode: wanted.mode });
+  }
   return kept;
 }
 

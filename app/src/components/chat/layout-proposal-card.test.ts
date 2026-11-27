@@ -161,17 +161,17 @@ test('a computer-use proposal shows the access now and after, and Allow writes n
   await w.render(proposal({
     id: 'p-computer', kind: 'computer-use', agent: 'timon.main', note: 'Answer the community',
     payload: {
-      agent: 'support.tim', addApps: ['Discord'], removeApps: ['Slack'], enable: true,
-      before: { enabled: false, apps: ['Notepad', 'Slack'] }, expiresAt: Date.now() + 60_000,
+      agent: 'support.tim', addApps: [{ app: 'Discord', mode: 'foreground' }, { app: 'Notes', mode: 'background' }], removeApps: ['Slack'], enable: true,
+      before: { enabled: false, apps: [{ app: 'Notepad', mode: 'background' }, { app: 'Slack', mode: 'foreground' }], defaultMode: 'foreground' }, expiresAt: Date.now() + 60_000,
     },
   }));
   const text = document.body.textContent ?? '';
-  assert.match(text, /Allow support\.tim to control Discord with computer use/);
+  assert.match(text, /Allow support\.tim to control Discord \(foreground\), Notes \(background\) with computer use/);
   assert.match(text, /Computer use off/);
-  assert.match(text, /Allowed applications: Notepad, Slack/);
+  assert.match(text, /Allowed applications: Notepad \(background\), Slack \(foreground\)/);
   assert.match(text, /Computer use on/);
-  assert.match(text, /Allowed applications: Notepad, Discord · removed: Slack/);
-  assert.match(text, /click and type in these applications when they are in front/);
+  assert.match(text, /Allowed applications: Notepad \(background\), Discord \(foreground\), Notes \(background\) · removed: Slack/);
+  assert.match(text, /each application in the mode shown/);
   assert.deepEqual(w.buttons(), ['applied', 'dismissed']);
   assert.match(document.querySelector('button[data-decision="applied"]')!.textContent ?? '', /Allow/);
   // The daemon writes the agent's config in the claim: the browser's part ends there.
