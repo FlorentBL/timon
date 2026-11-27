@@ -1,0 +1,69 @@
+# Proves on real Windows, Linux and macOS machines that computer use acts on the screen: a real
+# Electron window, the real service, an agent clicking, typing and pressing the stop shortcut over
+# the private transport (desktop/scripts/computer-use-e2e.mjs). macOS has no screen grant on a
+# runner, so there the test checks the clean refusal. No secret is used.
+name: Computer use e2e
+
+on:
+  pull_request:
+    paths:
+      - 'desktop/src/computer-use-*'
+      - 'desktop/scripts/computer-use-e2e.mjs'
+      - '.github/workflows/computer-use-e2e.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: computer-use-e2e-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  e2e:
+    name: ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: desktop/package-lock.json
+
+      # Scripts are not skipped: Electron's postinstall downloads the binary the test runs.
+      - name: Install the desktop app
+        working-directory: desktop
+        run: npm ci --include=dev
+
+      # xdotool is the Linux input tool computer use needs; the display is a fixed-size X11 server.
+      - name: Install xvfb and xdotool
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y xvfb xdotool
+
+      - name: Test computer use (Linux, X11 on xvfb)
+        if: runner.os == 'Linux'
+        working-directory: desktop
+        run: xvfb-run --auto-servernum --server-args="-screen 0 1280x800x24" npm run test:computer-use-e2e
+
+      - name: Test computer use
+        if: runner.os != 'Linux'
+        working-directory: desktop
+        run: npm run test:computer-use-e2e
+
+      # The report holds the timing of every action; it carries no secret.
+      - name: Upload the report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: computer-use-e2e-${{ matrix.os }}
+          path: desktop/computer-use-e2e-report.txt
+          if-no-files-found: ignore
