@@ -6153,7 +6153,7 @@ export function listAgents(): AgentSummary[] {
       created_by: cfg.created_by ?? null,
       extra_dirs: storedExtraDirs(cfg),
       computer_use: cfg.computer_use === true,
-    computer_use_apps: storedComputerUseApps(cfg),
+      computer_use_apps: storedComputerUseApps(cfg),
     });
   }
   return out;
