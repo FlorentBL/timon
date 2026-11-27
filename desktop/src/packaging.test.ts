@@ -590,7 +590,7 @@ test('the desktop sweeps the same processes as the uninstall', () => {
   const embedded = readFileSync(join(root, 'src', 'embedded.ts'), 'utf8');
   const host = body(service, 'installationProcessNeedles', 'winPath');
   assert.equal(body(embedded, 'orphanNeedles', 'win32'), host);
-  assert.ok(host.includes("'boot.js'") && host.includes("'browser-mcp.mjs'"));
+  assert.ok(host.includes("'boot.js'") && host.includes("'browser-mcp.mjs'") && host.includes("'computer-mcp.mjs'"));
 });
 
 test('the three targets of §5.5 are declared', () => {

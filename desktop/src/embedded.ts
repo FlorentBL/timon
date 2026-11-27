@@ -349,6 +349,7 @@ export function orphanNeedles(installDir: string): string[] {
     win32.join(installDir, 'dist', 'boot.js'),
     win32.join(installDir, 'dist', 'terminal-host', 'main.js'),
     win32.join(installDir, 'bin', 'browser-mcp.mjs'),
+    win32.join(installDir, 'bin', 'computer-mcp.mjs'),
     `${win32.join(win32.dirname(installDir), 'app')}${win32.sep}`,
   ];
 }
