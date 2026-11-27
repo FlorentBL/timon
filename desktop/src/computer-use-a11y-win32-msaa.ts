@@ -183,7 +183,14 @@ function Invoke-TimonMsaaAct($q, $root, $steps) {
         try {
           [TimonMsaa]::SetValue($node, $want)
           # Chromium can accept the call and change nothing: read it back (never for a password).
-          if (([int]$d[3] -band 0x20000000) -ne 0) { $done = $true } else { $done = ([string][TimonMsaa]::Describe($node)[2] -eq $want) }
+          # Chromium applies the value a moment later: read it back for up to about 0.6 s before calling
+          # it refused (an immediate read reported a refusal for a field that had changed, CI 46015708886).
+          if (([int]$d[3] -band 0x20000000) -ne 0) { $done = $true } else {
+            for ($try = 0; $try -lt 7 -and -not $done; $try++) {
+              if ($try -gt 0) { Start-Sleep -Milliseconds 100 }
+              $done = ([string][TimonMsaa]::Describe($node)[2] -eq $want)
+            }
+          }
         } catch { $done = $false }
         if (-not $done) {
           # Background mode: no keyboard, no focus. The agent is told to do without.
