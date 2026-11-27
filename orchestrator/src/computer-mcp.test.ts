@@ -37,16 +37,17 @@ async function harness(t: TestContext, respond: (path: string, body: any) => { s
   return { requests, call };
 }
 
-test('computer MCP lists the ten tools and warns about screenshots and passwords', async (t) => {
+test('computer MCP lists its tools and warns about screenshots, tokens and passwords', async (t) => {
   const { call } = await harness(t, () => ({ body: {} }));
   const { result } = await call('tools/list');
   assert.deepEqual(result.tools.map((x: any) => x.name).sort(), [
-    'computer_click', 'computer_cursor_position', 'computer_double_click', 'computer_drag', 'computer_key',
+    'computer_actions', 'computer_click', 'computer_cursor_position', 'computer_double_click', 'computer_drag', 'computer_key',
     'computer_move', 'computer_screenshot', 'computer_scroll', 'computer_type', 'computer_wait',
   ]);
   const text = result.tools.map((x: any) => x.description).join(' ');
   assert.match(text, /screenshot/i);
   assert.match(text, /Never type a password/);
+  assert.match(text, /save tokens/);
 });
 
 test('computer MCP posts to /api/computer/:command with the mission token and returns screenshots as images', async (t) => {
@@ -68,4 +69,38 @@ test('computer MCP surfaces a daemon refusal as a tool error', async (t) => {
   const out = await call('tools/call', { name: 'computer_move', arguments: { x: 1, y: 1 } });
   assert.equal(out.result.isError, true);
   assert.match(out.result.content[0].text, /turned off/);
+});
+
+test('computer_actions runs the steps in order and returns one screenshot at the end', async (t) => {
+  const { requests, call } = await harness(t, (path) => path.endsWith('/screenshot')
+    ? { body: { ok: true, result: { mimeType: 'image/jpeg', data: 'BBBB', width: 1024, height: 640 } } }
+    : { body: { ok: true, result: {} } });
+  const out = await call('tools/call', { name: 'computer_actions', arguments: { steps: [
+    { action: 'key', keys: 'cmd+space' }, { action: 'type', text: 'TextEdit' }, { action: 'wait', ms: 500 },
+  ] } });
+  assert.deepEqual(out.result.content[0], { type: 'image', data: 'BBBB', mimeType: 'image/jpeg' });
+  assert.deepEqual(JSON.parse(out.result.content[1].text), { width: 1024, height: 640, steps: 3 });
+  assert.deepEqual(requests.map((r) => [r.path, r.body]), [
+    ['/api/computer/key', { keys: 'cmd+space' }], ['/api/computer/type', { text: 'TextEdit' }],
+    ['/api/computer/wait', { ms: 500 }], ['/api/computer/screenshot', {}],
+  ]);
+});
+
+test('computer_actions stops at the first refused step, says which, and reads nothing', async (t) => {
+  const { requests, call } = await harness(t, (path) => path.endsWith('/type')
+    ? { status: 409, body: { error: 'Computer use was stopped by the user.', code: 'computer_stopped' } }
+    : { body: { ok: true, result: {} } });
+  const out = await call('tools/call', { name: 'computer_actions', arguments: { steps: [
+    { action: 'click', x: 1, y: 1 }, { action: 'type', text: 'hello' }, { action: 'key', keys: 'Enter' },
+  ] } });
+  assert.equal(out.result.isError, true);
+  assert.match(out.result.content[0].text, /Step 2 \(type\) failed: Computer use was stopped by the user\.; 1 step\(s\) done/);
+  assert.deepEqual(requests.map((r) => r.path), ['/api/computer/click', '/api/computer/type']);
+});
+
+test('computer_actions refuses a step that is not an action, before doing anything', async (t) => {
+  const { requests, call } = await harness(t, () => ({ body: { ok: true, result: {} } }));
+  const out = await call('tools/call', { name: 'computer_actions', arguments: { steps: [{ action: 'screenshot' }] } });
+  assert.equal(out.result.isError, true);
+  assert.deepEqual(requests, []);
 });
