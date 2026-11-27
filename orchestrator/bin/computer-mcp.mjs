@@ -13,11 +13,21 @@ const SEE_FIRST = ' Coordinates are in the pixels of the latest screenshot.';
 const THRIFT = ' To save tokens, chain the steps you can predict in one computer_actions call, and look at the screen only when the next step depends on it.';
 const NO_PASSWORD = ' Never type a password, a one-time code or a payment detail: ask the user to do it.';
 // The steps computer_actions accepts: the commands that act or wait, never one that reads.
-const BATCH_ACTIONS = ['click', 'double_click', 'move', 'drag', 'type', 'key', 'scroll', 'wait', 'focus_window'];
+const BATCH_ACTIONS = ['click', 'double_click', 'move', 'drag', 'type', 'key', 'scroll', 'wait', 'focus_window', 'a11y_action'];
+const A11Y_ACTIONS = ['press', 'focus', 'set_value', 'select', 'expand', 'collapse', 'show_menu', 'scroll_into_view'];
+// The order to work in: the tree first, pixels only for what the tree does not show.
+const A11Y_FIRST = ' Read the window first with computer_a11y_tree and act by element. Take a screenshot and click in pixels only if the element is missing from the tree.';
 const MAX_STEPS = 20;
 const tools = [
+  { name: 'computer_a11y_tree', description: `Read a window as a tree of elements (buttons, fields, menus...), with no screenshot. One line per element, indented by depth: #id role "name" = value [actions] @x,y. The id is what follows the first "#". Without windowId it reads the window in front. Use query to find an element by part of its name, value or role (case does not matter): the answer keeps the matches and the elements that contain them. Roles: button, textfield, textarea, checkbox, radio, combobox, list, listitem, menu, menuitem, menubar, tab, tablist, link, image, text, group, window, toolbar, table, row, cell, slider, scrollbar, other. Ids last as long as the interface does not change: an a11y_element_stale error means read the tree again. Set withBounds only if you need the positions (in screenshot pixels).${A11Y_FIRST}`, inputSchema: schema({
+    windowId: { type: 'string', minLength: 1, maxLength: 64 }, query: { type: 'string', maxLength: 200 },
+    maxDepth: { type: 'integer', minimum: 1, maximum: 15 }, maxNodes: { type: 'integer', minimum: 1, maximum: 1500 }, withBounds: { type: 'boolean' },
+  }) },
+  { name: 'computer_a11y_action', description: `Act on one element by the id computer_a11y_tree returned, without moving the mouse or the keyboard. action: ${A11Y_ACTIONS.join(', ')}. press clicks a button or link, set_value writes the value into a field (at most 2000 characters, never log a password: ask the user to do it), select picks a list item or tab, expand and collapse open or close a group, show_menu opens the context menu, scroll_into_view brings the element into sight. An element only accepts the actions in its [brackets]; otherwise the error lists the possible ones.${A11Y_FIRST}${NO_PASSWORD}`, inputSchema: schema({
+    id: { type: 'string', minLength: 1, maxLength: 120 }, action: { type: 'string', enum: A11Y_ACTIONS }, value: { type: 'string', maxLength: 2000 },
+  }, ['id', 'action']) },
   { name: 'computer_screenshot', description: `Capture the main screen as a JPEG, 1024 px wide by default. Ask for a larger maxWidth only to read small text, a smaller one (768) for a quick look.${THRIFT}`, inputSchema: schema({ maxWidth: { type: 'integer', minimum: 64, maximum: 4096 } }) },
-  { name: 'computer_actions', description: `Run several steps in a row, then return one screenshot (unless screenshot is false). Each step is an object with an "action" (click, double_click, move, drag, type, key, scroll, wait, focus_window) and that action's arguments, for example [{"action":"key","keys":"cmd+space"},{"action":"type","text":"TextEdit"},{"action":"key","keys":"Enter"},{"action":"wait","ms":1500}]. Stops at the first failing step and says which.${SEE_FIRST}${NO_PASSWORD}`, inputSchema: schema({
+  { name: 'computer_actions', description: `Run several steps in a row, then return one screenshot (unless screenshot is false). Each step is an object with an "action" (click, double_click, move, drag, type, key, scroll, wait, focus_window, a11y_action) and that action's arguments (an a11y_action step names the element action as \"do\": {\"action\":\"a11y_action\",\"id\":\"...\",\"do\":\"press\"}), for example [{"action":"key","keys":"cmd+space"},{"action":"type","text":"TextEdit"},{"action":"key","keys":"Enter"},{"action":"wait","ms":1500}]. Stops at the first failing step and says which.${A11Y_FIRST}${SEE_FIRST}${NO_PASSWORD}`, inputSchema: schema({
     steps: { type: 'array', minItems: 1, maxItems: 20, items: { type: 'object', properties: { action: { type: 'string', enum: [...BATCH_ACTIONS] } }, required: ['action'] } },
     screenshot: { type: 'boolean' }, maxWidth: { type: 'integer', minimum: 64, maximum: 4096 },
   }, ['steps']) },
@@ -38,6 +48,7 @@ const COMMANDS = {
   computer_screenshot: 'screenshot', computer_click: 'click', computer_double_click: 'double_click', computer_move: 'move',
   computer_drag: 'drag', computer_type: 'type', computer_key: 'key', computer_scroll: 'scroll',
   computer_cursor_position: 'cursor_position', computer_list_windows: 'list_windows', computer_focus_window: 'focus_window', computer_wait: 'wait',
+  computer_a11y_tree: 'a11y_tree', computer_a11y_action: 'a11y_action',
 };
 async function command(name, args) {
   if (!token) throw new Error('A mission token is required to control the computer.');
@@ -57,7 +68,7 @@ async function runActions(args) {
   for (const step of steps) {
     const { action, ...rest } = step && typeof step === 'object' ? step : {};
     if (!BATCH_ACTIONS.includes(action)) throw new Error(`Step ${done + 1}: unknown action ${JSON.stringify(action)}; ${done} step(s) done before it.`);
-    try { await command(action, rest); } catch (error) {
+    try { await command(action, action === 'a11y_action' ? a11yStep(rest) : rest); } catch (error) {
       throw new Error(`Step ${done + 1} (${action}) failed: ${error.message}; ${done} step(s) done before it.`);
     }
     done += 1;
@@ -66,8 +77,35 @@ async function runActions(args) {
   const shot = await command('screenshot', args.maxWidth === undefined ? {} : { maxWidth: args.maxWidth });
   return { ...shot, steps: done };
 }
+/** The tree as indented text: far fewer tokens than the JSON, and the ids stay readable. */
+function renderTree(tree, withBounds) {
+  const quote = text => JSON.stringify(String(text));
+  const lines = [`window #${tree.window.id} ${quote(tree.window.title)} (${tree.window.app})${tree.truncated ? ' - truncated: raise maxNodes or maxDepth, or use query' : ''}`];
+  for (const node of Array.isArray(tree.nodes) ? tree.nodes : []) {
+    let line = `${'  '.repeat(node.depth)}#${node.id} ${node.role}`;
+    if (node.name) line += ` ${quote(node.name)}`;
+    if (node.value !== undefined) line += ` = ${quote(node.value)}`;
+    if (node.enabled === false) line += ' (disabled)';
+    if (node.focused) line += ' (focused)';
+    if (Array.isArray(node.actions) && node.actions.length) line += ` [${node.actions.join(',')}]`;
+    if (withBounds && node.bounds) line += ` @${node.bounds.x},${node.bounds.y}`;
+    lines.push(line);
+  }
+  return lines.join('\n');
+}
+/** An element id may be pasted with the "#" it is shown with. */
+const bareId = id => typeof id === 'string' && id.startsWith('#') ? id.slice(1) : id;
+/** In a step, "action" names the step, so the element action travels as "do": {"action":"a11y_action","id":"...","do":"press"}. */
+function a11yStep({ id, do: what, value }) {
+  return { id: bareId(id), action: what, ...(value === undefined ? {} : { value }) };
+}
 async function run(name, args) {
   if (name === 'computer_actions') return runActions(args);
+  if (name === 'computer_a11y_tree') {
+    const { withBounds, ...rest } = args;
+    return { text: renderTree(await command('a11y_tree', rest), withBounds === true) };
+  }
+  if (name === 'computer_a11y_action') return command('a11y_action', { ...args, id: bareId(args.id) });
   const mapped = COMMANDS[name];
   if (!mapped) throw new Error(`Unknown tool: ${name}`);
   return command(mapped, args);
@@ -85,7 +123,8 @@ lines.on('line', async line => {
     else if (msg.method === 'tools/list') result = { tools };
     else if (msg.method === 'tools/call') {
       const value = await run(msg.params?.name, msg.params?.arguments ?? {});
-      result = { content: typeof value?.data === 'string'
+      result = { content: typeof value?.text === 'string' && Object.keys(value).length === 1 ? [{ type: 'text', text: value.text }]
+        : typeof value?.data === 'string'
         ? [{ type: 'image', data: value.data, mimeType: value.mimeType || 'image/jpeg' },
           { type: 'text', text: JSON.stringify({ width: value.width, height: value.height, ...(value.steps === undefined ? {} : { steps: value.steps }) }) }]
         : [{ type: 'text', text: JSON.stringify(value) }] };
