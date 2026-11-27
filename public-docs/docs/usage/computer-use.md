@@ -13,7 +13,27 @@ Computer use needs the **Timon desktop app** running on the machine to control. 
 2. Switch on **Computer use**.
 3. Follow the setup card that appears under the switch: it checks each requirement (desktop app connected, system permissions, input tool) and marks it ✅ or ❌. On macOS, **Allow** shows the system prompt; when macOS asks for it, **Restart Timon** reopens the app. Elsewhere the card gives the exact steps or the install command. It updates by itself when you come back from System Settings.
 
-Only that agent gets the screen and input tools; other agents are unaffected. Switching it off removes them at the agent's next conversation. The agent can take a screenshot (a JPEG, 1024 px wide by default), move the pointer, click, double-click, drag, scroll, type text and press key combinations. To keep the cost in tokens down, it chains the steps it can predict in a single call and looks at the screen only when the next step depends on it.
+Only that agent gets the screen and input tools; other agents are unaffected. Switching it off removes them at the agent's next conversation. The agent can list and focus windows, take a screenshot (a JPEG, 1024 px wide by default), move the pointer, click, double-click, drag, scroll, type text and press key combinations. To keep the cost in tokens down, it chains the steps it can predict in a single call and looks at the screen only when the next step depends on it.
+
+## Choose the applications it may use
+
+Computer use is **refused for everything except an explicit list of applications**. In the card **Allowed applications** under the setup card, list the applications the agent may click and type in. Before every mouse or keyboard action (click, double-click, move, drag, type, key, scroll), Timon reads which application is in front, and the action is refused with `computer_app_not_allowed` unless it is on the list. The error names the application it found, so the agent can ask you to add it.
+
+- An entry can be the application's name, the name of its executable, or on macOS its bundle identifier (for example `TextEdit`, `notepad` or `com.apple.TextEdit`). The case does not matter, and a trailing `.exe` is ignored.
+- **An empty list means the agent cannot do anything with the keyboard or the mouse.** The card warns you about it. Screenshots, listing the windows and waiting stay possible.
+- **Add from open windows** lists the applications that have a window open right now: click one to add it.
+- Only a person can edit the list. An agent cannot add to it, whatever its account holds; it can only remove entries.
+
+**Known limit:** a screenshot always shows your whole screen, not only the allowed applications. Close or hide whatever the agent must not see before you let it work.
+
+## Windows
+
+Two more actions let the agent find its way around without guessing coordinates:
+
+- `list_windows` returns the open windows as `{ id, title, app, focused }`.
+- `focus_window` brings a window to the front by its `id`. It is refused with `computer_app_not_allowed` when the window's application is not on the list, and with a clear error when the window no longer exists.
+
+Both can be used as a step of a chained call. The window `id` is only valid until the windows change: list them again when in doubt.
 
 ## Allow Timon on your system
 
