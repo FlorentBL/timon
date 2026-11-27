@@ -41,7 +41,7 @@ Both can be used as a step of a chained call. The window `id` is only valid unti
 
 Before looking at pixels, the agent reads a window as a **tree of elements** (buttons, fields, menus, with their names, values and the actions they accept) and acts on an element directly. This is faster, cheaper (text instead of an image) and more reliable than guessing coordinates, and it moves neither your mouse nor your keyboard.
 
-- `computer_a11y_tree` reads the window in front, or the one given by its `id` from `list_windows`. `query` keeps the elements whose name, value or role contains a word, together with the elements that contain them. Positions are only returned on request.
+- `computer_a11y_tree` reads the window in front, or the one given by its `id` from `list_windows`. `query` keeps the elements whose name, value or role contains a word, together with the elements that contain them. Positions are only returned on request. Without `maxDepth` it reads up to 15 levels (the maximum), so the web content of a browser or Electron window is reached; `maxNodes` is the real limit.
 - `computer_a11y_action` acts on an element by its id: `press`, `focus`, `set_value` (writes a value into a field), `select`, `expand`, `collapse`, `show_menu` or `scroll_into_view`. The element lists the actions it accepts; any other is refused with the possible ones. It can also be a step of a chained call.
 - An element id lasts as long as the window does not change. After a change the agent gets `a11y_element_stale` and reads the tree again.
 - The agent takes a screenshot and clicks in pixels only when an element is missing from the tree.

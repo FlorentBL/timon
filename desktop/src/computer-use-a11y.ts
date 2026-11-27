@@ -20,7 +20,7 @@ export type A11yRole = typeof A11Y_ROLES[number];
 export const A11Y_ACTIONS = ['press', 'focus', 'set_value', 'select', 'expand', 'collapse', 'show_menu', 'scroll_into_view'] as const;
 export type A11yAction = typeof A11Y_ACTIONS[number];
 
-export const A11Y_DEFAULT_MAX_DEPTH = 8;
+export const A11Y_DEFAULT_MAX_DEPTH = 15;
 export const A11Y_MAX_DEPTH = 15;
 export const A11Y_DEFAULT_MAX_NODES = 400;
 export const A11Y_MAX_NODES = 1500;

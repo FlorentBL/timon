@@ -25,6 +25,61 @@ interface WindowEntry extends WindowInfo { identity: AppIdentity }
 
 const MAX_WINDOWS = 60;
 
+/**
+ * JXA that picks the Accessibility window for a CGWindowNumber, shared by the focus and the a11y
+ * scripts. The window server tells which windows of the application are floating (a layer above 0:
+ * the computer-use banner, tooltips, palettes); those are never a target. The wanted window is found
+ * by its bounds, then its title; without a match the focused window, the main window and only then
+ * the first one are used, so the banner cannot be read in place of the application's own window.
+ */
+export const MAC_PICK_WINDOW_JS = `
+function axGet(el, name) {
+  const ref = Ref();
+  if ($.AXUIElementCopyAttributeValue(el, $(name), ref) !== 0 || !ref[0]) return null;
+  return ObjC.castRefToObject(ref[0]);
+}
+function axText(el, name) {
+  const v = axGet(el, name);
+  if (v === null) return '';
+  const u = ObjC.unwrap(v);
+  return typeof u === 'string' ? u : '';
+}
+function axBox(el) {
+  const p = axGet(el, 'AXPosition');
+  const s = axGet(el, 'AXSize');
+  if (p === null || s === null) return null;
+  const pm = String(ObjC.unwrap(p.description)).match(/x:(-?[0-9.]+) y:(-?[0-9.]+)/);
+  const sm = String(ObjC.unwrap(s.description)).match(/w:(-?[0-9.]+) h:(-?[0-9.]+)/);
+  return pm && sm ? { x: Number(pm[1]), y: Number(pm[2]), w: Number(sm[1]), h: Number(sm[2]) } : null;
+}
+function sameBox(a, b) {
+  return a !== null && b !== null && Math.abs(a.x - b.x) <= 2 && Math.abs(a.y - b.y) <= 2 && Math.abs(a.w - b.w) <= 2 && Math.abs(a.h - b.h) <= 2;
+}
+function pickWindow(app, pid, number) {
+  const infos = ObjC.deepUnwrap(ObjC.castRefToObject($.CGWindowListCopyWindowInfo($.kCGWindowListOptionAll, 0))) || [];
+  const box = (info) => info && info.kCGWindowBounds ? { x: info.kCGWindowBounds.X, y: info.kCGWindowBounds.Y, w: info.kCGWindowBounds.Width, h: info.kCGWindowBounds.Height } : null;
+  const floating = infos.filter((info) => info.kCGWindowOwnerPID === pid && info.kCGWindowLayer !== 0).map(box);
+  const list = axGet(app, 'AXWindows');
+  const all = [];
+  const count = list === null ? 0 : Number(list.count);
+  for (let i = 0; i < count; i++) all.push(list.objectAtIndex(i));
+  const targets = all.filter((w) => { const b = axBox(w); return !floating.some((f) => sameBox(f, b)); });
+  if (targets.length === 0) return null;
+  const mine = infos.find((info) => info.kCGWindowNumber === number);
+  if (mine) {
+    const wanted = box(mine);
+    const byBox = targets.find((w) => sameBox(axBox(w), wanted));
+    if (byBox) return byBox;
+    if (mine.kCGWindowName) {
+      const byTitle = targets.find((w) => axText(w, 'AXTitle') === mine.kCGWindowName);
+      if (byTitle) return byTitle;
+    }
+  }
+  const sameAs = (candidate) => candidate !== null && targets.find((w) => sameBox(axBox(w), axBox(candidate)) && axText(w, 'AXTitle') === axText(candidate, 'AXTitle')) || null;
+  return sameAs(axGet(app, 'AXFocusedWindow')) || sameAs(axGet(app, 'AXMainWindow')) || targets[0];
+}
+`.trim();
+
 // ── macOS ──────────────────────────────────────────────────────────────────
 
 const MAC_FOREGROUND_SCRIPT = `
@@ -70,28 +125,16 @@ const MAC_FOCUS_SCRIPT = `
 ObjC.import('CoreGraphics');
 ObjC.import('AppKit');
 ObjC.import('ApplicationServices');
+${MAC_PICK_WINDOW_JS}
 function run(argv) {
   const [pid, number] = JSON.parse(argv[0]);
   const app = $.NSRunningApplication.runningApplicationWithProcessIdentifier(pid);
   if (!app) return 'gone';
   app.activateWithOptions($.NSApplicationActivateIgnoringOtherApps);
-  // The title of that window, from the window server: the Accessibility windows are matched on it.
-  const infos = ObjC.deepUnwrap(ObjC.castRefToObject($.CGWindowListCopyWindowInfo($.kCGWindowListOptionAll, 0))) || [];
-  const mine = infos.find((info) => info.kCGWindowNumber === number);
-  const title = mine && mine.kCGWindowName ? mine.kCGWindowName : '';
-  const element = $.AXUIElementCreateApplication(pid);
-  const ref = Ref();
-  if ($.AXUIElementCopyAttributeValue(element, $('AXWindows'), ref) !== 0) return 'activated';
-  const windows = ObjC.castRefToObject(ref[0]);
-  const count = Number(windows.count);
-  for (let i = 0; i < count; i++) {
-    const window = windows.objectAtIndex(i);
-    const name = Ref();
-    $.AXUIElementCopyAttributeValue(window, $('AXTitle'), name);
-    const text = name[0] ? String(ObjC.unwrap(ObjC.castRefToObject(name[0])) || '') : '';
-    if (!title || text === title) { $.AXUIElementPerformAction(window, $('AXRaise')); return 'raised'; }
-  }
-  return 'activated';
+  const window = pickWindow($.AXUIElementCreateApplication(pid), pid, number);
+  if (window === null) return 'activated';
+  $.AXUIElementPerformAction(window, $('AXRaise'));
+  return 'raised';
 }
 `.trim();
 

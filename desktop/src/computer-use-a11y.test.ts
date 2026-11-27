@@ -156,7 +156,7 @@ test('arguments are validated', () => {
   bad('a11y_action', { id: '10:1#0', action: 'set_value' });
   bad('a11y_action', { id: '10:1#0', action: 'set_value', value: 'x'.repeat(2001) });
   bad('a11y_action', { id: '10:1#0', action: 'press', value: 'x' });
-  assert.deepEqual(parseComputerCommand('a11y_tree', {}), { command: 'a11y_tree', maxDepth: 8, maxNodes: 400 });
+  assert.deepEqual(parseComputerCommand('a11y_tree', {}), { command: 'a11y_tree', maxDepth: 15, maxNodes: 400 });
 });
 
 test('element ids round-trip, and the filter and tree builder drop orphans', () => {

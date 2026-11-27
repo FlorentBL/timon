@@ -9,7 +9,7 @@
  */
 import { A11yError, A11Y_ACTIONS, type A11yAction, type A11yActArgs, type A11yBackend, type A11yBounds, type A11yCheck, type A11yRawNode, type A11yRawTree, type A11yTreeArgs } from './computer-use-a11y.js';
 import { MAC_TRUST_SCRIPT, macCommand } from './computer-use-input.js';
-import type { Exec } from './computer-use-windows.js';
+import { MAC_PICK_WINDOW_JS, type Exec } from './computer-use-windows.js';
 
 /**
  * One script for both operations. `argv[0]` is `{ op: 'tree' | 'act', pid, number, path?, action?, value?, maxDepth?, maxNodes? }`.
@@ -18,6 +18,7 @@ import type { Exec } from './computer-use-windows.js';
 export const MAC_A11Y_SCRIPT = `
 ObjC.import('ApplicationServices');
 ObjC.import('CoreGraphics');
+${MAC_PICK_WINDOW_JS}
 const NODE_BUDGET_MS = 6000;
 function attr(el, name) {
   const ref = Ref();
@@ -53,14 +54,6 @@ function actionNames(el) {
   const ref = Ref();
   if ($.AXUIElementCopyActionNames(el, ref) !== 0 || !ref[0]) return [];
   return ObjC.deepUnwrap(ObjC.castRefToObject(ref[0])) || [];
-}
-function findWindow(app, number) {
-  const infos = ObjC.deepUnwrap(ObjC.castRefToObject($.CGWindowListCopyWindowInfo($.kCGWindowListOptionAll, 0))) || [];
-  const mine = infos.find((info) => info.kCGWindowNumber === number);
-  const title = mine && mine.kCGWindowName ? mine.kCGWindowName : '';
-  const windows = childrenOf(app, 'AXWindows');
-  for (const w of windows) if (!title || str(w, 'AXTitle') === title) return w;
-  return windows.length > 0 && !title ? windows[0] : null;
 }
 function describe(el, path) {
   const role = str(el, 'AXRole');
@@ -134,7 +127,7 @@ function run(argv) {
   const app = $.AXUIElementCreateApplication(req.pid);
   // Electron and Chromium only build their tree when an assistive client says it is there.
   $.AXUIElementSetAttributeValue(app, $('AXManualAccessibility'), $.kCFBooleanTrue);
-  const win = findWindow(app, req.number);
+  const win = pickWindow(app, req.pid, req.number);
   if (win === null) return JSON.stringify({ error: 'stale' });
   if (req.op === 'tree') return JSON.stringify(readTree(win, req.maxDepth, req.maxNodes));
   const el = walk(win, req.path);
