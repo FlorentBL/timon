@@ -771,6 +771,10 @@
       "useAgentFolders": {
         "type": "export",
         "since": 20
+      },
+      "usePullRequestDialog": {
+        "type": "export",
+        "since": 20
       }
     },
     "api.js": {

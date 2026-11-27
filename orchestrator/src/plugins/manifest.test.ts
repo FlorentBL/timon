@@ -848,6 +848,17 @@ test('the agent folders slot opens in wave 20', () => {
   assert.equal(SLOT_API_VERSIONS['agent.folders'], 20);
 });
 
+test('the pull request window slot opens in wave 20', () => {
+  // `usePullRequestDialog` is missing from a host 19 (0.1.10, 0.1.11), which
+  // only let a bundled occupant take the slot: a manifest naming it must
+  // declare 20, or its browser half would die there on a missing import.
+  const message = refusal(pkg({ apiVersion: 19, client: { slots: ['kanban.pull.dialog'] } }));
+  assert.ok(message.includes('names `kanban.pull.dialog`, which needs `apiVersion: 20`'), message);
+  const res = readManifest(pkg({ apiVersion: 20, client: { slots: ['kanban.pull.dialog'] } }));
+  assert.ok(res.ok, res.ok ? '' : res.message);
+  assert.equal(SLOT_API_VERSIONS['kanban.pull.dialog'], 20);
+});
+
 test('`root` outside a layout is refused, whatever the other kind', () => {
   // `root` is the whole interface: a non-layout naming it would replace the
   // shell for everyone, with no choice in the appearance settings.

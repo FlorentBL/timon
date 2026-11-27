@@ -29,6 +29,7 @@ import { useAgentFolders } from '../components/agent-folders/agent-folders-conte
 import { ProviderRow } from '../components/provider-list/provider-row';
 import { useJobDialog } from '../plugins-client/kanban/job-dialog-context';
 import { usePublishDialog } from '../plugins-client/kanban/publish-dialog-context';
+import { usePullRequestDialog } from '../plugins-client/kanban/pull-request-dialog-context';
 import { GitStackProjectPicker, useGitStackProject } from '../plugins-client/kanban/git-stack-project';
 import { useTodoOpener } from '../plugins-client/kanban/todo-opener';
 import { useFenceGrant } from '../components/chat/fence-grant-card';
@@ -380,4 +381,17 @@ test('the agent folders open in wave 20, with their slot', () => {
   const declarations = readFileSync(join(process.cwd(), '../packages/sdk/src/ui.d.ts'), 'utf8');
   assert.ok(declarations.includes('export function useAgentFolders(): AgentFoldersValue | null;'));
   assert.ok(declarations.includes('browse(current: string): Promise<string | null>;'));
+});
+
+test('the pull request window opens in wave 20, with its slot', () => {
+  // 0.1.10 and 0.1.11 shipped API 19 with the slot but not the hook, so only a
+  // bundled occupant could take it: a plugin naming `kanban.pull.dialog`
+  // declares 20, which `SLOT_API_VERSIONS` enforces on the daemon side.
+  assert.ok(snapshot.apiVersion >= 20);
+  assert.equal(UI_KIT.usePullRequestDialog, usePullRequestDialog);
+  assert.ok(platformModuleExports('ui.js').includes('usePullRequestDialog'));
+  assert.equal(snapshot.modules['ui.js']?.usePullRequestDialog?.since, 20);
+  const declarations = readFileSync(join(process.cwd(), '../packages/sdk/src/ui.d.ts'), 'utf8');
+  assert.ok(declarations.includes('export function usePullRequestDialog(): PullRequestDialogValue | null;'));
+  assert.ok(declarations.includes('run(id: PullRequestActionId): void;'));
 });

@@ -2202,6 +2202,190 @@ declare module '@timon/ui' {
    */
   export function useAgentFolders(): AgentFoldersValue | null;
 
+  /** A label of a pull request, its colour as GitHub gives it (`rrggbb`), or `null` (client API 20). */
+  export type PullRequestLabel = { name: string; color: string | null };
+  /** How many people reacted to a text with one emoji (client API 20). */
+  export type PullRequestReaction = {
+    content: 'thumbs_up' | 'thumbs_down' | 'laugh' | 'hooray' | 'confused' | 'heart' | 'rocket' | 'eyes';
+    count: number;
+  };
+  /**
+   * One entry of a pull request's conversation (client API 20): a comment, a
+   * review, a label added or removed, or its branch rewritten. Every text was
+   * written by someone on GitHub: render it as text, or as markdown without
+   * raw HTML. `bodyTruncated` says Timon cut a long text; `reactions` is
+   * absent from an older daemon.
+   */
+  export type PullRequestTimelineItem =
+    | { kind: 'comment'; author: string | null; body: string; bodyTruncated: boolean; createdAt: string; url: string | null; hidden: boolean; reactions?: PullRequestReaction[] }
+    | { kind: 'review'; author: string | null; state: 'approved' | 'changes_requested' | 'commented' | 'dismissed' | 'pending'; body: string; bodyTruncated: boolean; createdAt: string; reactions?: PullRequestReaction[] }
+    | { kind: 'labeled' | 'unlabeled'; actor: string | null; createdAt: string; label: PullRequestLabel }
+    | { kind: 'force_pushed'; actor: string | null; createdAt: string; before: string | null; after: string | null; url: string | null };
+  /** A review thread on a line of the diff (client API 20); `commentsMore` counts the comments not read. */
+  export type PullRequestThread = {
+    path: string | null;
+    line: number | null;
+    resolved: boolean;
+    outdated: boolean;
+    comments: Array<{ author: string | null; body: string; bodyTruncated: boolean; createdAt: string; url: string | null; reactions?: PullRequestReaction[] }>;
+    commentsMore: number;
+  };
+  /** A check of the pull request's head (client API 20); `workflow` names the CI workflow of a job. */
+  export type PullRequestCheck = {
+    name: string;
+    status: 'pass' | 'fail' | 'pending' | 'skipped';
+    url: string | null;
+    workflow: string | null;
+    startedAt: string | null;
+    completedAt: string | null;
+  };
+  /**
+   * GitHub's page of a pull request, read through the daemon (client API 20).
+   * Dates are ISO strings. Each list is cut at the daemon's bound: its `…More`
+   * counts what was left out. `threadsError` says why the review threads
+   * could not be read (in English), the rest of the page standing.
+   */
+  export type PullRequestPage = {
+    number: number;
+    title: string;
+    url: string;
+    state: 'open' | 'closed' | 'merged';
+    isDraft: boolean;
+    author: string | null;
+    createdAt: string;
+    updatedAt: string;
+    mergedAt: string | null;
+    closedAt: string | null;
+    baseRef: string;
+    headRef: string;
+    headSha: string | null;
+    headOwner: string | null;
+    headRepository: string | null;
+    isCrossRepository: boolean;
+    maintainerCanModify: boolean;
+    mergeable: 'mergeable' | 'conflicting' | 'unknown';
+    /** GitHub's `mergeStateStatus`, lower case (`clean`, `dirty`, `behind`, `blocked`…). */
+    mergeStateStatus: string;
+    reviewDecision: 'approved' | 'changes_requested' | 'review_required' | null;
+    additions: number;
+    deletions: number;
+    changedFiles: number;
+    body: string;
+    bodyTruncated: boolean;
+    reactions?: PullRequestReaction[];
+    labels: PullRequestLabel[];
+    milestone: { title: string; url: string | null } | null;
+    assignees: string[];
+    assigneesMore: number;
+    reviewRequests: string[];
+    reviewRequestsMore: number;
+    /** The issues it closes once merged; `repo` is `null` for one of the same repository. */
+    closingIssues: Array<{ repo: string | null; number: number; url: string | null }>;
+    timeline: PullRequestTimelineItem[];
+    timelineMore: number;
+    commits: Array<{ sha: string; headline: string; author: string | null; date: string; url: string | null }>;
+    commitsMore: number;
+    files: Array<{ path: string; additions: number; deletions: number }>;
+    filesMore: number;
+    checks: PullRequestCheck[];
+    checksMore: number;
+    threads: PullRequestThread[];
+    threadsMore: number;
+    threadsError: string | null;
+  };
+  /**
+   * A row of the Pull requests widget (client API 20): what the list read,
+   * before the page. `review` is Timon's own review of it (a brief, a running
+   * review, its verdict), `null` when none was asked. `links`,
+   * `mergeStateStatus` and `gestures` are absent from an older daemon.
+   */
+  export type PullRequestRow = {
+    number: number;
+    title: string;
+    author: string | null;
+    url: string;
+    isDraft: boolean;
+    updatedAt: string;
+    headOwner: string | null;
+    /** Opened from a fork: Timon writes to its branch only as the contributor allows. */
+    external: boolean;
+    review: {
+      id: string;
+      number: number;
+      state: 'draft' | 'running' | 'done' | 'failed';
+      agent: string;
+      verdict: 'mergeable' | 'changes_requested' | 'reject' | 'product_decision' | null;
+      report: string | null;
+      mission_id: string | null;
+      /** The pull request's `updatedAt` the review read: an older one than the row's means the code moved since. */
+      pr_updated_at: string | null;
+      updated_at: number;
+    } | null;
+    /** Timon's job behind it and the ideas it carries, as far as the reader may see them. */
+    links?: KanbanJobLinks & { job_id: string | null };
+    mergeStateStatus?: string;
+    gestures?: { update_branch: boolean; ask_contributor: boolean; resolve_conflict: boolean; locked?: 'not_allowed' | 'fork_deleted' | null };
+  };
+  /**
+   * A gesture on a pull request (client API 20), the same from its row's menu
+   * and from its window: resolve a conflict, update the branch, prepare or
+   * read Timon's review, ask the contributor, comment, open it on GitHub.
+   */
+  export type PullRequestActionId = 'resolveConflict' | 'updateBranch' | 'review' | 'report' | 'askContributor' | 'comment' | 'forge';
+  /**
+   * One gesture as the host places it. `blocked`: show it greyed with its
+   * reason (`not_allowed`, `fork_deleted`: the branch cannot be written from
+   * here; `branch_busy`: another branch gesture runs; `review_running`), or
+   * `null`. `busy`: this very gesture is under way.
+   */
+  export type PullRequestAction = {
+    id: PullRequestActionId;
+    blocked: 'not_allowed' | 'fork_deleted' | 'branch_busy' | 'review_running' | null;
+    busy: boolean;
+  };
+  /** The gestures, placed: the one the state calls for (`primary`, or none), a few beside it, the rest in a "…" menu. */
+  export type PullRequestActions = { primary: PullRequestAction | null; secondary: PullRequestAction[]; overflow: PullRequestAction[] };
+  /** A read through the daemon: its value, or its refusal in the reader's language. */
+  export type PullRequestRead<T> = { ok: true; value: T } | { ok: false; message: string };
+  /**
+   * The pull request a `kanban.pull.dialog` occupant paints (client API 20),
+   * opened by a click on its row in the Pull requests widget. The occupant
+   * draws the whole window (`Dialog` from this module) and calls `close()`
+   * when it is dismissed.
+   *
+   * The reads and the gestures stay the host's: the occupant holds no access
+   * to GitHub or to the daemon. `run(id)` goes through the widget that opened
+   * the window, as from the row's menu, on a person's click only: Timon opens
+   * what it needs (a brief, the "Publish on GitHub" window, a conflict) and
+   * nothing reaches GitHub without that person's own confirmation there.
+   */
+  export type PullRequestDialogValue = {
+    project: string;
+    /** `owner/name` of the project's repository, when known. */
+    repo: string | null;
+    /** The row the window was opened from: its title shows before the page is read; its links and review come from the list. */
+    pull: PullRequestRow;
+    /** GitHub's page: being read, refused (`message` in the reader's language), or read. */
+    load: { kind: 'loading' } | { kind: 'error'; message: string } | { kind: 'ready'; page: PullRequestPage };
+    /** A fresh read asked by `refresh` is under way; `load` keeps the last page meanwhile. */
+    refreshing: boolean;
+    /** Reads the page again from GitHub, past the host's short cache. */
+    refresh(): Promise<void>;
+    actions: PullRequestActions;
+    run(id: PullRequestActionId): void;
+    /** The end of a failed check's log (`checkUrl`: a check's `url`), for a job of the repository's own CI. */
+    readCheckLog(checkUrl: string): Promise<PullRequestRead<{ tail: string; truncated: boolean }>>;
+    /** The pull request's whole diff, as text, cut past the daemon's bound. */
+    readDiff(): Promise<PullRequestRead<{ diff: string; truncated: boolean }>>;
+    close(): void;
+    /** Close the window, then open Timon's job behind the pull request (`links.job_id`). */
+    openJob(id: string): void;
+    /** Close the window, then open one of the TO DO ideas it carries (`links.todos`). */
+    openTodo(id: number): void;
+  };
+  /** The pull request a `kanban.pull.dialog` occupant paints, and the host's gestures (client API 20); `null` outside the slot. */
+  export function usePullRequestDialog(): PullRequestDialogValue | null;
+
   /**
    * A provider's one status line (client API 16), the same verdict on the list
    * and on its page: green `connected` / `available`, yellow `not-connected` /

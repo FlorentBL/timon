@@ -2,8 +2,9 @@
 
 /**
  * What a `kanban.pull.dialog` occupant reads: the pull request, its page and
- * its gestures (`pull-request-dialog.tsx`). Not exported to third-party
- * plugins yet (`slots.ts`): the plugin contract would need a new wave.
+ * its gestures (`pull-request-dialog.tsx`). `usePullRequestDialog` is in the
+ * plugin contract at client API 20 (`ui-kit.ts`), its types declared in
+ * `packages/sdk/src/ui.d.ts`: a field added here is added there too.
  */
 
 import { createContext, useContext } from 'react';
