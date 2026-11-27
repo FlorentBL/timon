@@ -767,6 +767,10 @@
       "onAccountChange": {
         "type": "export",
         "since": 20
+      },
+      "useAgentFolders": {
+        "type": "export",
+        "since": 20
       }
     },
     "api.js": {

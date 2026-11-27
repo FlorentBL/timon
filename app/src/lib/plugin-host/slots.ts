@@ -790,6 +790,18 @@ export const EMAIL_CODE_SLOT = 'email.code';
 export const AGENT_LOOK_STYLER_SLOT = 'agent.lookstyler';
 
 /**
+ * Slot of an agent's extra folders (TODO #505, #1168): the folders outside the
+ * working directory its missions may read, or read and write. Painted by every
+ * `AgentFoldersSection` host — the Workspace tab of the agent's page, and the
+ * project's settings, which list the project's own folders and every agent's —
+ * so a plugin that takes it changes both at once. The occupant reads
+ * `useAgentFolders()` (client API 20) and paints; the host keeps the reads,
+ * the writes, which the daemon checks again, and the folder browser. A boot
+ * slot like `agent.lookstyler`.
+ */
+export const AGENT_FOLDERS_SLOT = 'agent.folders';
+
+/**
  * Slot of the parts mascot packs add (docs/AGENT-MASCOT.md, "Mascot packs"):
  * skulls, furs, eyes and accessories, as data, keyed `<pluginId>:<slug>`. Not
  * painted: the mascot and its configurator read it. A boot slot: a pack
@@ -831,6 +843,7 @@ function declareBootSlots(): void {
   declareSlot(AGENT_MASCOT_SLOT, 'single');
   declareSlot(EMAIL_CODE_SLOT, 'single');
   declareSlot(AGENT_LOOK_STYLER_SLOT, 'single');
+  declareSlot(AGENT_FOLDERS_SLOT, 'single');
   declareSlot(MASCOT_PARTS_SLOT, 'keyed');
   // Also listed in `UI_LAYOUT_CHILD_SLOTS`, which is the daemon's contract
   // (`bundled-identity.ts`); declared here as well so that dictation does not

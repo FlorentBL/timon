@@ -807,6 +807,17 @@ test('the fence card slot joins wave 19', () => {
   assert.equal(SLOT_API_VERSIONS['chat.fence'], 19);
 });
 
+test('the agent folders slot opens in wave 20', () => {
+  // `useAgentFolders` is missing from a host 19 (0.1.10, 0.1.11): a manifest
+  // naming the slot must declare 20, or its browser half would die there on a
+  // missing import instead of being refused at install.
+  const message = refusal(pkg({ apiVersion: 19, client: { slots: ['agent.folders'] } }));
+  assert.ok(message.includes('names `agent.folders`, which needs `apiVersion: 20`'), message);
+  const res = readManifest(pkg({ apiVersion: 20, client: { slots: ['agent.folders'] } }));
+  assert.ok(res.ok, res.ok ? '' : res.message);
+  assert.equal(SLOT_API_VERSIONS['agent.folders'], 20);
+});
+
 test('`root` outside a layout is refused, whatever the other kind', () => {
   // `root` is the whole interface: a non-layout naming it would replace the
   // shell for everyone, with no choice in the appearance settings.
