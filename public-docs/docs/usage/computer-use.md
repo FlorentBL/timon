@@ -31,6 +31,10 @@ While the agent is in control, a banner with a **Stop** button is visible in Tim
 
 After a stop, every Computer use action of every agent is refused until you resume it from the banner. Only a person can stop or resume; an agent cannot. If another application already uses the shortcut, the button still works.
 
+## Review what the agent did
+
+Under the setup card, the agent's page shows an **Action journal** with its last 50 actions: time, action and result (a refused action shows the reason, such as `computer_stopped`). Press **Refresh** to reload it. The journal keeps the coordinates and keys of each action, never the text typed (only its length) and never a screenshot, and it keeps the last 5,000 actions across all agents. Only you can read it: an agent cannot read its own journal.
+
 ## Security
 
 - **The agent really controls the machine.** It acts in whatever is open on your screen, with your accounts and your rights. Watch it work, close sensitive windows first, and do not leave it unattended with anything you cannot afford to lose.

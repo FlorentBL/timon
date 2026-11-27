@@ -24,6 +24,13 @@
     "restartMaybe": "After you allow Screen Recording, macOS may ask you to quit and reopen Timon: a Restart button appears here.",
     "ready": "Ready: the agent can control this computer.",
     "stateOk": "Done:",
-    "stateMissing": "To do:"
+    "stateMissing": "To do:",
+    "journalTitle": "Action journal",
+    "journalHint": "The last actions this agent took on the computer. Typed text is never recorded.",
+    "journalRefresh": "Refresh",
+    "journalEmpty": "No action yet.",
+    "journalUnreadable": "The journal could not be read.",
+    "journalResultOk": "OK",
+    "journalResultRefused": "Refused: {code}"
   }
 }

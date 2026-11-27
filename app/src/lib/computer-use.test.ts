@@ -103,3 +103,13 @@ test('the setup calls go through the UI proxy and fail soft', async () => {
     globalThis.fetch = real;
   }
 });
+
+test('the journal path is built for a named agent only, with a bounded limit and an encoded name', async () => {
+  const { uiComputerJournalPath, uiComputerPath } = await import('./computer-use');
+  assert.equal(uiComputerJournalPath('', 50), null);
+  assert.equal(uiComputerJournalPath('a b&c', 9999), '/api/computer/journal?agent=a%20b%26c&limit=500');
+  assert.equal(uiComputerJournalPath('tim', 0), '/api/computer/journal?agent=tim&limit=50');
+  // `journal` is not a command of the generic relay: it has its own route.
+  assert.equal(uiComputerPath('GET', 'journal'), null);
+  assert.equal(uiComputerPath('POST', 'journal'), null);
+});

@@ -30,7 +30,7 @@ import { agentPermissionMode, PermissionModeField } from './permission-mode-fiel
 import { AgentApprovals } from '@/components/agent-editor/agent-approvals';
 import { BackendLimitsBadge } from '@/components/backend-limits-badge';
 import { t } from '@/lib/i18n';
-import { ComputerUseSetup } from './computer-use-setup';
+import { ComputerJournal, ComputerUseSetup } from './computer-use-setup';
 import { isValidAgentName, normalizeAgentName } from '@/lib/agent-name-rule';
 import { renameFollowUps } from '@/lib/agent-rename';
 import { agentSaveWarnings } from '@/lib/agent-save-warnings';
@@ -1448,6 +1448,7 @@ export function AgentEditor({ agent, isNew, onClose, onDirtyChange, initialTab }
                   </div>
                 </label>
                 {draft.computerUse && <ComputerUseSetup />}
+                {draft.computerUse && draft.name && <ComputerJournal agent={draft.name} />}
                 {draft.computerUse && (
                   <p
                     role="note"
