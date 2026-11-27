@@ -33,6 +33,9 @@ import type { ProviderMcpOptions, ProviderMcpPlan, ProviderMcpServer } from './p
 import type { BuildSpawnOpts } from './types.js';
 import { resolve } from 'node:path';
 import { mcpScriptPaths } from './mcp-paths.js';
+/** Key of the computer-use server in the MCP config (`mcp__timon-computer__*`). */
+export const COMPUTER_MCP_SERVER = 'timon-computer';
+const COMPUTER_MCP_PATH = process.env.TIMON_COMPUTER_MCP_PATH ?? resolve(import.meta.dirname, '..', '..', 'bin', 'computer-mcp.mjs');
 const { timon: TIMON_MCP_PATH, forms: PERMISSION_MCP_PATH } = mcpScriptPaths(resolve(import.meta.dirname, '..', '..'), { timon: process.env.TIMON_MCP_PATH, forms: process.env.TIMON_PERMISSION_MCP_PATH });
 
 /** The agent's own servers, minus the ones Timon injects itself: an entry of the agent's named like the project's index or browser would shadow the one bound to this project. */
@@ -111,6 +114,16 @@ export async function providerMcpPlan(input: {
     // The one moment we know an agent just hooked onto the project's browser for
     // this mission. A probe asks for the plan without launching anything.
     if (seal) noteBrowserSessionSpawned(cfg);
+  }
+  // Screen, mouse and keyboard: only for an agent a person turned computer use on for,
+  // and never for a mission that must stay read-only. The daemon checks the flag again per call.
+  // `computer_use` is read through a local type: `ProviderAgentConfig` is the SDK's published contract and does not carry it.
+  if ((cfg as { computer_use?: boolean }).computer_use === true && !spawn.readOnlyTools && spawn.timonMcp !== false) {
+    const node = input.node ?? nodeRuntime(config());
+    servers.push({
+      role: 'computer', type: 'stdio', name: COMPUTER_MCP_SERVER, command: node.command, args: [COMPUTER_MCP_PATH],
+      env: { ...identityEnv, ...node.env },
+    });
   }
   const ids = seal ? userServerIds(spawn) : [];
   if (seal && ids.length) {
