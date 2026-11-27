@@ -40,7 +40,8 @@ import { fileURLToPath } from 'node:url';
 import { assertEntriesResolve } from './entry-resolve.mjs';
 import { bundledNodeExecutable, fetchNode, nodeRuntimeSpec } from './fetch-node.mjs';
 import { SHELL_LOCALES_BUILD, copyShellLocales } from './shell-locales.mjs';
-import { GLIBC_FLOOR, assertGlibcFloor, containerBuildEnv, containerCommand, elfFilesUnder, nativeBuildImage, pruneLinuxBuild } from './native-linux.mjs';
+import { GLIBC_FLOOR, assertGlibcFloor, containerBuildEnv, containerCommand, elfFilesUnder, nativeBuildImage } from './native-linux.mjs';
+import { pruneLinuxBuild } from './native-build.mjs';
 
 const desktopDir = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const repoRoot = resolve(desktopDir, '..');

@@ -4,10 +4,11 @@ import { existsSync, mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
-  GLIBC_FLOOR, LINUX_NATIVE_ARTEFACTS, LINUX_PACKAGE_NATIVES, NATIVE_BUILD_IMAGES, assertGlibcFloor, compareGlibc,
+  GLIBC_FLOOR, LINUX_PACKAGE_NATIVES, NATIVE_BUILD_IMAGES, assertGlibcFloor, compareGlibc,
   containerBuildEnv, containerCommand, elfFilesUnder, elfVersionNeeds, glibcOffenders, nativeBuildImage, newestGlibc,
-  pruneLinuxBuild, requiredGlibc,
+  requiredGlibc,
 } from './native-linux.mjs';
+import { LINUX_NATIVE_ARTEFACTS, pruneLinuxBuild } from './native-build.mjs';
 
 /**
  * A minimal 64-bit little-endian ELF holding only what `objdump -T` reads the
