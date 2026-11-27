@@ -123,8 +123,10 @@ export class ComputerUseService {
     }
     if (platform === 'win32') return null;
     if (platform === 'linux') {
-      if (env.XDG_SESSION_TYPE === 'wayland') return 'wayland';
-      if (!env.DISPLAY) return env.WAYLAND_DISPLAY ? 'wayland' : 'no-desktop';
+      // Under Wayland, DISPLAY (XWayland) can be set too, and xdotool then only reaches X11 windows:
+      // a launcher that drops XDG_SESSION_TYPE must not make the session look like X11.
+      if (env.XDG_SESSION_TYPE === 'wayland' || (env.WAYLAND_DISPLAY && env.XDG_SESSION_TYPE !== 'x11')) return 'wayland';
+      if (!env.DISPLAY) return 'no-desktop';
       try { await this.deps.exec({ file: 'xdotool', args: ['version'] }); } catch { return 'no-input-tool'; }
       return null;
     }
