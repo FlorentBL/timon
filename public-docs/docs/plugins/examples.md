@@ -1378,7 +1378,7 @@ export function apply(ctx) {
 
 Source: `examples/plugin-agent-folders`. Manifest ID: `example-agent-folders`. Minimum API: **20**.
 
-API 20. One registration in the single agent.folders slot replaces an agent's extra folders on the Workspace tab of the agent's page and in the Agent folders dialog of a project's settings, both at once. This template shows one list per owner, the project first, with a read/write switch on each folder. The component reads useAgentFolders(): the rows with their owner, path, name, access and the reason a launch leaves a folder out, the owners a folder may be added to, and the gestures add, setMode, remove and browse, which opens Timon's folder browser. Timon checks every path again and announces each change; a gesture resolves { ok: false, message } when refused, and the template shows that message. Remove the plugin and Timon's own section comes back.
+API 20. One registration in the single agent.folders slot replaces an agent's extra folders on the Workspace tab of the agent's page and in the Agent folders dialog of a project's settings, both at once. This template shows one list per owner, the project first, with a read/write switch on each folder. The component reads useAgentFolders(): the rows with their owner, path, name, access and the reason a launch leaves a folder out, the owners a folder may be added to, and the gestures add, setMode, remove and browse, which opens Timon's folder browser. Timon checks every path again and announces each change; a gesture resolves `{ ok: false, message }` when refused, and the template shows that message. Remove the plugin and Timon's own section comes back.
 
 Permissions: none. Read the [related guide](slots.md).
 
@@ -1736,6 +1736,7 @@ function CompactPullRequest() {
     onClick: () => host.run(action.id),
   }, t(action.id))
 
+  const jobId = pull.links?.job_id ?? null
   const state = page ? (page.isDraft && page.state === 'open' ? t('draft') : t(page.state)) : null
   return React.createElement(Dialog, { open: true, onOpenChange: (open) => { if (!open) host.close() } },
     React.createElement(DialogContent, { className: 'flex max-h-[85vh] max-w-[560px] flex-col gap-3', 'data-example-pull': pull.number },
@@ -1757,7 +1758,7 @@ function CompactPullRequest() {
           ? React.createElement('p', { className: 'px-2 py-1 text-sm text-muted-foreground' }, t('noCheck'))
           : React.createElement('ul', null, page.checks.map((check) => React.createElement(CheckRow, { key: check.name, check, readLog: host.readCheckLog })))) : null,
       React.createElement('div', { className: 'flex flex-wrap items-center justify-end gap-2' },
-        pull.links?.job_id ? React.createElement(Button, { type: 'button', size: 'sm', variant: 'ghost', onClick: () => host.openJob(pull.links.job_id) }, t('job')) : null,
+        jobId ? React.createElement(Button, { type: 'button', size: 'sm', variant: 'ghost', onClick: () => host.openJob(jobId) }, t('job')) : null,
         actions.overflow.length > 0 ? React.createElement(DropdownMenu, null,
           React.createElement(DropdownMenuTrigger, { asChild: true },
             React.createElement(Button, { type: 'button', size: 'sm', variant: 'ghost', 'aria-label': t('more'), title: t('more') }, '…')),
