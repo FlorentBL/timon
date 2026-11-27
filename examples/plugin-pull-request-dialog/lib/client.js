@@ -87,6 +87,7 @@ function CompactPullRequest() {
     onClick: () => host.run(action.id),
   }, t(action.id))
 
+  const jobId = pull.links?.job_id ?? null
   const state = page ? (page.isDraft && page.state === 'open' ? t('draft') : t(page.state)) : null
   return React.createElement(Dialog, { open: true, onOpenChange: (open) => { if (!open) host.close() } },
     React.createElement(DialogContent, { className: 'flex max-h-[85vh] max-w-[560px] flex-col gap-3', 'data-example-pull': pull.number },
@@ -108,7 +109,7 @@ function CompactPullRequest() {
           ? React.createElement('p', { className: 'px-2 py-1 text-sm text-muted-foreground' }, t('noCheck'))
           : React.createElement('ul', null, page.checks.map((check) => React.createElement(CheckRow, { key: check.name, check, readLog: host.readCheckLog })))) : null,
       React.createElement('div', { className: 'flex flex-wrap items-center justify-end gap-2' },
-        pull.links?.job_id ? React.createElement(Button, { type: 'button', size: 'sm', variant: 'ghost', onClick: () => host.openJob(pull.links.job_id) }, t('job')) : null,
+        jobId ? React.createElement(Button, { type: 'button', size: 'sm', variant: 'ghost', onClick: () => host.openJob(jobId) }, t('job')) : null,
         actions.overflow.length > 0 ? React.createElement(DropdownMenu, null,
           React.createElement(DropdownMenuTrigger, { asChild: true },
             React.createElement(Button, { type: 'button', size: 'sm', variant: 'ghost', 'aria-label': t('more'), title: t('more') }, '…')),
