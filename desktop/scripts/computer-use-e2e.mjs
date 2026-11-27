@@ -193,13 +193,17 @@ async function main() {
     if (status !== 200 || !body.ok) throw fail(`list_windows failed: HTTP ${status} ${JSON.stringify(body)}`);
     return body.result;
   };
-  // macOS hides window titles from an app without Screen Recording (the hosted runner): there, our
-  // window is the front one of this very process, whose pid starts the macOS window id.
-  const ours = (list) => list.find((w) => w.title === 'timon e2e')
-    ?? (process.platform === 'darwin' ? list.find((w) => !w.title && w.focused && String(w.id).startsWith(`${process.pid}:`)) : undefined);
+  // The system id of our window, as list_windows writes it: macOS `<pid>:<CGWindowID>` (titles are
+  // hidden without Screen Recording on the runner), Windows the HWND, Linux the X11 id, in decimal.
+  const handle = win.getNativeWindowHandle();
+  const expectedId = process.platform === 'darwin'
+    ? `${process.pid}:${win.getMediaSourceId().split(':')[1]}`
+    : process.platform === 'win32' ? (handle.length >= 8 ? handle.readBigUInt64LE(0) : BigInt(handle.readUInt32LE(0))).toString() : String(handle.readUInt32LE(0));
+  log(`  test window id ${expectedId}`);
+  const ours = (list) => list.find((w) => w.id === expectedId) ?? list.find((w) => w.title === 'timon e2e');
   const listed = await windowsOf([]);
   const mine = ours(listed);
-  if (!mine) throw fail(`The test window is not in list_windows (${listed.length} windows): ${JSON.stringify(listed.map((w) => [w.app, w.title]))}`);
+  if (!mine) throw fail(`The test window ${expectedId} is not in list_windows (${listed.length} windows): ${JSON.stringify(listed.map((w) => [w.id, w.app, w.title]))}`);
   log(`  ✓ listed: ${JSON.stringify(mine)}`);
   // Put another window in front, then ask for ours back.
   const other = new BrowserWindow({ x: 200, y: 200, width: 400, height: 300, show: true, webPreferences: { sandbox: true, contextIsolation: true } });

@@ -131,6 +131,13 @@ export function createSystemExecutor(): SystemExecutor {
       const worker = await workerFor({ ...command, worker: command.worker });
       if (!worker) return runSystemCommand(command);
       const answer = await worker.request(command.worker.input, 20_000);
+      // Diagnostic mode only: which kind of request got which answer, to see a desynchronised worker.
+      // A query's answer may name windows; input steps are never echoed, only their count.
+      if (DEBUG) {
+        let kind = 'request';
+        try { const parsed = JSON.parse(command.worker.input) as unknown; kind = Array.isArray(parsed) ? `${parsed.length} step(s)` : `query ${String((parsed as { q?: unknown }).q)}`; } catch { /* kind stays generic */ }
+        console.error(`[computer-use] worker ${kind} -> ${answer === null ? 'nothing' : JSON.stringify(command.worker.reply ? answer.slice(0, 120) : answer.slice(0, 20))}`);
+      }
       // Not retried as a one-shot: the input may already have been performed.
       if (command.worker.reply) {
         // A read: the answer line is the result. Reads can be repeated, unlike input.
