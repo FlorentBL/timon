@@ -1,3 +1,5 @@
+import { WINDOWS_MSAA_LIB } from './computer-use-a11y-win32-msaa.js';
+
 /**
  * The UI Automation half of the Windows accessibility backend, as PowerShell functions added to the
  * persistent input worker. Fixed text: a request (window handle, index path, action, value) arrives
@@ -6,7 +8,7 @@
  * The tree is walked in the Control view with a CacheRequest, so each element costs one cross-process
  * round trip instead of one per property. Ids are index paths from the window element.
  */
-export const WINDOWS_UIA_LIB = String.raw`
+export const WINDOWS_UIA_LIB = WINDOWS_MSAA_LIB + String.raw`
 $script:uiaReady = $false
 function Initialize-TimonUia {
   if ($script:uiaReady) { return }
@@ -19,7 +21,7 @@ function Initialize-TimonUia {
   $A = [System.Windows.Automation.AutomationElement]
   $cr = New-Object System.Windows.Automation.CacheRequest
   foreach ($p in @($A::NameProperty, $A::ControlTypeProperty, $A::IsEnabledProperty, $A::BoundingRectangleProperty,
-      $A::ClassNameProperty, $A::HasKeyboardFocusProperty, $A::IsKeyboardFocusableProperty, $A::IsPasswordProperty,
+      $A::ClassNameProperty, $A::NativeWindowHandleProperty, $A::HasKeyboardFocusProperty, $A::IsKeyboardFocusableProperty, $A::IsPasswordProperty,
       $A::IsInvokePatternAvailableProperty, $A::IsValuePatternAvailableProperty, $A::IsTogglePatternAvailableProperty,
       $A::IsSelectionItemPatternAvailableProperty, $A::IsExpandCollapsePatternAvailableProperty, $A::IsScrollItemPatternAvailableProperty,
       [System.Windows.Automation.ValuePattern]::ValueProperty, [System.Windows.Automation.ValuePattern]::IsReadOnlyProperty,
@@ -83,7 +85,7 @@ function Get-TimonUiaFirstChild($el) {
   if ($class -ne 'Chrome_RenderWidgetHostHWND' -and $class -notlike 'Chrome_WidgetWin_*') {
     return $null
   }
-  for ($try = 0; $try -lt 12; $try++) {
+  for ($try = 0; $try -lt 4; $try++) {
     $child = $script:uiaWalker.GetFirstChild($el, $script:uiaCache)
     if ($null -eq $child) { $child = $script:uiaRaw.GetFirstChild($el, $script:uiaCache) }
     if ($null -ne $child) { return $child }
@@ -119,6 +121,8 @@ function Add-TimonUiaNode($el, [string]$path, [int]$depth, $state) {
     $i++
     $child = $script:uiaWalker.GetNextSibling($child, $script:uiaCache)
   }
+  # UI Automation (UIA2) shows nothing under a Chromium web area: read it through MSAA instead.
+  if ($i -eq 0 -and $state.nodes.Count -lt $state.maxNodes) { Add-TimonMsaaNodes $el $path $depth $state }
 }
 function Get-TimonUiaElement($id, [string]$path) {
   $el = Get-TimonUiaRoot $id
@@ -126,7 +130,16 @@ function Get-TimonUiaElement($id, [string]$path) {
   $steps = $path.Split('.')
   for ($k = 1; $k -lt $steps.Length; $k++) {
     $want = [int]$steps[$k]
-    $el = Get-TimonUiaFirstChild $el
+    $first = Get-TimonUiaFirstChild $el
+    if ($null -eq $first) {
+      # No UIA children: the rest of the path, if any, is an MSAA path under this web area.
+      $msaa = Get-TimonMsaaRoot $el
+      if ($null -eq $msaa -or $want -ne 0) { return $null }
+      $rest = New-Object System.Collections.ArrayList
+      for ($m = $k + 1; $m -lt $steps.Length; $m++) { [void]$rest.Add([int]$steps[$m]) }
+      return @{ msaaRoot = $msaa; steps = @($rest) }
+    }
+    $el = $first
     for ($j = 0; $j -lt $want -and $null -ne $el; $j++) { $el = $script:uiaWalker.GetNextSibling($el, $script:uiaCache) }
     if ($null -eq $el) { return $null }
   }
@@ -144,6 +157,7 @@ function Invoke-TimonUiaAct($q) {
   Initialize-TimonUia
   $el = Get-TimonUiaElement $q.id ([string]$q.path)
   if ($null -eq $el) { return @{ stale = $true } }
+  if ($el -is [hashtable]) { return Invoke-TimonMsaaAct $q $el.msaaRoot $el.steps }
   $possible = Get-TimonUiaActions $el
   $unsupported = @{ unsupported = $true; actions = @($possible) }
   try {

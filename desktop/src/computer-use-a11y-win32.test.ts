@@ -73,7 +73,24 @@ test('the worker script carries the UI Automation functions the requests need', 
   const { seen, exec } = recorder({ ok: true });
   await win32A11yBackend(exec).probe();
   const script = seen[0].worker!.env!.TIMON_CU_SCRIPT!;
-  for (const needle of ['UIAutomationClient', 'ControlViewWalker', 'CacheRequest', 'InvokePattern', 'ValuePattern', 'SelectionItemPattern', 'ExpandCollapsePattern', 'ScrollItemPattern', 'SetFocus', "'a11y_tree'", "'a11y_act'"]) {
+  for (const needle of ['UIAutomationClient', 'ControlViewWalker', 'CacheRequest', 'InvokePattern', 'ValuePattern', 'SelectionItemPattern', 'ExpandCollapsePattern', 'ScrollItemPattern', 'SetFocus', 'oleacc.dll', 'AccessibleObjectFromWindow', 'AccessibleChildren', 'accDoDefaultAction', 'set_accValue', 'Chrome_RenderWidgetHostHWND', "'a11y_tree'", "'a11y_act'"]) {
     assert.ok(script.includes(needle), needle);
   }
+});
+
+test('MSAA children come back as nodes whose paths continue the UIA path, and a stale answer stays stale', async () => {
+  const { exec } = recorder({
+    truncated: false,
+    nodes: [
+      { path: '0', role: 'window', name: 'Test', enabled: true, actions: [] },
+      { path: '0.0', role: 'group', name: 'Chrome Legacy Window', enabled: true, actions: [] },
+      { path: '0.0.0', role: 'group', name: 'page', enabled: true, actions: [] },
+      { path: '0.0.0.1', role: 'textfield', name: 'Nom', value: 'x', enabled: true, actions: ['focus', 'set_value'] },
+    ],
+  });
+  const tree = await win32A11yBackend(exec).tree({ windowId: '9', maxDepth: 8, maxNodes: 400 });
+  assert.deepEqual(tree.nodes.map((n) => n.path), ['0', '0.0', '0.0.0', '0.0.0.1']);
+  const act = (answer: unknown) => win32A11yBackend(recorder(answer).exec).act({ windowId: '9', path: '0.0.0.1', action: 'set_value', value: 'timon' });
+  await assert.rejects(act({ stale: true }), (e: A11yError) => e.kind === 'stale');
+  await assert.rejects(act({ failed: true }), (e: A11yError) => e.kind === 'failed');
 });
