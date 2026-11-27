@@ -41,9 +41,22 @@ def has(state_set, state):
 
 def interfaces(acc):
     try:
-        return set(acc.get_interfaces())
+        found = set(acc.get_interfaces())
     except Exception:
-        return set()
+        found = set()
+    # Chromium's cached interface list can miss EditableText, while the interface itself answers:
+    # ask for each one directly (the typed getters return None when it is not implemented).
+    for name, getter in (('EditableText', 'get_editable_text_iface'), ('Text', 'get_text_iface'),
+                         ('Action', 'get_action_iface'), ('Component', 'get_component_iface'),
+                         ('Value', 'get_value_iface'), ('Selection', 'get_selection_iface')):
+        if name in found:
+            continue
+        try:
+            if getattr(acc, getter)() is not None:
+                found.add(name)
+        except Exception:
+            pass
+    return found
 
 def action_names(acc):
     names = []
@@ -75,7 +88,7 @@ def possible(acc, kind, ifaces, states, parent_ifaces):
         out.append('press')
     if 'Component' in ifaces and has(states, Atspi.StateType.FOCUSABLE):
         out.append('focus')
-    if 'EditableText' in ifaces and has(states, Atspi.StateType.EDITABLE):
+    if 'EditableText' in ifaces or (has(states, Atspi.StateType.EDITABLE) and kind in ('textfield', 'textarea')):
         out.append('set_value')
     if 'Selection' in parent_ifaces or has(states, Atspi.StateType.SELECTABLE):
         out.append('select')
@@ -208,6 +221,23 @@ def walk(win, max_depth, max_nodes):
     visit(win, '0', 0, set())
     return {'truncated': truncated, 'nodes': nodes}
 
+def write_text(acc, text):
+    """EditableText.set_text_contents first; when the toolkit refuses, focus the field and replace
+    its text by deleting then inserting."""
+    try:
+        if Atspi.EditableText.set_text_contents(acc, text):
+            return True
+    except Exception:
+        pass
+    try:
+        Atspi.Component.grab_focus(acc)
+        count = Atspi.Text.get_character_count(acc)
+        if count > 0:
+            Atspi.EditableText.delete_text(acc, 0, count)
+        return bool(Atspi.EditableText.insert_text(acc, 0, text, len(text.encode('utf-8'))))
+    except Exception:
+        return False
+
 def act(win, req):
     acc = at_path(win, req['path'])
     if acc is None:
@@ -226,7 +256,7 @@ def act(win, req):
     elif action == 'focus':
         ok = Atspi.Component.grab_focus(acc)
     elif action == 'set_value':
-        ok = Atspi.EditableText.set_text_contents(acc, req.get('value') or '')
+        ok = write_text(acc, req.get('value') or '')
     elif action == 'select':
         index = acc.get_index_in_parent()
         if 'Selection' in parent_ifaces:
