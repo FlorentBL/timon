@@ -32,8 +32,9 @@ function setup(allowed: readonly string[] = ['TextEdit'], overrides: Partial<Com
     a11y: backend,
     exec: async (command) => {
       calls.push(command);
+      if (command.args.some((arg) => arg.includes('kCGWindowListOptionOnScreenOnly'))) return { stdout: JSON.stringify(windows) };
+      // The window list script also reads the frontmost application, so it is matched first.
       if (command.args.some((arg) => arg.includes('frontmostApplication'))) return { stdout: JSON.stringify(FRONT) };
-      if (command.args.some((arg) => arg.includes('process.windows()'))) return { stdout: JSON.stringify(windows) };
       return { stdout: 'true' };
     },
     ...overrides,
