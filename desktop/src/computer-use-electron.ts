@@ -10,7 +10,12 @@ import type { DisplayInfo, ImageSize } from './computer-use-geometry.js';
 
 export type ShellText = (key: string, vars?: Record<string, string | number>) => string;
 
-export const COMPUTER_STOP_SHORTCUT = 'CommandOrControl+Shift+Escape';
+/**
+ * macOS swallows ⌘⇧Esc before any app sees it (checked on macOS 26), and Windows keeps Ctrl+Shift+Esc
+ * for the Task Manager: both stayed silent although registration succeeded. Neither of these is taken.
+ */
+export const COMPUTER_STOP_SHORTCUT = process.platform === 'darwin' ? 'Control+Alt+Command+Escape' : 'Control+Alt+Shift+Escape';
+const COMPUTER_STOP_SHORTCUT_LABEL = process.platform === 'darwin' ? '⌃⌥⌘Esc' : 'Ctrl+Alt+Shift+Esc';
 
 function primaryDisplay(): DisplayInfo {
   const display = screen.getPrimaryDisplay();
@@ -63,7 +68,7 @@ class Indicator {
 
   private page(): string {
     const escape = (value: string): string => value.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]!);
-    const hint = this.t('computerUse.shortcutHint', { shortcut: process.platform === 'darwin' ? '⌘⇧Esc' : 'Ctrl+Shift+Esc' });
+    const hint = this.t('computerUse.shortcutHint', { shortcut: COMPUTER_STOP_SHORTCUT_LABEL });
     return `<!doctype html><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'">
 <body style="margin:0;font:13px system-ui,sans-serif;color:#fff"><div style="display:flex;align-items:center;gap:12px;height:44px;box-sizing:border-box;padding:0 12px 0 16px;background:#b3261e;border-radius:22px">
 <span style="flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis" title="${escape(hint)}">${escape(this.t('computerUse.indicator'))}</span>
