@@ -111,11 +111,11 @@ export function createSystemExecutor(): SystemExecutor {
   const broken = new Set<string>();
 
   async function workerFor(command: SystemCommand & { worker: NonNullable<SystemCommand['worker']> }): Promise<LineWorker | null> {
-    const key = [command.file, ...command.worker.args].join('\0');
+    const key = [command.file, ...command.worker.args, JSON.stringify(command.worker.env ?? {})].join('\0');
     if (broken.has(key)) return null;
     const existing = workers.get(key);
     if (existing?.alive) return existing;
-    const worker = new LineWorker(command.file, command.worker.args, undefined, () => { if (workers.get(key) === worker) workers.delete(key); });
+    const worker = new LineWorker(command.file, command.worker.args, command.worker.env, () => { if (workers.get(key) === worker) workers.delete(key); });
     workers.set(key, worker);
     if (await worker.ready()) return worker;
     worker.kill();

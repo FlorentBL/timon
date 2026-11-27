@@ -19,7 +19,7 @@ export interface SystemCommand {
    * (the expensive part happens there), `input` is this request. An executor that has no such
    * process runs `file` and `args` as a plain one-shot command, which does the same thing.
    */
-  worker?: { args: string[]; input: string; /** The worker's answer line is the result (stdout), not just "ok". */ reply?: boolean };
+  worker?: { args: string[]; input: string; /** Environment of the long-lived process (the script of a Windows worker travels there). */ env?: Record<string, string>; /** The worker's answer line is the result (stdout), not just "ok". */ reply?: boolean };
 }
 export type InputPlatform = 'darwin' | 'win32' | 'linux';
 
@@ -463,24 +463,31 @@ export function windowsQueryCommand(query: WindowsQuery): SystemCommand {
   const json = JSON.stringify(query);
   return {
     file: 'powershell.exe',
-    args: powershellArgs(WINDOWS_QUERY_SCRIPT),
-    env: { TIMON_CU_QUERY: json },
-    worker: { args: powershellArgs(WINDOWS_WORKER_SCRIPT), input: json, reply: true },
+    args: powershellArgs(),
+    env: { TIMON_CU_SCRIPT: WINDOWS_QUERY_SCRIPT, TIMON_CU_QUERY: json },
+    worker: { args: powershellArgs(), env: { TIMON_CU_SCRIPT: WINDOWS_WORKER_SCRIPT }, input: json, reply: true },
   };
 }
 
-/** -EncodedCommand is UTF-16LE base64: no quoting layer between us and PowerShell. */
-function powershellArgs(script: string): string[] {
-  return ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-EncodedCommand', Buffer.from(script, 'utf16le').toString('base64')];
+/**
+ * The scripts are too long for a command line: Windows caps it at 32 767 characters and the
+ * UTF-16 base64 of the UI Automation worker is about 43 000, so the process never started and
+ * nothing said why (CI run 45996549913). The fixed script travels in TIMON_CU_SCRIPT (an
+ * environment variable holds up to 32 767 characters) and a short -EncodedCommand evaluates it.
+ * -EncodedCommand is UTF-16LE base64: no quoting layer between us and PowerShell.
+ */
+const POWERSHELL_BOOTSTRAP = 'Invoke-Expression $env:TIMON_CU_SCRIPT';
+function powershellArgs(): string[] {
+  return ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-EncodedCommand', Buffer.from(POWERSHELL_BOOTSTRAP, 'utf16le').toString('base64')];
 }
 
 function windowsCommand(steps: WinStep[]): SystemCommand {
   const json = JSON.stringify(steps);
   return {
     file: 'powershell.exe',
-    args: powershellArgs(WINDOWS_INPUT_SCRIPT),
-    env: { TIMON_CU_STEPS: json },
-    worker: { args: powershellArgs(WINDOWS_WORKER_SCRIPT), input: json },
+    args: powershellArgs(),
+    env: { TIMON_CU_SCRIPT: WINDOWS_INPUT_SCRIPT, TIMON_CU_STEPS: json },
+    worker: { args: powershellArgs(), env: { TIMON_CU_SCRIPT: WINDOWS_WORKER_SCRIPT }, input: json },
   };
 }
 

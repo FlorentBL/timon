@@ -186,7 +186,11 @@ export async function readForegroundApp(platform: InputPlatform, exec: Exec): Pr
     let active = (await exec(xdotool('getactivewindow')).catch(() => ({ stdout: '' }))).stdout.trim();
     if (!/^\d+$/.test(active)) active = (await exec(xdotool('getwindowfocus'))).stdout.trim();
     return /^\d+$/.test(active) ? await linuxIdentity(exec, active) : null;
-  } catch { return null; }
+  } catch (error) {
+    // Diagnostic mode only: a null here becomes a refusal ("could not be read"), which said nothing about why.
+    if (process.env.TIMON_COMPUTER_USE_DEBUG === '1') console.error(`[computer-use] reading the foreground application failed: ${error instanceof Error ? error.message.slice(0, 300) : String(error).slice(0, 300)}`);
+    return null;
+  }
 }
 
 async function entries(platform: InputPlatform, exec: Exec): Promise<WindowEntry[]> {

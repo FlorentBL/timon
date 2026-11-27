@@ -60,10 +60,13 @@ test('Windows: fixed encoded script, steps in the environment, absolute normalis
   const command = buildInputCommand('win32', { kind: 'type', text: NASTY }, retina);
   assert.equal(command.file, 'powershell.exe');
   assert.deepEqual(command.args.slice(0, 5), ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-EncodedCommand']);
-  assert.equal(Buffer.from(command.args[5]!, 'base64').toString('utf16le'), WINDOWS_INPUT_SCRIPT);
+  assert.equal(command.env!.TIMON_CU_SCRIPT, WINDOWS_INPUT_SCRIPT);
+  // A command line is capped at 32 767 characters on Windows: the long script must not be on it.
+  for (const args of [command.args, command.worker!.args]) assert.ok(args.join(' ').length < 2000, 'the script is not on the command line');
   assert.equal(command.args.join(' ').includes('rm -rf'), false);
   // The persistent form: same fixed script family, the request is one JSON line, never code.
-  assert.equal(Buffer.from(command.worker!.args[5]!, 'base64').toString('utf16le'), WINDOWS_WORKER_SCRIPT);
+  assert.equal(command.worker!.env!.TIMON_CU_SCRIPT, WINDOWS_WORKER_SCRIPT);
+  assert.ok(WINDOWS_WORKER_SCRIPT.length < 32_000, 'an environment variable holds 32 767 characters at most');
   assert.equal(command.worker!.input, command.env!.TIMON_CU_STEPS);
   assert.equal(command.worker!.input.includes('\n'), false);
   assert.equal(/[^\x20-\x7e]/.test(command.worker!.input), false, 'ASCII only: the console code page cannot alter it');
