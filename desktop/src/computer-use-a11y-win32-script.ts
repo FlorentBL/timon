@@ -9,10 +9,9 @@ import { WINDOWS_MSAA_LIB } from './computer-use-a11y-win32-msaa.js';
  * round trip instead of one per property. Ids are index paths from the window element.
  *
  * A Chromium web area (the child window of class Chrome_RenderWidgetHostHWND) is read through MSAA
- * whenever MSAA answers, even when UI Automation shows children. Up to Chromium 13x, UIA showed
- * nothing there; from the Chromium of Electron 45 it serves its own UIA tree, but a text field comes
- * back without ValuePattern, focusability or real bounds (CI run 46144862676), while MSAA still
- * offers set_value and press. MSAA also keeps the ids and actions the same across Chromium versions.
+ * whenever MSAA answers, even when UI Automation shows children: up to Chromium 13x, UIA showed
+ * nothing there. The Chromium of Electron 45 shows no such element and serves the whole window
+ * over UIA, with its patterns (CI run 46147770073), so it is read here like any other application.
  */
 export const WINDOWS_UIA_LIB = WINDOWS_MSAA_LIB + String.raw`
 $script:uiaReady = $false
