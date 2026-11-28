@@ -220,7 +220,12 @@ export function doctorMainSeat(): DoctorReport['mainSeat'] {
   }
 }
 
-export function diagnose(): DoctorReport {
+/**
+ * `refreshBrowser`: the caller asks for the state now (a route, the support report), so a stale
+ * built-in browser report starts the shared probe for the next one. Off by default: the probe runs
+ * `systemctl` in the background, which only someone asking for the state should pay for.
+ */
+export function diagnose(options: { refreshBrowser?: boolean } = {}): DoctorReport {
   const cfg = config();
   const pins = cfg.host.binaries;
   const authEnv = mainAgentAuthEnv();
@@ -270,8 +275,8 @@ export function diagnose(): DoctorReport {
   const { report: missionIsolation, blocker: isolationBlocker } = missionIsolationNow(cfg);
 
   // What the shared probe last learned: `diagnose()` answers an HTTP route and must not wait on systemd.
-  // Nothing learned yet: no section this time, the probe is started for the next report.
-  const builtInBrowser: DoctorReport['builtInBrowser'] = builtInBrowserLatest();
+  // Nothing learned yet: no section this time; with `refreshBrowser` the probe starts for the next report.
+  const builtInBrowser: DoctorReport['builtInBrowser'] = builtInBrowserLatest(options.refreshBrowser === true);
 
   const free = freeBytes(TIMON_HOME);
   const storage = { path: TIMON_HOME, freeBytes: free, low: free !== null && free < LOW_DISK_BYTES };

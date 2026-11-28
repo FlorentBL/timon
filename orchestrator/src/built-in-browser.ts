@@ -80,6 +80,8 @@ export type SharedProbe<T> = {
   get(): Promise<T>;
   /** The last answer, however old, without waiting; a stale one starts a read in the background. */
   latest(): T | undefined;
+  /** The last answer, however old, and nothing else: no read starts. */
+  peek(): T | undefined;
   reset(): void;
 };
 
@@ -131,6 +133,7 @@ export function sharedProbe<T>(input: {
       if ((!cached || now() >= cached.until) && !inFlight) void start();
       return cached?.value;
     },
+    peek: () => cached?.value,
     reset: () => {
       generation += 1;
       cached = null;
@@ -162,9 +165,14 @@ export function builtInBrowserProbe(
 
 const probe = builtInBrowserProbe();
 
-/** The report kept by the daemon's probe, without waiting: what `diagnose()` reads. */
-export function builtInBrowserLatest(): BuiltInBrowserReport | undefined {
-  return probe.latest()?.report;
+/**
+ * The report kept by the daemon's probe, without waiting: what `diagnose()` reads. `refresh` is for
+ * someone who asks for the state now (`/api/doctor`): a stale report then starts a read for the next
+ * one. Without it nothing runs: a doctor report built for another reason (the supervisor's name, a
+ * test) must not leave `systemctl` questions running behind it.
+ */
+export function builtInBrowserLatest(refresh = false): BuiltInBrowserReport | undefined {
+  return (refresh ? probe.latest() : probe.peek())?.report;
 }
 
 /** The daemon's probe, waited for: the start-up log, and `timon doctor` before its report. */

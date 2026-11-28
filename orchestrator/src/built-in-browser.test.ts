@@ -6,8 +6,10 @@ import './test-home.js';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  browserUnavailableRefusal, builtInBrowserProbe, builtInBrowserRefusal, sharedProbe, type BuiltInBrowserRead,
+  browserUnavailableRefusal, builtInBrowserLatest, builtInBrowserProbe, builtInBrowserRefusal, resetBrowserUnavailableRefusal,
+  sharedProbe, type BuiltInBrowserRead,
 } from './built-in-browser.js';
+import { getHost } from './host/index.js';
 import type { BuiltInBrowserReport } from './plugins/contract/system.js';
 
 const serverDown: BuiltInBrowserReport = {
@@ -117,4 +119,36 @@ test('latest() never waits: nothing before the first read, then the last answer 
   assert.equal(await probe.get(), 2);
   probe.reset();
   assert.equal(probe.latest(), undefined);
+});
+
+test('peek() reads what was kept and never starts a read', async () => {
+  let reads = 0;
+  const probe = sharedProbe<number>({
+    read: async () => { reads += 1; return reads; },
+    fallback: () => -1, failed: () => false,
+    ttlMs: 5_000, failureTtlMs: 30_000, deadlineMs: 1_000,
+  });
+  assert.equal(probe.peek(), undefined);
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  assert.equal(reads, 0);
+  assert.equal(await probe.get(), 1);
+  assert.equal(probe.peek(), 1);
+});
+
+// The CI has no screen (DISPLAY and WAYLAND_DISPLAY empty): there the probe goes as far as
+// `systemctl`, which a machine with a screen never reaches. A report built for another reason
+// (`diagnose()` for the supervisor's name, a test) left those processes running into the next test.
+test('the kept report alone starts no probe, even on a machine with no screen', async (t) => {
+  resetBrowserUnavailableRefusal();
+  t.after(resetBrowserUnavailableRefusal);
+  const env = { DISPLAY: process.env.DISPLAY, WAYLAND_DISPLAY: process.env.WAYLAND_DISPLAY };
+  delete process.env.DISPLAY;
+  delete process.env.WAYLAND_DISPLAY;
+  t.after(() => {
+    for (const [key, value] of Object.entries(env)) if (value !== undefined) process.env[key] = value;
+  });
+  const exec = t.mock.method(getHost(), 'execAsync', () => { throw new Error('unexpected probe'); });
+  assert.equal(builtInBrowserLatest(), undefined);
+  await new Promise((resolve) => setTimeout(resolve, 200));
+  assert.equal(exec.mock.callCount(), 0);
 });
