@@ -14,6 +14,7 @@
  * with "skipped: permissions".
  */
 import { app, BrowserWindow } from 'electron';
+import { execFile } from 'node:child_process';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { basename, join, dirname } from 'node:path';
@@ -282,13 +283,33 @@ async function main() {
       await dumpWhole();
       throw fail(`No element matching "${query}" in the accessibility tree: ${JSON.stringify(tree?.nodes.map((n) => [n.role, n.name]))}`);
     };
+    // Windows only, on a failure: what UI Automation and MSAA expose, live and cached, and whether
+    // each API can write the field and press the button (computer-use-a11y-win32-diag.ps1).
+    const windowsDiagnostic = async (hwnd) => {
+      if (process.platform !== 'win32') return;
+      const script = join(root, 'scripts', 'computer-use-a11y-win32-diag.ps1');
+      const run = (stage) => new Promise((resolve) => {
+        execFile('powershell.exe', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', script, '-Hwnd', hwnd, '-Stage', stage],
+          { timeout: 90_000, maxBuffer: 8 * 1024 * 1024, windowsHide: true },
+          (error, stdout, stderr) => resolve(`${stdout}${stderr ? `\n[stderr] ${stderr}` : ''}${error ? `\n[exit] ${error.message.split('\n')[0]}` : ''}`));
+      });
+      const page = async () => `field=${JSON.stringify(await nameField())} out=${JSON.stringify(await js('document.getElementById("out").textContent'))}`;
+      const reset = () => js('document.querySelector("input[aria-label=Nom]").value = ""; document.getElementById("out").textContent = ""');
+      log(await run('tree'));
+      for (const stage of ['uia-act', 'msaa-act']) {
+        log(await run(stage));
+        await sleep(600);
+        log(`  diag ${stage} -> page ${await page()}`);
+        await reset();
+      }
+    };
     const { tree: nameTree, found: field } = await findNode('Nom', (n) => n.name === 'Nom' && ['textfield', 'textarea', 'combobox'].includes(n.role));
     const windowId = nameTree.window.id;
     if ((mine && windowId !== mine.id) || !nameTree.nodes.every((n) => typeof n.id === 'string' && n.id.startsWith(`${windowId}#`))) throw fail('Element ids must be prefixed by the window id.');
-    if (!field.actions.includes('set_value')) await dumpWhole();
+    if (!field.actions.includes('set_value')) { await dumpWhole(); await windowsDiagnostic(windowId); }
     if (!field.actions.includes('set_value')) throw fail(`The field does not offer set_value: ${JSON.stringify(field)}`);
     const { found: button } = await findNode('Valider', (n) => n.role === 'button' && n.name === 'Valider');
-    if (!button.actions.includes('press')) await dumpWhole();
+    if (!button.actions.includes('press')) { await dumpWhole(); await windowsDiagnostic(windowId); }
     if (!button.actions.includes('press')) throw fail(`The button does not offer press: ${JSON.stringify(button)}`);
     log(`  ✓ found field ${field.id} and button ${button.id}`);
     const started = performance.now();
@@ -311,12 +332,19 @@ async function main() {
     await agent('a11y_action', { id: field.id, action: 'set_value', value: 'timon' }, 'a11y_action set_value');
     const until = Date.now() + 5000;
     while ((await nameField()) !== 'timon' && Date.now() < until) await sleep(100);
-    if ((await nameField()) !== 'timon') throw fail(`set_value: the field holds ${JSON.stringify(await nameField())}, expected "timon".`);
+    const written = await nameField();
+    if (written !== 'timon') {
+      await windowsDiagnostic(windowId);
+      throw fail(`set_value: the field holds ${JSON.stringify(written)}, expected "timon".`);
+    }
     log('  ✓ set_value wrote "timon" into the field');
     await agent('a11y_action', { id: button.id, action: 'press' }, 'a11y_action press');
     const pressed = Date.now() + 5000;
     while ((await js('document.getElementById("out").textContent')) !== 'clicked' && Date.now() < pressed) await sleep(100);
-    if ((await js('document.getElementById("out").textContent')) !== 'clicked') throw fail('press: the button did not write "clicked".');
+    if ((await js('document.getElementById("out").textContent')) !== 'clicked') {
+      await windowsDiagnostic(windowId);
+      throw fail('press: the button did not write "clicked".');
+    }
     log('  ✓ press clicked the button');
     const after = await pointer();
     if (before.x !== after.x || before.y !== after.y) throw fail(`The accessibility actions moved the mouse: ${JSON.stringify(before)} -> ${JSON.stringify(after)}`);
