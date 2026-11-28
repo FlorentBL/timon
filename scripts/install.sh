@@ -290,6 +290,29 @@ as_root() {
   fi
 }
 
+# True when the deb needs root and this account cannot get it: not root, and
+# no sudo at all. A sudo that asks for a password is left to ask: only its
+# absence is known for sure before the download.
+lacks_admin() {
+  [ "$FORMAT" = deb ] && [ "$(id -u)" != 0 ] && ! has sudo
+}
+
+# Root installs the package, then the owner installs the service from its own
+# account: the same split as a run as root (after_install).
+refuse_without_admin() {
+  warn 'installing the deb package needs administrator rights, and this account has no sudo.'
+  {
+    say 'Become root, then run the same command again:'
+    say '  su -'
+    say "  $RERUN"
+    if [ "$SERVER" = yes ] && [ "$NO_SERVICE" = 0 ]; then
+      say 'Then, back on this account (not root), install the background service:'
+      say '  timon service install'
+    fi
+  } >&2
+  exit 1
+}
+
 print_plan() {
   size_mb=$(awk -v s="$A_SIZE" 'BEGIN { printf "%.0f", s / 1048576 }')
   say "Timon $VERSION ($CHANNEL channel) for $OS-$ARCH"
@@ -298,7 +321,13 @@ print_plan() {
   say "  sha256:    $A_SHA"
   say "  signature: $SIGNATURE"
   case "$FORMAT" in
-    deb) say "  install:   apt-get install (sudo)" ;;
+    deb)
+      if lacks_admin; then
+        say "  install:   apt-get install (needs root, and this account has no sudo)"
+      else
+        say "  install:   apt-get install (sudo)"
+      fi
+      ;;
     appimage) say "  install:   $APPIMAGE_PATH (no sudo; no timon command)" ;;
     pkg) say "  install:   installer -pkg -target / (sudo)" ;;
   esac
@@ -480,6 +509,16 @@ main() {
   SERVER=auto
   NO_SERVICE=0
   NO_LAUNCH=0
+  # The command to run again, as root, when this account cannot install.
+  RERUN_ARGS=''
+  for arg in "$@"; do
+    case "$arg" in
+      --dry-run | --download-only) ;;
+      *) RERUN_ARGS="${RERUN_ARGS:+$RERUN_ARGS }$arg" ;;
+    esac
+  done
+  RERUN='curl -fsSL https://timon-ai.com/install.sh | sh'
+  [ -z "$RERUN_ARGS" ] || RERUN="$RERUN -s -- $RERUN_ARGS"
   while [ $# -gt 0 ]; do
     case "$1" in
       --dry-run) DRY_RUN=1 ;;
@@ -521,6 +560,8 @@ main() {
 
   apply_test_hooks
   detect_platform
+  # Before any download: the package alone weighs hundreds of megabytes.
+  if [ "$DRY_RUN" = 0 ] && [ "$DOWNLOAD_ONLY" = 0 ] && lacks_admin; then refuse_without_admin; fi
   APPIMAGE_PATH="${TIMON_APPIMAGE_PATH:-$HOME/Applications/Timon.AppImage}"
 
   WORK=$(mktemp -d 2>/dev/null || mktemp -d -t timon-install)
@@ -577,6 +618,10 @@ main() {
 
   pick_fonts
   print_plan
+  if [ "$DRY_RUN" = 1 ] && lacks_admin; then
+    say ''
+    refuse_without_admin
+  fi
   if [ "$DRY_RUN" = 1 ]; then
     say ''
     say 'Dry run: nothing was downloaded or installed.'

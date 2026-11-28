@@ -7,7 +7,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash, createPublicKey, generateKeyPairSync, sign } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -378,21 +378,44 @@ function tool(bin, name, body) {
   chmodSync(join(bin, name), 0o755);
 }
 
+/** The tools install.sh runs, linked one by one: a PATH with no sudo on a machine that has one. */
+const SYSTEM_TOOLS = ['sh', 'cat', 'sed', 'tr', 'awk', 'grep', 'openssl', 'curl', 'mktemp', 'rm', 'mkdir', 'chmod', 'cp', 'mv', 'date',
+  'uname', 'id', 'wc', 'find', 'head', 'dirname', 'sha256sum', 'base64', 'env', 'nohup'];
+
+function systemWithoutSudo(ctx) {
+  const dir = join(ctx.dir, 'system-bin');
+  mkdirSync(dir, { recursive: true });
+  for (const name of SYSTEM_TOOLS) {
+    const found = spawnSync('sh', ['-c', `command -v ${name}`], { encoding: 'utf8' }).stdout?.trim();
+    if (found && found.startsWith('/') && !existsSync(join(dir, name))) symlinkSync(found, join(dir, name));
+  }
+  return dir;
+}
+
 /**
- * A server where nothing real is installed: sudo runs its command, apt-get and timon only write
- * what they were asked into `calls.log`, apt-cache knows the fonts of `known`, and the font
- * folders are `fonts` (empty: no font).
+ * A server where nothing real is installed: sudo runs its command (none with `sudo: false`),
+ * apt-get and timon only write what they were asked into `calls.log`, apt-cache knows the fonts
+ * of `known`, and the font folders are `fonts` (empty: no font). `root` makes `id -u` say 0.
  */
-function fakeServer(ctx, { known = ['fonts-liberation', 'fonts-noto-core', 'fonts-noto-color-emoji'], withFont = false, doctor = 0, oldCli = false } = {}) {
+function fakeServer(ctx, {
+  known = ['fonts-liberation', 'fonts-noto-core', 'fonts-noto-color-emoji'], withFont = false, doctor = 0, oldCli = false,
+  sudo = true, root = false,
+} = {}) {
   const bin = join(ctx.dir, 'fake-bin');
+  rmSync(bin, { recursive: true, force: true });
   mkdirSync(bin, { recursive: true });
   const log = join(ctx.dir, 'calls.log');
   writeFileSync(log, '');
   const fonts = join(ctx.dir, 'fonts');
   mkdirSync(join(fonts, 'truetype'), { recursive: true });
   if (withFont) writeFileSync(join(fonts, 'truetype', 'DejaVuSans.ttf'), '');
-  tool(bin, 'sudo', 'exec "$@"');
+  if (sudo) tool(bin, 'sudo', 'exec "$@"');
+  if (root) {
+    const id = spawnSync('sh', ['-c', 'command -v id'], { encoding: 'utf8' }).stdout.trim();
+    tool(bin, 'id', `if [ "$1" = -u ]; then echo 0; else exec '${id}' "$@"; fi`);
+  }
   tool(bin, 'apt-get', `echo "apt-get $*" >>'${log}'`);
+  tool(bin, 'dpkg', 'exit 0');
   tool(bin, 'apt-cache', `case " ${known.join(' ')} " in *" $2 "*) exit 0 ;; esac\nexit 100`);
   tool(bin, 'timon', [
     `echo "timon $*" >>'${log}'`,
@@ -401,9 +424,10 @@ function fakeServer(ctx, { known = ['fonts-liberation', 'fonts-noto-core', 'font
     `  doctor) echo 'built-in browser  UNAVAILABLE'; echo '  the browser host service is stopped  →  systemctl --user restart timon-browser-x'; exit ${doctor} ;;`,
     'esac',
   ].join('\n'));
+  const path = sudo ? process.env.PATH : systemWithoutSudo(ctx);
   return {
     log,
-    env: { PATH: `${bin}:${process.env.PATH}`, TIMON_INSTALL_TIMON_BIN: join(bin, 'timon'), TIMON_INSTALL_FONT_DIRS: fonts },
+    env: { PATH: `${bin}:${path}`, TIMON_INSTALL_TIMON_BIN: join(bin, 'timon'), TIMON_INSTALL_FONT_DIRS: fonts },
   };
 }
 
@@ -495,6 +519,67 @@ test('after the service install, the built-in browser is checked through timon a
     const none = fakeServer(ctx);
     run(ctx, key, ['--format', 'deb', '--server', '--no-service'], none.env);
     assert.doesNotMatch(readFileSync(none.log, 'utf8'), /service install|doctor/);
+  } finally {
+    rmSync(ctx.dir, { recursive: true, force: true });
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('an account with no sudo is refused before any download, with the way through root', { skip: skip || asRoot }, () => {
+  const key = pair();
+  const { dir, ctx } = debManifest(key);
+  try {
+    const fake = fakeServer(ctx, { sudo: false });
+    const r = run(ctx, key, ['--format', 'deb', '--server'], fake.env);
+    assert.equal(r.code, 1, r.out);
+    assert.match(r.err, /installing the deb package needs administrator rights, and this account has no sudo\./);
+    assert.match(r.err, /^ +su -$/m);
+    assert.match(r.err, /curl -fsSL https:\/\/timon-ai\.com\/install\.sh \| sh -s -- --format deb --server$/m);
+    assert.match(r.err, /back on this account \(not root\), install the background service:\n +timon service install$/m);
+    assert.doesNotMatch(r.err, /apt-get|DEBIAN_FRONTEND/, 'no internal command');
+    assert.equal(r.out, '', 'nothing read, nothing downloaded');
+    assert.equal(readFileSync(fake.log, 'utf8'), '');
+
+    const plain = run(ctx, key, [], fake.env);
+    assert.equal(plain.code, 1);
+    assert.match(plain.err, /^ +curl -fsSL https:\/\/timon-ai\.com\/install\.sh \| sh$/m);
+
+    const plan = run(ctx, key, ['--dry-run', '--format', 'deb', '--server'], fake.env);
+    assert.equal(plan.code, 1, plan.out);
+    assert.match(plan.out, /install: +apt-get install \(needs root, and this account has no sudo\)/);
+    assert.doesNotMatch(plan.out, /Dry run: nothing was downloaded/);
+    assert.match(plan.err, /^ +su -$/m);
+    assert.match(plan.err, /\| sh -s -- --format deb --server$/m, 'the command to run again drops --dry-run');
+
+    const withSudo = run(ctx, key, ['--dry-run', '--format', 'deb', '--server'], fakeServer(ctx).env);
+    assert.equal(withSudo.code, 0, withSudo.err);
+    assert.match(withSudo.out, /install: +apt-get install \(sudo\)/);
+
+    const download = run(ctx, key, ['--download-only', '--format', 'deb'], fakeServer(ctx, { sudo: false }).env);
+    assert.equal(download.code, 0, download.err);
+    assert.match(download.out, /Package verified\./);
+  } finally {
+    rmSync(ctx.dir, { recursive: true, force: true });
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('root with no sudo installs the package and leaves the service to the owner\'s account', { skip }, () => {
+  const key = pair();
+  const { dir, ctx } = debManifest(key);
+  try {
+    const fake = fakeServer(ctx, { sudo: false, root: true });
+    const plan = run(ctx, key, ['--dry-run', '--format', 'deb', '--server'], fake.env);
+    assert.equal(plan.code, 0, plan.err);
+    assert.match(plan.out, /install: +apt-get install \(sudo\)/);
+
+    const r = run(ctx, key, ['--format', 'deb', '--server'], fake.env);
+    assert.equal(r.code, 0, r.err);
+    const calls = readFileSync(fake.log, 'utf8');
+    assert.match(calls, /^apt-get install -y \S+timon-desktop_0\.2\.0_amd64\.deb/m);
+    assert.doesNotMatch(calls, /service install/, 'no service for root');
+    assert.match(r.out, /never as root/);
+    assert.match(r.out, /^ +timon service install$/m);
   } finally {
     rmSync(ctx.dir, { recursive: true, force: true });
     rmSync(dir, { recursive: true, force: true });
