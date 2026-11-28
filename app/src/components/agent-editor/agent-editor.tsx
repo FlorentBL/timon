@@ -30,6 +30,10 @@ import { agentPermissionMode, PermissionModeField } from './permission-mode-fiel
 import { AgentApprovals } from '@/components/agent-editor/agent-approvals';
 import { BackendLimitsBadge } from '@/components/backend-limits-badge';
 import { t } from '@/lib/i18n';
+import { ComputerJournal, ComputerUseSetup } from './computer-use-setup';
+import { ComputerUseApps } from './computer-use-apps';
+import { ComputerUseMode } from './computer-use-mode';
+import { normalizeAllowedApps, type AllowedApp } from '@/lib/computer-use';
 import { isValidAgentName, normalizeAgentName } from '@/lib/agent-name-rule';
 import { renameFollowUps } from '@/lib/agent-rename';
 import { agentSaveWarnings } from '@/lib/agent-save-warnings';
@@ -99,6 +103,11 @@ type AgentSummary = {
   directives?: string | null;
   /** Injects the cross-project digest (hot projects + goals) at spawn. */
   global_context?: boolean;
+  /** Lets the agent drive the desktop's mouse and keyboard (absent = off). */
+  computer_use?: boolean;
+  /** The applications the agent may click and type in (absent or empty = none). */
+  computer_use_apps?: (string | { app: string; mode: 'foreground' | 'background' })[];
+  computer_use_mode?: 'foreground' | 'background';
   /** Explicit manager (the canvas sets it) and team of bots (an id). */
   reports_to?: string | null;
   team?: string | null;
@@ -196,6 +205,9 @@ type Draft = {
   role: string;
   /** Injects the cross-project digest at spawn (business agents / _main). */
   globalContext: boolean;
+  computerUse: boolean;
+  computerUseApps: AllowedApp[];
+  computerUseMode: 'foreground' | 'background';
 };
 
 /** Auto-derive project slug from a cwd. Mirrors orchestrator helper. */
@@ -310,6 +322,9 @@ function toDraft(a: AgentSummary, cat: BackendCatalog): Draft {
     look: lookOfAgent({ look: a.look, role: a.role }),
     role: a.role || '',
     globalContext: a.global_context ?? false,
+    computerUse: a.computer_use ?? false,
+    computerUseApps: normalizeAllowedApps(a.computer_use_apps, a.computer_use_mode === 'background' ? 'background' : 'foreground'),
+    computerUseMode: a.computer_use_mode === 'background' ? 'background' : 'foreground',
   };
 }
 
@@ -879,6 +894,11 @@ export function AgentEditor({ agent, isNew, onClose, onDirtyChange, initialTab }
           role: draft.role || 'coder',
           reasoningEffort: draft.reasoningEffort || undefined,
           global_context: draft.globalContext || undefined,
+          // Always sent: an absent key keeps the stored value, so switching it off must say `false`.
+          computer_use: draft.computerUse,
+          // Always sent too: an empty list must say so, or the stored one is kept.
+          computer_use_apps: draft.computerUseApps,
+          computer_use_mode: draft.computerUseMode,
         },
       };
       // Rename: if the name changed, RENAME the agent (moves the folder +
@@ -1422,6 +1442,38 @@ export function AgentEditor({ agent, isNew, onClose, onDirtyChange, initialTab }
                   onChange={(v) => updateDraft('denied', v)}
                   tone="deny"
                 />
+              </FormRow>
+              <FormRow label={t('editPage.computerUse')} hint={t('editPage.computerUseNeedsDesktop')}>
+                <label className="flex items-start gap-3 rounded-lg bg-muted/30 px-3.5 py-3">
+                  <Switch
+                    checked={draft.computerUse}
+                    onCheckedChange={(v) => updateDraft('computerUse', v)}
+                    aria-label={t('editPage.computerUseToggle')}
+                    data-computer-use-switch
+                  />
+                  <div className="leading-tight">
+                    <div className="text-[13px] font-medium">{t('editPage.computerUseToggle')}</div>
+                    <div className="mt-0.5 text-[11.5px] text-muted-foreground">{t('editPage.computerUseHint')}</div>
+                    <ul className="mt-1.5 list-disc pl-4 text-[11.5px] text-muted-foreground">
+                      <li>{t('editPage.computerUseMac')}</li>
+                      <li>{t('editPage.computerUseLinux')}</li>
+                    </ul>
+                  </div>
+                </label>
+                {draft.computerUse && <ComputerUseSetup />}
+                {draft.computerUse && draft.name && <ComputerJournal agent={draft.name} />}
+                {draft.computerUse && <ComputerUseMode value={draft.computerUseMode} onChange={(next) => updateDraft('computerUseMode', next)} />}
+                {draft.computerUse && <ComputerUseApps values={draft.computerUseApps} defaultMode={draft.computerUseMode} onChange={(next) => updateDraft('computerUseApps', next)} />}
+                {draft.computerUse && (
+                  <p
+                    role="note"
+                    data-computer-use-warning
+                    className="mt-2 flex items-start gap-1.5 rounded-md bg-amber-500/10 px-2.5 py-2 text-[12px] text-amber-900 dark:text-amber-200"
+                  >
+                    <TriangleAlert className="mt-0.5 size-3.5 shrink-0" aria-hidden />
+                    <span>{t('editPage.computerUseWarning')}</span>
+                  </p>
+                )}
               </FormRow>
               {selected?.name && (
                 <FormRow label={t('agentApprovals.title')} hint={t('agentApprovals.hint')}>

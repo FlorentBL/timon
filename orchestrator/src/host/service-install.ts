@@ -989,6 +989,7 @@ export function installationProcessNeedles(installDir: string): string[] {
     winPath.join(installDir, 'dist', 'boot.js'),
     winPath.join(installDir, 'dist', 'terminal-host', 'main.js'),
     winPath.join(installDir, 'bin', 'browser-mcp.mjs'),
+    winPath.join(installDir, 'bin', 'computer-mcp.mjs'),
     `${winPath.join(winPath.dirname(installDir), 'app')}${winPath.sep}`,
   ];
 }

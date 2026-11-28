@@ -220,6 +220,48 @@ over `timon.config.json` (`orchestrator/src/config/load.ts`, `ENV_OVERRIDES`):
 | `TIMON_INSTALL_DIR` | `<installDir>/../app` is where the daemon serves the UI from, and an AppImage mounts its resources on a different `/tmp/.mount_XXXX` at every launch. |
 | `PORT`, `TIMON_APP_ENABLED`, `TIMON_APP_PORT` | Only on a first launch (see above): what the shell decided alone, so the daemon does not pick the developer defaults instead. |
 
+## Computer use (native service)
+
+The shell serves a second private loopback transport, `computer-native`, next to the browser's:
+`<TIMON_HOME>/computer-native/provider.json` (`{ version, origin, token, pid }`, owner-only, removed on quit) and
+`POST <origin>/command` with `Authorization: Bearer <token>` and `{ command, args, actor }`. The answer is
+`{ ok: true, result }` or `{ ok: false, error, code }` (HTTP 409 and `computer_stopped` after a stop).
+Coordinates are in the pixels of the last screenshot; the shell converts them to screen points.
+
+- Screenshots: Electron's `desktopCapturer`, primary display, resized (1024 px wide by default) and sent as JPEG (quality 75).
+- Input: macOS `osascript` (JXA, CGEvent), Windows `powershell.exe` (SendInput), Linux `xdotool` under X11.
+  Wayland or a missing tool reports `available: false` with a `reason`. macOS also needs the Accessibility and
+  Screen Recording grants (`permission-accessibility`, `permission-screen`).
+- Safety: only a person (`actor: "human"`) can `stop` or `resume`. `Control+Option+Command+Escape` (macOS) or `Ctrl+Alt+Shift+Escape` (Windows, Linux) stops from anywhere, and a
+  small always-on-top bar with a Stop button shows while the agent is acting.
+- Setup: `status` also returns `checks` (`desktop`, and per platform `accessibility`, `screen`, `inputTool`, `session`, plus `a11y`, each
+  `ok` | `missing` | `unsupported`) and `needsRestart` (Screen Recording granted while the app ran). Two commands are
+  reserved to people (`actor: "human"`, 403 otherwise): `request_permissions` (macOS: shows the Accessibility prompt and the
+  Screen Recording prompt, or opens Settings once already asked; elsewhere it only returns the status) and `restart_app`.
+  The agent editor's setup card calls them through `/api/ui/computer/<command>`. On macOS 26 the Settings link may open
+  "General" instead of the right pane, which cannot be detected: the card always prints the path.
+  An agent's refused action answers `computer_unavailable` with what to ask the user (allow Timon under Privacy & Security,
+  install `xdotool`, the desktop app must be running).
+- Accessibility tree (first choice, pixels are the last resort): `a11y_tree { windowId?, maxDepth? 1..15 (15), maxNodes? 1..1500 (400), query? }`
+  answers `{ window: { id, title, app }, truncated, nodes: [{ id, parent, depth, role, name, value?, enabled, focused?, bounds?, actions }] }`,
+  and `a11y_action { id, action, value? }` (`press`, `focus`, `set_value`, `select`, `expand`, `collapse`, `show_menu`, `scroll_into_view`)
+  answers `{ ok: true }` without moving the mouse or the keyboard. Roles are lower-case and shared by the three systems (`button`, `textfield`,
+  `textarea`, `checkbox`, `radio`, `combobox`, `list`, `listitem`, `menu`, `menuitem`, `menubar`, `tab`, `tablist`, `link`, `image`, `text`,
+  `group`, `window`, `toolbar`, `table`, `row`, `cell`, `slider`, `scrollbar`, `other`). An element id is `<window id>#<index path>`: opaque, and
+  stable while the interface does not change; a stale one answers `a11y_element_stale` (409), an action the element does not offer
+  `a11y_action_unsupported` (422, the message lists the possible ones). `bounds` are in the pixels of the last screenshot (the click conversion).
+  `query` keeps the elements whose name, value or role contains it (case-insensitive) and their ancestors. Same allowed applications as the keyboard and
+  the mouse (`computer_app_not_allowed`, judged on the window's application), and `computer_stopped` applies. `status.checks.a11y` is `ok` | `missing` |
+  `unsupported`; it never makes `available` false.
+  - Backends: `interface A11yBackend { probe(); tree(args); act(args) }` in `computer-use-a11y.ts`, one file per system
+    (`computer-use-a11y-darwin.ts`, `-win32.ts`, `-linux.ts`) picked by `computer-use-a11y-select.ts` from `process.platform`, and
+    `computer-use-a11y-fake.ts` for tests. A backend returns raw nodes (`path`, role as the system names it, bounds in screen points);
+    the shared code builds ids, parents and depths, normalises roles, caps text, applies `query` and converts bounds. Every system call goes through the
+    injected executor (no shell, arguments as JSON). Electron and Chromium applications: macOS sets `AXManualAccessibility` on the application element
+    before reading, Linux needs accessibility enabled in the session, Windows UI Automation switches the tree on by itself.
+  - The daemon never journals the `value` of a `set_value`, only its length.
+- Code: `desktop/src/computer-use-*.ts`. Scripts are fixed text fed with JSON; typed text never reaches a script or a shell.
+
 ## Uninstall
 
 In an installed desktop app, open **Settings → Desktop application → Uninstall

@@ -27,7 +27,7 @@ import { userAllows } from './permissions.js';
 import { catalogBackend, catalogClaimsModel, resolvedPermissionModeFor } from '../backends/catalog.js';
 import { implicitBackendName, defaultBackendName } from '../backends/index.js';
 import { accountInstanceRefusal } from '../backends/account-launch.js';
-import { loadConfig, type AgentConfig } from '../agent-config.js';
+import { loadConfig, storedComputerUseApps, type AgentConfig } from '../agent-config.js';
 import { delegationRefusal } from '../delegation-guard.js';
 import { getMcp } from '../mcp.js';
 import { isInjectedMcpServer } from '../injected-mcp.js';
@@ -516,12 +516,19 @@ export type WideningRequest = {
   allowed_tools?: unknown;
   mcp_servers?: unknown;
   disallowed_tools?: unknown;
+  computer_use?: unknown;
+  computer_use_apps?: unknown;
+  computer_use_mode?: unknown;
 };
 
 export type WideningGrant = {
   allowed_tools?: readonly string[] | null;
   mcp_servers?: readonly string[] | null;
   disallowed_tools?: readonly string[] | null;
+  computer_use?: boolean | null;
+  /** As stored: bare names or `{ app, mode }` objects. */
+  computer_use_apps?: readonly unknown[] | null;
+  computer_use_mode?: string | null;
 } | null;
 
 /**
@@ -552,6 +559,49 @@ export function agentWideningRefusal(
     if (value === undefined || value === null) return null;
     return asStringArray(value) ?? 'invalid';
   };
+
+  // Controlling the host's mouse and keyboard: only a person grants it.
+  if (wanted.computer_use !== undefined && wanted.computer_use !== null) {
+    if (typeof wanted.computer_use !== 'boolean') return `${label('computer_use')} must be a boolean`;
+    if (wanted.computer_use && granted?.computer_use !== true) {
+      return `${label('computer_use')} turns on control of the host's mouse and keyboard: an agent's token cannot grant it, whatever its account holds. `
+        + 'A person turns it on from the Agents page of the app. Turning it off, or sending it unchanged, is accepted';
+    }
+  }
+
+  // The applications the agent may act in: an agent's token can keep or narrow the list, never add to it,
+  // and never move an application from background to foreground (foreground takes the user's screen).
+  const apps = wanted.computer_use_apps;
+  if (apps !== undefined && apps !== null) {
+    if (!Array.isArray(apps) || apps.some((entry) => typeof entry !== 'string' && !(entry && typeof entry === 'object' && typeof (entry as { app?: unknown }).app === 'string'))) {
+      return `${label('computer_use_apps')} must be an array of strings or { app, mode } objects`;
+    }
+    const grantedMode = granted?.computer_use_mode === 'background' ? 'background' : 'foreground';
+    const held = new Map(storedComputerUseApps({ computer_use_apps: granted?.computer_use_apps as never, computer_use_mode: grantedMode })
+      .map((entry) => [entry.app.toLowerCase(), entry.mode]));
+    // A bare name inherits the default mode, which an agent cannot change either.
+    for (const entry of storedComputerUseApps({ computer_use_apps: apps as never, computer_use_mode: grantedMode })) {
+      const mode = held.get(entry.app.toLowerCase());
+      if (mode === undefined) {
+        return `${label('computer_use_apps')} adds ${entry.app}: an agent's token cannot widen the applications an agent may control, whatever its account holds. `
+          + 'A person edits the list from the Agents page of the app. Removing entries, or sending the list unchanged, is accepted';
+      }
+      if (mode === 'background' && entry.mode === 'foreground') {
+        return `${label('computer_use_apps')} moves ${entry.app} from background to foreground: an agent's token cannot widen how an application is driven, whatever its account holds. `
+          + 'A person sets the mode from the Agents page of the app. Sending it unchanged, or moving it to background, is accepted';
+      }
+    }
+  }
+
+  // The mode decides whether the agent may take the user's screen, mouse and keyboard: only a person changes it.
+  if (wanted.computer_use_mode !== undefined && wanted.computer_use_mode !== null) {
+    if (wanted.computer_use_mode !== 'foreground' && wanted.computer_use_mode !== 'background') return `${label('computer_use_mode')} must be 'foreground' or 'background'`;
+    const current = granted?.computer_use_mode === 'background' ? 'background' : 'foreground';
+    if (wanted.computer_use_mode !== current) {
+      return `${label('computer_use_mode')} changes how the agent drives the screen: an agent's token cannot change it, whatever its account holds. `
+        + 'A person sets it from the Agents page of the app. Sending it unchanged is accepted';
+    }
+  }
 
   const tools = listOf('allowed_tools');
   if (tools === 'invalid') return `${label('allowed_tools')} must be an array of strings`;

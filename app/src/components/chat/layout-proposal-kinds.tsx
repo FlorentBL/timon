@@ -28,6 +28,7 @@ import { ISLANDS_PROPOSAL_KIND, proposalScopes } from '@/lib/island-proposals';
 import { navigateHref, NAVIGATE_PROPOSAL_KIND, parseNavigateProposal } from '@/lib/navigate-proposals';
 import { applyIslands, checkIslands, IslandsClosingsElsewhere, IslandsPreview, prepareIslands } from './island-proposal-kind';
 import { TRIGGER_PROPOSAL_KIND, TRIGGER_PROPOSAL_RENDERER } from './trigger-proposal-kind';
+import { COMPUTER_USE_PROPOSAL_KIND, COMPUTER_USE_PROPOSAL_RENDERER } from './computer-use-proposal-kind';
 import { ISLAND_ARRANGEMENT_PROPOSAL_KIND, ISLAND_ARRANGEMENT_PROPOSAL_RENDERER } from './island-arrangement-proposal-kind';
 
 /** What applying needs from the page: whose rows, and what this browser can place. */
@@ -64,6 +65,8 @@ export type ProposalKindRenderer = {
   prepare?: (payload: unknown, ctx: ApplyContext) => Promise<ReadonlyMap<string, () => void> | string>;
   /** i18n key of the Apply button when "Apply this arrangement" is not the right verb. */
   applyLabel?: string;
+  /** The card's title when it names more than the proposer (the agent a proposal is about): null falls back to the labels. */
+  titleOf?: (payload: unknown) => string | null;
   /** i18n keys of the card's words, for a kind that is not a screen arrangement (a trigger). */
   labels?: {
     badge?: string; title?: string; titleFrom?: string; applied?: string; stateApplied?: string; dismiss?: string; stale?: string;
@@ -341,4 +344,6 @@ export const PROPOSAL_KINDS: Record<string, ProposalKindRenderer> = {
   [NAV_PROPOSAL_KIND]: { Preview: NavPreview, apply: applyNav, applyLabel: 'layoutProposal.nav.apply' },
   // A trigger running a script (`trigger_create` from an agent): the daemon creates it on approval.
   [TRIGGER_PROPOSAL_KIND]: TRIGGER_PROPOSAL_RENDERER,
+  // Computer-use access for an agent (`computer_use_propose`): the daemon writes the agent's config on Allow.
+  [COMPUTER_USE_PROPOSAL_KIND]: COMPUTER_USE_PROPOSAL_RENDERER,
 };

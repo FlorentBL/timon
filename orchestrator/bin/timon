@@ -1152,6 +1152,10 @@ Widget arrangement of the user's screen (an agent's mission owner):
   timon widgets preset-save <name> [--view PATH] [--project SLUG] [--replace]
                                              current arrangement → Layouts menu
 
+Computer use (an agent's mission, the user decides):
+  timon computer propose <agent> [--add APP]... [--remove APP]... [--enable|--disable] [--note TEXT]
+                                             a card the user allows or refuses; nothing changes by itself
+
 Island workspace of the user's screen (an agent's mission owner):
   timon islands get [--view PATH] [--project SLUG]
                                              islands, tabs, focus, content types, limits
@@ -4090,6 +4094,42 @@ function printBackupStatus(s) {
  * behind the token (an agent's mission owner), never an argument. `propose`
  * raises a card the user applies; only a preset is written directly.
  */
+/**
+ * `timon computer propose` — asks the user to let an agent control the
+ * computer, as the MCP tool `computer_use_propose` does: a card in the
+ * mission's conversation, applied only by a person.
+ */
+async function cmdComputer(argv) {
+  const [sub, ...rest] = argv;
+  if (sub !== 'propose') {
+    process.stderr.write('usage: timon computer propose <agent> [--add APP]... [--remove APP]... [--enable|--disable] [--note TEXT]\n');
+    process.exit(64);
+  }
+  const all = (name) => {
+    const values = [];
+    for (let v = takeFlag(rest, name); v !== undefined; v = takeFlag(rest, name)) values.push(v);
+    return values;
+  };
+  const addApps = all('add');
+  const removeApps = all('remove');
+  const note = takeFlag(rest, 'note');
+  const enable = rest.includes('--enable') ? true : rest.includes('--disable') ? false : undefined;
+  const agent = rest.find((a) => !a.startsWith('--'));
+  if (!agent) {
+    process.stderr.write('usage: timon computer propose <agent> [--add APP]... [--remove APP]... [--enable|--disable] [--note TEXT]\n');
+    process.exit(64);
+  }
+  const body = {
+    agent,
+    ...(addApps.length ? { addApps } : {}),
+    ...(removeApps.length ? { removeApps } : {}),
+    ...(enable !== undefined ? { enable } : {}),
+    ...(note !== undefined ? { note } : {}),
+  };
+  const j = await http('POST', '/api/computer/proposals', body);
+  process.stdout.write(JSON.stringify({ id: j.id, status: j.status, message: j.message }, null, 2) + '\n');
+}
+
 async function cmdWidgets(argv) {
   const [sub, ...rest] = argv;
   const view = takeFlag(rest, 'view');
@@ -6148,6 +6188,9 @@ async function main() {
         break;
       case 'widgets':
         await cmdWidgets(rest);
+        break;
+      case 'computer':
+        await cmdComputer(rest);
         break;
       case 'islands':
         await cmdIslands(rest);

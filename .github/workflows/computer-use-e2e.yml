@@ -1,0 +1,104 @@
+# Proves on real Windows, Linux and macOS machines that computer use acts on the screen: a real
+# Electron window, the real service, an agent clicking, typing, acting on elements through the
+# accessibility tree and pressing the stop shortcut over
+# the private transport (desktop/scripts/computer-use-e2e.mjs). macOS has no screen grant on a
+# runner, so there the test checks the clean refusal. No secret is used.
+name: Computer use e2e
+
+on:
+  pull_request:
+    paths:
+      - 'desktop/src/computer-use-*'
+      - 'desktop/scripts/computer-use-e2e.mjs'
+      - '.github/workflows/computer-use-e2e.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: computer-use-e2e-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  e2e:
+    name: ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    # The capture must really be JPEG here: a silent fallback to PNG would hide the token cost again.
+    env:
+      TIMON_E2E_REQUIRE_JPEG: '1'
+      # The Windows worker's error output (never typed text) goes to the test log, so a failure is readable.
+      TIMON_COMPUTER_USE_DEBUG: '1'
+      # The accessibility steps (find a field and a button by name, set_value, press, read back) are
+      # required on the three systems now that each has its backend: a missing tree fails the run.
+      TIMON_E2E_REQUIRE_A11Y: '1'
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: desktop/package-lock.json
+
+      # Scripts are not skipped: Electron's postinstall downloads the binary the test runs.
+      - name: Install the desktop app
+        working-directory: desktop
+        run: npm ci --include=dev
+
+      # xdotool is the Linux input tool computer use needs (x11-utils gives xprop, which reads a window's class); the display is a fixed-size X11 server.
+      # openbox is the window manager: without one there is no active window to read, which the
+      # allowed-applications guard and focus_window both need.
+      - name: Install xvfb, xdotool, a window manager and AT-SPI
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y xvfb xdotool x11-utils openbox python3-gi gir1.2-atspi-2.0 at-spi2-core dbus-x11
+
+      # The verdict is read from the test's own output, not from its exit status: on the first Linux
+      # run the step passed although the test printed FAIL, the status being lost between Electron
+      # and xvfb-run. The D-Bus session and the accessibility bus (at-spi-bus-launcher) feed the AT-SPI
+      # backend of the accessibility tree. The runner's Chromium sandbox cannot start on Ubuntu 24.04 (SUID helper, then
+      # /dev/shm), so Linux runs Electron without it; the test page is a local static textarea.
+      - name: Test computer use (Linux, X11 on xvfb)
+        if: runner.os == 'Linux'
+        working-directory: desktop
+        shell: bash
+        run: |
+          set -o pipefail
+          npx tsc --outDir dist-e2e
+          xvfb-run --auto-servernum --server-args="-screen 0 1280x800x24" dbus-run-session -- bash -c 'openbox & /usr/libexec/at-spi-bus-launcher --launch-immediately & sleep 2; gsettings set org.gnome.desktop.interface toolkit-accessibility true || true; export ACCESSIBILITY_ENABLED=1; exec npx electron --no-sandbox --force-renderer-accessibility scripts/computer-use-e2e.mjs' 2>&1 | tee computer-use-e2e.log || true
+          grep -qx 'PASS' computer-use-e2e.log
+
+      - name: Test computer use (Windows)
+        if: runner.os == 'Windows'
+        working-directory: desktop
+        shell: bash
+        run: |
+          npm run test:computer-use-e2e 2>&1 | tee computer-use-e2e.log || true
+          grep -qx 'PASS' computer-use-e2e.log
+
+      # A hosted macOS runner has no Screen Recording grant: the clean refusal is the expected result.
+      - name: Test computer use (macOS, refusal without grants)
+        if: runner.os == 'macOS'
+        working-directory: desktop
+        shell: bash
+        run: |
+          npm run test:computer-use-e2e 2>&1 | tee computer-use-e2e.log || true
+          grep -qE '^(PASS|skipped: permissions)$' computer-use-e2e.log
+
+      # The report holds the timing of every action; it carries no secret.
+      - name: Upload the report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: computer-use-e2e-${{ matrix.os }}
+          path: |
+            desktop/computer-use-e2e-report.txt
+            desktop/computer-use-e2e.log
+          if-no-files-found: ignore

@@ -71,6 +71,7 @@ Whatever the `timon` command does in a terminal, a tool of the same name does fo
 | Show you a table, a chart, a preview or a form as an HTML card in the chat, and read your answer ([HTML cards in the chat](html-cards.md)) | `ui_render`, `ui_document_get` |
 | Suggest a command for your terminal | `terminal_propose` |
 | Read and rearrange your widgets and chat columns | `widgets_get`, `widgets_propose`, `widgets_preset_save` |
+| Ask you to let an agent control your computer ([Allow from the conversation](computer-use.md#allow-from-the-conversation)) | `computer_use_propose` |
 | Split your screen into islands, and keep an arrangement under a name | `islands_get`, `islands_propose`, `islands_preset_save`, `islands_arrangements_list`, `islands_arrangement_save` |
 | Take you to a page of the app, or of a plugin you can open | `ui_routes`, `ui_navigate` |
 | Hide, reorder or separate the pages of the side menu | `nav_get`, `nav_propose` |

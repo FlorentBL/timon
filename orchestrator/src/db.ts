@@ -1581,6 +1581,24 @@ CREATE INDEX IF NOT EXISTS idx_audit_log_at ON audit_log(at);
 CREATE INDEX IF NOT EXISTS idx_audit_log_user ON audit_log(user_id);
 `);
 
+// Computer-use journal: one row per agent command received by /api/computer/:command.
+// Arguments are stored REDUCED by the route (never typed text, never an image); the table only
+// keeps what it is given. No foreign key: a deleted agent's history stays readable. Bounded on
+// insert (COMPUTER_JOURNAL_KEEP rows), so it needs no purge timer.
+db.exec(`
+CREATE TABLE IF NOT EXISTS computer_journal (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  at         INTEGER NOT NULL,
+  agent      TEXT NOT NULL,
+  mission_id TEXT,
+  command    TEXT NOT NULL,
+  args       TEXT NOT NULL,
+  result     TEXT NOT NULL,             -- 'ok' or the error code
+  duration_ms INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_computer_journal_agent ON computer_journal(agent, id DESC);
+`);
+
 // secu-9 — who acted when it was not a person: 'daemon' (daemon-token, i.e.
 // the CLI or the dispatcher), 'api-token' (a spawned agent), NULL (a browser
 // session). Added late, hence the ALTER: existing rows keep NULL.
@@ -5427,6 +5445,27 @@ function historyExpiredSql(archive: boolean): string {
     AND NOT EXISTS (SELECT 1 FROM tasks t WHERE t.mission_id = m.id AND t.status != 'DONE')
     AND NOT EXISTS (SELECT 1 FROM tasks t WHERE t.id = m.task_id AND t.status != 'DONE')
     AND NOT EXISTS (SELECT 1 FROM workflow_runs w WHERE w.id = m.workflow_run_id AND w.status IN ('running', 'waiting'))`;
+}
+
+export const COMPUTER_JOURNAL_KEEP = 5000;
+export interface ComputerJournalInput {
+  at?: number;
+  agent: string;
+  mission_id?: string | null;
+  command: string;
+  args: Record<string, unknown>;
+  result: string;
+  duration_ms: number;
+}
+export interface ComputerJournalRow {
+  id: number;
+  at: number;
+  agent: string;
+  mission_id: string | null;
+  command: string;
+  args: Record<string, unknown>;
+  result: string;
+  duration_ms: number;
 }
 
 export const dbApi = {
@@ -10226,6 +10265,25 @@ export const dbApi = {
    */
   pruneSecretAccess(cutoff: number): number {
     return db.prepare(`DELETE FROM secret_access WHERE at < ?`).run(cutoff).changes;
+  },
+
+  /** Append one computer-use command to the journal, then drop what exceeds the last `keep` rows. */
+  recordComputerJournal(entry: ComputerJournalInput, keep = COMPUTER_JOURNAL_KEEP): void {
+    db.prepare(
+      `INSERT INTO computer_journal (at, agent, mission_id, command, args, result, duration_ms)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    ).run(entry.at ?? Date.now(), entry.agent, entry.mission_id ?? null, entry.command,
+      JSON.stringify(entry.args), entry.result, Math.max(0, Math.round(entry.duration_ms)));
+    db.prepare(`DELETE FROM computer_journal WHERE id <= (SELECT MAX(id) FROM computer_journal) - ?`).run(keep);
+  },
+
+  /** The journal of one agent, most recent first. */
+  listComputerJournal(agent: string, limit = 50): ComputerJournalRow[] {
+    const rows = db.prepare(
+      `SELECT id, at, agent, mission_id, command, args, result, duration_ms
+         FROM computer_journal WHERE agent=? ORDER BY id DESC LIMIT ?`,
+    ).all(agent, Math.max(1, Math.min(Math.trunc(limit) || 50, 500))) as Array<Omit<ComputerJournalRow, 'args'> & { args: string }>;
+    return rows.map((row) => ({ ...row, args: JSON.parse(row.args) as Record<string, unknown> }));
   },
 
   /**

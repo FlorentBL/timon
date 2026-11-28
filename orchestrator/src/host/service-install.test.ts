@@ -1905,6 +1905,7 @@ test('TIM-0115: the sweep targets this installation\'s daemon and terminal host,
   // daemon too (tester report, 22/10/2026): found by the sibling app directory
   // and the helper's entry, never by Electron's own `resources\app.asar`.
   assert.ok(script.includes("\\resources\\orchestrator\\bin\\browser-mcp.mjs'"));
+  assert.ok(script.includes("\\resources\\orchestrator\\bin\\computer-mcp.mjs'"));
   assert.ok(script.includes("'c:\\users\\robin\\appdata\\local\\programs\\timon\\resources\\app\\'"));
   assert.equal(installationProcessNeedles('C:\\T\\resources\\orchestrator').some((n) => 'c:\\t\\resources\\app.asar'.includes(n.toLowerCase())), false);
   assert.doesNotMatch(script, /orchestrator'\)/, 'the bare install directory is also where the CLI that runs this uninstall lives');

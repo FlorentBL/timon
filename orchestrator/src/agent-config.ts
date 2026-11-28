@@ -35,6 +35,17 @@ export type AgentConfig = {
   /** undefined inherits; null disables browsing; a profile id is an explicit,
    * owner-checked assignment frozen when each mission starts. */
   browser_profile_id?: string | null;
+  /** The agent may drive the host's mouse and keyboard through the computer-use
+   *  tools (`timon-computer`). Absent = off. Turning it on is a person's act: an
+   *  agent's token cannot (`agentWideningRefusal`). */
+  computer_use?: boolean;
+  /** The only applications the agent may type or click in (bundle id, displayed name or
+   *  executable name, case ignored). Empty or absent = no keyboard or mouse action at all.
+   *  Widening it is a person's act, like `computer_use`. */
+  computer_use_apps?: ComputerUseAppEntry[];
+  /** How the agent drives the screen: `background` = accessibility only, never the user's screen,
+   *  mouse or keyboard. Absent = `foreground`. Changing it is a person's act, like `computer_use_apps`. */
+  computer_use_mode?: ComputerUseMode;
   /** DEFAULT LLM backend of the agent. 'claude' (default) = long-lived Claude
    *  CLI; 'codex' = one-shot OpenAI Codex CLI on the ChatGPT subscription.
    *  The agent is AGNOSTIC: this field is only a default, overridable per
@@ -338,4 +349,71 @@ export { isValidAgentName };
 
 export function validName(name: string): void {
   if (!isValidAgentName(name)) throw new Error(`invalid agent name: ${name}`);
+}
+
+export type ComputerUseMode = 'foreground' | 'background';
+
+/** The mode as stored, read defensively: anything but 'background' is the foreground. */
+export function storedComputerUseMode(cfg: Pick<AgentConfig, 'computer_use_mode'>): ComputerUseMode {
+  return cfg.computer_use_mode === 'background' ? 'background' : 'foreground';
+}
+
+/** Why a `computer_use_mode` value is not acceptable, or null. */
+export function computerUseModeRefusal(value: unknown): string | null {
+  return value === 'foreground' || value === 'background' ? null : "computer_use_mode must be 'foreground' or 'background'";
+}
+
+export const COMPUTER_USE_APPS_MAX = 100;
+export const COMPUTER_USE_APP_MAX_LENGTH = 200;
+
+/** One entry of `computer_use_apps`: a bare name keeps the agent's default mode, an object carries its own. */
+export type ComputerUseAppEntry = string | { app: string; mode: ComputerUseMode };
+
+/** An allowed application with the mode it is driven in (the normalised form). */
+export type ComputerUseApp = { app: string; mode: ComputerUseMode };
+
+/**
+ * The allowed applications as stored, read defensively and normalised: a bare name takes the
+ * agent's default mode (`computer_use_mode`), an object keeps its own. Only non-empty names
+ * survive; a repeated name keeps its first entry.
+ */
+export function storedComputerUseApps(cfg: Pick<AgentConfig, 'computer_use_apps' | 'computer_use_mode'>): ComputerUseApp[] {
+  const raw: unknown = cfg.computer_use_apps;
+  if (!Array.isArray(raw)) return [];
+  const fallback = storedComputerUseMode(cfg);
+  const seen = new Set<string>();
+  const out: ComputerUseApp[] = [];
+  for (const entry of raw) {
+    let app: string;
+    let mode: ComputerUseMode = fallback;
+    if (typeof entry === 'string') app = entry.trim();
+    else if (entry && typeof entry === 'object' && typeof (entry as { app?: unknown }).app === 'string') {
+      app = (entry as { app: string }).app.trim();
+      const own = (entry as { mode?: unknown }).mode;
+      if (own === 'foreground' || own === 'background') mode = own;
+    } else continue;
+    if (!app || seen.has(app.toLowerCase())) continue;
+    seen.add(app.toLowerCase());
+    out.push({ app, mode });
+    if (out.length >= COMPUTER_USE_APPS_MAX) break;
+  }
+  return out;
+}
+
+/** Why a `computer_use_apps` value is not acceptable, or null. */
+export function computerUseAppsRefusal(value: unknown): string | null {
+  const shape = `computer_use_apps must be an array of non-empty names of at most ${COMPUTER_USE_APP_MAX_LENGTH} characters, `
+    + "each a string or an object { app, mode: 'foreground' | 'background' }";
+  if (!Array.isArray(value)) return shape;
+  for (const entry of value) {
+    if (typeof entry === 'string') {
+      if (entry.trim() === '' || entry.length > COMPUTER_USE_APP_MAX_LENGTH) return shape;
+    } else if (entry && typeof entry === 'object' && !Array.isArray(entry)) {
+      const { app, mode } = entry as { app?: unknown; mode?: unknown };
+      if (typeof app !== 'string' || app.trim() === '' || app.length > COMPUTER_USE_APP_MAX_LENGTH) return shape;
+      if (mode !== 'foreground' && mode !== 'background') return shape;
+    } else return shape;
+  }
+  if (value.length > COMPUTER_USE_APPS_MAX) return `computer_use_apps holds at most ${COMPUTER_USE_APPS_MAX} applications`;
+  return null;
 }
