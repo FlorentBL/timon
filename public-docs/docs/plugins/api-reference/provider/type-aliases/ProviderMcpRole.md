@@ -3,4 +3,4 @@
 
 # Type Alias: ProviderMcpRole
 
-> **ProviderMcpRole** = `"timon"` \| `"forms"` \| `"grepai"` \| `"browser"` \| `"user"`
+> **ProviderMcpRole** = `"timon"` \| `"forms"` \| `"grepai"` \| `"browser"` \| `"computer"` \| `"user"`

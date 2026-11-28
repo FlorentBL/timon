@@ -1137,6 +1137,12 @@ usage: timon docs search <words...> [--limit N] [--json]
        timon docs read [<route>] [--heading TEXT]
 ```
 
+### timon computer propose agent [--add APP]... [--remove APP]... [--enable|--disable] …
+
+```text
+usage: timon computer propose <agent> [--add APP]... [--remove APP]... [--enable|--disable] [--note TEXT]
+```
+
 ### timon widgets preset-save name [--view PATH] [--project SLUG] [--replace]
 
 ```text
