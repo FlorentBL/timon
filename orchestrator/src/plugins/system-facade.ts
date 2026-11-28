@@ -57,7 +57,7 @@ export function systemFor(scope: AdminCallerScope): ScopedSystem {
     },
     doctor() {
       needSuperadmin('the doctor report');
-      return { ...diagnose(), desktop: process.env.TIMON_DESKTOP_EMBEDDED === '1' || process.env.TIMON_DESKTOP_SERVICE === '1' };
+      return { ...diagnose({ refreshBrowser: true }), desktop: process.env.TIMON_DESKTOP_EMBEDDED === '1' || process.env.TIMON_DESKTOP_SERVICE === '1' };
     },
     logs(options = {}) {
       needSuperadmin('the logs');

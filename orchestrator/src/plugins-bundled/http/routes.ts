@@ -90,7 +90,7 @@ export function registerRoutes(app: Router): void {
    * operator: the superadmin, or the daemon token `timon doctor` uses.
    */
   app.get('/api/doctor', (req, res) => {
-    const report = diagnose();
+    const report = diagnose({ refreshBrowser: true });
     const binaries = req.auth?.isSuperadmin === true
       ? report.binaries
       : report.binaries.map(({ attemptedPaths: _operatorOnly, ...rest }) => rest);

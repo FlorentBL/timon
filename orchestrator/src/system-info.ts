@@ -328,7 +328,7 @@ export async function daemonDiagnosticReport(appVersion: string | null): Promise
     doctor: async () => {
       // A support report may wait: the pins never asked yet are, so the report does not miss them.
       await refreshPinnedIdentities();
-      return doctorOutcome(diagnose());
+      return doctorOutcome(diagnose({ refreshBrowser: true }));
     },
   });
 }
