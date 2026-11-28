@@ -10,7 +10,7 @@ Timon runs on Linux on x86-64 processors only. ARM servers (aarch64, arm64) are 
 :::
 
 :::tip The short version
-1. Install Timon on the server, as the account that will own it: `curl -fsSL https://timon-ai.com/install.sh | sh`. On a Debian or Ubuntu server it installs the package, the background service and the [built-in browser](#6-the-built-in-browser-on-a-server), with nothing to set up by hand.
+1. Install Timon on the server, as the account that will own it: `curl -fsSL https://timon-ai.com/install.sh | sh`. On a Debian or Ubuntu server it installs the package, the background service (kept running after you log out) and the [built-in browser](#6-the-built-in-browser-on-a-server), with nothing to set up by hand.
 2. Create your account on the server, before opening any access: `timon init`.
 3. Publish it on your private Tailscale network with `tailscale serve`, over **HTTPS**.
 4. On your computer, turn on the **Machines** plugin and pair the server with a one-time code (`timon device pair` on the server prints one): the interface you already use switches to it in the same window. See [Machines](../usage/machines.md).
@@ -25,9 +25,11 @@ On a Debian or Ubuntu server, in an SSH session as the account that will own Tim
 curl -fsSL https://timon-ai.com/install.sh | sh
 ```
 
-It installs the deb package (with the `timon` command), then the background service, and checks that the built-in browser answers (see [section 6](#6-the-built-in-browser-on-a-server)). On a server with no font installed, it adds the fonts that browser needs in the same `apt-get install`. Run as `root`, it installs the package only and asks you to install the service from the owner's account. `timon` on its own then shows where the installation stands and the next command to type.
+It installs the deb package (with the `timon` command), then the background service, keeps that service running after your SSH session ends (`timon service session-mode always`, see below), and checks that the built-in browser answers (see [section 6](#6-the-built-in-browser-on-a-server)). On a server with no font installed, it adds the fonts that browser needs in the same `apt-get install`. Run as `root`, it installs the package only and prints the two service commands to run from the owner's account. `timon` on its own then shows where the installation stands and the next command to type.
 
-By hand, install the supplied deb package: it also installs the `timon` command. From an authorised source checkout, follow [Linux](linux.md#from-an-authorised-source-checkout). In both cases, the daemon runs as a service of the operating system's supervisor, not inside a window:
+Installing the package needs administrator rights. If your account has no `sudo` (a fresh Debian server where only `root` has a password), the script stops before downloading anything and tells you what to do: become `root` with `su -`, run the same command again, then, back on your own account, run `timon service install` and `timon service session-mode always`.
+
+By hand, without the script, install the supplied deb package: it also installs the `timon` command. From an authorised source checkout, follow [Linux](linux.md#from-an-authorised-source-checkout). In both cases, the daemon runs as a service of the operating system's supervisor, not inside a window:
 
 ```bash
 timon service install --dry-run   # shows what will be installed
@@ -37,7 +39,7 @@ timon service status
 timon doctor
 ```
 
-On Linux the service is a systemd **user** service. `timon service session-mode always` turns on user lingering: the service then starts at boot, before anyone signs in, and survives the end of your SSH session. Without it, the service stops when your last SSH session ends. Install it as the account that will own Timon's data, never as `root`. See [Running in the background](background.md) for the details, and for `timon service stop` / `timon service start`.
+On Linux the service is a systemd **user** service. `timon service session-mode always` turns on user lingering: the service then starts at boot, before anyone signs in, and survives the end of your SSH session. Without it, the service stops when your last SSH session ends. The install script runs it for you; it needs no administrator rights on Debian and Ubuntu, and if it is refused the script says so and prints the command. Install it as the account that will own Timon's data, never as `root`. See [Running in the background](background.md) for the details, and for `timon service stop` / `timon service start`.
 
 A server must not sleep: nothing runs while it does, and Timon does not wake it. On a machine without a desktop, `sudo systemctl mask sleep.target suspend.target` disables suspend.
 
