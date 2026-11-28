@@ -15,8 +15,9 @@
 #      BEFORE installing anything;
 #   4. installs it (sudo is asked for the deb and the pkg only);
 #   5. on a machine with a screen, opens Timon; on a server (no display),
-#      installs the background service, checks that the built-in browser
-#      answers, and prints the next step. A server with no font gets the
+#      installs the background service, keeps it running after logout
+#      (lingering), checks that the built-in browser answers, and prints the
+#      next step. A server with no font gets the
 #      fonts the built-in browser needs in the same apt-get install.
 #
 # The whole script is one function called on its last line: a download cut
@@ -308,6 +309,7 @@ refuse_without_admin() {
     if [ "$SERVER" = yes ] && [ "$NO_SERVICE" = 0 ]; then
       say 'Then, back on this account (not root), install the background service:'
       say '  timon service install'
+      say '  timon service session-mode always'
     fi
   } >&2
   exit 1
@@ -334,8 +336,11 @@ print_plan() {
   if [ -n "$FONT_PACKAGES" ]; then
     say "  fonts:     $FONT_PACKAGES (this server has none; the built-in browser needs them)"
   fi
-  if [ "$SERVER" = yes ] && [ "$NO_SERVICE" = 0 ]; then
+  if [ "$SERVER" = yes ] && [ "$NO_SERVICE" = 0 ] && [ "$(id -u)" = 0 ]; then
+    say "  then:      how to install the background service from the account that owns Timon (never root)"
+  elif [ "$SERVER" = yes ] && [ "$NO_SERVICE" = 0 ]; then
     say "  then:      timon service install (background service and built-in browser)"
+    say "  and:       timon service session-mode always (keeps running after you log out)"
   elif [ "$NO_LAUNCH" = 0 ]; then
     say "  then:      open Timon"
   fi
@@ -415,6 +420,26 @@ account_step() {
   fi
 }
 
+# A server's service is a systemd user service: without lingering it stops
+# when the last SSH session ends. Asked through timon, which records the
+# answer as the onboarding would; enabling lingering for one's own account
+# needs no root where polkit allows it (Debian, Ubuntu). A machine with a
+# screen never gets here: its session is the user's choice. A refusal does
+# not fail the install: the command is printed.
+linger_step() {
+  if ! "$1" help 2>/dev/null | grep -q 'service session-mode'; then
+    warn 'to keep Timon running after you log out, run: loginctl enable-linger'
+    return 0
+  fi
+  if "$1" service session-mode always </dev/null >"$WORK/linger.txt" 2>&1; then
+    say 'Timon keeps running after you log out.'
+  else
+    warn 'Timon could not be kept running after you log out:'
+    sed 's/^/  /' "$WORK/linger.txt" >&2
+    warn 'run it again with: timon service session-mode always'
+  fi
+}
+
 # Whether the browser host the service install started answers, asked through
 # timon: it knows the provider's file and the unit. An older package has no
 # such check, and says nothing.
@@ -451,17 +476,20 @@ after_install() {
     if [ "$NO_SERVICE" = 1 ]; then
       say 'Next steps, as the account that will own Timon (not root): install the background service,'
       say '  timon service install'
+      say '  timon service session-mode always   # keeps it running after you log out'
       say 'then create your account:'
       account_step "$timon_bin"
     elif [ "$(id -u)" = 0 ]; then
       say 'The background service runs as the account that owns Timon, never as root.'
       say 'Log in as that account, then install the background service:'
       say '  timon service install'
+      say '  timon service session-mode always   # keeps it running after you log out'
       say 'and create your account:'
       account_step "$timon_bin"
     else
       say 'Installing the background service...'
       if "$timon_bin" service install </dev/null; then
+        linger_step "$timon_bin"
         browser_step "$timon_bin"
         say ''
         say 'Timon runs in the background. Next step, create your account:'

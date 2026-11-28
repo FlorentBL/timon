@@ -395,11 +395,12 @@ function systemWithoutSudo(ctx) {
 /**
  * A server where nothing real is installed: sudo runs its command (none with `sudo: false`),
  * apt-get and timon only write what they were asked into `calls.log`, apt-cache knows the fonts
- * of `known`, and the font folders are `fonts` (empty: no font). `root` makes `id -u` say 0.
+ * of `known`, and the font folders are `fonts` (empty: no font). `root` makes `id -u` say 0;
+ * `linger` is the exit status of `timon service session-mode always`.
  */
 function fakeServer(ctx, {
   known = ['fonts-liberation', 'fonts-noto-core', 'fonts-noto-color-emoji'], withFont = false, doctor = 0, oldCli = false,
-  sudo = true, root = false,
+  sudo = true, root = false, linger = 0,
 } = {}) {
   const bin = join(ctx.dir, 'fake-bin');
   rmSync(bin, { recursive: true, force: true });
@@ -420,8 +421,9 @@ function fakeServer(ctx, {
   tool(bin, 'timon', [
     `echo "timon $*" >>'${log}'`,
     'case "$1" in',
-    `  help) echo '  timon init'; ${oldCli ? '' : "echo '  timon doctor --browser [--wait S] [--json]'"} ;;`,
+    `  help) echo '  timon init'; ${oldCli ? '' : "echo '  timon doctor --browser [--wait S] [--json]'; echo '  timon service session-mode [session|always]'"} ;;`,
     `  doctor) echo 'built-in browser  UNAVAILABLE'; echo '  the browser host service is stopped  →  systemctl --user restart timon-browser-x'; exit ${doctor} ;;`,
+    `  service) if [ "$2" = session-mode ] && [ ${linger} != 0 ]; then echo 'Could not enable linger: Access denied' >&2; exit ${linger}; fi ;;`,
     'esac',
   ].join('\n'));
   const path = sudo ? process.env.PATH : systemWithoutSudo(ctx);
@@ -525,6 +527,55 @@ test('after the service install, the built-in browser is checked through timon a
   }
 });
 
+test('on a server, lingering is turned on through timon after the service, and a refusal only prints the command', { skip: skip || asRoot }, () => {
+  const key = pair();
+  const { dir, ctx } = debManifest(key);
+  try {
+    const plan = run(ctx, key, ['--dry-run', '--format', 'deb', '--server'], fakeServer(ctx).env);
+    assert.equal(plan.code, 0, plan.err);
+    assert.match(plan.out, /and: +timon service session-mode always \(keeps running after you log out\)/);
+
+    const on = fakeServer(ctx);
+    const r = run(ctx, key, ['--format', 'deb', '--server'], on.env);
+    assert.equal(r.code, 0, r.err);
+    const calls = readFileSync(on.log, 'utf8');
+    assert.match(calls, /^timon service session-mode always$/m);
+    assert.ok(calls.indexOf('timon service install') < calls.indexOf('timon service session-mode'), 'the service first');
+    assert.ok(calls.indexOf('timon service session-mode') < calls.indexOf('timon doctor'), 'before the browser check');
+    assert.match(r.out, /Timon keeps running after you log out\./);
+
+    const refused = fakeServer(ctx, { linger: 1 });
+    const failed = run(ctx, key, ['--format', 'deb', '--server'], refused.env);
+    assert.equal(failed.code, 0, 'a refused lingering does not fail the install');
+    assert.match(failed.err, /Timon could not be kept running after you log out:/);
+    assert.match(failed.err, /Access denied/);
+    assert.match(failed.err, /run it again with: timon service session-mode always/);
+    assert.doesNotMatch(failed.out, /keeps running after you log out\./);
+    assert.match(failed.out, /create your account/);
+
+    const old = fakeServer(ctx, { oldCli: true });
+    const older = run(ctx, key, ['--format', 'deb', '--server'], old.env);
+    assert.equal(older.code, 0, older.err);
+    assert.doesNotMatch(readFileSync(old.log, 'utf8'), /session-mode/, 'an older package has no session-mode');
+    assert.match(older.err, /loginctl enable-linger/);
+
+    const none = fakeServer(ctx);
+    const noService = run(ctx, key, ['--format', 'deb', '--server', '--no-service'], none.env);
+    assert.equal(noService.code, 0, noService.err);
+    assert.doesNotMatch(readFileSync(none.log, 'utf8'), /session-mode/);
+    assert.match(noService.out, /timon service session-mode always/, 'the next steps name it');
+
+    const desktop = fakeServer(ctx);
+    const screen = run(ctx, key, ['--format', 'deb', '--no-launch'], { ...desktop.env, DISPLAY: ':0' });
+    assert.equal(screen.code, 0, screen.err);
+    assert.doesNotMatch(readFileSync(desktop.log, 'utf8'), /session-mode|service install/, 'a machine with a screen keeps its own choice');
+    assert.doesNotMatch(screen.out, /session-mode|after you log out/);
+  } finally {
+    rmSync(ctx.dir, { recursive: true, force: true });
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test('an account with no sudo is refused before any download, with the way through root', { skip: skip || asRoot }, () => {
   const key = pair();
   const { dir, ctx } = debManifest(key);
@@ -535,7 +586,7 @@ test('an account with no sudo is refused before any download, with the way throu
     assert.match(r.err, /installing the deb package needs administrator rights, and this account has no sudo\./);
     assert.match(r.err, /^ +su -$/m);
     assert.match(r.err, /curl -fsSL https:\/\/timon-ai\.com\/install\.sh \| sh -s -- --format deb --server$/m);
-    assert.match(r.err, /back on this account \(not root\), install the background service:\n +timon service install$/m);
+    assert.match(r.err, /back on this account \(not root\), install the background service:\n +timon service install\n +timon service session-mode always/);
     assert.doesNotMatch(r.err, /apt-get|DEBIAN_FRONTEND/, 'no internal command');
     assert.equal(r.out, '', 'nothing read, nothing downloaded');
     assert.equal(readFileSync(fake.log, 'utf8'), '');
@@ -572,14 +623,16 @@ test('root with no sudo installs the package and leaves the service to the owner
     const plan = run(ctx, key, ['--dry-run', '--format', 'deb', '--server'], fake.env);
     assert.equal(plan.code, 0, plan.err);
     assert.match(plan.out, /install: +apt-get install \(sudo\)/);
+    assert.match(plan.out, /then: +how to install the background service from the account that owns Timon \(never root\)/);
 
     const r = run(ctx, key, ['--format', 'deb', '--server'], fake.env);
     assert.equal(r.code, 0, r.err);
     const calls = readFileSync(fake.log, 'utf8');
     assert.match(calls, /^apt-get install -y \S+timon-desktop_0\.2\.0_amd64\.deb/m);
-    assert.doesNotMatch(calls, /service install/, 'no service for root');
+    assert.doesNotMatch(calls, /service install|session-mode/, 'no service for root');
     assert.match(r.out, /never as root/);
     assert.match(r.out, /^ +timon service install$/m);
+    assert.match(r.out, /^ +timon service session-mode always +# keeps it running after you log out$/m);
   } finally {
     rmSync(ctx.dir, { recursive: true, force: true });
     rmSync(dir, { recursive: true, force: true });
