@@ -2,7 +2,10 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { runInNewContext } from 'node:vm';
+import ts from 'typescript';
 import { BROWSER_HOST_EXIT, BROWSER_HOST_LAUNCH, writeHostMarker } from './browser-host.js';
 import { runBrowserHost, type BrowserHostSeams } from './browser-host-shell.js';
 import { startNativeBrowserServer } from './native-browser-server.js';
@@ -211,4 +214,68 @@ test('a system with no font is said at start, with what to install; one with fon
       await h.exited;
     } finally { rmSync(h.home, { recursive: true, force: true }); }
   }
+});
+
+const SRC = dirname(fileURLToPath(import.meta.url));
+
+/** Every module of this folder `entry` loads, its static and dynamic relative imports followed. */
+function localImports(entry: string): Set<string> {
+  const seen = new Set<string>();
+  const pending = [entry];
+  while (pending.length) {
+    const name = pending.pop()!;
+    if (seen.has(name)) continue;
+    seen.add(name);
+    const { importedFiles } = ts.preProcessFile(readFileSync(join(SRC, name), 'utf8'), true, true);
+    for (const { fileName } of importedFiles) {
+      if (fileName.startsWith('./')) pending.push(fileName.slice(2).replace(/\.c?js$/, (ext) => ext === '.cjs' ? '.cts' : '.ts'));
+    }
+  }
+  return seen;
+}
+
+// Computer use drives the desktop of the person in front of the screen; a browser host has neither.
+test('the browser host never starts computer use: none of its modules loads it, and its branch of main.ts runs the host alone', async () => {
+  for (const entry of ['browser-host-shell.ts', 'browser-host-electron.ts', 'browser-host.ts']) {
+    const reached = [...localImports(entry)].filter((name) => name.startsWith('computer-use'));
+    assert.deepEqual(reached, [], `${entry} reaches ${reached.join(', ')}`);
+  }
+
+  const source = ts.createSourceFile('main.ts', readFileSync(join(SRC, 'main.ts'), 'utf8'), ts.ScriptTarget.ES2022, true);
+  const isHostTest = (node: ts.Expression): boolean => ts.isCallExpression(node) && node.expression.getText(source) === 'browserHostRequested';
+  let hostBranch: ts.Statement | undefined;
+  const visit = (node: ts.Node): void => {
+    if (ts.isIfStatement(node) && isHostTest(node.expression)) hostBranch = node.thenStatement;
+    else if (ts.isIfStatement(node)) { visit(node.expression); visit(node.thenStatement); if (node.elseStatement) visit(node.elseStatement); }
+  };
+  source.statements.forEach(visit);
+  assert.ok(hostBranch, 'main.ts dispatches --browser-host at the top level');
+
+  // Every start of computer use lies in main(), which only the application with a screen calls.
+  const starts: string[] = [];
+  const enclosing = (node: ts.Node): string => {
+    for (let at: ts.Node | undefined = node.parent; at; at = at.parent) {
+      if (ts.isFunctionDeclaration(at) && at.name) return at.name.text;
+    }
+    return '<top level>';
+  };
+  const collect = (node: ts.Node): void => {
+    if (ts.isCallExpression(node) && node.expression.getText(source) === 'startComputerUse') starts.push(enclosing(node));
+    ts.forEachChild(node, collect);
+  };
+  collect(source);
+  assert.deepEqual(starts, ['main']);
+
+  const calls: string[] = [];
+  const branch = ts.transpileModule(hostBranch!.getText(source), { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText;
+  runInNewContext(branch, {
+    runBrowserHost: async () => { calls.push('host'); },
+    electronBrowserHostSeams: () => ({}),
+    startComputerUse: () => { calls.push('computer use'); },
+    main: () => { calls.push('application'); },
+    startShell: () => { calls.push('application'); },
+    app: { exit: () => {} }, BROWSER_HOST_EXIT: { failed: 1 }, console,
+  });
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(calls, ['host']);
 });
