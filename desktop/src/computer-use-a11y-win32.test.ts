@@ -99,7 +99,7 @@ test('a Chromium web area is read through MSAA even when UI Automation shows chi
   const { seen, exec } = recorder({ ok: true });
   await win32A11yBackend(exec).probe();
   const script = seen[0].worker!.env!.TIMON_CU_SCRIPT!;
-  // The Chromium of Electron 45 serves a UIA tree whose text field has no ValuePattern (CI run 46144862676).
+  // Older Chromium showed nothing under its web area over UIA; MSAA reaches it there.
   assert.match(script, /function Test-TimonChromiumWebArea\(\$el\) \{\s*\[string\]\(Get-TimonUiaCached \$el \(\[System\.Windows\.Automation\.AutomationElement\]::ClassNameProperty\)\) -eq 'Chrome_RenderWidgetHostHWND'/);
   const walk = script.slice(script.indexOf('function Add-TimonUiaNode'), script.indexOf('function Test-TimonChromiumWebArea'));
   assert.ok(walk.indexOf('Test-TimonChromiumWebArea $el') < walk.indexOf('Get-TimonUiaFirstChild $el'), 'the walk tries MSAA before the UIA children');
