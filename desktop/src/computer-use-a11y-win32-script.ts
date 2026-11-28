@@ -54,8 +54,10 @@ function Get-TimonUiaRole($typeName) {
     default { 'other' }
   }
 }
+# NotSupported is matched by reference: with -eq a boolean on the left converts the sentinel to $true,
+# so every true property (IsInvokePatternAvailable, IsKeyboardFocusable, IsPassword...) read as absent.
 function Get-TimonUiaCached($el, $property) {
-  try { $v = $el.GetCachedPropertyValue($property); if ($v -eq [System.Windows.Automation.AutomationElement]::NotSupported) { return $null }; return $v } catch { return $null }
+  try { $v = $el.GetCachedPropertyValue($property); if ([object]::ReferenceEquals($v, [System.Windows.Automation.AutomationElement]::NotSupported)) { return $null }; return $v } catch { return $null }
 }
 function Get-TimonUiaActions($el) {
   $A = [System.Windows.Automation.AutomationElement]
