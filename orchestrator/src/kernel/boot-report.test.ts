@@ -4,7 +4,7 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { kernelBootSummary, pluginFailureNotification } from './boot-report.js';
+import { builtInBrowserBootLines, kernelBootSummary, pluginFailureNotification } from './boot-report.js';
 import type { EntryDecision } from './registry.js';
 
 const FRENCH = /[àâäçéèêëîïôöùûüÿœæ]|a échoué|profil=|édition=|capacités=|désactivé|actif\(s\)/i; // french-ok: the French the boot report used to print
@@ -46,4 +46,21 @@ test('the licence reason follows its status, and nothing is listed when every mo
     capabilities: [], decisions: [decision('kanban', false)],
   });
   assert.equal(line, '[kernel] profile=lite edition=free licence=expired:offline capabilities=[] — 1 module(s) active');
+});
+
+test('the start-up log names who provides the built-in browser, or why nobody does and the repair', () => {
+  assert.deepEqual(builtInBrowserBootLines({ provider: 'host', server: true, unit: 'timon-browser-x', problems: [] }),
+    ['[browser] built-in browser provided by the browser host (timon-browser-x)']);
+  const lines = builtInBrowserBootLines({
+    provider: 'none', server: true, unit: 'timon-browser-x', problems: [
+      { id: 'host-unit-missing', blocking: true, message: 'the browser host service is not installed.', fix: 'timon service install' },
+      { id: 'no-fonts', blocking: false, message: 'no font is installed.', fix: 'sudo apt-get install fonts-liberation' },
+    ],
+  });
+  assert.deepEqual(lines, [
+    '[browser] built-in browser unavailable',
+    '[browser] the browser host service is not installed. Fix: timon service install',
+    '[browser] warning: no font is installed. Fix: sudo apt-get install fonts-liberation',
+  ]);
+  for (const line of lines) assert.doesNotMatch(line, FRENCH);
 });

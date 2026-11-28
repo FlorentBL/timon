@@ -10,7 +10,10 @@ on:
     paths:
       - 'desktop/src/computer-use-*'
       - 'desktop/scripts/computer-use-e2e.mjs'
+      - 'desktop/scripts/computer-use-a11y-win32-diag.ps1'
       - '.github/workflows/computer-use-e2e.yml'
+      # A new Electron changes the capture, input and window APIs computer use runs on.
+      - 'desktop/package-lock.json'
   workflow_dispatch:
 
 permissions:

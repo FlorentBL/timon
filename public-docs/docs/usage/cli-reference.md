@@ -451,6 +451,8 @@ Resources (anti-saturation guard for the machine):
   timon backup status [--json]               state, next run, archives under backups/
   timon doctor [--json]                      binaries, host capabilities, config
   timon doctor --report [--save F]           diagnostic report to paste in a support request
+  timon doctor --browser [--wait S] [--json] does the built-in browser answer? if not, why and the
+                                             command that repairs it; waits up to S seconds (exit 1: no)
   timon logs [--desktop|--prompts|--supervisor] [-n N]
                                              newest log lines first (default: daemon, 100)
 
@@ -474,7 +476,9 @@ Daemon service (systemd user unit on Linux, launchd agent on macOS, logon task o
   timon service install [--dry-run] [--allow-temp-home] [--force]
                                              writes the unit/plist and starts it; refuses a TIMON_HOME
                                              under the system temporary folder without the flag, and a
-                                             service that belongs to another Timon installation without --force
+                                             service that belongs to another Timon installation without --force;
+                                             on a Linux server with no desktop session, also a second unit that
+                                             runs the built-in browser with no window (TIMON_BROWSER_HOST_SERVICE=0: not)
   timon service uninstall [--force]          stops and removes it, ~/.timon untouched; same refusal
   timon service stop                         ends the daemon and its programs, keeps the service registered (Windows: the task is disabled); the app starts it again at its next launch
   timon service start                        starts a stopped service again
@@ -1131,6 +1135,12 @@ usage: timon import <archive.tar.gz> [--to DIR] [--force] [--no-projects]
 ```text
 usage: timon docs search <words...> [--limit N] [--json]
        timon docs read [<route>] [--heading TEXT]
+```
+
+### timon computer propose agent [--add APP]... [--remove APP]... [--enable|--disable] …
+
+```text
+usage: timon computer propose <agent> [--add APP]... [--remove APP]... [--enable|--disable] [--note TEXT]
 ```
 
 ### timon widgets preset-save name [--view PATH] [--project SLUG] [--replace]

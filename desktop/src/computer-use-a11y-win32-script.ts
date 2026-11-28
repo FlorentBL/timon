@@ -7,6 +7,11 @@ import { WINDOWS_MSAA_LIB } from './computer-use-a11y-win32-msaa.js';
  *
  * The tree is walked in the Control view with a CacheRequest, so each element costs one cross-process
  * round trip instead of one per property. Ids are index paths from the window element.
+ *
+ * A Chromium web area (the child window of class Chrome_RenderWidgetHostHWND) is read through MSAA
+ * whenever MSAA answers, even when UI Automation shows children: up to Chromium 13x, UIA showed
+ * nothing there. The Chromium of Electron 45 shows no such element and serves the whole window
+ * over UIA, with its patterns (CI run 46147770073), so it is read here like any other application.
  */
 export const WINDOWS_UIA_LIB = WINDOWS_MSAA_LIB + String.raw`
 $script:uiaReady = $false
@@ -48,8 +53,10 @@ function Get-TimonUiaRole($typeName) {
     default { 'other' }
   }
 }
+# NotSupported is matched by reference: with -eq a boolean on the left converts the sentinel to $true,
+# so every true property (IsInvokePatternAvailable, IsKeyboardFocusable, IsPassword...) read as absent.
 function Get-TimonUiaCached($el, $property) {
-  try { $v = $el.GetCachedPropertyValue($property); if ($v -eq [System.Windows.Automation.AutomationElement]::NotSupported) { return $null }; return $v } catch { return $null }
+  try { $v = $el.GetCachedPropertyValue($property); if ([object]::ReferenceEquals($v, [System.Windows.Automation.AutomationElement]::NotSupported)) { return $null }; return $v } catch { return $null }
 }
 function Get-TimonUiaActions($el) {
   $A = [System.Windows.Automation.AutomationElement]
@@ -113,6 +120,9 @@ function Add-TimonUiaNode($el, [string]$path, [int]$depth, $state) {
     $node.bounds = @{ x = [math]::Round($rect.X / $s); y = [math]::Round($rect.Y / $s); width = [math]::Round($rect.Width / $s); height = [math]::Round($rect.Height / $s) }
   }
   [void]$state.nodes.Add($node)
+  if ((Test-TimonChromiumWebArea $el) -and $state.nodes.Count -lt $state.maxNodes) {
+    if (Add-TimonMsaaNodes $el $path $depth $state) { return }
+  }
   $i = 0
   $child = Get-TimonUiaFirstChild $el
   while ($null -ne $child) {
@@ -122,7 +132,18 @@ function Add-TimonUiaNode($el, [string]$path, [int]$depth, $state) {
     $child = $script:uiaWalker.GetNextSibling($child, $script:uiaCache)
   }
   # UI Automation (UIA2) shows nothing under a Chromium web area: read it through MSAA instead.
-  if ($i -eq 0 -and $state.nodes.Count -lt $state.maxNodes) { Add-TimonMsaaNodes $el $path $depth $state }
+  if ($i -eq 0 -and $state.nodes.Count -lt $state.maxNodes) { [void](Add-TimonMsaaNodes $el $path $depth $state) }
+}
+function Test-TimonChromiumWebArea($el) {
+  [string](Get-TimonUiaCached $el ([System.Windows.Automation.AutomationElement]::ClassNameProperty)) -eq 'Chrome_RenderWidgetHostHWND'
+}
+# The MSAA element a UIA path designates past a web area: step k must be 0 (the MSAA root), the rest
+# are MSAA child indices.
+function Get-TimonMsaaTarget($msaa, $steps, [int]$k) {
+  if ([int]$steps[$k] -ne 0) { return $null }
+  $rest = New-Object System.Collections.ArrayList
+  for ($m = $k + 1; $m -lt $steps.Length; $m++) { [void]$rest.Add([int]$steps[$m]) }
+  return @{ msaaRoot = $msaa; steps = @($rest) }
 }
 function Get-TimonUiaElement($id, [string]$path) {
   $el = Get-TimonUiaRoot $id
@@ -130,14 +151,17 @@ function Get-TimonUiaElement($id, [string]$path) {
   $steps = $path.Split('.')
   for ($k = 1; $k -lt $steps.Length; $k++) {
     $want = [int]$steps[$k]
+    # The same choice as the walk: a Chromium web area whose MSAA root answers is an MSAA path.
+    if (Test-TimonChromiumWebArea $el) {
+      $msaa = Get-TimonMsaaRoot $el
+      if ($null -ne $msaa) { return (Get-TimonMsaaTarget $msaa $steps $k) }
+    }
     $first = Get-TimonUiaFirstChild $el
     if ($null -eq $first) {
       # No UIA children: the rest of the path, if any, is an MSAA path under this web area.
       $msaa = Get-TimonMsaaRoot $el
-      if ($null -eq $msaa -or $want -ne 0) { return $null }
-      $rest = New-Object System.Collections.ArrayList
-      for ($m = $k + 1; $m -lt $steps.Length; $m++) { [void]$rest.Add([int]$steps[$m]) }
-      return @{ msaaRoot = $msaa; steps = @($rest) }
+      if ($null -eq $msaa) { return $null }
+      return (Get-TimonMsaaTarget $msaa $steps $k)
     }
     $el = $first
     for ($j = 0; $j -lt $want -and $null -ne $el; $j++) { $el = $script:uiaWalker.GetNextSibling($el, $script:uiaCache) }

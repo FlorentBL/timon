@@ -2,12 +2,12 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { execFile } from 'node:child_process';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
-import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
 import { Script } from 'node:vm';
 import { SHELL_LOCALES_DIR, writeEngine } from './native-browser-smoke.fixture.js';
+import { smokeArgs, smokeElectron, smokeEnv } from './electron-binary.fixture.js';
 
 /**
  * The annotation bubble of TODO #481, end to end in a real Electron: the real engine, tab preload,
@@ -141,6 +141,8 @@ const PAGE = '<!doctype html><meta charset="utf-8"><title>Shop</title><script>'
     await attach();
     page = activeTab().view.webContents;
     await command('annotateStart', human);
+    // The tab learns over IPC that it annotates; a point asked on that same channel is answered after it.
+    await command('annotatePick', { x: 1, y: 1, preview: true, ...human });
     await js(page, 'seen.splice(0); true');
 
     // ---- A click on an element opens the bubble on it, with the keyboard -------------------------
@@ -233,15 +235,15 @@ interface Report {
 
 async function runSmoke(): Promise<Report> {
   const root = await mkdtemp(join(tmpdir(), 'timon-bubble-smoke-'));
-  const electron = createRequire(import.meta.url)('electron') as string;
+  const electron = smokeElectron();
   try {
     await writeEngine(root, { preloads: ['native-browser-preload', 'native-browser-bubble-preload'] });
     new Script(fixture, { filename: 'smoke.cjs' });
     await writeFile(join(root, 'smoke.cjs'), fixture);
     const env: NodeJS.ProcessEnv = { ...process.env, TIMON_HOME: root, TIMON_SMOKE_LOCALES: SHELL_LOCALES_DIR };
     delete env.ELECTRON_RUN_AS_NODE;
-    const { stdout } = await promisify(execFile)(electron, [join(root, 'smoke.cjs')], {
-      env, timeout: 90_000, killSignal: 'SIGKILL', maxBuffer: 4 * 1024 * 1024,
+    const { stdout } = await promisify(execFile)(electron, smokeArgs(join(root, 'smoke.cjs')), {
+      env: smokeEnv(env), timeout: 90_000, killSignal: 'SIGKILL', maxBuffer: 4 * 1024 * 1024,
     }).catch((error) => { throw new Error(`Bubble smoke failed (${error.code ?? error.signal}): ${error.stdout}\n${error.stderr}`); });
     const line = stdout.split('\n').find((candidate) => candidate.startsWith('BUBBLE_REPORT '));
     assert.ok(line, stdout);

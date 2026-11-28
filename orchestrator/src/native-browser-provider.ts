@@ -1,4 +1,5 @@
 import { readFileSync, statSync } from 'node:fs';
+import { readFile, stat } from 'node:fs/promises';
 import { join } from 'node:path';
 import { TIMON_HOME } from './paths.js';
 import { detectChromeBinary, type ChromeDetection } from './host/chrome-binary.js';
@@ -31,10 +32,32 @@ export type NativeProvider = { version: 1; origin: string; token: string; pid: n
 /** This credential is local IPC, never returned through a browser-facing API. */
 export function readNativeProvider(home = TIMON_HOME): NativeProvider | null {
   try {
-    const path = join(home, 'browser-native', 'provider.json');
+    const path = providerFile(home);
     const stat = statSync(path);
-    if (!stat.isFile() || stat.size > 4096) return null;
-    const value = JSON.parse(readFileSync(path, 'utf8')) as NativeProvider;
+    if (!stat.isFile() || stat.size > MAX_PROVIDER_BYTES) return null;
+    return parseNativeProvider(readFileSync(path, 'utf8'));
+  } catch { return null; }
+}
+
+/** `readNativeProvider` without holding the event loop: what a daemon route reads. */
+export async function readNativeProviderAsync(home = TIMON_HOME): Promise<NativeProvider | null> {
+  try {
+    const path = providerFile(home);
+    const info = await stat(path);
+    if (!info.isFile() || info.size > MAX_PROVIDER_BYTES) return null;
+    return parseNativeProvider(await readFile(path, 'utf8'));
+  } catch { return null; }
+}
+
+const MAX_PROVIDER_BYTES = 4096;
+
+function providerFile(home: string): string {
+  return join(home, 'browser-native', 'provider.json');
+}
+
+function parseNativeProvider(text: string): NativeProvider | null {
+  try {
+    const value = JSON.parse(text) as NativeProvider;
     const url = new URL(value.origin);
     if (value.version !== 1 || url.protocol !== 'http:' || url.hostname !== '127.0.0.1'
       || !url.port || url.username || url.password || url.pathname !== '/' || url.search || url.hash
@@ -42,6 +65,17 @@ export function readNativeProvider(home = TIMON_HOME): NativeProvider | null {
       || !Number.isInteger(value.pid) || value.pid <= 0) return null;
     return { ...value, origin: url.origin };
   } catch { return null; }
+}
+
+/**
+ * The refusals the desktop names with a code (`BrowserCommandError.code`, desktop
+ * `native-browser-protocol.ts`). Any other code is not trusted to name a translation.
+ */
+function providerRefusal(code: unknown): ApiErrorBody | null {
+  if (code === 'browser_signin_needs_screen') {
+    return apiError('browser_signin_needs_screen', 'Signing in with Chrome opens a Chrome window, and this browser runs on a machine with no screen. Sign in to the site directly in the built-in browser.');
+  }
+  return null;
 }
 
 export async function callNativeBrowser(
@@ -60,9 +94,9 @@ export async function callNativeBrowser(
     });
     const result = await response.json() as Record<string, unknown>;
     if (!response.ok) {
-      // The desktop answers in English prose with no code: it stays the technical detail.
+      // The desktop answers in English prose: it stays the technical detail, unless it names a refusal the webview translates.
       const detail = typeof result.error === 'string' ? result.error : `HTTP ${response.status}`;
-      throw new NativeBrowserError(apiError('browser_command_failed', `Browser command failed: ${detail}`, { detail }), response.status);
+      throw new NativeBrowserError(providerRefusal(result.code) ?? apiError('browser_command_failed', `Browser command failed: ${detail}`, { detail }), response.status);
     }
     return result;
   } catch (error) {
@@ -97,13 +131,21 @@ export function chromeCapability(detect: () => ChromeDetection = detectChromeBin
     : { available: false, reason: detection.reason, message: chromeMissingMessage(detection.reason) };
 }
 
-export async function nativeBrowserCapabilities(detect?: () => ChromeDetection): Promise<{
-  available: boolean; reason?: string; chrome: ChromeCapability;
+export type NativeBrowserCapabilities = {
+  available: boolean;
+  /** The refusal in English; `refusal` is the same, coded for the webview to translate. */
+  reason?: string; refusal?: ApiErrorBody;
+  chrome: ChromeCapability;
   media?: { webrtc: boolean; encoded: boolean; iceServers: unknown[] };
-}> {
+};
+
+export async function nativeBrowserCapabilities(detect?: () => ChromeDetection): Promise<NativeBrowserCapabilities> {
   const chrome = chromeCapability(detect);
   try {
     await callNativeBrowser('_probe', { action: 'status' }, { timeoutMs: 1500 });
     return { available: true, chrome, media: { webrtc: true, encoded: true, iceServers: [] } };
-  } catch (error) { return { available: false, reason: (error as Error).message, chrome }; }
+  } catch (error) {
+    const refusal = browserErrorBody(error);
+    return { available: false, reason: refusal.error, refusal, chrome };
+  }
 }

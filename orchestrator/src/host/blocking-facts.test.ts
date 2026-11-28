@@ -4,8 +4,9 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
-  REQUIRED_BINARIES, blockingFactsOf, blockingFindings, localBlockingFacts, missingRequiredBinaries, type BlockingFacts,
+  REQUIRED_BINARIES, blockingFactsOf, blockingFindings, localBlockingFacts, missingRequiredBinaries, packagedStandIn, type BlockingFacts,
 } from './blocking-facts.js';
+import type { RuntimeFacts } from './bundled-node.js';
 import { BINARIES } from '../doctor.js';
 import { explainNodePtyFailure } from '../terminal-host/pty.js';
 
@@ -60,11 +61,32 @@ test('the facts of a doctor report, from this daemon or an older one', () => {
 });
 
 test('with no doctor, the report measures the same facts here', () => {
-  const facts = localBlockingFacts({}, { found: () => null, terminal: () => ({ available: false, reason: 'no addon' }) });
+  const facts = localBlockingFacts({}, { found: () => null, terminal: () => ({ available: false, reason: 'no addon' }), runtime: SOURCE });
   assert.deepEqual(facts.blockers, ['node not found']);
   assert.deepEqual(facts.terminal, { available: false, reason: 'no addon' });
   assert.equal(facts.isolation, null, 'only the daemon measures the fence');
   assert.deepEqual(localBlockingFacts({}, { found: (name) => `/bin/${name}`, terminal: () => ({ available: true, reason: null }) }).blockers, []);
+});
+
+const SOURCE: RuntimeFacts = { execPath: '/usr/bin/node', versions: { node: '24.0.0' } as NodeJS.ProcessVersions, platform: 'linux' };
+const PACKAGED: RuntimeFacts = { ...SOURCE, execPath: '/opt/Timon/resources/node/node' };
+
+test('an installed package\'s own Node stands for a node the system lacks; a source checkout still needs one', () => {
+  const terminal = () => ({ available: true, reason: null });
+  // The recipe of 27/11/2026: a bare Ubuntu Server, the .deb installed, no nodejs package.
+  assert.deepEqual(localBlockingFacts({}, { found: () => null, terminal, runtime: PACKAGED }).blockers, []);
+  assert.deepEqual(localBlockingFacts({}, { found: () => null, terminal, runtime: SOURCE }).blockers, ['node not found']);
+  assert.equal(packagedStandIn('node', false, PACKAGED), '/opt/Timon/resources/node/node');
+  assert.equal(packagedStandIn('node', false, { ...SOURCE, execPath: 'C:\\Program Files\\Timon\\resources\\node\\node.exe', platform: 'win32' }),
+    'C:\\Program Files\\Timon\\resources\\node\\node.exe');
+  assert.equal(packagedStandIn('node', false, SOURCE), null);
+  // Only node: the package ships no git, no backend.
+  assert.equal(packagedStandIn('git', false, PACKAGED), null);
+  // A pin names the Node to launch: a broken one stays a blocker.
+  assert.equal(packagedStandIn('node', true, PACKAGED), null);
+  assert.deepEqual(localBlockingFacts({ node: '/missing/node' }, { found: () => null, terminal, runtime: PACKAGED }).blockers, ['node not found']);
+  // A system Node, when there is one, is still the one found.
+  assert.deepEqual(localBlockingFacts({}, { found: (name) => `/usr/bin/${name}`, terminal, runtime: PACKAGED }).blockers, []);
 });
 
 test('TIM-0162: node-pty\'s "checked: … prebuilds" error gives way to the built addon\'s own', () => {

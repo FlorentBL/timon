@@ -52,3 +52,48 @@ export async function detectDesktopSession(
   } catch { /* probe unavailable → unknown */ }
   return 'unknown';
 }
+
+/** A synchronous command runner, `ServiceOpts.exec` shaped. */
+export type SessionExec = (name: string, args: string[]) => { code: number; stdout: string; stderr: string };
+
+/**
+ * Linux: does this machine have a desktop session, now or at its next login? The installing
+ * shell's own variables are not enough: an SSH login to a workstation has no DISPLAY either.
+ * The user's systemd manager holds the variables a graphical login exported to it, and a
+ * running display manager means a login screen, hence a desktop. Any one signal is enough;
+ * a probe that cannot run says nothing, and a server answers no to all three.
+ */
+export function linuxGraphicalSession(env: NodeJS.ProcessEnv, exec: SessionExec): boolean {
+  if (env.DISPLAY || env.WAYLAND_DISPLAY) return true;
+  const ask = (args: string[]): string => {
+    try {
+      const result = exec('systemctl', args);
+      return result.code === 0 ? result.stdout : '';
+    } catch { return ''; }
+  };
+  if (EXPORTED_DISPLAY.test(ask(SHOW_ENVIRONMENT))) return true;
+  return ask(DISPLAY_MANAGER).trim() === 'active';
+}
+
+const EXPORTED_DISPLAY = /^(?:DISPLAY|WAYLAND_DISPLAY)=\S/m;
+const SHOW_ENVIRONMENT = ['--user', 'show-environment'];
+const DISPLAY_MANAGER = ['is-active', 'display-manager.service'];
+
+/** `SessionExec` that does not hold the event loop: what a daemon asks with. */
+export type AsyncSessionExec = (name: string, args: string[]) => Promise<{ code: number; stdout: string; stderr: string }>;
+
+/**
+ * `linuxGraphicalSession` for the daemon: a `systemd --user` that does not answer must not
+ * freeze every mission while `systemctl` waits for its timeout.
+ */
+export async function linuxGraphicalSessionAsync(env: NodeJS.ProcessEnv, exec: AsyncSessionExec): Promise<boolean> {
+  if (env.DISPLAY || env.WAYLAND_DISPLAY) return true;
+  const ask = async (args: string[]): Promise<string> => {
+    try {
+      const result = await exec('systemctl', args);
+      return result.code === 0 ? result.stdout : '';
+    } catch { return ''; }
+  };
+  if (EXPORTED_DISPLAY.test(await ask(SHOW_ENVIRONMENT))) return true;
+  return (await ask(DISPLAY_MANAGER)).trim() === 'active';
+}

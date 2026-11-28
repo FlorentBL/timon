@@ -11,7 +11,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join, resolve, win32 as winPath } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { ExecResult } from './types.js';
-import { packagedServiceOptions } from './packaged-service.js';
+import { browserHostUnit, packagedServiceOptions, renderBrowserHostUnit } from './packaged-service.js';
 import { upgradeDesktopService, type UpgradeDeps } from './packaged-upgrade.js';
 import {
   LINUX_UNIT, MACOS_LABEL, WINDOWS_SERVICE_REVISION, WINDOWS_TASK, elevatedScriptPath, installService, launchDaemonPath, macosLauncherPath, plistPath,
@@ -28,7 +28,7 @@ type Host = {
   /** Windows: the registered task as XML; the others read their file. */
   task: { xml: string | null; registered: boolean };
   /** Linux: what `systemctl show` answers for a unit, instead of reading its files. */
-  systemd: Map<string, () => ExecResult>;
+  systemd: Map<string, (args: string[]) => ExecResult>;
 };
 
 const OK: ExecResult = { code: 0, stdout: '', stderr: '' };
@@ -46,7 +46,7 @@ function host(platform: Platform): Host {
   );
   const calls: string[][] = [];
   const task = { xml: null as string | null, registered: false };
-  const systemd = new Map<string, () => ExecResult>();
+  const systemd = new Map<string, (args: string[]) => ExecResult>();
   const o: ServiceOpts = {
     platform,
     homeDir,
@@ -73,7 +73,7 @@ function host(platform: Platform): Host {
         // The effective unit, as systemd would serialize what is on disk now.
         const unit = args[args.indexOf('show') + 1]!;
         const scripted = systemd.get(unit);
-        if (scripted) return scripted();
+        if (scripted) return scripted(args);
         const file = unitPath(homeDir, unit);
         if (!existsSync(file)) return { code: 0, stdout: 'LoadState=not-found\n', stderr: '' };
         // The file, then its drop-ins in order: the last assignment wins, and
@@ -83,12 +83,33 @@ function host(platform: Platform): Host {
           .map((f) => readFileSync(f, 'utf8')).join('\n').replaceAll('%t', '/run/user/501');
         const environment = [...text.matchAll(/^Environment=("?TIMON_HOME=.*)$/gm)].at(-1)?.[1] ?? '';
         const directory = [...text.matchAll(/^WorkingDirectory=(.*)$/gm)].at(-1)?.[1] ?? '';
-        return { code: 0, stdout: `LoadState=loaded\nNeedDaemonReload=no\nActiveState=active\nUnitFileState=enabled\nWorkingDirectory=${directory}\nEnvironment=${environment}\n`, stderr: '' };
+        return { code: 0, stdout: `LoadState=loaded\nNeedDaemonReload=no\nActiveState=active\nUnitFileState=enabled\nWorkingDirectory=${directory}\nEnvironment=${environment}\n${execLines(text, unit)}`, stderr: '' };
       }
       return OK;
     },
   };
   return { o, calls, task, systemd };
+}
+
+/**
+ * The `Exec*` properties as `systemctl show` prints them: each assignment adds a
+ * command, an empty one resets the list (how a drop-in replaces `ExecStart`), the
+ * words are unquoted and the specifiers resolved, then joined by spaces.
+ */
+function execLines(text: string, unit: string): string {
+  return ['ExecCondition', 'ExecStartPre', 'ExecStart', 'ExecStartPost', 'ExecReload', 'ExecStop', 'ExecStopPost'].flatMap((property) => {
+    let commands: string[][] = [];
+    for (const [, value] of text.matchAll(new RegExp(`^${property}=(.*)$`, 'gm'))) {
+      if (value!.trim() === '') { commands = []; continue; }
+      commands.push([...value!.matchAll(/"((?:\\.|[^"\\])*)"|(\S+)/g)].map(([, quoted, bare]) =>
+        (quoted === undefined ? bare! : quoted.replace(/\\(.)/g, '$1'))
+          .replace(/%(.)/g, (whole, s: string) => (s === 'n' ? `${unit}.service` : s === '%' ? '%' : whole))));
+    }
+    return commands.map((argv) => {
+      const path = argv[0]!.replace(/^[-@+!:]+/, '');
+      return `${property}={ path=${path} ; argv[]=${[path, ...argv.slice(1)].join(' ')} ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }\n`;
+    });
+  }).join('');
 }
 
 /** What the elevated Windows batch reports, step by step, once it is run. */
@@ -1053,6 +1074,133 @@ test('linux: an update of the package is not judged on a clone unit beside it', 
   });
   assert.equal(moved.ok, true);
   assert.deepEqual(steps, ['install']);
+});
+
+/**
+ * The built-in browser's unit names this home too, and was let through on its
+ * name alone: a residual unit, edited or overridden, could run `dist/boot.js` on
+ * this home without being seen as a second daemon (audit I10, 26/11/2026).
+ */
+function registerBrowserHost(h: Host, executable = '/opt/Timon/timon-desktop'): { unit: string; file: string } {
+  const unit = browserHostUnit(h.o.timonHome);
+  const file = unitPath(h.o.homeDir, unit);
+  mkdirSync(dirname(file), { recursive: true });
+  writeFileSync(file, renderBrowserHostUnit(h.o.timonHome, executable));
+  return { unit, file };
+}
+
+const PASSES = { refusal: null, replacing: null, notice: null };
+
+test('linux: the browser host as rendered is no second daemon', { skip: SYSTEMD_IDENTITY }, () => {
+  const h = host('linux');
+  registerBrowserHost(h);
+  assert.deepEqual(servicesSharingHome(h.o), []);
+  assert.deepEqual(guardServiceGesture(h.o, 'install'), PASSES);
+  assert.deepEqual(guardServiceGesture(h.o, 'start'), PASSES);
+  // Read as systemd runs it, not skipped on its name.
+  const unit = browserHostUnit(h.o.timonHome);
+  assert.ok(h.calls.some((c) => c[2] === 'show' && c[3] === unit && c.some((a) => a.includes('ExecStart'))), JSON.stringify(h.calls));
+});
+
+test('linux: a browser host of another package root, spaces included, is still the host', { skip: SYSTEMD_IDENTITY }, () => {
+  const h = host('linux');
+  registerBrowserHost(h, '/srv/Old Timon/timon-desktop');
+  assert.deepEqual(servicesSharingHome(h.o), []);
+});
+
+test('linux: a browser host unit whose ExecStart runs the daemon blocks install and start', { skip: SYSTEMD_IDENTITY }, () => {
+  const h = host('linux');
+  const { unit, file } = registerBrowserHost(h);
+  writeFileSync(file, readFileSync(file, 'utf8').replace(/^ExecStart=.*$/m,
+    'ExecStart="/opt/Timon/resources/node/node" "/opt/Timon/resources/orchestrator/dist/boot.js"'));
+
+  assert.equal(servicesSharingHome(h.o)[0]?.why, 'shared');
+  for (const gesture of ['install', 'start'] as const) {
+    const { refusal } = guardServiceGesture(h.o, gesture);
+    assert.ok(refusal, gesture);
+    assert.match(refusal.lines[0]!, new RegExp(`the service ${unit} already runs on this data directory`));
+    assert.ok(refusal.lines.join('\n').includes(file));
+  }
+  assert.ok(h.calls.every(READ_ONLY), JSON.stringify(h.calls));
+  // Its home is proven: --force may take it down, and the install writes the host again.
+  assert.deepEqual(guardServiceGesture(h.o, 'install', { force: true }).replacing?.units, [unit]);
+});
+
+const HIJACKS: Record<string, string> = {
+  'a drop-in that replaces ExecStart': '[Service]\nExecStart=\nExecStart="/usr/bin/node" "/srv/clone/orchestrator/dist/boot.js"\n',
+  'a drop-in that adds a command before the host': '[Service]\nExecStartPre="/usr/bin/node" "/srv/clone/orchestrator/dist/boot.js"\n',
+  'a drop-in that adds a stop command': '[Service]\nExecStop=/usr/bin/true\n',
+  'a drop-in that hands the launcher another desktop': '[Service]\nExecStart=\nExecStart="/opt/Timon/resources/node/node" "/opt/Timon/resources/orchestrator/dist/host/browser-host-launcher.js" "/usr/bin/node" %n\n',
+  'a drop-in that points the launcher elsewhere': '[Service]\nExecStart=\nExecStart="/opt/Timon/resources/node/node" "/opt/Timon/resources/orchestrator/dist/boot.js" "/opt/Timon/timon-desktop" %n\n',
+};
+
+for (const [why, content] of Object.entries(HIJACKS)) {
+  test(`linux: browser host unit, ${why}: blocks install and start`, { skip: SYSTEMD_IDENTITY }, () => {
+    const h = host('linux');
+    const { unit } = registerBrowserHost(h);
+    dropIn(h, unit, content);
+    assert.equal(servicesSharingHome(h.o)[0]?.why, 'shared');
+    assert.ok(guardServiceGesture(h.o, 'install').refusal);
+    assert.ok(guardServiceGesture(h.o, 'start').refusal);
+  });
+}
+
+test('linux: a browser host unit given NODE_OPTIONS can run any script: it blocks', { skip: SYSTEMD_IDENTITY }, () => {
+  const h = host('linux');
+  const { unit, file } = registerBrowserHost(h);
+  const node = '/opt/Timon/resources/node/node';
+  const argv = [node, '/opt/Timon/resources/orchestrator/dist/host/browser-host-launcher.js', '/opt/Timon/timon-desktop', `${unit}.service`].join(' ');
+  for (const variable of ['NODE_OPTIONS=--import=/srv/clone/orchestrator/dist/boot.js', 'ELECTRON_RUN_AS_NODE=1']) {
+    h.systemd.set(unit, () => ({ code: 0, stderr: '', stdout: 'LoadState=loaded\nNeedDaemonReload=no\nWorkingDirectory=\n'
+      + `Environment="TIMON_HOME=${h.o.timonHome}" ${variable}\n`
+      + `ExecStart={ path=${node} ; argv[]=${argv} ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }\n` }));
+    assert.equal(servicesSharingHome(h.o)[0]?.why, 'shared', variable);
+    assert.ok(guardServiceGesture(h.o, 'install').refusal, variable);
+  }
+  // The same answer without it is the host.
+  h.systemd.set(unit, () => ({ code: 0, stderr: '', stdout: 'LoadState=loaded\nNeedDaemonReload=no\nWorkingDirectory=\n'
+    + `Environment="TIMON_HOME=${h.o.timonHome}"\n`
+    + `ExecStart={ path=${node} ; argv[]=${argv} ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }\n` }));
+  assert.deepEqual(servicesSharingHome(h.o), []);
+  assert.ok(existsSync(file));
+});
+
+/** The home is proven, so only the commands are in doubt. */
+const UNREADABLE_HOST: Record<string, (home: string) => (args: string[]) => ExecResult> = {
+  ...Object.fromEntries(Object.entries(UNVERIFIED).map(([why, answer]) => [why, () => answer])),
+  'its commands cannot be asked for': (home) => (args) => args.some((a) => a.includes('ExecStart'))
+    ? { code: 1, stderr: 'Failed to connect to bus', stdout: '' }
+    : { code: 0, stderr: '', stdout: `LoadState=loaded\nNeedDaemonReload=no\nWorkingDirectory=\nEnvironment="TIMON_HOME=${home}"\n` },
+  'its commands are printed in a form not understood': (home) => () => ({
+    code: 0, stderr: '', stdout: `LoadState=loaded\nNeedDaemonReload=no\nWorkingDirectory=\nEnvironment="TIMON_HOME=${home}"\nExecStart=/opt/Timon/resources/node/node\n`,
+  }),
+};
+
+for (const [why, answerFor] of Object.entries(UNREADABLE_HOST)) {
+  test(`linux: browser host unit, ${why}: unverified, and --force does not get past it`, { skip: SYSTEMD_IDENTITY }, () => {
+    const h = host('linux');
+    const { unit, file } = registerBrowserHost(h);
+    const before = readFileSync(file, 'utf8');
+    h.systemd.set(unit, answerFor(h.o.timonHome));
+    assert.equal(servicesSharingHome(h.o)[0]?.why, 'unverified');
+    for (const gesture of ['install', 'start'] as const) {
+      for (const force of [false, true]) {
+        const { refusal, replacing } = guardServiceGesture(h.o, gesture, { force });
+        assert.ok(refusal, `${gesture}, force ${force}`);
+        assert.equal(replacing, null);
+        assert.match(refusal.lines[0]!, new RegExp(`the service ${unit} could not be checked`));
+      }
+    }
+    assert.equal(readFileSync(file, 'utf8'), before);
+  });
+}
+
+test('linux: a browser host of another home, edited or not, is none of this gesture\'s business', { skip: SYSTEMD_IDENTITY }, () => {
+  const h = host('linux');
+  const other = { ...h, o: { ...h.o, timonHome: join(h.o.homeDir, 'other-home') } };
+  const { unit } = registerBrowserHost(other);
+  dropIn(h, unit, '[Service]\nExecStart=\nExecStart=/usr/bin/node /srv/clone/orchestrator/dist/boot.js\n');
+  assert.deepEqual(servicesSharingHome(h.o), []);
 });
 
 test('macOS and Windows have one service name per account: nothing else to read', () => {

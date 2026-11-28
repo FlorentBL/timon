@@ -16,3 +16,14 @@ fi
 if [ ! -e '/opt/${sanitizedProductName}/cli/timon' ] && [ "$(readlink /usr/bin/timon)" = '/opt/${sanitizedProductName}/cli/timon' ]; then
     rm -f /usr/bin/timon
 fi
+
+# The AppArmor profile names the executable: a final removal takes it, an
+# upgrade (the executable still in place) keeps it. Never a profile this
+# package did not write.
+if [ ! -e '/opt/${sanitizedProductName}/${executable}' ] && [ -f '/etc/apparmor.d/${executable}' ] \
+    && grep -qxF '# Written by the ${sanitizedProductName} package: removed with it.' '/etc/apparmor.d/${executable}'; then
+    if hash apparmor_parser 2>/dev/null; then
+        apparmor_parser --remove '/etc/apparmor.d/${executable}' >/dev/null 2>&1 || true
+    fi
+    rm -f '/etc/apparmor.d/${executable}'
+fi

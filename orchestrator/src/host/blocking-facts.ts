@@ -14,6 +14,7 @@
  */
 import { z } from 'zod';
 import { findExecutableBinary, resolvePinnedBinary } from './binary-path.js';
+import { packagedRuntime, type RuntimeFacts } from './bundled-node.js';
 import { nodePtyStatus } from '../terminal-host/pty.js';
 
 export type Finding = { id: string; text: string };
@@ -25,6 +26,20 @@ export const REQUIRED_BINARIES: readonly string[] = ['node'];
 export function resolveConfiguredBinary(name: string, pins: Record<string, string | null>): string | null {
   const pin = pins[name];
   return typeof pin === 'string' && pin ? resolvePinnedBinary(name, pin) : findExecutableBinary(name);
+}
+
+const currentRuntime = (): RuntimeFacts => ({ execPath: process.execPath, versions: process.versions, platform: process.platform });
+
+/**
+ * What stands for a required binary the search did not find: on an installed package, the Node
+ * it ships (`resources/node/node`) runs the daemon, the CLI and the missions (`nodeRuntime`), so
+ * a machine without a system Node lacks nothing. The doctor of a bare server said "BLOCKING: node
+ * not found → sudo apt-get install nodejs" (recipe of 27/11/2026). A source checkout runs on the
+ * system's Node and keeps the requirement; a pin names the Node to use, and a broken one stays
+ * a blocker, since `nodeRuntime` would launch it.
+ */
+export function packagedStandIn(name: string, pinned: boolean, runtime: RuntimeFacts = currentRuntime()): string | null {
+  return name === 'node' && !pinned && packagedRuntime(runtime) ? runtime.execPath : null;
 }
 
 /** The doctor's blocker for each required binary `found` does not resolve, in its exact words. */
@@ -73,9 +88,10 @@ export function blockingFactsOf(report: unknown): BlockingFacts | null {
  */
 export function localBlockingFacts(
   pins: Record<string, string | null>,
-  probe: { found?: (name: string) => string | null; terminal?: () => TerminalFacts } = {},
+  probe: { found?: (name: string) => string | null; terminal?: () => TerminalFacts; runtime?: RuntimeFacts } = {},
 ): BlockingFacts {
-  const found = probe.found ?? ((name: string) => resolveConfiguredBinary(name, pins));
+  const search = probe.found ?? ((name: string) => resolveConfiguredBinary(name, pins));
+  const found = (name: string) => search(name) ?? packagedStandIn(name, Boolean(pins[name]), probe.runtime);
   return {
     blockers: missingRequiredBinaries(found),
     terminal: (probe.terminal ?? nodePtyStatus)(),

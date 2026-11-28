@@ -4,7 +4,7 @@ import { mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { BrowserCommandError } from './native-browser-protocol.js';
-import { startNativeBrowserServer } from './native-browser-server.js';
+import { providerCommand, startNativeBrowserServer } from './native-browser-server.js';
 
 test('provider publishes a private descriptor, authenticates requests, cleans up on shutdown', async () => {
   const home = await mkdtemp(join(tmpdir(), 'timon-browser-server-'));
@@ -52,5 +52,33 @@ test('an old provider does not remove the replacement descriptor', async () => {
     await writeFile(path, JSON.stringify({ ...provider.descriptor, token: 'replacement' }));
     await provider.close();
     assert.equal(JSON.parse(await readFile(path, 'utf8')).token, 'replacement');
+  } finally { await provider.close(); await rm(home, { recursive: true, force: true }); }
+});
+
+test('a stream command goes to the capture, a stop ends the profile streams before the engine', async () => {
+  const calls: string[] = [];
+  const command = providerCommand(() => ({
+    browser: { command: async (body) => { calls.push(`browser:${String(body.action)}`); return {}; } },
+    media: {
+      command: async (body) => { calls.push(`media:${String(body.action)}`); return {}; },
+      closeProfile: (profileId) => { calls.push(`media:close:${profileId}`); },
+    },
+  }));
+  await command({ action: 'mediaStart', profileId: 'a' });
+  await command({ action: 'navigate', profileId: 'a' });
+  await command({ action: 'stop', profileId: 'a' });
+  assert.deepEqual(calls, ['media:mediaStart', 'browser:navigate', 'media:close:a', 'browser:stop']);
+});
+
+test('a coded refusal reaches the daemon with its code, an uncoded one without', async () => {
+  const home = await mkdtemp(join(tmpdir(), 'timon-browser-server-'));
+  const provider = await startNativeBrowserServer(home, async (body) => {
+    throw body.action === 'coded' ? new BrowserCommandError('No screen.', 409, 'browser_signin_needs_screen') : new BrowserCommandError('Plain.', 409);
+  });
+  try {
+    const headers = { 'Content-Type': 'application/json', Authorization: `Bearer ${provider.descriptor.token}` };
+    const call = (action: string) => fetch(`${provider.descriptor.origin}/command`, { method: 'POST', headers, body: JSON.stringify({ action }) });
+    assert.deepEqual(await (await call('coded')).json(), { error: 'No screen.', code: 'browser_signin_needs_screen' });
+    assert.deepEqual(await (await call('plain')).json(), { error: 'Plain.' });
   } finally { await provider.close(); await rm(home, { recursive: true, force: true }); }
 });

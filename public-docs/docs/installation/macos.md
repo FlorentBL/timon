@@ -3,6 +3,8 @@ title: macOS
 sidebar_position: 4
 ---
 
+Timon needs macOS 13.5 Ventura or later, on Apple silicon. The installer refuses macOS 13.4 or older: update macOS first.
+
 ## One command
 
 ```bash

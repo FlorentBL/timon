@@ -40,7 +40,7 @@ import { formatBytes, freeBytes, LOW_DISK_BYTES } from './storage-failure.js';
 import { CATALOG } from './kernel/catalog.js';
 import { degradation } from './kernel/degradation.js';
 import { checkDaemonNode, nodelessBackends, nodelessBackendText } from './host/launch-path.js';
-import { missingRequiredBinaries, REQUIRED_BINARIES } from './host/blocking-facts.js';
+import { missingRequiredBinaries, packagedStandIn, REQUIRED_BINARIES } from './host/blocking-facts.js';
 import { nodePtyStatus } from './terminal-host/pty.js';
 import { binaryCandidates, findExecutableBinary, npmPrefixCandidates, pinnedBinaryCandidates, resolvePinnedBinary, type BinarySearchOptions } from './host/binary-path.js';
 import { BUILTIN_API_KEY_PROVIDERS, BUILTIN_DECLARATIONS, builtinBinaries, builtinProviderIds } from './backends/builtin-declarations.js';
@@ -50,6 +50,10 @@ import type { ProviderBinaryIdentity } from './backends/provider-declarations.js
 import { declaredBinary } from './host/declared-binaries.js';
 import { usableProviders } from './backends/usable.js';
 import { isRemoteDialect } from './backends/types.js';
+import { builtInBrowserLatest } from './built-in-browser.js';
+// `timon doctor` waits for it before `diagnose()`, as for the pinned programs.
+export { refreshBuiltInBrowser } from './built-in-browser.js';
+import { formatBuiltInBrowser } from './host/built-in-browser-status.js';
 import type { DoctorReport, BinaryReport, BinaryProvider, ProviderAuthReport } from './plugins/contract/system.js';
 export type { DoctorReport, BinaryReport, BinaryProvider, ProviderAuthReport } from './plugins/contract/system.js';
 
@@ -216,7 +220,12 @@ export function doctorMainSeat(): DoctorReport['mainSeat'] {
   }
 }
 
-export function diagnose(): DoctorReport {
+/**
+ * `refreshBrowser`: the caller asks for the state now (a route, the support report), so a stale
+ * built-in browser report starts the shared probe for the next one. Off by default: the probe runs
+ * `systemctl` in the background, which only someone asking for the state should pay for.
+ */
+export function diagnose(options: { refreshBrowser?: boolean } = {}): DoctorReport {
   const cfg = config();
   const pins = cfg.host.binaries;
   const authEnv = mainAgentAuthEnv();
@@ -226,7 +235,9 @@ export function diagnose(): DoctorReport {
   const machine = { platform: process.platform, packageManager: linux?.packageManager ?? null };
 
   const binaries: BinaryReport[] = BINARIES.map((b) => {
-    const { path, pinned } = whichBin(b.name, pins);
+    const { path: searched, pinned } = whichBin(b.name, pins);
+    // An installed package's own Node stands for a `node` missing from the system.
+    const path = searched ?? packagedStandIn(b.name, pinned);
     const pin = pins[b.name];
     const provider = providerOf(b.name);
     const wrongProgram = pinned && path ? pinnedIdentityProblem(b.name, path) : null;
@@ -263,6 +274,10 @@ export function diagnose(): DoctorReport {
 
   const { report: missionIsolation, blocker: isolationBlocker } = missionIsolationNow(cfg);
 
+  // What the shared probe last learned: `diagnose()` answers an HTTP route and must not wait on systemd.
+  // Nothing learned yet: no section this time; with `refreshBrowser` the probe starts for the next report.
+  const builtInBrowser: DoctorReport['builtInBrowser'] = builtInBrowserLatest(options.refreshBrowser === true);
+
   const free = freeBytes(TIMON_HOME);
   const storage = { path: TIMON_HOME, freeBytes: free, low: free !== null && free < LOW_DISK_BYTES };
 
@@ -279,6 +294,9 @@ export function diagnose(): DoctorReport {
   // `enforce` refuses every mission it cannot fence: nothing works until fixed.
   // In `auto` it is a warning, never a blocker.
   if (isolationBlocker) blockers.push(isolationBlocker);
+  // Not the browser alone: Chromium refuses to start, the Timon app included.
+  const sandbox = builtInBrowser?.problems.find((p) => p.id === 'no-sandbox');
+  if (sandbox) blockers.push(`${sandbox.message} Repair: ${sandbox.fix}`);
   if (cfg.host.docker === 'required' && !docker.usable) {
     blockers.push(`host.docker is "required" but Docker is unusable (${docker.detail})`);
   }
@@ -305,6 +323,7 @@ export function diagnose(): DoctorReport {
     docker,
     display,
     terminal: nodePtyStatus(),
+    ...(builtInBrowser ? { builtInBrowser } : {}),
     missionIsolation,
     storage,
     mainSeat: doctorMainSeat(),
@@ -515,6 +534,7 @@ export function formatDoctor(r: DoctorReport): string {
     `docker           ${r.docker.usable ? `usable — ${r.docker.detail}` : `unusable — ${r.docker.detail}`}`,
     `graphical session ${r.display ?? 'none (DISPLAY/WAYLAND_DISPLAY empty)'}`,
     ...(r.terminal ? [`built-in terminal ${r.terminal.available ? 'available' : `UNAVAILABLE — ${r.terminal.reason ?? 'node-pty did not load'}`}`] : []),
+    ...(r.builtInBrowser ? formatBuiltInBrowser(r.builtInBrowser) : []),
     `mission isolation ${r.missionIsolation.message}`,
     ...r.missionIsolation.gaps.map((gap) => `  ${gap}`),
   );
@@ -536,6 +556,14 @@ export function formatDoctor(r: DoctorReport): string {
   }
   if (r.terminal && !r.terminal.available) {
     lines.push('', 'WARNING:', `  - the built-in terminal cannot start: ${r.terminal.reason ?? 'node-pty did not load'}`);
+  }
+  // A server's browser is what its agents browse with: a missing one is said again where it shows.
+  // The sandbox is already a blocker below.
+  const browserProblems = (r.builtInBrowser?.server ? r.builtInBrowser.problems : r.builtInBrowser?.problems.filter((p) => !p.blocking) ?? [])
+    .filter((p) => p.id !== 'no-sandbox');
+  if (browserProblems.length) {
+    lines.push('', 'WARNING:');
+    for (const p of browserProblems) lines.push(`  - built-in browser: ${p.message}${p.fix ? `  →  ${p.fix}` : ''}`);
   }
   if (r.blockers.length) {
     lines.push('', 'BLOCKING:');

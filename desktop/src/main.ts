@@ -92,7 +92,7 @@ import { NativeBrowserEngine } from './native-browser.js';
 import { sessionAnnotationRoutes } from './native-browser-bubble.js';
 import { startRendererDiagnostic } from './renderer-diagnostic.js';
 import { NativeBrowserMedia } from './native-browser-media.js';
-import { startNativeBrowserServer } from './native-browser-server.js';
+import { providerCommand, startNativeBrowserServer } from './native-browser-server.js';
 import { startComputerUse } from './computer-use-electron.js';
 import { APP_INFO_CHANNEL, canReadAppInfo } from './app-info.js';
 import { machineForDetachedWindow, OPEN_WINDOW_CHANNEL, parseOpenWindowRequest } from './window-open.js';
@@ -105,6 +105,9 @@ import { canUninstall, cleanupCopy, cleanupPlan, uninstallRequest, removalInstru
 import { performUninstall, prepareCleanup, stopInstalledService, verifyStopped } from './uninstall-controller.js';
 import { runUninstallHelper } from './uninstall-helper.js';
 import { runWindowsServiceShell, WINDOWS_SERVICE_FLAG } from './windows-service-shell.js';
+import { BROWSER_HOST_EXIT, browserHostRequested, launchedByBrowserHost, takeHomeFromBrowserHost } from './browser-host.js';
+import { runBrowserHost } from './browser-host-shell.js';
+import { electronBrowserHostSeams } from './browser-host-electron.js';
 import { BROWSER_ATTACH_CHANNEL, BROWSER_DETACH_CHANNEL, trustedBrowserSender } from './native-browser-protocol.js';
 
 import { DaemonStartTimeoutError, updateOffer, finishUpdate, finishUpdateDeps, updateCopy, updateFailureDialog, unmanagedDaemon, type UpdateOffer, type UpdateStage } from './data-update.js';
@@ -1658,11 +1661,7 @@ async function main(): Promise<void> {
     locale: () => uiLocale(),
   });
   browserMedia = new NativeBrowserMedia(desktopHome, profileId => nativeBrowser!.mediaSource(profileId));
-  const browserProvider = await startNativeBrowserServer(desktopHome, (body) => {
-    if (typeof body.action === 'string' && body.action.startsWith('media')) return browserMedia!.command(body);
-    if (body.action === 'stop' && typeof body.profileId === 'string') browserMedia!.closeProfile(body.profileId);
-    return nativeBrowser!.command(body);
-  });
+  const browserProvider = await startNativeBrowserServer(desktopHome, providerCommand(() => ({ browser: nativeBrowser!, media: browserMedia! })));
   stopBrowserProvider = browserProvider.close;
   // The computer-native service never blocks startup: the daemon answers `computer_unavailable` without it.
   try {
@@ -1897,6 +1896,10 @@ if (process.platform === 'win32' && process.argv.includes(WINDOWS_SERVICE_FLAG))
   void runWindowsServiceShell(app, process.argv).catch(() => app.exit(1));
 } else if (process.argv.includes(UNINSTALL_HELPER_FLAG)) {
   void runUninstallHelper().catch(error => { dialog.showErrorBox(DISPLAY_NAME, String(error)); app.exit(1); });
+} else if (browserHostRequested(process.argv)) {
+  // The built-in browser alone, for a Linux machine with no Timon window (`browser-host.ts`).
+  void runBrowserHost(electronBrowserHostSeams())
+    .catch((error: unknown) => { console.error('[browser-host] failed', error); app.exit(BROWSER_HOST_EXIT.failed); });
 } else {
 // Before any window: the class the dock matches its launcher against (`linux-desktop.ts`).
 const devName = devShellName(process.platform, app.isPackaged);
@@ -1927,9 +1930,19 @@ layoutKeeper = new WindowLayoutKeeper(readWindowLayout(desktopHome), {
 const ownBuild = shellBuild({ packaged: app.isPackaged, version: app.getVersion(), mainModifiedMs: mainModifiedMs() });
 
 // A second launch opens a window in this shell (`second-instance`), never a second shell.
-if (!app.requestSingleInstanceLock({ build: ownBuild } satisfies LaunchData)) {
-  app.quit();
-} else {
+const ownLaunch = { build: ownBuild } satisfies LaunchData;
+if (app.requestSingleInstanceLock(ownLaunch)) startShell();
+else {
+  // A browser host holding this home steps aside for the app with a screen (`browser-host.ts`).
+  void takeHomeFromBrowserHost({
+    home: desktopHome, pid: process.pid, request: () => app.requestSingleInstanceLock(ownLaunch), log: (line) => console.log(line),
+  }).then((taken) => { if (taken) startShell(); else app.quit(); }, (error: unknown) => {
+    console.error('[desktop] could not take the home from the browser host', error);
+    app.quit();
+  });
+}
+
+function startShell(): void {
   const restartAfterSetup = setupRestarter({
     validate: () => {
       if (!existsSync(join(desktopHome, 'timon.config.json'))) {
@@ -2343,6 +2356,8 @@ if (!app.requestSingleInstanceLock({ build: ownBuild } satisfies LaunchData)) {
   // three windows, each on its machine. While the interface is failing or a
   // check or update window is up, it is the gesture that brings them back.
   app.on('second-instance', (_event, _argv, _cwd, launch: unknown) => {
+    // A browser host waiting for this home asks for the lock every few seconds: not a launch.
+    if (launchedByBrowserHost(launch)) return;
     const cfg = loadDesktopConfig(desktopHome, { packaged: app.isPackaged });
     const url = originOf(cfg.app.listen);
     // Another build launched: its pages would ask for bridges this main process does not have.
@@ -2441,6 +2456,8 @@ if (!app.requestSingleInstanceLock({ build: ownBuild } satisfies LaunchData)) {
 
   // Every session, before any page loads: no spell-check dictionary from Google.
   app.on('session-created', (created) => keepDictionariesLocal(created, process.platform));
+  // Taken from a browser host after Electron was ready: the default session was created before the listener.
+  if (app.isReady()) keepDictionariesLocal(session.defaultSession, process.platform);
   app.whenReady().then(main).catch(async (e: unknown) => {
     console.error('[desktop] startup failed', e);
     // Quit only once the box is closed: on Linux the copied report would go with the app.

@@ -12,6 +12,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { existsSync, readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
+import { createRequire } from 'node:module';
 import { dirname, join } from 'node:path';
 import { PACKAGED_DEFAULTS } from './config.js';
 
@@ -23,6 +24,21 @@ const pkg = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8')) as {
   homepage?: string;
   author?: { email?: string };
 };
+
+/**
+ * electron-builder checks its configuration against its own schema only when
+ * a build starts, on each OS: a key its new major no longer knows (26 moved the
+ * Linux `desktop` keys under `entry`) failed the build, not a test.
+ */
+test('electron-builder.yml passes the schema of the installed electron-builder', async () => {
+  const require = createRequire(import.meta.url);
+  const yaml = require('js-yaml') as { load: (text: string) => unknown };
+  const { validateConfiguration } = require('app-builder-lib/out/util/config/config.js') as {
+    validateConfiguration: (config: unknown, logger: unknown) => Promise<void>;
+  };
+  const { DebugLogger } = require('builder-util') as { DebugLogger: new (enabled: boolean) => unknown };
+  await validateConfiguration(yaml.load(yml), new DebugLogger(false));
+});
 
 test('the daemon and the built app travel with the client', () => {
   for (const resource of [
@@ -120,7 +136,10 @@ test('the rebuild never touches the tree the local daemon runs on', () => {
 test('TIM-0162: a Linux x64 package ships pty.node, built for the glibc it promises', async () => {
   const script = readFileSync(join(root, 'scripts', 'prepare-daemon-deps.mjs'), 'utf8');
   assert.match(script, /if \(LINUX\) assertContainerEngine\(\)/, 'no Linux package without the build image');
-  assert.match(script, /if \(LINUX\) pruneLinuxBuild\(/);
+  // Pruned on every platform, and only what survives is loaded: a macOS
+  // source build of better-sqlite3 left `test_extension.node` (0.1.12-rc.1).
+  assert.match(script, /for \(const artefact of pruneNativeBuild\(join\(staged, 'node_modules', moduleName\), moduleName\)\) loadUnderRuntime\(/);
+  assert.doesNotMatch(script, /if \(LINUX\) pruneNativeBuild/);
   assert.match(script, /assertGlibcFloor\(binaries\)/, 'prepare:deps checks what it built');
   const hooks = readFileSync(join(root, 'scripts', 'release-hooks.mjs'), 'utf8');
   assert.match(hooks, /assertPackagedLinuxNatives\(app, resources, platform\)/, 'afterPack checks what electron-builder packed');
@@ -146,7 +165,10 @@ test('the shipped Node is pinned, hash-checked and required by the pack', () => 
   const spec = JSON.parse(readFileSync(join(root, 'scripts', 'node-runtime.json'), 'utf8')) as {
     version: string; abi: string; files: Record<string, { archive: string; sha256: string }>;
   };
-  assert.match(spec.version, /^22\./, 'Node 24 needs macOS 13.5: the interface runs from macOS 11');
+  assert.match(spec.version, /^24\./, 'Node 24, whose macOS binaries need 13.5: the floor of electron-builder.yml');
+  assert.equal(spec.abi, '137', 'the module ABI of Node 24: the natives are rebuilt for it');
+  const floor = /\nmac:\n(?:  .*\n)*  minimumSystemVersion: "([\d.]+)"\n/.exec(readFileSync(join(root, 'electron-builder.yml'), 'utf8'))?.[1];
+  assert.equal(floor, '13.5', 'a Node that needs a newer macOS than the pkg allows installs a daemon that cannot start');
   for (const key of ['linux-x64', 'darwin-x64', 'darwin-arm64', 'win32-x64']) {
     assert.match(spec.files[key]?.sha256 ?? '', /^[0-9a-f]{64}$/, key);
   }
@@ -196,8 +218,13 @@ test('the Windows node-pty prebuild ships its ConPTY', () => {
  * "already installed" over it. The shell decides those values on first launch
  * and the first-run screen registers the service once they exist.
  */
+test('the macOS app and its pkg declare the oldest macOS the shipped Node runs on', () => {
+  // Node 24's macOS binaries are built for 13.5 (LC_BUILD_VERSION minos), Electron 45 for 13.
+  assert.match(yml, /\nmac:\n(?:  .*\n)*  minimumSystemVersion: "13\.5"\n/);
+});
+
 test('an older installer can replace a newer version, to go back after a bad update', () => {
-  // NSIS (electron-builder 25.1.8) has no version check; the macOS .pkg has one, on by default.
+  // NSIS (electron-builder 26) has no version check; the macOS .pkg has one, on by default.
   assert.match(yml, /\npkg:\n(?:  .*\n)*  isVersionChecked: false\n/);
 });
 
@@ -860,4 +887,26 @@ test('the service pause never lets the installer go on while the task is still e
   assert.ok(check > ps1.lastIndexOf('MethodName Create'), 'after the resume is started: it enables the task again');
   assert.ok(check < ps1.indexOf('# The net.'));
   assert.match(ps1, /\$taskNow = & \$taskState\s+if \(@\('Ready', 'Running', 'Queued'\) -contains \$taskNow\) \{\s+& \$note [^\n]+\s+exit \$stillRunning\s+\}/);
+});
+
+/**
+ * A `depends` list replaces electron-builder's default, and the default left
+ * libasound to a desktop: on a bare Ubuntu Server 24.04 the browser host died
+ * at every start, status 127 (recipe of 27/11/2026). The default must stay in
+ * the list, and both names of libasound with it: `libasound2t64` (Ubuntu 24.04,
+ * Debian 13), `libasound2` (Ubuntu 22.04, Debian 12).
+ */
+test('the Linux packages depend on every library Electron links against, libasound included', () => {
+  const require = createRequire(import.meta.url);
+  const yaml = require('js-yaml') as { load: (text: string) => unknown };
+  const config = yaml.load(yml) as { deb?: { depends?: string[] }; rpm?: { depends?: string[] } };
+  const deb = config.deb?.depends ?? [];
+  for (const name of ['libgtk-3-0', 'libnotify4', 'libnss3', 'libxss1', 'libxtst6', 'xdg-utils', 'libatspi2.0-0', 'libuuid1', 'libsecret-1-0', 'libgbm1']) {
+    assert.ok(deb.includes(name), `deb depends on ${name}`);
+  }
+  assert.ok(deb.includes('libasound2t64 | libasound2'), 'deb depends on libasound under both names, the t64 one first');
+  const rpm = config.rpm?.depends ?? [];
+  for (const name of ['gtk3', 'nss', '(libXtst or libXtst6)', 'libasound.so.2()(64bit)', 'libgbm.so.1()(64bit)']) {
+    assert.ok(rpm.includes(name), `rpm depends on ${name}`);
+  }
 });

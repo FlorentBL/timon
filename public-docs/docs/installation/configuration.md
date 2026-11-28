@@ -59,6 +59,14 @@ The loader merges the edition preset with your file, then applies schema default
 
 Registry settings resolve in this order: **environment → `settings` in the file → saved UI setting → default**. The UI shows the source, so a value controlled by the environment or file cannot be changed by saving another UI value.
 
+In the file, a registry setting goes under `settings`, by its name. For example, to keep a Linux server from installing the service that runs the built-in browser ([Run Timon on a headless server](headless-server.md#6-the-built-in-browser-on-a-server)), then run `timon service install`:
+
+```json
+{
+  "settings": { "TIMON_BROWSER_HOST_SERVICE": false }
+}
+```
+
 `modules` controls bundled modules; `plugins` controls third-party plugins by manifest ID. Values can be `true`, `false`, `"auto"` or an options object with `enabled`. Plugin toggles recompose the loader without a daemon restart. Changes to daemon addresses, host configuration or process environment require an operator-managed restart.
 
 :::warning Paths and credentials

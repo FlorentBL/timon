@@ -2,12 +2,12 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { execFile } from 'node:child_process';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
-import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
 import { Script } from 'node:vm';
 import { writeEngine } from './native-browser-smoke.fixture.js';
+import { smokeArgs, smokeElectron, smokeEnv } from './electron-binary.fixture.js';
 
 /**
  * The recorder end to end under the pinned Electron (TODO #461): the real preload and the real
@@ -115,15 +115,15 @@ test('recording smoke: the real preload and engine record human steps, mask secr
   skip: process.env.TIMON_ELECTRON_SMOKE !== '1', timeout: 60_000,
 }, async () => {
   const root = await mkdtemp(join(tmpdir(), 'timon-recording-smoke-'));
-  const electron = createRequire(import.meta.url)('electron') as string;
+  const electron = smokeElectron();
   try {
     await writeEngine(root);
     new Script(fixture, { filename: 'smoke.cjs' });
     await writeFile(join(root, 'smoke.cjs'), fixture);
     const env = { ...process.env, TIMON_HOME: root };
     delete env.ELECTRON_RUN_AS_NODE;
-    const { stdout } = await promisify(execFile)(electron, [join(root, 'smoke.cjs')], {
-      env, timeout: 50_000, killSignal: 'SIGKILL', maxBuffer: 2 * 1024 * 1024,
+    const { stdout } = await promisify(execFile)(electron, smokeArgs(join(root, 'smoke.cjs')), {
+      env: smokeEnv(env), timeout: 50_000, killSignal: 'SIGKILL', maxBuffer: 2 * 1024 * 1024,
     }).catch((error) => { throw new Error(`Recording smoke failed (${error.code ?? error.signal}): ${error.stdout}\n${error.stderr}`); });
     const line = stdout.split('\n').find((candidate) => candidate.startsWith('RECORDING_REPORT '));
     assert.ok(line, stdout);

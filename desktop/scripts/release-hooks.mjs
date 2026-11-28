@@ -1,7 +1,7 @@
-import { join } from 'node:path';
+import { dirname, join, relative } from 'node:path';
 import { writePackagedCli } from '../../orchestrator/src/host/packaged-cli.mjs';
 import { Arch } from 'builder-util';
-import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
+import { existsSync, lstatSync, readdirSync, readFileSync, statSync } from 'node:fs';
 // Ships with electron-builder, and these hooks only ever run while
 // electron-builder runs: resolution is guaranteed at the only moment it counts,
 // so this stays out of package.json rather than pinning a second copy.
@@ -181,6 +181,46 @@ export function assertPackagedLinuxNatives(app, resources, platform) {
   console.log(`[release] ${checked} Linux binaries checked against the glibc floor`);
 }
 
+/**
+ * The trees `prepare:deps` staged in `build-resources/`, and where each lands
+ * under `resources/`: the app's standalone output and the daemon's rebuilt
+ * dependencies. Two entries carry the app because electron-builder 26 drops
+ * the root `node_modules` of a copy source (see electron-builder.yml).
+ */
+export const STAGED_TREES = Object.freeze([
+  Object.freeze({ staged: 'app', packaged: 'app' }),
+  Object.freeze({ staged: join('orchestrator', 'node_modules'), packaged: join('orchestrator', 'node_modules') }),
+]);
+
+/** Names electron-builder's directory walk never copies (builder-util `walk`). */
+const NEVER_COPIED = new Set(['.DS_Store', '.gitkeep']);
+
+/** Every file and link of `source` (relative paths) that `copy` lacks. Links are not followed. */
+export function missingFromCopy(source, copy) {
+  return readdirSync(source, { withFileTypes: true, recursive: true })
+    .filter((entry) => !entry.isDirectory() && !NEVER_COPIED.has(entry.name))
+    .map((entry) => relative(source, join(entry.parentPath, entry.name)))
+    .filter((file) => !lstatSync(join(copy, file), { throwIfNoEntry: false }));
+}
+
+/**
+ * Every file of the staged trees reached the package. Their files are not in
+ * the signed daemon manifest, so nothing else notices a filter that drops
+ * some: 0.1.12-rc.1 packed `resources/app` without one dependency, on every
+ * OS, and only the Linux check of `better_sqlite3.node` saw it.
+ */
+export function assertPackagedStagedTrees(resources, buildResources = dirname(releaseDir)) {
+  for (const { staged, packaged } of STAGED_TREES) {
+    const source = join(buildResources, staged);
+    if (!existsSync(source)) throw new Error(`${source} is missing: run prepare:deps before packaging`);
+    const missing = missingFromCopy(source, join(resources, packaged));
+    if (missing.length) {
+      throw new Error(`${missing.length} file(s) of ${source} did not reach ${join(resources, packaged)}, `
+        + `an electron-builder file filter dropped them (extraResources of electron-builder.yml): ${missing.slice(0, 5).join(', ')}`);
+    }
+  }
+}
+
 export async function afterPack(context) {
   const name = context.packager.appInfo.productFilename;
   const platform = context.electronPlatformName;
@@ -199,6 +239,7 @@ export async function afterPack(context) {
   assertPackagedReleaseCheck(resources);
   assertPackagedNode(resources, platform);
   assertPackagedFence(resources, platform);
+  assertPackagedStagedTrees(resources);
   assertPackagedLinuxNatives(app, resources, platform);
   assertPackagedThirdPartyNotices(resources, readFileSync(new URL(`../${THIRD_PARTY_NOTICES}`, import.meta.url)));
   assertPackagedShellLocales(resources);

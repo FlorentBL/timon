@@ -11,10 +11,18 @@ daemon (or Compose) already serves.
 
 ```sh
 npm install
+npm run install:electron   # the Electron binary: npm install no longer fetches it
 npm test            # pure modules: config reader, health probe, supervisor
 npx tsc --noEmit
 npm run build && npm start
 ```
+
+The smoke tests that start a real Electron are opt-in
+(`TIMON_ELECTRON_SMOKE=1 npm test -- src/<name>-smoke.test.ts`) and stop with
+the install command above when the binary is missing. They open windows: add
+`TIMON_ELECTRON_SMOKE_HEADLESS=1` to keep them off your screen (Linux: Electron
+then runs on Chromium's headless Ozone backend, without `DISPLAY` or
+`WAYLAND_DISPLAY`; a shell without a display gets that mode on its own).
 
 `TIMON_HOME` is honoured, so a development shell can point at a throwaway home:
 
@@ -67,10 +75,10 @@ anything. See [`docs/RELEASE-RC.md`](../docs/RELEASE-RC.md).
 
 ### Why `prepare:deps` exists
 
-The embedded daemon runs under `ELECTRON_RUN_AS_NODE`, i.e. Electron's Node
-(module ABI 130) — and so does the Next app it spawns — while
-`orchestrator/node_modules` and `app/node_modules` are built for the host's
-Node (ABI 127). Shipping those trees gives an installer whose daemon cannot
+The packaged daemon runs on the Node the package ships in `resources/node`
+(`scripts/node-runtime.json`: Node 24, module ABI 137) — and so does the Next
+app it spawns — while `orchestrator/node_modules` and `app/node_modules` are
+built for the host's Node (Node 22 on a maintainer's machine: ABI 127). Shipping those trees gives an installer whose daemon cannot
 load `better-sqlite3`: it crash-loops and the shell only says "the daemon keeps
 crashing". Three artefacts are concerned, and each fails in its own place:
 
@@ -141,6 +149,47 @@ install itself, and falls back on the exact command to paste when it may not
 run one on your behalf (anything needing `sudo`). Portable mode stays the
 answer for a machine where no supervisor can be installed — a Linux without
 systemd — and the screen says so rather than pretending the install worked.
+
+## The built-in browser on a server: `--browser-host` (Linux)
+
+On a Linux machine where only the daemon runs, nothing provides the built-in
+browser: the daemon reaches it through `<home>/browser-native/provider.json`,
+which only the desktop app wrote. `timon-desktop --browser-host` (from the
+sources: `electron dist/main.js --browser-host`) starts the engine, the capture
+of its tabs and that provider, and nothing else: no window, tray, update or
+consent screen, data restore or service install. It writes `provider.json` and
+removes it when it stops (SIGTERM, SIGINT). Code: `src/browser-host.ts` (the
+rules), `src/browser-host-shell.ts` (the run).
+
+- **No screen.** With neither `DISPLAY` nor `WAYLAND_DISPLAY`, it starts itself
+  again with `--ozone-platform=headless --ozone-override-screen-size=1920,1080`,
+  in the same process (`process.execve`, same PID for a service manager).
+  `app.commandLine.appendSwitch` cannot do it: Electron picks its Ozone
+  platform before the main script runs. On that platform a hidden window has no
+  display surface and `capturePage` rejects its tabs, so the engine shows its
+  host windows there (`headless` option of `NativeBrowserEngine`); the streams
+  work hidden.
+- **One provider per home.** The host takes the app's single-instance lock (in
+  `desktop-profile/`), since both would open the same browser profiles. The app
+  with a screen comes first: its refused lock request makes the host close its
+  provider and exit 75; the app, seeing `browser-native/browser-host.json`,
+  retries the lock until it holds it (`app-claim.json` keeps a host restarted at
+  once from taking it back). A host started while the app runs waits, trying
+  every 5 s, and serves once the app quits.
+- **Refused here.** The Chrome sign-in opens a real Chrome window: refused with
+  the code `browser_signin_needs_screen`. On macOS and Windows the flag is
+  refused (exit 78): the browser runs in the app there.
+- **Fonts.** A server image often has none, and pages then render with no text
+  at all on screenshots and in the panel (agents still read the DOM). The host
+  measures a word at start and says what to install (Debian/Ubuntu:
+  `fonts-liberation fonts-noto-core fonts-noto-cjk fonts-noto-color-emoji`).
+
+| Exit code | Meaning |
+|---|---|
+| 0 | stopped on request |
+| 1 | could not start (the log says why) |
+| 75 | Timon desktop opened on this home and took the browser over: start again later |
+| 78 | not on this system: starting again changes nothing |
 
 ## First launch of an installed package
 

@@ -10,7 +10,7 @@ Timon runs on Linux on x86-64 processors only. ARM servers (aarch64, arm64) are 
 :::
 
 :::tip The short version
-1. Install Timon on the server, as the account that will own it: `curl -fsSL https://timon-ai.com/install.sh | sh`. On a Debian or Ubuntu server it installs the package and the background service.
+1. Install Timon on the server, as the account that will own it: `curl -fsSL https://timon-ai.com/install.sh | sh`. On a Debian or Ubuntu server it installs the package, the background service (kept running after you log out) and the [built-in browser](#6-the-built-in-browser-on-a-server), with nothing to set up by hand.
 2. Create your account on the server, before opening any access: `timon init`.
 3. Publish it on your private Tailscale network with `tailscale serve`, over **HTTPS**.
 4. On your computer, turn on the **Machines** plugin and pair the server with a one-time code (`timon device pair` on the server prints one): the interface you already use switches to it in the same window. See [Machines](../usage/machines.md).
@@ -25,9 +25,11 @@ On a Debian or Ubuntu server, in an SSH session as the account that will own Tim
 curl -fsSL https://timon-ai.com/install.sh | sh
 ```
 
-It installs the deb package (with the `timon` command), then the background service. Run as `root`, it installs the package only and asks you to install the service from the owner's account. `timon` on its own then shows where the installation stands and the next command to type.
+It installs the deb package (with the `timon` command), then the background service, keeps that service running after your SSH session ends (`timon service session-mode always`, see below), and checks that the built-in browser answers (see [section 6](#6-the-built-in-browser-on-a-server)). On a server with no font installed, it adds the fonts that browser needs in the same `apt-get install`. Run as `root`, it installs the package only and prints the two service commands to run from the owner's account. `timon` on its own then shows where the installation stands and the next command to type.
 
-By hand, install the supplied deb package: it also installs the `timon` command. From an authorised source checkout, follow [Linux](linux.md#from-an-authorised-source-checkout). In both cases, the daemon runs as a service of the operating system's supervisor, not inside a window:
+Installing the package needs administrator rights. If your account has no `sudo` (a fresh Debian server where only `root` has a password), the script stops before downloading anything and tells you what to do: become `root` with `su -`, run the same command again, then, back on your own account, run `timon service install` and `timon service session-mode always`.
+
+By hand, without the script, install the supplied deb package: it also installs the `timon` command. From an authorised source checkout, follow [Linux](linux.md#from-an-authorised-source-checkout). In both cases, the daemon runs as a service of the operating system's supervisor, not inside a window:
 
 ```bash
 timon service install --dry-run   # shows what will be installed
@@ -37,7 +39,7 @@ timon service status
 timon doctor
 ```
 
-On Linux the service is a systemd **user** service. `timon service session-mode always` turns on user lingering: the service then starts at boot, before anyone signs in, and survives the end of your SSH session. Without it, the service stops when your last SSH session ends. Install it as the account that will own Timon's data, never as `root`. See [Running in the background](background.md) for the details, and for `timon service stop` / `timon service start`.
+On Linux the service is a systemd **user** service. `timon service session-mode always` turns on user lingering: the service then starts at boot, before anyone signs in, and survives the end of your SSH session. Without it, the service stops when your last SSH session ends. The install script runs it for you; it needs no administrator rights on Debian and Ubuntu, and if it is refused the script says so and prints the command. Install it as the account that will own Timon's data, never as `root`. See [Running in the background](background.md) for the details, and for `timon service stop` / `timon service start`.
 
 A server must not sleep: nothing runs while it does, and Timon does not wake it. On a machine without a desktop, `sudo systemctl mask sleep.target suspend.target` disables suspend.
 
@@ -135,11 +137,38 @@ timon doctor
 
 Update the interfaces that drive the server as well. When a machine runs a Timon too old for the interface you switch from, the switch is refused and the interface says to update that machine; a machine newer than the interface works, with a banner suggesting to update the interface. See [Upgrading](upgrading.md) for backups and restores.
 
+## 6. The built-in browser on a server
+
+Agents browse with the project's built-in browser on a server too, and you watch and drive it from the interface on your computer (through Machines or the server's Tailscale address), as on a desktop: agents open pages, read them and take screenshots, and you follow them in the live view. Nothing extra to install.
+
+On a desktop, the Timon app runs that browser. A server has no app open, so `timon service install` adds a second background service next to the daemon, the **browser host**: the same Timon program, started with no window, that runs only the built-in browser. It is a systemd user service named `timon-browser-<id>`, installed only on Linux, with the deb package, on a machine with no desktop session. A machine with a desktop never gets one: there, the app runs the browser.
+
+It follows the daemon: `timon service stop`, `timon service start`, `timon update apply` and `timon service uninstall` act on both. `timon service uninstall` removes the browser host first, and stops there, with both services left in place, if it does not stop: the message names the unit and the command to stop it, then you run the uninstall again. To see it:
+
+```bash
+timon service status     # a "browser" line: the unit and its state
+timon doctor --browser   # does the built-in browser answer? if not, why, and the command that repairs it
+```
+
+`timon doctor` shows the same thing on its *built-in browser* line, and the daemon's log repeats it at start-up, on lines that begin with `[browser]`.
+
+**Turn it off** if the server's projects never browse: set **Built-in browser service on a server** to off (search for it in **Settings**; in a file, `"settings": { "TIMON_BROWSER_HOST_SERVICE": false }` in `timon.config.json`), then run `timon service install`: it removes the browser host. Agents then get a clear refusal when they try to browse. Turn it back on the same way.
+
+What the installation adds for it, and why:
+
+- **Fonts.** A server image often ships with no font. The pages then still load, and agents still read their text, but every screenshot and the live view show them **without any text**. `install.sh` installs `fonts-liberation`, `fonts-noto-core` and `fonts-noto-color-emoji` when the server has no font at all; add `fonts-noto-cjk` for Chinese, Japanese or Korean pages.
+- **An AppArmor profile, on Ubuntu 23.10 and later (24.04 included).** Chromium, which runs the browser, isolates every page in a sandbox; these Ubuntu releases allow it only to programs with an AppArmor profile. The deb package installs `/etc/apparmor.d/timon-desktop`, which grants that single right to `/opt/Timon/timon-desktop`. See [Linux: no usable sandbox](troubleshooting.md#linux-no-usable-sandbox) if it could not be loaded.
+
+Two limits:
+
+- The browser host comes with the **deb package** only. A server running the AppImage has no built-in browser.
+- **Sign in with Chrome** opens a real Chrome window, which a server cannot show: it is refused there. Sign in to the site directly in the built-in browser, from the interface on your computer.
+
 ## What does not run on a headless server
 
-- **The built-in browser** of a project is run by the Timon desktop app. A server where only the background service runs has none: open the desktop app on that machine (in a desktop session) if its projects need it.
 - **Push notifications from the server** reach your phone through the Timon that serves your interface. If that Timon (your computer) is off, the server's cards wait in its own notification centre. See [Machines](../usage/machines.md#notifications).
 - **Tools that need an open desktop session** (a sign-in through the system credential store, a window): see [Limits while no session is open](background.md#limits-while-no-session-is-open).
+- **Sign in with Chrome** in the built-in browser (see [section 6](#6-the-built-in-browser-on-a-server)).
 
 ## Troubleshooting
 
@@ -152,6 +181,11 @@ Update the interfaces that drive the server as well. When a machine runs a Timon
 | *The machine refused this code* | Code mistyped, expired (5 minutes) or already used; or the address is the server's **web interface**, not its daemon | Check that the address is the daemon's (`:8443` above), then authorize a new device on the server and use the new code at once |
 | *This machine runs a Timon version too old for this interface* | The server was not updated | Update the server (section 5), then switch again |
 | `timon update status` still shows the previous version after you installed the new package | The package replaces the installed program, not the service, which still runs the previous release | `timon update apply`, then `timon update status` and `timon update approve <daemon-version>` (section 5) |
+| The built-in browser says *The built-in browser of this server is not running* | The browser host is stopped, failed, turned off or not installed | `timon doctor --browser` names the cause and the command; usually `systemctl --user restart <unit>` (the unit is on the `browser` line of `timon service status`), or `timon service install` |
+| `timon service install` or `start` is refused: *the service timon-browser-… already runs on this data directory* | The browser host's unit was edited, or a drop-in (`systemctl --user edit`) changed what it runs: Timon only accepts the command it writes itself | Remove the drop-in (`systemctl --user revert <unit>`), or run `timon service install --force`, which takes that unit down and writes it again |
+| Screenshots and the live view of the built-in browser show pages with no text | The server has no font | `sudo apt-get install fonts-liberation fonts-noto-core fonts-noto-color-emoji`, then `systemctl --user restart <unit>` |
+| `timon doctor --browser` says the browser host *crashes at every start*, exit status 127, and its log says *error while loading shared libraries* | An older package did not declare that library | `curl -fsSL https://timon-ai.com/install.sh \| sh` (or install the library the log names, `libasound2t64` on Ubuntu 24.04), then `systemctl --user restart <unit>` |
+| The browser host stays `failed`, and its log says *No usable sandbox* | Chromium's sandbox is refused (Ubuntu 23.10 and later) | See [Linux: no usable sandbox](troubleshooting.md#linux-no-usable-sandbox) |
 | The server's interface asks to approve an update and nothing else works | A new package was installed and the migration is not approved | `timon update status`, then `timon update approve <daemon-version>` on the server |
 
-For anything else, the daemon log has the answer: `journalctl --user -u <unit> -n 100`; `systemctl --user list-unit-files 'timon-*'` lists the unit names. See also [Troubleshooting](troubleshooting.md).
+For anything else, the daemon log has the answer: `journalctl --user -u <unit> -n 100`; `systemctl --user list-unit-files 'timon-*'` lists the unit names (the daemon's, and `timon-browser-<id>` for the built-in browser). See also [Troubleshooting](troubleshooting.md).

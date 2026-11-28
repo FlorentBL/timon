@@ -19,6 +19,9 @@ sidebar_position: 10
 | Windows installer ends with code -1073741819 | Whether it was started from a PowerShell window opened with **Run as administrator** | Run the command again in a normal PowerShell window, or open the installer from File Explorer; see [The installer ends with code -1073741819](#windows-the-installer-ends-with-code--1073741819) |
 | Windows installer says Timon cannot be closed | Whether you allowed the permission prompt when the installer opened | Choose **Quit and stop the background service** in the tray icon menu before installing; or, in an administrator PowerShell, run `schtasks /End /TN TimonOrchestrator; Stop-Process -Name Timon -Force`, then choose Retry |
 | Windows installer says Timon is still running in the background or that its check did not run, or Timon says the running daemon is not the installed version | Whether you allowed the permission prompt | Choose **Retry** and allow the prompt, or restart the computer and install again; see [Updating while the background service runs](#windows-updating-while-the-background-service-runs) |
+| Linux: Timon does not open after installing the `.deb`, or the built-in browser of a server stays stopped, with "No usable sandbox" or "The SUID sandbox helper binary was found, but is not configured correctly" | Whether the package's setup could install its AppArmor profile | See [Linux: no usable sandbox](#linux-no-usable-sandbox) |
+| The built-in browser does not open, or an agent says it is unavailable | Who runs the browser on that machine: `timon doctor --browser` | Follow the command it prints; see [The built-in browser does not answer](#the-built-in-browser-does-not-answer) |
+| Screenshots or the live view of the built-in browser show pages with no text (Linux server) | Whether any font is installed | Install fonts; see [The built-in browser does not answer](#the-built-in-browser-does-not-answer) |
 | Quota state unavailable | Whether the backend has a working usage probe | Treat unknown as unknown, not as zero usage |
 | Anything else, or you need help | The diagnostic report | **Copy diagnostic** and paste it in your support request; see below |
 
@@ -40,6 +43,45 @@ When something goes wrong, send the **diagnostic report** with your support requ
 ## The built-in terminal does not start (Linux, TIM-0162)
 
 The terminal opens on "node-pty unavailable", or the diagnostic report says *The built-in terminal cannot start*. Its native module did not load on this system. Packages built before the fix needed a recent glibc for it, newer than the 2.28 the [requirements](requirements.md) state, so the terminal failed on Debian 13 and older: update Timon. `ldd --version` prints the glibc of your system; the report and `timon doctor` name the library or version the module asked for (for example ``version `GLIBC_2.42' not found``). If your glibc is 2.28 or later and a current Timon still shows this, send the diagnostic report.
+
+## Linux: no usable sandbox
+
+Chromium, which draws Timon's windows and runs its built-in browser, isolates every page in a sandbox. Ubuntu 23.10 and later (24.04 included, desktop and server) allow that sandbox only to programs that have an AppArmor profile. The `.deb` package installs one, `/etc/apparmor.d/timon-desktop`, which grants Timon that single right; packages built before this fix did not, and Timon then refused to start, with "No usable sandbox" or "The SUID sandbox helper binary was found, but is not configured correctly" in the terminal or in `journalctl --user -u 'timon-browser-*'` on a server.
+
+Install a current package. If the message stays (AppArmor was not running during the installation, or the profile could not load), either load the profile or make the sandbox helper usable without it, then start Timon again (on a server: `systemctl --user restart <unit>`, with the `browser` unit named by `timon service status`):
+
+```bash
+sudo apparmor_parser -r /etc/apparmor.d/timon-desktop
+# or
+sudo chown root:root /opt/Timon/chrome-sandbox && sudo chmod 4755 /opt/Timon/chrome-sandbox
+```
+
+On a server, the built-in browser's service stops trying after this error instead of restarting every few minutes, and its log says the same.
+
+## The built-in browser does not answer
+
+The browser panel stays empty or shows an error, or an agent reports that the built-in browser is unavailable. Ask Timon who should run it on that machine, and why nobody does:
+
+```bash
+timon doctor --browser            # add --json for a script
+```
+
+It names who runs the browser (the Timon app, or the browser host of a server), then each problem with the command that repairs it. The same lines appear in `timon doctor` and the diagnostic report. On a computer with a desktop, the Timon app runs the browser: open it. On a Linux server, a background service does (see [The built-in browser on a server](headless-server.md#6-the-built-in-browser-on-a-server)), and the panel says *The built-in browser of this server is not running*, with the command to type:
+
+| `timon doctor --browser` says | What to do |
+| --- | --- |
+| the browser host service is stopped | `systemctl --user restart <unit>`; if it stops again, `journalctl --user -u <unit> -n 50` says why |
+| the browser host service is not installed | `timon service install` |
+| the browser host service is turned off | Turn **Built-in browser service on a server** back on in Settings, then `timon service install` |
+| Timon runs from an AppImage | Install the deb package (`curl -fsSL https://timon-ai.com/install.sh \| sh`): only it runs the browser on a server |
+| the browser host crashes at every start and systemd keeps restarting it | Read its log (`journalctl --user -u <unit> -n 50`): it gives the exit status and the cause. Exit status 127 is a library missing on the system: update or reinstall Timon (`curl -fsSL https://timon-ai.com/install.sh \| sh`), whose package installs it, or install the library the log names; then `systemctl --user restart <unit>` |
+| the browser host service runs but does not offer the browser yet | It is starting; if it lasts, read its log |
+| Chromium has no usable sandbox | See [Linux: no usable sandbox](#linux-no-usable-sandbox) |
+| no font is installed | `sudo apt-get install fonts-liberation fonts-noto-core fonts-noto-color-emoji` (and `fonts-noto-cjk` for Chinese, Japanese or Korean pages), then restart the browser |
+
+Without any font, pages still load and agents still read them, but screenshots and the live view show them with no text at all. A server image often has none; `install.sh` adds them when it installs Timon on such a server.
+
+**Sign in with Chrome** is refused on a server: it opens a Chrome window, which a machine with no screen cannot show. Sign in to the site directly in the built-in browser.
 
 ## Reading a 403 refusal
 

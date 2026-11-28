@@ -94,6 +94,8 @@ test('/_next/image answers 404 before any fetch or decoding', async () => {
   assert.equal(handled, true);
   assert.equal(notFound, 1);
   // Next 15 installs sharp as an optional dependency: the refusal must come
-  // before the decoder is even loaded.
-  assert.equal(Object.keys(require.cache).some((k) => /[\\/]node_modules[\\/]sharp[\\/]/.test(k)), false);
+  // before the decoder is even loaded. The cache of a `createRequire` require
+  // is the process-wide one; Node 24 gives a module loaded through the ESM
+  // loader a `require` without `cache`.
+  assert.equal(Object.keys(nextRequire.cache).some((k) => /[\\/]node_modules[\\/]sharp[\\/]/.test(k)), false);
 });

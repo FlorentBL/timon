@@ -2,12 +2,12 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { execFile } from 'node:child_process';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
-import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
 import { Script } from 'node:vm';
 import { writeEngine } from './native-browser-smoke.fixture.js';
+import { smokeArgs, smokeElectron, smokeEnv } from './electron-binary.fixture.js';
 
 /**
  * Annotate mode end to end under the pinned Electron (TODO #468): the real preload and the real
@@ -125,6 +125,8 @@ const HOSTILE = head('Hostile') + '<button id="target">Hostile</button><script>'
     report.agentStart = await outcome(command('annotateStart'));
     report.agentStartClaimingHuman = await outcome(command('annotateStart', { commandActor: 'agent' }));
     await command('annotateStart', human);
+    // The tab learns over IPC that it annotates; a point asked on that same channel is answered after it.
+    await command('annotatePick', { x: 1, y: 1, preview: true, ...human });
 
     // Swallowing: left, right, middle, double click and a tap; nothing reaches the page.
     await click(contents, 60, 35);
@@ -197,15 +199,15 @@ test('annotation smoke: the real preload and engine swallow gestures, pick, mask
   skip: process.env.TIMON_ELECTRON_SMOKE !== '1', timeout: 60_000,
 }, async () => {
   const root = await mkdtemp(join(tmpdir(), 'timon-annotation-smoke-'));
-  const electron = createRequire(import.meta.url)('electron') as string;
+  const electron = smokeElectron();
   try {
     await writeEngine(root);
     new Script(fixture, { filename: 'smoke.cjs' });
     await writeFile(join(root, 'smoke.cjs'), fixture);
     const env = { ...process.env, TIMON_HOME: root };
     delete env.ELECTRON_RUN_AS_NODE;
-    const { stdout } = await promisify(execFile)(electron, [join(root, 'smoke.cjs')], {
-      env, timeout: 50_000, killSignal: 'SIGKILL', maxBuffer: 8 * 1024 * 1024,
+    const { stdout } = await promisify(execFile)(electron, smokeArgs(join(root, 'smoke.cjs')), {
+      env: smokeEnv(env), timeout: 50_000, killSignal: 'SIGKILL', maxBuffer: 8 * 1024 * 1024,
     }).catch((error) => { throw new Error(`Annotation smoke failed (${error.code ?? error.signal}): ${error.stdout}\n${error.stderr}`); });
     const line = stdout.split('\n').find((candidate) => candidate.startsWith('ANNOTATION_REPORT '));
     assert.ok(line, stdout);

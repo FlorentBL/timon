@@ -2,12 +2,12 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { execFile } from 'node:child_process';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
-import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
 import { Script } from 'node:vm';
 import { writeEngine } from './native-browser-smoke.fixture.js';
+import { smokeArgs, smokeElectron, smokeEnv } from './electron-binary.fixture.js';
 
 /** One Electron launch over a shared home: `set` signs in then quits (cleanly or killed), `get` reopens and reads the jar. */
 const fixture = String.raw`
@@ -77,7 +77,7 @@ test('a session sign-in survives a clean quit and a killed shell', {
   skip: process.env.TIMON_ELECTRON_SMOKE !== '1', timeout: 90_000,
 }, async () => {
   const root = await mkdtemp(join(tmpdir(), 'timon-native-browser-persistence-'));
-  const electron = createRequire(import.meta.url)('electron') as string;
+  const electron = smokeElectron();
   try {
     await writeEngine(root);
     new Script(fixture, { filename: 'smoke.cjs' });
@@ -86,7 +86,7 @@ test('a session sign-in survives a clean quit and a killed shell', {
       const env: NodeJS.ProcessEnv = { ...process.env, TIMON_HOME: home, SMOKE_MODE: mode };
       delete env.ELECTRON_RUN_AS_NODE;
       try {
-        return (await promisify(execFile)(electron, [join(root, 'smoke.cjs')], { env, timeout: 30_000, killSignal: 'SIGKILL' })).stdout;
+        return (await promisify(execFile)(electron, smokeArgs(join(root, 'smoke.cjs')), { env: smokeEnv(env), timeout: 30_000, killSignal: 'SIGKILL' })).stdout;
       } catch (error) {
         const failure = error as { signal?: string; stdout?: string; stderr?: string };
         if (mode === 'set-kill' && failure.signal === 'SIGKILL') return failure.stdout ?? '';
