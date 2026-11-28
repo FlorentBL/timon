@@ -261,6 +261,13 @@ async function main() {
     log(`  skipped: a11y (${a11yCheck})`);
   } else {
     const nameField = () => js('document.querySelector("input[aria-label=Nom]").value');
+    // What the system really exposes, unfiltered, to tell a shallow tree from an unexposed page or a
+    // field exposed without its actions.
+    const dumpWhole = async () => {
+      const whole = await send('a11y_tree', { ...windowArgs, maxDepth: 15, maxNodes: 200 }, 'agent', 'a11y_tree (whole)');
+      const outline = (whole.body.result?.nodes ?? []).map((n) => `${'  '.repeat(n.depth)}${n.role} "${n.name ?? ''}" ${n.id} [${(n.actions ?? []).join(',')}]`).join('\n');
+      log(`  whole tree (${whole.body.result?.nodes?.length ?? 0} nodes, truncated=${whole.body.result?.truncated}):\n${outline}`);
+    };
     const findNode = async (query, accept) => {
       let tree = null;
       const until = Date.now() + 8000;
@@ -272,17 +279,16 @@ async function main() {
         if (found) return { tree, found };
         await sleep(400);
       }
-      // What the system really exposes, unfiltered, to tell a shallow tree from an unexposed page.
-      const whole = await send('a11y_tree', { ...windowArgs, maxDepth: 15, maxNodes: 200 }, 'agent', 'a11y_tree (whole)');
-      const outline = (whole.body.result?.nodes ?? []).map((n) => `${'  '.repeat(n.depth)}${n.role} "${n.name ?? ''}"`).join('\n');
-      log(`  whole tree (${whole.body.result?.nodes?.length ?? 0} nodes, truncated=${whole.body.result?.truncated}):\n${outline}`);
+      await dumpWhole();
       throw fail(`No element matching "${query}" in the accessibility tree: ${JSON.stringify(tree?.nodes.map((n) => [n.role, n.name]))}`);
     };
     const { tree: nameTree, found: field } = await findNode('Nom', (n) => n.name === 'Nom' && ['textfield', 'textarea', 'combobox'].includes(n.role));
     const windowId = nameTree.window.id;
     if ((mine && windowId !== mine.id) || !nameTree.nodes.every((n) => typeof n.id === 'string' && n.id.startsWith(`${windowId}#`))) throw fail('Element ids must be prefixed by the window id.');
+    if (!field.actions.includes('set_value')) await dumpWhole();
     if (!field.actions.includes('set_value')) throw fail(`The field does not offer set_value: ${JSON.stringify(field)}`);
     const { found: button } = await findNode('Valider', (n) => n.role === 'button' && n.name === 'Valider');
+    if (!button.actions.includes('press')) await dumpWhole();
     if (!button.actions.includes('press')) throw fail(`The button does not offer press: ${JSON.stringify(button)}`);
     log(`  ✓ found field ${field.id} and button ${button.id}`);
     const started = performance.now();
