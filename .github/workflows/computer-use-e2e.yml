@@ -11,6 +11,8 @@ on:
       - 'desktop/src/computer-use-*'
       - 'desktop/scripts/computer-use-e2e.mjs'
       - '.github/workflows/computer-use-e2e.yml'
+      # A new Electron changes the capture, input and window APIs computer use runs on.
+      - 'desktop/package-lock.json'
   workflow_dispatch:
 
 permissions:
