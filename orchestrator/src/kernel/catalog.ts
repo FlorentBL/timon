@@ -67,6 +67,8 @@ export const CATALOG: readonly ModuleDescriptor[] = [
   { id: '@timon/browser-recording', name: './plugins-bundled/browser-recording/index.js', tier: 'opt', dependsOn: ['@timon/browser-embedded'] },
   // Pointing at an element of the built-in browser and sending it to an agent (TODO #468).
   { id: '@timon/browser-annotations', name: './plugins-bundled/browser-annotations/index.js', tier: 'opt', dependsOn: ['@timon/browser-embedded'] },
+  // The host's mouse and keyboard for an agent that has `computer_use`; the desktop app does the acting.
+  { id: '@timon/computer-use', name: './plugins-bundled/computer-use/index.js', tier: 'opt', requires: [] },
   { id: '@timon/terminal-native', name: './plugins-bundled/terminal-native/index.js', tier: 'opt', requires: ['gui'] },
   { id: '@timon/terminal-web', name: './plugins-bundled/terminal-web/index.js', tier: 'opt' },
   { id: '@timon/orchestrator-self', name: './plugins-bundled/orchestrator-self/index.js', tier: 'opt', requires: ['systemd'] },

@@ -66,12 +66,13 @@ function seedUserMcps(): string[] {
   return ['probe-stdio', 'probe-http'];
 }
 
-async function buildConfigToml(): Promise<string> {
+async function buildConfigToml(extra: Partial<AgentConfig> = {}): Promise<string> {
   const cfg: AgentConfig = {
     cwd: makeCwd(),
     model: 'gpt-5.5',
     permission_mode: 'auto',
     mcp_servers: seedUserMcps(),
+    ...extra,
   };
   const sp = await buildUnderSeal('codex', {
     agentName: AGENT_NAME,
@@ -175,6 +176,16 @@ test('the internal MCPs receive the mission token through env_vars, never its va
   // mission, under ~/.timon/provider-runs/provider-codex/). The token is the one
   // `buildUnderSeal` issues, not an inherited TIMON_API_TOKEN: run-tests.mjs
   // no longer passes on the mission one (TODO #606).
+  assert.ok(!toml.includes(`test-token-${MISSION_ID}`), 'the token value is written in config.toml');
+});
+
+test('computer use receives the mission token through env_vars too', async () => {
+  // WHY (live test of the branch, 27/11): the server was declared without the line, so it
+  // called the daemon with no token and every action came back computer_mission_token_required.
+  const toml = await buildConfigToml({ computer_use: true });
+  const lines = serverTables(toml).get('timon-computer');
+  assert.ok(lines, `[mcp_servers.timon-computer] absent:\n${toml}`);
+  assert.ok(lines.some((line) => line.startsWith('env_vars = ["TIMON_API_TOKEN", ')), `timon-computer without the token:\n${toml}`);
   assert.ok(!toml.includes(`test-token-${MISSION_ID}`), 'the token value is written in config.toml');
 });
 

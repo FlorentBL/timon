@@ -70,3 +70,25 @@ test('a backend that declares no Timon MCP gets none, runtime or not', async () 
   const plan = await providerMcpPlan({ spawn: { ...spawn, timonMcp: false }, seal: undefined, node: packaged });
   assert.deepEqual(own(plan.servers), []);
 });
+
+test('computer use: the server is injected only for an agent that turned it on, never in a read-only mission', async () => {
+  const on: BuildSpawnOpts = { ...spawn, cfg: { ...spawn.cfg, computer_use: true } as BuildSpawnOpts['cfg'], readOnlyTools: false };
+  const names = async (opts: BuildSpawnOpts) => (await providerMcpPlan({ spawn: opts, seal: undefined, node: packaged })).servers.filter((s) => s.role === 'computer');
+  assert.equal((await names({ ...spawn })).length, 0, 'absent = off');
+  assert.equal((await names({ ...on, cfg: { ...on.cfg, computer_use: false } as BuildSpawnOpts['cfg'] })).length, 0);
+  assert.equal((await names({ ...on, readOnlyTools: true })).length, 0, 'read-only mission');
+  const [server] = await names(on);
+  assert.equal(server?.name, 'timon-computer');
+  assert.equal(server?.type === 'stdio' && server.args[0]?.endsWith('computer-mcp.mjs'), true);
+  assert.equal(server?.type === 'stdio' && server.env.TIMON_MISSION_ID, 'mission-486');
+  assert.equal(server?.type === 'stdio' && server.env.ELECTRON_RUN_AS_NODE, '1');
+});
+
+test('computer use: claude and codex are both handed the server', async () => {
+  const on: BuildSpawnOpts = { ...spawn, cfg: { ...spawn.cfg, computer_use: true } as BuildSpawnOpts['cfg'], readOnlyTools: false };
+  const plan = await providerMcpPlan({ spawn: on, seal: undefined, node: packaged });
+  const servers = plan.servers.filter((s) => s.role === 'computer');
+  const json = JSON.parse(serializeMcpJson(servers) ?? '{}') as { mcpServers: Record<string, unknown> };
+  assert.ok(json.mcpServers['timon-computer']);
+  assert.match(serializeCodexMcpToml(servers) ?? '', /\[mcp_servers\.timon-computer\]/);
+});

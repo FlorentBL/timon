@@ -93,6 +93,7 @@ import { sessionAnnotationRoutes } from './native-browser-bubble.js';
 import { startRendererDiagnostic } from './renderer-diagnostic.js';
 import { NativeBrowserMedia } from './native-browser-media.js';
 import { startNativeBrowserServer } from './native-browser-server.js';
+import { startComputerUse } from './computer-use-electron.js';
 import { APP_INFO_CHANNEL, canReadAppInfo } from './app-info.js';
 import { machineForDetachedWindow, OPEN_WINDOW_CHANNEL, parseOpenWindowRequest } from './window-open.js';
 import { createDesktopSpeech, type DesktopSpeech } from './speech-desktop.js';
@@ -229,6 +230,7 @@ let uninstallReadyToQuit = false;
 let nativeBrowser: NativeBrowserEngine | null = null;
 let browserMedia: NativeBrowserMedia | null = null;
 let stopBrowserProvider: (() => Promise<void>) | null = null;
+let stopComputerUse: (() => Promise<void>) | null = null;
 /** Until the installed release is verified, no other window opens (TODO #439). */
 let releasePending = false;
 let releaseCheckWindow: BrowserWindow | null = null;
@@ -1662,6 +1664,17 @@ async function main(): Promise<void> {
     return nativeBrowser!.command(body);
   });
   stopBrowserProvider = browserProvider.close;
+  // The computer-native service never blocks startup: the daemon answers `computer_unavailable` without it.
+  try {
+    stopComputerUse = (await startComputerUse(desktopHome, (key, vars) => shellText(uiLocale())(key, vars), () => {
+      // Screen Recording only takes effect in a new process: same relaunch as after an update.
+      const options = relaunchOptions(process.platform, process.env, process.argv);
+      if (options.execPath) queueAppImageRelaunch(options.execPath, options.args, desktopHome); else app.relaunch(options);
+      app.quit();
+    })).close;
+  } catch (error) {
+    console.error('[computer-use] The computer-native service did not start.', error);
+  }
   const restoreId = await offerDataRestore(cfg.home);
   // Asked before anything reads the revision file: a task deleted outside
   // Timon leaves it behind, and everything below would believe in a service.
@@ -2267,6 +2280,7 @@ if (!app.requestSingleInstanceLock({ build: ownBuild } satisfies LaunchData)) {
         stopService: () => stopInstalledService(cfg, shellDaemonRuntime(), process.resourcesPath, app.getVersion()),
         stopBrowser: async () => {
           await stopBrowserProvider?.(); stopBrowserProvider = null;
+          await stopComputerUse?.(); stopComputerUse = null;
           browserMedia?.close(); browserMedia = null;
           await nativeBrowser?.close(); nativeBrowser = null;
         },
@@ -2465,18 +2479,21 @@ if (!app.requestSingleInstanceLock({ build: ownBuild } satisfies LaunchData)) {
     if (windowsHoldQuit()) { event.preventDefault(); return; }
     speech?.dispose();
     speech = null;
-    if (quittingAfterEmbeddedStop || (!stopEmbedded && !stopBrowserProvider && !nativeBrowser)) return;
+    if (quittingAfterEmbeddedStop || (!stopEmbedded && !stopBrowserProvider && !stopComputerUse && !nativeBrowser)) return;
     event.preventDefault();
     quittingAfterEmbeddedStop = true;
     const stop = stopEmbedded;
     const stopProvider = stopBrowserProvider;
+    const stopComputer = stopComputerUse;
     const browser = nativeBrowser;
     const media = browserMedia;
     stopEmbedded = null;
     stopBrowserProvider = null;
+    stopComputerUse = null;
     nativeBrowser = null;
     browserMedia = null;
     void (async () => {
+      await stopComputer?.().catch((error: unknown) => console.error('[computer-use] stop failed', error));
       await stopProvider?.();
       media?.close();
       const stopped = await Promise.allSettled([browser?.close(), stop?.()]);

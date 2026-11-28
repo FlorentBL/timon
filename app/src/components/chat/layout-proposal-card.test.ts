@@ -155,3 +155,28 @@ test('a trigger proposal shows every action in full, and Approve writes nothing 
   assert.equal(w.calls.filter((c) => c.url.includes('/resolve')).length, 1);
   assert.equal(w.calls.filter((c) => c.method === 'PUT').length, 0);
 });
+
+test('a computer-use proposal shows the access now and after, and Allow writes nothing from the browser', async (t) => {
+  const w = await mount(t);
+  await w.render(proposal({
+    id: 'p-computer', kind: 'computer-use', agent: 'timon.main', note: 'Answer the community',
+    payload: {
+      agent: 'support.tim', addApps: [{ app: 'Discord', mode: 'foreground' }, { app: 'Notes', mode: 'background' }], removeApps: ['Slack'], enable: true,
+      before: { enabled: false, apps: [{ app: 'Notepad', mode: 'background' }, { app: 'Slack', mode: 'foreground' }], defaultMode: 'foreground' }, expiresAt: Date.now() + 60_000,
+    },
+  }));
+  const text = document.body.textContent ?? '';
+  assert.match(text, /Allow support\.tim to control Discord \(foreground\), Notes \(background\) with computer use/);
+  assert.match(text, /Computer use off/);
+  assert.match(text, /Allowed applications: Notepad \(background\), Slack \(foreground\)/);
+  assert.match(text, /Computer use on/);
+  assert.match(text, /Allowed applications: Notepad \(background\), Discord \(foreground\), Notes \(background\) · removed: Slack/);
+  assert.match(text, /each application in the mode shown/);
+  assert.deepEqual(w.buttons(), ['applied', 'dismissed']);
+  assert.match(document.querySelector('button[data-decision="applied"]')!.textContent ?? '', /Allow/);
+  // The daemon writes the agent's config in the claim: the browser's part ends there.
+  await w.click('applied', () => w.calls.some((c) => c.url.includes('/resolve')), 'the computer-use proposal to be claimed');
+  await w.until(() => true, 'the claim to settle');
+  assert.equal(w.calls.filter((c) => c.url.includes('/resolve')).length, 1);
+  assert.equal(w.calls.filter((c) => c.method === 'PUT').length, 0);
+});

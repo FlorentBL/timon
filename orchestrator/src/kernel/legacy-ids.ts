@@ -36,6 +36,7 @@ export const LEGACY_IDS: Readonly<Record<string, string>> = Object.freeze({
   grepai: '@timon/grepai',
   'docker-supervision': '@timon/docker-supervision',
   'browser-embedded': '@timon/browser-embedded',
+  'computer-use': '@timon/computer-use',
   'terminal-native': '@timon/terminal-native',
   'terminal-web': '@timon/terminal-web',
   'orchestrator-self': '@timon/orchestrator-self',

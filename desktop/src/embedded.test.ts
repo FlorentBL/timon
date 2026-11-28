@@ -421,6 +421,7 @@ test('Windows portable: quitting also ends the daemon\'s orphans — never the w
     `${installDir}\\dist\\boot.js`,
     `${installDir}\\dist\\terminal-host\\main.js`,
     `${installDir}\\bin\\browser-mcp.mjs`,
+    `${installDir}\\bin\\computer-mcp.mjs`,
     'C:\\Users\\Robin\\AppData\\Local\\Programs\\Timon\\resources\\app\\',
   ]);
   const renderer = 'c:\\users\\robin\\appdata\\local\\programs\\timon\\timon.exe --type=renderer --app-path=c:\\users\\robin\\appdata\\local\\programs\\timon\\resources\\app.asar';

@@ -217,8 +217,11 @@ function withoutToken(plan) {
         : server);
 }
 
-/** The servers that ask codex for the mission's token, by name: Timon's own and the project's browser. */
-const TOKEN_ASKERS = new Set(['timon', 'forms', 'browser']);
+/**
+ * The servers that ask codex for the mission's token, by name: Timon's own, the project's browser and
+ * computer use. A server left out starts without a token, and the daemon refuses every call it makes.
+ */
+const TOKEN_ASKERS = new Set(['timon', 'forms', 'browser', 'computer']);
 
 /** MIME → file extension for attached images. Codex infers the format from the
  *  content, but a correct extension avoids ambiguity. */
