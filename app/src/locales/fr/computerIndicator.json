@@ -1,0 +1,10 @@
+{
+  "computerIndicator": {
+    "title": "Un agent contrôle votre ordinateur",
+    "stoppedTitle": "Le contrôle de l'ordinateur est arrêté",
+    "stop": "Arrêter",
+    "resume": "Reprendre",
+    "stopFailed": "Impossible d'arrêter l'agent. Utilisez le raccourci d'urgence ou quittez Timon.",
+    "resumeFailed": "Impossible de reprendre le contrôle de l'ordinateur."
+  }
+}

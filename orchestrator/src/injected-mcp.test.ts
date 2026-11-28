@@ -47,7 +47,7 @@ test('a server that is not Timon\'s own is not in the list', () => {
 });
 
 test('a stub id is recognised from its id alone', () => {
-  for (const id of ['ext-timon', 'ext-timon-browser', 'ext-timon_browser', 'ext-timon_ask', 'ext-timon_permission', 'ext-grepai']) {
+  for (const id of ['ext-timon', 'ext-timon-browser', 'ext-timon_browser', 'ext-timon-computer', 'ext-timon_computer', 'ext-timon_ask', 'ext-timon_permission', 'ext-grepai']) {
     assert.ok(isInjectedMcpStubId(id), id);
   }
   for (const id of ['ext-acme', 'ext-chrome-devtools', 'timon', 'grepai', 'ext-claude.ai-notes']) {

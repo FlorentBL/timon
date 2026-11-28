@@ -91,6 +91,8 @@ export const BUNDLED_ICONS: Readonly<Record<string, string>> = Object.freeze({
     '<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 8.5h18"/><circle cx="12" cy="14.3" r="3.2"/><circle cx="12" cy="14.3" r="1.2"/>',
   '@timon/browser-annotations':
     '<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 8.5h18"/><path d="M9 17.5l.6-2.6 5.2-5.2 2 2-5.2 5.2z"/>',
+  '@timon/computer-use':
+    '<rect x="3" y="4" width="18" height="12" rx="2"/><path d="M9 20h6M12 16v4"/><path d="M10 8l5 3-2.2.6L14 14l-1.1.4-1.2-2.3L10 13z"/>',
   '@timon/terminal-native':
     '<path d="M4.5 6.5l5.5 5.5-5.5 5.5M12.5 18h7"/>',
   '@timon/terminal-web':

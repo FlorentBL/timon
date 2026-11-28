@@ -156,6 +156,8 @@ test('--browser-host serves the built-in browser with no screen, streams it, ref
     assert.equal(descriptor.pid, host.child.pid, 'the headless start replaced the process, same PID');
     assert.match(host.output(), /starting again on the headless platform/);
     assert.equal(JSON.parse(readFileSync(join(home, 'browser-native', 'browser-host.json'), 'utf8')).pid, host.child.pid);
+    // No desktop to drive: the daemon must find no computer use provider on a host.
+    assert.equal(existsSync(join(home, 'computer-native')), false, 'a browser host started computer use');
     const cmd = client(descriptor);
     assert.equal((await cmd({ action: 'start' })).status, 200);
     assert.equal((await cmd({ action: 'navigate', url })).status, 200);

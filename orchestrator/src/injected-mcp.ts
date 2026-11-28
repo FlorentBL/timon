@@ -25,6 +25,8 @@ export const INJECTED_MCP_SERVERS: readonly string[] = [
   LEGACY_ASK_MCP_SERVER,
   // The project's embedded browser (`CHROME_DEVTOOLS_MCP_KEY`).
   'timon-browser',
+  // The screen, mouse and keyboard of the user's machine, for an agent with computer use on.
+  'timon-computer',
   // The project's semantic index. Reserved as a whole: the dialects drop an
   // agent's own `grepai` entry in favour of the one bound to the project.
   'grepai',

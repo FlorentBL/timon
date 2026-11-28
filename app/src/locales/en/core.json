@@ -4050,6 +4050,29 @@
       "laterHint": "No problem — start the tour any time from the appearance menu (palette icon in the top bar) › Guided tour."
     }
   },
+  "computerProposal": {
+    "badge": "computer use",
+    "titleApps": "Allow {target} to control {apps} with computer use",
+    "titleEnable": "Allow {target} to control the computer",
+    "titleChange": "Change what {target} may control with computer use",
+    "now": "Now",
+    "after": "After",
+    "on": "Computer use on",
+    "off": "Computer use off",
+    "apps": "Allowed applications: {apps}",
+    "noApps": "none",
+    "modeForeground": "foreground",
+    "modeBackground": "background",
+    "removed": "removed: {apps}",
+    "openAs": "\"{typed}\" is open as \"{name}\" on this computer.",
+    "reminder": "The agent will be able to control each application in the mode shown: in the foreground it may click and type when the application is in front, in the background it only reads and presses elements through accessibility.",
+    "allow": "Allow",
+    "refuse": "Refuse",
+    "applied": "Computer use updated",
+    "stateApplied": "Allowed — access updated",
+    "stale": "This request cannot be applied: {reasons}",
+    "expired": "This request has expired: ask the agent to propose it again."
+  },
   "triggerProposal": {
     "badge": "script",
     "title": "{agent} asks to run a script",

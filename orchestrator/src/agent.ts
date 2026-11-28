@@ -297,6 +297,10 @@ import {
   loadSystemPrompt,
   isValidAgentName,
   validName,
+  storedComputerUseApps,
+  storedComputerUseMode,
+  type ComputerUseApp,
+  type ComputerUseMode,
 } from './agent-config.js';
 
 // The ACP runtime is shared with the published SDK, so it learns from the daemon which missions are fenced.
@@ -861,6 +865,7 @@ confuse them** with your CLI's own todo tools (\`TaskCreate\`, \`TaskList\`…),
 | Delegate to an isolated sub-agent     | \`mission_spawn\` (or \`timon spawn\`)            |
 | Search past missions / read a trace   | \`mission_search\` / \`trace_get\`                |
 | Rearrange the user's widgets          | \`widgets_get\`, then \`widgets_propose\` (a card they apply) |
+| Ask the user to let an agent use the computer | \`computer_use_propose\` (a card they allow or refuse) |
 | Split the user's screen into islands  | \`islands_get\`, then \`islands_propose\` (a card they apply) |
 | Keep an island layout under a name    | \`islands_arrangements_list\`, then \`islands_arrangement_save\` |
 | Lay a named arrangement on a view     | \`islands_propose\` with \`arrangement: <id>\` (a card they apply) |
@@ -5069,6 +5074,12 @@ export type AgentSummary = {
   created_by: string | null;
   /** Folders outside `cwd` its missions may read or write (`agent-extra-dirs.ts`), as stored. */
   extra_dirs: AgentExtraDir[];
+  /** Whether a person let this agent control the host's screen, mouse and keyboard. */
+  computer_use: boolean;
+  /** Applications the agent may control while computer use is on, each with the mode it is driven in. */
+  computer_use_apps: ComputerUseApp[];
+  /** 'background' = accessibility only, the user's screen, mouse and keyboard are never touched. */
+  computer_use_mode: ComputerUseMode;
 };
 
 export type AgentDetails = AgentSummary & { system_prompt: string };
@@ -5115,6 +5126,9 @@ export function getAgent(name: string): AgentDetails | null {
     reasoning_effort: cfg.reasoningEffort ?? null,
     created_by: cfg.created_by ?? null,
     extra_dirs: storedExtraDirs(cfg),
+    computer_use: cfg.computer_use === true,
+    computer_use_apps: storedComputerUseApps(cfg),
+    computer_use_mode: storedComputerUseMode(cfg),
   };
 }
 
@@ -5202,7 +5216,7 @@ export function upsertAgent(input: {
     // them would take the delegation rights away without anyone asking.
     // The mascot look and the avatar mode are picked elsewhere too
     // (onboarding, the Avatar tab, `agent_update look`, `agent_set_look`).
-    for (const key of ['reports_to', 'team', 'orchestrator', 'orchestrates', 'directives', 'created_by', 'uid', 'look', 'avatar', 'extra_dirs'] as const) {
+    for (const key of ['reports_to', 'team', 'orchestrator', 'orchestrates', 'directives', 'created_by', 'uid', 'look', 'avatar', 'extra_dirs', 'computer_use', 'computer_use_apps', 'computer_use_mode'] as const) {
       if (!(key in config) && current[key] !== undefined) (config as Record<string, unknown>)[key] = current[key];
     }
   }
@@ -6145,6 +6159,9 @@ export function listAgents(): AgentSummary[] {
       reasoning_effort: cfg.reasoningEffort ?? null,
       created_by: cfg.created_by ?? null,
       extra_dirs: storedExtraDirs(cfg),
+      computer_use: cfg.computer_use === true,
+      computer_use_apps: storedComputerUseApps(cfg),
+      computer_use_mode: storedComputerUseMode(cfg),
     });
   }
   return out;

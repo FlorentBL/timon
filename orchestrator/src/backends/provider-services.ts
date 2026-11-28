@@ -16,7 +16,7 @@ import type { McpLaunchServer } from './mcp-serialize.js';
 import type { ProviderScratchDir } from './scratch-dir.js';
 
 /** Which of Timon's servers, or whose, a server of the plan is. */
-export type ProviderMcpRole = 'timon' | 'forms' | 'grepai' | 'browser' | 'user';
+export type ProviderMcpRole = 'timon' | 'forms' | 'grepai' | 'browser' | 'computer' | 'user';
 
 export type ProviderMcpServer = McpLaunchServer & { readonly role: ProviderMcpRole };
 
