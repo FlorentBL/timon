@@ -94,3 +94,24 @@ test('MSAA children come back as nodes whose paths continue the UIA path, and a 
   await assert.rejects(act({ stale: true }), (e: A11yError) => e.kind === 'stale');
   await assert.rejects(act({ failed: true }), (e: A11yError) => e.kind === 'failed');
 });
+
+test('a Chromium web area is read through MSAA even when UI Automation shows children, in the walk and in act', async () => {
+  const { seen, exec } = recorder({ ok: true });
+  await win32A11yBackend(exec).probe();
+  const script = seen[0].worker!.env!.TIMON_CU_SCRIPT!;
+  // The Chromium of Electron 45 serves a UIA tree whose text field has no ValuePattern (CI run 46144862676).
+  assert.match(script, /function Test-TimonChromiumWebArea\(\$el\) \{\s*\[string\]\(Get-TimonUiaCached \$el \(\[System\.Windows\.Automation\.AutomationElement\]::ClassNameProperty\)\) -eq 'Chrome_RenderWidgetHostHWND'/);
+  const walk = script.slice(script.indexOf('function Add-TimonUiaNode'), script.indexOf('function Test-TimonChromiumWebArea'));
+  assert.ok(walk.indexOf('Test-TimonChromiumWebArea $el') < walk.indexOf('Get-TimonUiaFirstChild $el'), 'the walk tries MSAA before the UIA children');
+  const resolve = script.slice(script.indexOf('function Get-TimonUiaElement'), script.indexOf('function Invoke-TimonUiaTree'));
+  assert.ok(resolve.indexOf('Test-TimonChromiumWebArea $el') < resolve.indexOf('Get-TimonUiaFirstChild $el'), 'act resolves the same way as the walk');
+});
+
+test('Add-TimonMsaaNodes returns a boolean, so every call consumes it and nothing leaks into the tree answer', async () => {
+  const { seen, exec } = recorder({ ok: true });
+  await win32A11yBackend(exec).probe();
+  const script = seen[0].worker!.env!.TIMON_CU_SCRIPT!;
+  const calls = [...script.matchAll(/^.*Add-TimonMsaaNodes \$el.*$/gm)].map((m) => m[0]).filter((line) => !line.trimStart().startsWith('function '));
+  assert.equal(calls.length, 2);
+  for (const line of calls) assert.match(line, /if \(Add-TimonMsaaNodes|\[void\]\(Add-TimonMsaaNodes/, line);
+});
