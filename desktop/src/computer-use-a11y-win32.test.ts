@@ -115,3 +115,12 @@ test('Add-TimonMsaaNodes returns a boolean, so every call consumes it and nothin
   assert.equal(calls.length, 2);
   for (const line of calls) assert.match(line, /if \(Add-TimonMsaaNodes|\[void\]\(Add-TimonMsaaNodes/, line);
 });
+
+test('the NotSupported sentinel is matched by reference, never with -eq, which turns it into $true next to a boolean', async () => {
+  const { seen, exec } = recorder({ ok: true });
+  await win32A11yBackend(exec).probe();
+  const script = seen[0].worker!.env!.TIMON_CU_SCRIPT!;
+  // With -eq every true IsInvokePatternAvailable, IsKeyboardFocusable or IsPassword read as absent (CI run 46146143920).
+  assert.doesNotMatch(script, /-(eq|ne) \[System\.Windows\.Automation\.AutomationElement\]::NotSupported/);
+  assert.match(script, /\[object\]::ReferenceEquals\(\$v, \[System\.Windows\.Automation\.AutomationElement\]::NotSupported\)/);
+});
