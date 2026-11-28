@@ -146,12 +146,13 @@ function Get-TimonMsaaRoot($el) {
   }
   return $null
 }
+# Adds the MSAA nodes under a Chromium web area; true when MSAA answered, so the caller skips UIA.
 function Add-TimonMsaaNodes($el, [string]$path, [int]$depth, $state) {
   $root = Get-TimonMsaaRoot $el
   $debug = ($env:TIMON_COMPUTER_USE_DEBUG -eq '1')
   if ($null -eq $root) {
-    if ($debug -and (Get-TimonMsaaHwnd $el) -ne 0) { [Console]::Error.WriteLine('[computer-use] a11y: UIA showed no web content, MSAA found no children') }
-    return
+    if ($debug -and (Get-TimonMsaaHwnd $el) -ne 0) { [Console]::Error.WriteLine('[computer-use] a11y: MSAA found no children under the web area at ' + $path) }
+    return $false
   }
   $res = [TimonMsaa]::WalkFrom($root, ($path + '.0'), [Math]::Max(0, $state.maxDepth - $depth - 1), [Math]::Max(0, $state.maxNodes - $state.nodes.Count))
   $s = $script:uiaScale
@@ -163,7 +164,8 @@ function Add-TimonMsaaNodes($el, [string]$path, [int]$depth, $state) {
     [void]$state.nodes.Add($node)
   }
   if ($res.Truncated) { $state.truncated = $true }
-  if ($debug) { [Console]::Error.WriteLine('[computer-use] a11y: path MSAA, ' + $res.Rows.Count + ' children found') }
+  if ($debug) { [Console]::Error.WriteLine('[computer-use] a11y: path MSAA at ' + $path + ', ' + $res.Rows.Count + ' children found') }
+  return $true
 }
 function Invoke-TimonMsaaAct($q, $root, $steps) {
   $node = [TimonMsaa]::Resolve($root, [int[]]@($steps))
